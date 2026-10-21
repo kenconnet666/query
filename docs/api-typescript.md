@@ -297,6 +297,20 @@ PostgreSQL 的聚合过滤叫 `filterWhere`，用来和核心包里定义全局�
 | 方言 | 继承 `Dialect` 或某个现成方言，覆盖引号、字面量、占位符、分页、排序项和类型名 |
 | 驱动、监听、缓存 | `Driver`、`listener`、`QueryCache` |
 
+**记录语句**：监听器里接上项目已有的日志（pino、winston 或 console）。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
+
+```ts
+const db = new HanaDatabase(driver, {
+  listener: (e) => {
+    if (e.error !== undefined) logger.warn({ db: e.database, sql: e.statement.sql, params: e.statement.parameters, ms: e.elapsedMs, err: e.error });
+    else if (e.elapsedMs > 500) logger.info({ slow: true, sql: e.statement.sql, rows: e.rows, ms: e.elapsedMs });
+    else logger.debug({ sql: e.statement.sql, rows: e.rows, ms: e.elapsedMs, cached: e.cached });
+  },
+});
+```
+
+监听器抛出的异常会被忽略，不影响查询。
+
 ## 9. 编译期能拦住的错误
 
 以下错误写法在 `typescript/test/src/unit/typing.test.ts` 里用 `@ts-expect-error` 逐条验证，构建时任何一条不报错都会失败：

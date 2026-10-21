@@ -158,6 +158,7 @@ List<Delivery> rows = db.list(q);
 
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
 - 关联子查询直接捕获外层 lambda 的参数。
+- 函数式投影每行都会重放 lambda，读 10 万行时比 `selectAs` 慢约一半（0003 的 M5 粗测）；大结果集优先用 `selectAs` 或 `mapTo`。
 - 一个类里引用的不同 getter 超过约 500 个时，javac 生成的 `$deserializeLambda$` 可能超出 64KB 方法上限，编译报 "code too large"；把查询分到多个类即可。
 
 **小计与总计**：
@@ -329,6 +330,19 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect`（或某个现成方言），覆盖引号、字面量、分页、排序项、类型名、函数渲染和 JDBC 读写 |
 | 连接与监听 | `ConnectionProvider`、`QueryListener`、`QueryCache` |
+
+**用 SLF4J 记录语句**：本库不依赖任何日志框架，监听器里接上项目已有的日志即可。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
+
+```java
+Logger log = LoggerFactory.getLogger("query");
+Database db = Hana.database(dataSource, c -> c.listener(e -> {
+    if (e.error() != null) log.warn("{} failed after {} ms: {}", e.database(), e.elapsed().toMillis(), e.statement(), e.error());
+    else if (e.elapsed().toMillis() > 500) log.info("slow: {} rows in {} ms: {}", e.rows(), e.elapsed().toMillis(), e.statement());
+    else log.debug("{} rows in {} ms{}: {}", e.rows(), e.elapsed().toMillis(), e.cached() ? " (cached)" : "", e.statement().sql());
+}));
+```
+
+`e.statement()` 打印出 SQL 和参数。监听器抛出的异常会被忽略，不影响查询。
 
 ## 9. 编译期能拦住的错误
 
