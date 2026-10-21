@@ -42,13 +42,15 @@
   - SELECT 列表与分组表达式里的常量写成字面量。
 - **SQL 级列转换**（0002 第 12 条）：`@ReadAs("…{0}…")` 与内置的 `@BlankAsNull`、`@Trimmed`（TS 为 `readAs`、`blankAsNull`、`trimmed`），列在语句的每个位置都按模板读取。对照程序换用 `@BlankAsNull` 后两端仍是 21 组全部一致。
 - **ROLLUP 与分组集合**（0002 第 13 条）：核心包 `groupByRollup`、`grouping`，MySQL 渲染为 `WITH ROLLUP`；HANA、PostgreSQL 包里有 `cube`、`groupingSets`。
-- **PR 评审意见**（Codex 机器人的两条 P1，已修复并回复）：
+- **PR 评审意见**（Codex 机器人的两条 P1、两条 P2，均已修复、回复并标为已解决；机器人随后提示用量已到上限，暂时不会再评审）：
   - 右侧混用 UNION 与 UNION ALL 时加括号，保持原有分组（Java `Query.Combination`，TS `State.groups`）；
+  - Java 函数式投影重放时按表达式结构核对（`Expr.shape()`），按行值在两个 `coalesce(...)` 之间切换也会报错；
+  - 原生 SQL 的参数扫描改由方言钩子 `quotedEnd` 判断引用：PostgreSQL 认美元引号，MySQL 认反引号和反斜杠转义（TS 以前对所有方言都认反引号，Java 都不认，现在两端一致）；
   - PostgreSQL 的流式读取改由方言钩子 `Dialect.openCursor` 准备游标：自动提交的连接上临时开事务，外层事务不动，默认每批 1000 行。MySQL 仍默认缓冲，`fetchSize(Integer.MIN_VALUE)` 现在可以生效（以前只接受正数）。是否让 MySQL 默认逐行读取待定，见下文。
 - **两端一致**：`spec/render/` 下 73 个金样例，Java 与 TS 的测试都读取，SQL 与参数逐字相同。
 - **测试**（中文命名，本机三库全部通过）：
-  - Java 225 个（含 76 个金样例、61 个实库场景、javac 编译期检查、3 个 Spring 事务测试）；
-  - TS 207 个（含 76 个金样例、59 个实库场景、16 条 `@ts-expect-error` 编译期检查）。
+  - Java 229 个（含 76 个金样例、63 个实库场景、javac 编译期检查、3 个 Spring 事务测试）；
+  - TS 210 个（含 76 个金样例、61 个实库场景、16 条 `@ts-expect-error` 编译期检查）。
 - **CI**：
   - 并行的 job：Java 单元、TS 单元、Spring 6.2 与 7.0、PostgreSQL 和 MySQL 按"库 × 语言"拆成的 4 个 job、HANA（一个 job 跑两种语言）。
   - 提速规则见 CLAUDE.md 的"CI 的提速规则"。

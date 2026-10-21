@@ -90,6 +90,8 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 - **HANA**：驱动本身分批读取，不需要准备。
 - **MySQL**：Connector/J 默认也缓冲全部结果。逐行读取要配置 `fetchSize(Integer.MIN_VALUE)`（读完之前同一连接不能执行别的语句），或在 URL 中加 `useCursorFetch=true` 并配置正的 fetch size。两种做法都会改变连接的用法，所以不自动切换。
 
+**原生 SQL 的参数扫描**：`:name` 只在引号、注释之外替换，"什么算引号"由方言的 `quotedEnd` 决定：默认是 `'…'` 和 `"…"`；PostgreSQL 另有 `$$…$$` 与 `$tag$…$tag$`（函数体常用）；MySQL 另有反引号，并且字符串里的反斜杠是转义符，与 MySQL 字面量的写法一致。
+
 **UNION 的分组**：各段按左结合渲染，`a.union(b).unionAll(c)` 就是 `a UNION b UNION ALL c`。右侧本身是混用 UNION 与 UNION ALL 的组合时（`a.unionAll(b.union(c))`），渲染时给右侧加括号，三库都支持；右侧只用同一种运算符时满足结合律，不加括号。
 
 ### 9. TypeScript（第二期）
@@ -210,10 +212,10 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 
 | 模块 | 测试 | 内容 |
 | --- | --- | --- |
-| query-core | 70 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
+| query-core | 72 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
 | query-hana | 51 | 20 个实库场景（HANA 2.00.088）、4 个方言渲染、27 个金样例 |
-| query-postgres | 53 | 23 个实库场景（PostgreSQL 17）、4 个方言渲染、26 个金样例 |
-| query-mysql | 48 | 18 个实库场景（MySQL 8.4）、7 个方言渲染、23 个金样例 |
+| query-postgres | 54 | 24 个实库场景（PostgreSQL 17）、4 个方言渲染、26 个金样例 |
+| query-mysql | 49 | 19 个实库场景（MySQL 8.4）、7 个方言渲染、23 个金样例 |
 
 **第二期 TypeScript 的测试**（TS 7.0.2、Node 24，`node:test`），本机三个开发库上全部通过：
 
@@ -221,9 +223,9 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 | --- | --- |
 | 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 25 |
 | 金样例：三个方言共 73 个用例，再加 3 个"每个样例都有查询"的检查 | 76 |
-| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 46 |
+| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 47 |
 | 编译期检查：`@ts-expect-error` 验证 16 种错误写法不能编译 | 1 |
-| 实库场景：HANA 20、PostgreSQL 21、MySQL 18 | 59 |
+| 实库场景：HANA 20、PostgreSQL 22、MySQL 19 | 61 |
 
 **两端一致**：`spec/render/` 下的 73 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量、列转换、ROLLUP、UNION 的分组，以及三个方言的专属函数（含 HANA 与 PostgreSQL 的 CUBE、GROUPING SETS）。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
 
@@ -247,6 +249,8 @@ PostgreSQL 另有两个流式读取的实库测试：
 
 - 自动提交的连接上，fetch size 为 1 时能先读到前两行，第三行除以零的错误在取到那一批时才出现，证明按游标逐批读取；去掉方言钩子后，错误在执行时就出现，测试失败。连接归还前已恢复自动提交。
 - 外层事务中的流式读取前后，`txid_current()` 不变，外层事务没有被提交或回滚。
+
+原生 SQL 的方言引用在实库上执行：PostgreSQL 的 `$$:x$$`、`$tag$…$tag$`，MySQL 的 `'it\'s :x'` 与反引号别名里的冒号都原样保留。
 
 实库还发现并修复了一个 bug：`db.one()` 曾经覆盖用户自己设置的 LIMIT。
 
@@ -277,7 +281,7 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 ## 代价与风险
 
 - SerializedLambda 依赖私有的 `writeReplace`。classpath 上没有问题；JPMS 命名模块需要 `opens`；GraalVM 需要额外配置。
-- 函数式投影每行都会重跑一次 lambda；lambda 里不能有副作用，也不能按行值有条件地读列（已有检测）。
+- 函数式投影每行都会重跑一次 lambda；lambda 里不能有副作用，也不能按行值有条件地读列。重放时按表达式的结构核对（列、函数名、参数、常量值、CAST 目标），CASE 的条件是不透明的渲染函数，只核对个数。
 - 作用域最多 8 张表，更多时用 CTE 拆开。
 - 方言专属函数在渲染时才报错，由各方言包的"在别的方言上渲染应当失败"测试兜底。
 - SELECT 列表里的常量写成字面量（第 10 条），随请求变化的值放进 SELECT 列表会让语句文本变化。

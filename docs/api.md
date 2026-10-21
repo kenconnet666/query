@@ -290,7 +290,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭。PostgreSQL 在自动提交的连接上自动开临时事务；MySQL 要配置 `fetchSize(Integer.MIN_VALUE)` 才逐行读取 |
 | `db.count(q)` | 外包 `COUNT(*)` |
 | `db.page(q, page, size)` | 页号从 1 开始，同时返回总数 |
-| `db.sql("... :name IN (:ids)").bind(...).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射 |
+| `db.sql("... :name IN (:ids)").bind(...).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `db.render(q)` | 查看将要执行的 SQL 与参数 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
 
