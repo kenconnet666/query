@@ -41,6 +41,9 @@ public class PostgresDialect extends Dialect {
         return s.indexOf('\\') < 0 ? super.stringLiteral(s) : "E'" + s.replace("\\", "\\\\").replace("'", "''") + "'";
     }
 
+    /** pgjdbc reports a timeout as query_canceled (57014), since it cancels the statement through a separate request. */
+    @Override public boolean isTimeout(SQLException e) { return super.isTimeout(e) || "57014".equals(e.getSQLState()); }
+
     @Override public String castType(CastType<?> type) {
         return switch (type.kind()) {
             case DECIMAL -> "NUMERIC(" + type.length() + "," + type.scale() + ")";

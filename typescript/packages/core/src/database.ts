@@ -102,8 +102,10 @@ export class QueryExecutionError extends Error {
     readonly database: string,
     readonly statement: Rendered,
     cause: unknown,
+    /** Whether the database cancelled the statement because it ran past its timeout. */
+    readonly timedOut = false,
   ) {
-    super(`${database}: ${cause instanceof Error ? cause.message : String(cause)}\n${statement.sql}`, { cause });
+    super(`${database}${timedOut ? " (timed out)" : ""}: ${cause instanceof Error ? cause.message : String(cause)}\n${statement.sql}`, { cause });
     this.name = "QueryExecutionError";
   }
 }
@@ -198,7 +200,7 @@ export abstract class Database {
       }
     } catch (e) {
       this.#notify(statement, start, count, e, false);
-      throw e instanceof QueryExecutionError ? e : new QueryExecutionError(this.name, statement, e);
+      throw e instanceof QueryExecutionError ? e : new QueryExecutionError(this.name, statement, e, this.dialect.isTimeout(e));
     }
     this.#notify(statement, start, count, undefined, false);
   }
@@ -266,7 +268,7 @@ export abstract class Database {
       return result;
     } catch (e) {
       this.#notify(statement, start, 0, e, false);
-      throw new QueryExecutionError(this.name, statement, e);
+      throw new QueryExecutionError(this.name, statement, e, this.dialect.isTimeout(e));
     }
   }
 

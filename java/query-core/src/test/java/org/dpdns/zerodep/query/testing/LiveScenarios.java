@@ -57,6 +57,7 @@ import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.val;
 import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -430,9 +431,11 @@ public abstract class LiveScenarios {
     @Test
     void 超过超时的语句在数据库端被取消且连接仍可用() {
         long start = System.nanoTime();
-        assertThrows(QueryExecutionException.class, () -> db.sql(slowStatement()).timeout(Duration.ofSeconds(1)).list(String.class));
+        var own = assertThrows(QueryExecutionException.class, () -> db.sql(slowStatement()).timeout(Duration.ofSeconds(1)).list(String.class));
         Database limited = database(live.connections(), c -> c.queryTimeout(Duration.ofSeconds(1)));
-        assertThrows(QueryExecutionException.class, () -> limited.sql(slowStatement()).list(String.class));
+        var byDefault = assertThrows(QueryExecutionException.class, () -> limited.sql(slowStatement()).list(String.class));
+        assertTrue(own.isTimeout() && byDefault.isTimeout(), "the dialect recognises its database's timeout error: " + own.getCause());
+        assertFalse(assertThrows(QueryExecutionException.class, () -> db.sql("SELECT * FROM " + t("NO_SUCH_TABLE")).list(String.class)).isTimeout());
         long elapsed = Duration.ofNanos(System.nanoTime() - start).toMillis();
         assertTrue(elapsed < 5000, "both statements were cancelled after about a second instead of running to the end: " + elapsed + " ms");
         assertEquals(5, limited.count(from(Lips.class).where(l -> l.col(Lips::getClient).eq("100")).selectValue(l -> l.col(Lips::getDelivery))));

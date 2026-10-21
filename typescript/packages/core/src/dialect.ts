@@ -218,6 +218,16 @@ export abstract class Dialect {
     return 65535;
   }
 
+  /** Whether a driver error means the database cancelled the statement for running past its timeout. */
+  isTimeout(_error: unknown): boolean {
+    return false;
+  }
+
+  /** The `code` (or another property) a driver puts on its errors, if any. */
+  protected static errorProperty(error: unknown, name: string): unknown {
+    return typeof error === "object" && error !== null ? (error as Record<string, unknown>)[name] : undefined;
+  }
+
   /**
    * Where a quoted part of hand-written SQL that starts at `start` ends: the index of its last
    * character, or -1 when none starts there. Native queries look for `:name` only outside such parts.

@@ -470,9 +470,11 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
     it("超过超时的语句在数据库端被取消且连接仍可用", async () => {
       const { db, driver } = live();
       const start = Date.now();
-      await assert.rejects(db.sql(target.slowStatement).timeout(1000).list(), QueryExecutionError);
+      const timedOut = (e: unknown) => e instanceof QueryExecutionError && e.timedOut;
+      await assert.rejects(db.sql(target.slowStatement).timeout(1000).list(), timedOut);
       const limited = target.database(driver, { queryTimeoutMs: 1000 });
-      await assert.rejects(limited.sql(target.slowStatement).list(), QueryExecutionError);
+      await assert.rejects(limited.sql(target.slowStatement).list(), timedOut);
+      await assert.rejects(db.sql(`SELECT * FROM ${live().table("NO_SUCH_TABLE")}`).list(), (e: unknown) => e instanceof QueryExecutionError && !e.timedOut);
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 5000, `both statements were cancelled after about a second instead of running to the end: ${elapsed} ms`);
       assert.equal(await limited.one(from(Lips).where((l) => l.client.eq("100")).selectValue(() => count())), 5);

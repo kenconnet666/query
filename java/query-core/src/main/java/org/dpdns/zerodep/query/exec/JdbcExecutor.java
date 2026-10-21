@@ -86,7 +86,7 @@ public final class JdbcExecutor {
             }
         } catch (SQLException e) {
             notify(statement, start, 0, e, false);
-            throw new QueryExecutionException(database, statement, e);
+            throw new QueryExecutionException(database, statement, e, timedOut(e));
         } catch (RuntimeException e) {
             notify(statement, start, 0, e, false);
             throw e;
@@ -113,7 +113,7 @@ public final class JdbcExecutor {
             cleanUpQuietly(cleanup);
             release(connection);
             notify(statement, start, 0, e, false);
-            throw new QueryExecutionException(database, statement, e);
+            throw new QueryExecutionException(database, statement, e, timedOut(e));
         }
         Connection c = connection;
         PreparedStatement p = ps;
@@ -129,7 +129,7 @@ public final class JdbcExecutor {
                     action.accept(reader.read(r));
                     return true;
                 } catch (SQLException e) {
-                    throw new QueryExecutionException(database, statement, e);
+                    throw new QueryExecutionException(database, statement, e, timedOut(e));
                 }
             }
         };
@@ -143,6 +143,8 @@ public final class JdbcExecutor {
 
     /** Lets the database report a cache hit to listeners without running anything. */
     public void cacheHit(Rendered statement, long rows) { notify(statement, System.nanoTime(), rows, null, true); }
+
+    private boolean timedOut(Throwable e) { return e instanceof SQLException s && dialect.isTimeout(s); }
 
     /** Fails before contacting the database, whose own error for too many parameters is often cryptic. */
     private void checkParameterCount(Rendered statement) {

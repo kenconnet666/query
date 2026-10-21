@@ -125,6 +125,9 @@ public abstract class Dialect {
     /** Bound parameters one statement may carry; the wire protocols of HANA and PostgreSQL count them in 16 bits. */
     public int maxParameters() { return 65535; }
 
+    /** Whether the database cancelled a statement for running past its query timeout. */
+    public boolean isTimeout(SQLException e) { return e instanceof java.sql.SQLTimeoutException; }
+
     /**
      * Where a quoted part of hand-written SQL that starts at {@code start} ends: the index of its last
      * character, or -1 when none starts there. Native queries look for {@code :name} only outside such

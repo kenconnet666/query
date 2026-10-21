@@ -35,6 +35,11 @@ export class MysqlDialect extends Dialect {
     return c === "`" ? MysqlDialect.closingQuote(sql, start, false) : -1;
   }
 
+  /** 3024: maximum statement execution time exceeded. */
+  override isTimeout(error: unknown): boolean {
+    return MysqlDialect.errorProperty(error, "errno") === 3024;
+  }
+
   protected override stringLiteral(s: string): string {
     return `'${s.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
   }
