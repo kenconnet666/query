@@ -190,6 +190,25 @@ jobs:
         if: always()
         run: docker compose down --volumes --remove-orphans
 
+  spring:
+    name: Spring 适配 / ${{ matrix.spring }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 5.3 is the build's own line (Spring Boot 2.7); 6.2 and 7.0 are Boot 3 and Boot 4.
+        spring: ['6.2.19', '7.0.9']
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: 用指定的 Spring 版本运行事务测试
+        run: ./mvnw --batch-mode verify -pl java/query-spring -am "-Dspring.version=${{ matrix.spring }}" -Dtest=SpringConnectionsTest -Dsurefire.failIfNoSpecifiedTests=false
+
   typescript:
     name: TypeScript 编译、类型与单元测试
     runs-on: ubuntu-latest

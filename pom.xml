@@ -14,6 +14,7 @@
         <module>java/query-hana</module>
         <module>java/query-postgres</module>
         <module>java/query-mysql</module>
+        <module>java/query-spring</module>
     </modules>
 
     <properties>
@@ -25,6 +26,9 @@
         <postgresql.version>42.7.14</postgresql.version>
         <ngdbc.version>2.30.11</ngdbc.version>
         <mysql.version>9.7.0</mysql.version>
+        <!-- The oldest supported line (Spring Boot 2.7); CI also runs query-spring against 6.2 and 7.0. -->
+        <spring.version>5.3.39</spring.version>
+        <h2.version>2.5.252</h2.version>
         <surefire.version>3.6.0</surefire.version>
     </properties>
 
@@ -67,6 +71,16 @@
                 <groupId>com.mysql</groupId>
                 <artifactId>mysql-connector-j</artifactId>
                 <version>${mysql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-jdbc</artifactId>
+                <version>${spring.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${h2.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
