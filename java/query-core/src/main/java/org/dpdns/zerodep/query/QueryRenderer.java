@@ -61,12 +61,19 @@ final class QueryRenderer {
             }
         }
         if (s.distinct && !replacedDistinct) w.sql("DISTINCT ");
+        // Constants in the SELECT list are literals: HANA cannot type a parameter there (COALESCE(x, ?) in a
+        // CTE is not numeric to an outer SUM). GROUP BY, DISTINCT and their ORDER BY match expressions
+        // textually, so their constants must be literals too.
+        boolean grouped = !s.groupBy.isEmpty() || s.distinct || replacedDistinct;
+        boolean outer = w.inlining(true);
         List<Expr<?>> items = arm.items();
         for (int i = 0; i < items.size(); i++) {
             if (i > 0) w.sql(", ");
             w.render(items.get(i));
             if (labels != null) w.sql(" AS ").identifier(labels.get(i));
         }
+        w.inlining(false);
+        if (s.joins.isEmpty()) w.dialect().fromNothing(w);
         SourceFilters filters = s.filtered ? (SourceFilters) w.attribute(SourceFilters.class) : null;
         if (filters == null) filters = SourceFilters.NONE;
         List<Cond> where = new ArrayList<>();
@@ -97,11 +104,13 @@ final class QueryRenderer {
         where.addAll(s.where);
         Cond whereAll = Nodes.all(where);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
+        w.inlining(grouped);
         if (!s.groupBy.isEmpty()) w.sql("\nGROUP BY ").join(s.groupBy, ", ");
         Cond having = Nodes.all(s.having);
         if (!having.isEmpty()) w.sql("\nHAVING ").render(having);
         boolean limited = s.limit != null || s.offset != null;
         if (!s.orderBy.isEmpty() && (ordered || limited)) w.sql("\nORDER BY ").join(s.orderBy, ", ");
+        w.inlining(outer);
         w.dialect().limit(w, s.limit, s.offset);
         for (Clause c : s.clauses) {
             if (c.position() == Clause.Position.END) w.sql("\n").render(c);

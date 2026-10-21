@@ -96,6 +96,9 @@ export abstract class Dialect {
     return this.quote(alias);
   }
 
+  /** What a SELECT without a table needs: nothing on most databases, `FROM DUMMY` on HANA. */
+  fromNothing(_w: SqlWriter): void {}
+
   /** The placeholder of the n-th parameter, counted from 1. */
   placeholder(_index: number): string {
     return "?";

@@ -37,6 +37,12 @@ public class Sql {
     /** A named CTE over a {@code selectAs(Shape.class, ...)} query. */
     public static <E> Cte<E> cte(String name, Query<E> body) { return new Cte<>(name, body); }
 
+    /**
+     * Constant rows such as a code list: one SELECT of literals per row, joined by UNION ALL (with
+     * {@code FROM DUMMY} on HANA). Use it as a CTE or a derived table. Every property needs a value.
+     */
+    public static <V> Query<V> values(Class<V> shape, List<? extends V> rows) { return Query.constants(shape, rows); }
+
     // ---------- values ----------
 
     /** A bound parameter typed by the value's class. */
@@ -96,6 +102,40 @@ public class Sql {
 
     public static Expr<String> trim(Expr<String> e) { return Nodes.call(e.type(), "TRIM", List.of(e)); }
 
+    /** SUBSTRING(e, start, length), counting from 1; the positions are literals, so the call can be a GROUP BY key. */
+    public static Expr<String> substring(Expr<String> e, int start, int length) {
+        return Nodes.call(SqlType.of(String.class), "SUBSTRING", List.of(e, lit(position(start)), lit(count(length))));
+    }
+
+    /** SUBSTRING(e, start): from start, counting from 1, to the end. */
+    public static Expr<String> substring(Expr<String> e, int start) {
+        return Nodes.call(SqlType.of(String.class), "SUBSTRING", List.of(e, lit(position(start))));
+    }
+
+    public static Expr<String> left(Expr<String> e, int length) {
+        return Nodes.call(SqlType.of(String.class), "LEFT", List.of(e, lit(count(length))));
+    }
+
+    public static Expr<String> right(Expr<String> e, int length) {
+        return Nodes.call(SqlType.of(String.class), "RIGHT", List.of(e, lit(count(length))));
+    }
+
+    public static Expr<String> replace(Expr<String> e, String search, String replacement) {
+        SqlType<String> text = SqlType.of(String.class);
+        return Nodes.call(text, "REPLACE", List.of(e, new Nodes.Param<>(text, Objects.requireNonNull(search, "search")),
+            new Nodes.Param<>(text, Objects.requireNonNull(replacement, "replacement"))));
+    }
+
+    private static int position(int start) {
+        if (start < 1) throw new IllegalArgumentException("Text positions start at 1; negative positions differ between databases");
+        return start;
+    }
+
+    private static int count(int length) {
+        if (length < 0) throw new IllegalArgumentException("A length must not be negative");
+        return length;
+    }
+
     @SafeVarargs
     public static Expr<String> concat(Expr<String> first, Expr<String>... rest) {
         List<Expr<String>> args = new ArrayList<>();
@@ -109,6 +149,15 @@ public class Sql {
     /** The result has the first operand's type. */
     @SafeVarargs
     public static <N extends Number> Expr<N> plus(Expr<N> first, Expr<? extends Number>... rest) { return arithmetic("+", first, rest); }
+
+    /** The sum of all terms, e.g. sixteen period columns built from a list of getters. */
+    public static <N extends Number> Expr<N> plus(List<? extends Expr<N>> terms) {
+        if (terms.isEmpty()) throw new IllegalArgumentException("plus() needs at least one term");
+        return new Nodes.Arithmetic<>(terms.get(0).type(), "+", List.copyOf(terms));
+    }
+
+    /** Unary minus: {@code -(e)}. */
+    public static <N extends Number> Expr<N> negate(Expr<N> e) { return new Nodes.Negated<>(e); }
 
     @SafeVarargs
     public static <N extends Number> Expr<N> times(Expr<N> first, Expr<? extends Number>... rest) { return arithmetic("*", first, rest); }

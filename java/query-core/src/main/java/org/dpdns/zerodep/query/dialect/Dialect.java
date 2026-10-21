@@ -45,6 +45,15 @@ public abstract class Dialect {
         if (nullsFirst != null) w.sql(nullsFirst ? " NULLS FIRST" : " NULLS LAST");
     }
 
+    /** What a SELECT without a table needs: nothing on most databases, {@code FROM DUMMY} on HANA. */
+    public void fromNothing(SqlWriter w) { }
+
+    /** Whether {@link #literal} can write the value; others stay parameters even when inlining. */
+    public boolean hasLiteral(Object value) {
+        return value instanceof String || value instanceof Boolean || value instanceof Number || value instanceof LocalDate
+            || value instanceof LocalDateTime || value instanceof Enum<?>;
+    }
+
     public void literal(SqlWriter w, Object value) {
         if (value == null) w.sql("NULL");
         else if (value instanceof String s) w.sql(stringLiteral(s));

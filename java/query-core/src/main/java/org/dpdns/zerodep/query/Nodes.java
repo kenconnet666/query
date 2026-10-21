@@ -23,7 +23,12 @@ final class Nodes {
             this.value = value;
         }
 
-        @Override public void render(SqlWriter w) { w.bind(value, type()); }
+        /** A literal of the stored value while the writer inlines constants, otherwise a parameter. */
+        @Override public void render(SqlWriter w) {
+            Object stored = type().toDatabase(value);
+            if (w.inlining() && w.dialect().hasLiteral(stored)) w.literal(stored);
+            else w.bind(value, type());
+        }
     }
 
     static final class Literal<T> extends Expr<T> {
@@ -34,7 +39,8 @@ final class Nodes {
             this.value = value;
         }
 
-        @Override public void render(SqlWriter w) { w.literal(value); }
+        /** The stored value, so a converter applies to literals as it does to parameters. */
+        @Override public void render(SqlWriter w) { w.literal(type().toDatabase(value)); }
     }
 
     static final class Column<T> extends Expr<T> {
@@ -111,6 +117,18 @@ final class Nodes {
         }
 
         @Override public void render(SqlWriter w) { w.sql("(").join(operands, " " + operator + " ").sql(")"); }
+    }
+
+    /** Unary minus; the operand in parentheses, so a negative literal never turns into a comment. */
+    static final class Negated<T> extends Expr<T> {
+        private final Expr<T> operand;
+
+        Negated(Expr<T> operand) {
+            super(operand.type());
+            this.operand = operand;
+        }
+
+        @Override public void render(SqlWriter w) { w.sql("-(").render(operand).sql(")"); }
     }
 
     static final class Cast<T> extends Expr<T> {

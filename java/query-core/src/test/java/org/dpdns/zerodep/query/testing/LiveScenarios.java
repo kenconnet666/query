@@ -1,8 +1,11 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Database;
+import org.dpdns.zerodep.query.Expr;
 import org.dpdns.zerodep.query.Page;
 import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.Ref;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryListener;
 import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
@@ -28,8 +31,20 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.dpdns.zerodep.query.Sql.caseWhen;
 import static org.dpdns.zerodep.query.Sql.count;
+import static org.dpdns.zerodep.query.Sql.cte;
 import static org.dpdns.zerodep.query.Sql.from;
+import static org.dpdns.zerodep.query.Sql.keys;
+import static org.dpdns.zerodep.query.Sql.left;
+import static org.dpdns.zerodep.query.Sql.negate;
+import static org.dpdns.zerodep.query.Sql.orders;
+import static org.dpdns.zerodep.query.Sql.plus;
+import static org.dpdns.zerodep.query.Sql.replace;
+import static org.dpdns.zerodep.query.Sql.right;
+import static org.dpdns.zerodep.query.Sql.substring;
+import static org.dpdns.zerodep.query.Sql.sum;
+import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -217,6 +232,47 @@ public abstract class LiveScenarios {
         } finally {
             TimeZone.setDefault(original);
         }
+    }
+
+    public record Size(String name, Integer ord) { }
+
+    public record SizeTotal(String bucket, BigDecimal total) { }
+
+    private static Expr<String> size(Ref<Lips> l) {
+        Expr<BigDecimal> quantity = l.col(Lips::getQuantity);
+        return caseWhen(quantity.le(new BigDecimal("2")), "small").when(quantity.le(new BigDecimal("5")), "medium").otherwise("large");
+    }
+
+    @Test
+    void 常量行与带常量的分组在实库上可执行() {
+        Cte<Size> sizes = cte("sizes", values(Size.class, List.of(new Size("small", 1), new Size("medium", 2), new Size("large", 3))));
+        Cte<SizeTotal> totals = cte("totals", from(Lips.class)
+            .groupBy(l -> keys(size(l)))
+            .selectAs(SizeTotal.class, l -> keys(size(l).as(SizeTotal::bucket), sum(l.col(Lips::getQuantity)).as(SizeTotal::total))));
+        List<String> rows = db.list(from(sizes)
+            .leftJoin(totals, (s, t) -> t.col(SizeTotal::bucket).eq(s, Size::name))
+            .orderBy((s, t) -> orders(s.col(Size::ord).asc()))
+            .select((r, s, t) -> r.get(s, Size::name) + "=" + r.get(t.col(SizeTotal::total).coalesce(BigDecimal.ZERO)).stripTrailingZeros().toPlainString()));
+        assertEquals(List.of("small=3", "medium=8", "large=7"), rows);
+    }
+
+    @Test
+    void 文本函数取负与多项求和以及按子串分组() {
+        List<String> pieces = db.list(from(Lips.class)
+            .where(l -> l.col(Lips::getDelivery).eq("D1"))
+            .select((r, l) -> String.join("|",
+                r.get(left(l.col(Lips::getDelivery), 1)),
+                r.get(substring(l.col(Lips::getMaterial), 2)),
+                r.get(substring(l.col(Lips::getUnit), 1, 1)),
+                r.get(right(l.col(Lips::getSalesOrder), 1)),
+                r.get(replace(l.col(Lips::getUnit), "A", "-")),
+                r.get(negate(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString(),
+                r.get(plus(List.of(l.col(Lips::getQuantity), l.col(Lips::getQuantity)))).stripTrailingZeros().toPlainString())));
+        assertEquals(List.of("D|1|E|1|E-|-3|6"), pieces);
+        List<String> prefixes = db.list(from(Lips.class)
+            .groupBy(l -> keys(substring(l.col(Lips::getDelivery), 1, 1)))
+            .select((r, l) -> r.get(substring(l.col(Lips::getDelivery), 1, 1)) + "=" + r.get(count())));
+        assertEquals(List.of("D=5"), prefixes);
     }
 
     protected static void assertDelivery(Delivery d, String part, String name, String quantity) {

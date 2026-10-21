@@ -1,4 +1,4 @@
-import { call, date, expression, FunctionDef, integer, lit, text, toOrder, type Clause, type Expr, type KeepNull, type OrderItem } from "@query/core";
+import { call, condition, date, expression, FunctionDef, integer, lit, param, text, toOrder, type Clause, type Cond, type Expr, type KeepNull, type OrderItem } from "@query/core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA-only functions and clauses; they refuse to render on another dialect. */
@@ -9,6 +9,7 @@ const ADD_MONTHS = FunctionDef.only(HanaDialect, "ADD_MONTHS");
 const ADD_YEARS = FunctionDef.only(HanaDialect, "ADD_YEARS");
 const TO_VARCHAR = FunctionDef.only(HanaDialect, "TO_VARCHAR");
 const TO_DATE = FunctionDef.only(HanaDialect, "TO_DATE");
+const TO_NVARCHAR = FunctionDef.only(HanaDialect, "TO_NVARCHAR");
 const LENGTH = FunctionDef.only(HanaDialect, "LENGTH");
 const STRING_AGG = FunctionDef.only(HanaDialect, "STRING_AGG", (w, args) => {
   w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
@@ -40,6 +41,20 @@ export function toVarchar<T>(value: Expr<T>, format: string): Expr<KeepNull<T, s
 
 export function toDate<T extends string | null>(value: Expr<T>, format: string): Expr<KeepNull<T, string>> {
   return call(TO_DATE, date, value, lit(format));
+}
+
+/** TO_NVARCHAR(value[, format]), the Unicode form of {@link toVarchar}. */
+export function toNvarchar<T>(value: Expr<T>, format?: string): Expr<KeepNull<T, string>> {
+  return format === undefined ? call(TO_NVARCHAR, text, value as Expr<unknown>) : call(TO_NVARCHAR, text, value as Expr<unknown>, lit(format));
+}
+
+/** `e LIKE_REGEXPR pattern`, HANA's regular-expression predicate. */
+export function likeRegexpr(e: Expr<string | null>, pattern: string): Cond {
+  const p = param(text, pattern);
+  return condition((w) => {
+    if (!(w.dialect instanceof HanaDialect)) throw new Error(`LIKE_REGEXPR is a HanaDialect predicate; this database uses ${w.dialect.name}`);
+    w.render(e).sql(" LIKE_REGEXPR ").render(p);
+  });
 }
 
 /** HANA's LENGTH counts UTF-16 code units, so a character outside the BMP counts as 2. */

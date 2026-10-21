@@ -1,7 +1,9 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Expr;
 import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.Ref;
 import org.dpdns.zerodep.query.Window.Bound;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Makt;
@@ -78,8 +80,44 @@ public final class SpecCases {
                 r.get(max(l.col(Lips::getQuantity)).as("largest")),
                 r.get(sum(l.col(Lips::getQuantity)).as("total"))))));
         cases.put("windows", SpecCase.plain(SpecCases::windows));
+        cases.put("values", SpecCase.plain(() -> {
+            Cte<Category> categories = cte("category_def", values(Category.class,
+                List.of(new Category("1", "自制件", 1), new Category("2", "供应商件", 2))));
+            return from(categories)
+                .orderBy(c -> orders(c.col(Category::sortNo).asc()))
+                .select((r, c) -> Arrays.asList(r.get(c, Category::zfl), r.get(c, Category::name)));
+        }));
+        cases.put("text-functions", SpecCase.plain(() -> from(Lips.class).select((r, l) -> {
+            Expr<BigDecimal> quantity = l.col(Lips::getQuantity);
+            return Arrays.asList(
+                r.get(left(l.col(Lips::getDelivery), 2).as("prefix")),
+                r.get(right(l.col(Lips::getDelivery), 3).as("suffix")),
+                r.get(substring(l.col(Lips::getMaterial), 2, 3).as("middle")),
+                r.get(substring(l.col(Lips::getMaterial), 2).as("tail")),
+                r.get(replace(l.col(Lips::getUnit), "-", "").as("cleaned")),
+                r.get(negate(quantity).as("negative")),
+                r.get(plus(List.of(quantity, quantity.coalesce(BigDecimal.ZERO))).as("periods")));
+        })));
+        cases.put("grouped-constants", SpecCase.plain(() -> from(Lips.class)
+            .where(l -> l.col(Lips::getUnit).eq("EA"))
+            .groupBy(l -> keys(bucket(l), substring(l.col(Lips::getDelivery), 1, 1)))
+            .having(l -> count().gt(1L))
+            .orderBy(l -> orders(bucket(l).asc()))
+            .select((r, l) -> Arrays.asList(
+                r.get(bucket(l).as("bucket")),
+                r.get(substring(l.col(Lips::getDelivery), 1, 1).as("prefix")),
+                r.get(count().as("lines")),
+                r.get(sum(caseWhen(l.col(Lips::getUnit).eq("EA"), l.col(Lips::getQuantity)).otherwise(BigDecimal.ZERO)).as("total"))))));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         return cases;
+    }
+
+    /** A code list as constant rows. */
+    public record Category(String zfl, String name, Integer sortNo) { }
+
+    private static Expr<String> bucket(Ref<Lips> l) {
+        Expr<BigDecimal> quantity = l.col(Lips::getQuantity);
+        return caseWhen(quantity.le(new BigDecimal("2")), "small").when(quantity.le(new BigDecimal("5")), "medium").otherwise("large");
     }
 
     private static Query<String> conditions() {

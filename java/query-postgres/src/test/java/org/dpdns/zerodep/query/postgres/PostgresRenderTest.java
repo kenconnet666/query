@@ -37,7 +37,7 @@ class PostgresRenderTest {
         String sql = from(Lips.class)
             .selectValue(l -> filter(sum(cast(l.col(Lips::getQuantity), CastType.decimal(15, 3))), l.col(Lips::getMaterial).eq("M1")))
             .toSql(PostgresDialect.INSTANCE).sql();
-        assertTrue(sql.startsWith("SELECT SUM(CAST(lips.\"LFIMG\" AS NUMERIC(15,3))) FILTER (WHERE lips.\"MATNR\" = ?)"), sql);
+        assertTrue(sql.startsWith("SELECT SUM(CAST(lips.\"LFIMG\" AS NUMERIC(15,3))) FILTER (WHERE lips.\"MATNR\" = 'M1')"), sql);
     }
 
     @Test

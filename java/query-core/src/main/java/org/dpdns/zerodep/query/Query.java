@@ -108,6 +108,35 @@ public final class Query<R> {
         return new Query<>(List.of(new Arm(spec, List.of(item))), List.of(), List.of(label), values -> (T) values[0], null, null, null, null);
     }
 
+    /** One SELECT of literals per row, combined with UNION ALL. */
+    static <V> Query<V> constants(Class<V> shape, List<? extends V> rows) {
+        if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("values() needs at least one row");
+        EntityMeta<V> meta = Metadata.entity(shape);
+        Query<V> all = null;
+        for (V row : rows) {
+            List<Expr<?>> items = new ArrayList<>();
+            for (PropertyMeta p : meta.properties()) items.add(constant(shape, p, row).as(p.name()));
+            Query<V> arm = named(SelectSpec.none(), shape, items);
+            all = all == null ? arm : all.unionAll(arm);
+        }
+        return all;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Expr<?> constant(Class<?> shape, PropertyMeta p, Object row) {
+        Object value;
+        try {
+            p.field().trySetAccessible();
+            value = p.field().get(row);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("Cannot read " + shape.getSimpleName() + "." + p.name(), e);
+        }
+        if (value == null) {
+            throw new IllegalArgumentException(shape.getSimpleName() + "." + p.name() + " is null; every column of values() rows needs a value");
+        }
+        return new Nodes.Literal(p.type(), value);
+    }
+
     private static Expr<?> autoColumn(SelectSpec spec, Class<?> shape, PropertyMeta target) {
         List<Ref<?>> refs = spec.joins.stream().<Ref<?>>map(SelectSpec.Join::ref).toList();
         if (target.mapFrom() != null) {

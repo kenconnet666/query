@@ -3,7 +3,7 @@ import { all, Cond, Expr, Literal, toOrder, type Order, type OrderItem, type Sou
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "./internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "./metadata.js";
 import { createRef, Cte, Derived, ownerOf, tableSource, type NullableRef, type Ref, type Source } from "./source.js";
-import { integer, type SqlType } from "./types.js";
+import { double, integer, typeOf, type SqlType } from "./types.js";
 import { SqlWriter, type Rendered } from "./writer.js";
 
 declare const rowType: unique symbol;
@@ -340,11 +340,18 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   const distinctClauses = s.clauses.filter((c) => c.position === "distinct");
   for (const c of distinctClauses) w.render(c).sql(" ");
   if (s.distinct && distinctClauses.length === 0) w.sql("DISTINCT ");
+  // Constants in the SELECT list are literals: HANA cannot type a parameter there (COALESCE(x, ?) in a
+  // CTE is not numeric to an outer SUM). GROUP BY, DISTINCT and their ORDER BY match expressions
+  // textually, so their constants must be literals too.
+  const grouped = s.groupBy.length > 0 || s.distinct || distinctClauses.length > 0;
+  const outer = w.inline(true);
   arm.items.forEach((item, i) => {
     if (i > 0) w.sql(", ");
     w.render(item);
     if (labels !== undefined) w.sql(" AS ").identifier(labels[i]!);
   });
+  w.inline(false);
+  if (s.joins.length === 0) w.dialect.fromNothing(w);
   const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : [];
   const where: Cond[] = [];
   for (const j of s.joins) {
@@ -363,11 +370,13 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   }
   const whereAll = all(...where, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
+  w.inline(grouped);
   if (s.groupBy.length > 0) w.sql("\nGROUP BY ").join(s.groupBy, ", ");
   const having = all(...s.having);
   if (!having.isEmpty) w.sql("\nHAVING ").render(having);
   const limited = s.limit !== undefined || s.offset !== undefined;
   if (s.orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(s.orderBy, ", ");
+  w.inline(outer);
   w.dialect.limit(w, s.limit, s.offset);
   for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
 }
@@ -568,11 +577,9 @@ export class From<T extends readonly unknown[]> {
   }
 }
 
-/** Starts a query from a table entity, a CTE or a derived table. */
-export function from<E>(target: Target<E>): From<[Ref<E>]> {
-  const ref = refTo(target);
-  const spec: SelectSpec = {
-    joins: [{ kind: "FROM", ref, on: Cond.EMPTY }],
+function emptySpec(): SelectSpec {
+  return {
+    joins: [],
     where: [],
     groupBy: [],
     having: [],
@@ -583,10 +590,54 @@ export function from<E>(target: Target<E>): From<[Ref<E>]> {
     filtered: true,
     clauses: [],
   };
-  return makeFrom(spec, [ref] as [Ref<E>]);
+}
+
+/** Starts a query from a table entity, a CTE or a derived table. */
+export function from<E>(target: Target<E>): From<[Ref<E>]> {
+  const ref = refTo(target);
+  return makeFrom({ ...emptySpec(), joins: [{ kind: "FROM", ref, on: Cond.EMPTY }] }, [ref] as [Ref<E>]);
 }
 
 /** A named CTE over a query with a flat object projection. */
 export function cte<E>(name: string, body: Query<E>): Cte<E> {
   return new Cte(name, body);
+}
+
+/** A value of a constant row. */
+export type ConstantValue = string | number | bigint | boolean;
+
+/**
+ * Constant rows such as a code list: one SELECT of literals per row, joined by UNION ALL (with
+ * `FROM DUMMY` on HANA). Use it as a CTE or a derived table. Column types follow the values;
+ * give `types` for dates, decimals or converted columns. Every row needs the same keys and values.
+ */
+export function values<R extends Record<string, ConstantValue>>(rows: readonly R[], types: { readonly [K in keyof R]?: SqlType<R[K]> } = {}): Query<R> {
+  const first = rows[0];
+  if (first === undefined) throw new Error("values() needs at least one row");
+  const keys = Object.keys(first);
+  rows.forEach((row, n) => {
+    const extra = Object.keys(row).filter((k) => !keys.includes(k));
+    if (extra.length > 0) throw new Error(`values() row ${n + 1} has keys the first row lacks: ${extra.join(", ")}`);
+    const missing = keys.find((k) => row[k] == null);
+    if (missing !== undefined) throw new Error(`values() row ${n + 1} has no value for '${missing}'; every column of constant rows needs one`);
+  });
+  const columnTypes = keys.map((k) => {
+    const given = (types as Record<string, SqlType<unknown> | undefined>)[k];
+    if (given !== undefined) return given;
+    const numbers = rows.map((r) => r[k]).filter((v) => typeof v === "number");
+    return numbers.length > 0 && numbers.some((v) => !Number.isInteger(v)) ? (double as SqlType<unknown>) : typeOf(first[k]);
+  });
+  const none = emptySpec();
+  const arms = rows.map((row) => ({ spec: none, items: keys.map((k, i) => new Literal<unknown>(columnTypes[i] as SqlType<{}>, row[k])) }));
+  return makeQuery({
+    arms,
+    operators: arms.slice(1).map(() => "UNION ALL"),
+    labels: keys,
+    keyed: true,
+    flat: true,
+    assemble: assembler(keys.map((k) => [k])),
+    limit: undefined,
+    offset: undefined,
+    ttl: undefined,
+  });
 }

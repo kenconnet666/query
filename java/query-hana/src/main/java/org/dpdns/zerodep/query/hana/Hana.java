@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.hana;
 
+import org.dpdns.zerodep.query.Cond;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
 import org.dpdns.zerodep.query.Order;
@@ -31,6 +32,7 @@ public final class Hana extends Sql {
     private static final FunctionDef ADD_YEARS = FunctionDef.only(HanaDialect.class, "ADD_YEARS");
     private static final FunctionDef TO_VARCHAR = FunctionDef.only(HanaDialect.class, "TO_VARCHAR");
     private static final FunctionDef TO_DATE = FunctionDef.only(HanaDialect.class, "TO_DATE");
+    private static final FunctionDef TO_NVARCHAR = FunctionDef.only(HanaDialect.class, "TO_NVARCHAR");
     private static final FunctionDef LENGTH = FunctionDef.only(HanaDialect.class, "LENGTH");
     private static final FunctionDef STRING_AGG = FunctionDef.only(HanaDialect.class, "STRING_AGG", (w, args) -> {
         w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
@@ -69,6 +71,24 @@ public final class Hana extends Sql {
     public static Expr<String> toVarchar(Expr<?> value, String format) { return call(TO_VARCHAR, String.class, value, lit(format)); }
 
     public static Expr<LocalDate> toDate(Expr<String> text, String format) { return call(TO_DATE, LocalDate.class, text, lit(format)); }
+
+    /** TO_NVARCHAR(value, format), the Unicode form of {@link #toVarchar}. */
+    public static Expr<String> toNvarchar(Expr<?> value, String format) { return call(TO_NVARCHAR, String.class, value, lit(format)); }
+
+    public static Expr<String> toNvarchar(Expr<?> value) { return call(TO_NVARCHAR, String.class, value); }
+
+    /** {@code e LIKE_REGEXPR pattern}, HANA's regular-expression predicate. */
+    public static Cond likeRegexpr(Expr<String> e, String pattern) {
+        Expr<String> p = val(pattern, SqlType.of(String.class));
+        return new Cond() {
+            @Override public void render(SqlWriter w) {
+                if (!(w.dialect() instanceof HanaDialect)) {
+                    throw new UnsupportedOperationException("LIKE_REGEXPR is a HanaDialect predicate; this database uses " + w.dialect().name());
+                }
+                w.render(e).sql(" LIKE_REGEXPR ").render(p);
+            }
+        };
+    }
 
     /** HANA's LENGTH counts UTF-16 code units, so a character outside the BMP counts as 2. */
     public static Expr<Integer> length(Expr<String> text) { return call(LENGTH, Integer.class, text); }

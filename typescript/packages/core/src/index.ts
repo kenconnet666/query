@@ -56,7 +56,7 @@ export {
   type TemplateArg,
 } from "./expr.js";
 export { Cte, Derived, type NullableRef, type Ref, type Source } from "./source.js";
-export { cte, filter, from, From, Query, type Fields, type Projection, type Shape, type SourceFilter } from "./query.js";
+export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query.js";
 export {
   abs,
   avg,
@@ -74,6 +74,7 @@ export {
   ifPresent,
   lag,
   lead,
+  left,
   like,
   likeIfPresent,
   lit,
@@ -81,16 +82,20 @@ export {
   max,
   min,
   minus,
+  negate,
   notLike,
   nullOf,
   onlyIf,
   plus,
   rank,
+  replace,
+  right,
   round,
   rowNumber,
   scalar,
   sql,
   sqlCond,
+  substring,
   sum,
   times,
   trim,

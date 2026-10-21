@@ -85,11 +85,11 @@ class RenderTest {
     void 泛型模板生成的UNION只在第一段写别名() {
         Rendered r = Scenarios.stock("2026").toSql(DIALECT);
         assertEquals("""
-            SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, ?) AS "quantity"
+            SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, 0) AS "quantity"
             FROM QUERY_IT.MARDH MARDH
             WHERE MARDH.LFGJA = ?
             UNION ALL
-            SELECT MCHBH.MATNR, MCHBH.LFGJA, MCHBH.LFMON, COALESCE(MCHBH.CLABS, ?)
+            SELECT MCHBH.MATNR, MCHBH.LFGJA, MCHBH.LFMON, COALESCE(MCHBH.CLABS, 0)
             FROM QUERY_IT.MCHBH MCHBH
             WHERE MCHBH.LFGJA = ?""", r.sql());
     }
@@ -216,11 +216,38 @@ class RenderTest {
     }
 
     @Test
-    void CASE与类型化原生片段() {
+    void SELECT列表里的标量子查询仍然绑定WHERE参数() {
+        Rendered r = from(Mara.class).select((row, m) -> java.util.Arrays.asList(
+            row.get(scalar(from(Lips.class).where(l -> l.col(Lips::getMaterial).eq("M1")).selectValue(l -> count())).as("n")),
+            row.get(m.col(Mara::getMaterial).coalesce("none").as("material")))).toSql(DIALECT);
+        assertEquals("""
+            SELECT (SELECT COUNT(*)
+            FROM QUERY_IT.LIPS LIPS
+            WHERE LIPS.MATNR = ?) AS "n", COALESCE(MARA.MATNR, 'none') AS "material"
+            FROM QUERY_IT.MARA MARA""", r.sql());
+        assertEquals(List.of("M1"), r.parameters());
+    }
+
+    @Test
+    void 常量行每行一个字面量SELECT并用UNION_ALL连接() {
+        record Code(String code, Integer sort) { }
+        String sql = values(Code.class, List.of(new Code("A", 1), new Code("B", 2))).toSql(DIALECT).sql();
+        assertEquals("""
+            SELECT 'A' AS "code", 1 AS "sort"
+            UNION ALL
+            SELECT 'B', 2""", sql);
+        var empty = assertThrows(IllegalArgumentException.class, () -> values(Code.class, List.of()));
+        assertTrue(empty.getMessage().contains("at least one row"), empty.getMessage());
+        var missing = assertThrows(IllegalArgumentException.class, () -> values(Code.class, List.of(new Code("A", null))));
+        assertTrue(missing.getMessage().contains("Code.sort is null"), missing.getMessage());
+    }
+
+    @Test
+    void CASE与类型化原生片段且SELECT列表里的常量写成字面量() {
         String sql = from(Mara.class).selectValue(m -> caseWhen(m.col(Mara::getMaterialType).eq("ZMAT"), "material")
             .when(m.col(Mara::getMaterialType).eq("ZOTH"), "other").otherwise(sql(String.class, "LOWER({0})", m.col(Mara::getMaterialType))))
             .toSql(DIALECT).sql();
-        assertTrue(sql.startsWith("SELECT CASE WHEN MARA.MTART = ? THEN ? WHEN MARA.MTART = ? THEN ? ELSE LOWER(MARA.MTART) END"), sql);
+        assertTrue(sql.startsWith("SELECT CASE WHEN MARA.MTART = 'ZMAT' THEN 'material' WHEN MARA.MTART = 'ZOTH' THEN 'other' ELSE LOWER(MARA.MTART) END"), sql);
     }
 
     private static String where(Fn.F1<Ref<Mara>, Cond> cond) {

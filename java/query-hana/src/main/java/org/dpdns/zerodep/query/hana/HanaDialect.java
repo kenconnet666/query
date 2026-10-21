@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
@@ -46,6 +47,9 @@ public class HanaDialect extends Dialect {
     @Override protected boolean isBare(String identifier) { return BARE.matcher(identifier).matches(); }
 
     @Override public String foldCase(String identifier) { return identifier.toUpperCase(); }
+
+    /** HANA has no SELECT without FROM; DUMMY is its one-row table. */
+    @Override public void fromNothing(SqlWriter w) { w.sql("\nFROM DUMMY"); }
 
     /** N'...' keeps non-ASCII text intact. */
     @Override protected String stringLiteral(String s) {

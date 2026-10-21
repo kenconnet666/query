@@ -34,6 +34,11 @@ class HanaSpecTest extends RenderSpec {
                     r.get(toVarchar(lit(day), "YYYYMMDD").as("text")),
                     r.get(toDate(l.col(Lips::getDelivery), "YYYYMMDD").as("day")),
                     r.get(length(l.col(Lips::getMaterial)).as("size"))))),
+            "hana-regexpr", SpecCase.plain(() -> from(Lips.class)
+                .where(l -> likeRegexpr(l.col(Lips::getDelivery), "^D[0-9]+$"))
+                .select((r, l) -> Arrays.asList(
+                    r.get(toNvarchar(l.col(Lips::getQuantity)).as("text")),
+                    r.get(toNvarchar(lit(day), "YYYYMMDD").as("day"))))),
             "hana-string-agg", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> keys(l.col(Lips::getMaterial)))
                 .select((r, l) -> Arrays.asList(

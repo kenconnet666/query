@@ -10,6 +10,7 @@ import {
   concat,
   count,
   countDistinct,
+  cte,
   date,
   decimal,
   denseRank,
@@ -18,6 +19,7 @@ import {
   from,
   lag,
   lead,
+  left,
   like,
   likeIfPresent,
   lit,
@@ -25,15 +27,19 @@ import {
   max,
   min,
   minus,
+  negate,
   not,
   notExists,
   notLike,
   plus,
   rank,
+  replace,
+  right,
   round,
   rowNumber,
   scalar,
   sql,
+  substring,
   sum,
   text,
   timestamp,
@@ -41,9 +47,11 @@ import {
   trim,
   upper,
   val,
+  values,
   type Query,
+  type Ref,
 } from "@query/core";
-import { addDays, addMonths, addYears, daysBetween, hint, length, stringAgg as hanaStringAgg, toDate, toVarchar } from "@query/hana";
+import { addDays, addMonths, addYears, daysBetween, hint, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toNvarchar, toVarchar } from "@query/hana";
 import { dateDiff, dateFormat, groupConcat, maxExecutionTime } from "@query/mysql";
 import { distinctOn, filterWhere, ilike, pg, stringAgg as pgStringAgg } from "@query/postgres";
 import { Lips, Makt, Mara, Vbkd } from "./erp.js";
@@ -174,6 +182,43 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       moving: avg(l.quantity).over((w) => w.orderBy(l.delivery.asc()).rows(Bound.preceding(2), Bound.following(1))),
     })),
   ),
+  values: plain(() => {
+    const categories = cte(
+      "category_def",
+      values([
+        { zfl: "1", name: "自制件", sortNo: 1 },
+        { zfl: "2", name: "供应商件", sortNo: 2 },
+      ]),
+    );
+    return from(categories)
+      .orderBy((c) => c.sortNo)
+      .select((c) => ({ zfl: c.zfl, name: c.name }));
+  }),
+  "text-functions": plain(() =>
+    from(Lips).select((l) => ({
+      prefix: left(l.delivery, 2),
+      suffix: right(l.delivery, 3),
+      middle: substring(l.material, 2, 3),
+      tail: substring(l.material, 2),
+      cleaned: replace(l.unit, "-", ""),
+      negative: negate(l.quantity),
+      periods: plus([l.quantity, l.quantity.coalesce("0")]),
+    })),
+  ),
+  "grouped-constants": plain(() => {
+    const bucket = (l: Ref<Lips>) => caseWhen(l.quantity.le("2"), "small").when(l.quantity.le("5"), "medium").otherwise("large");
+    return from(Lips)
+      .where((l) => l.unit.eq("EA"))
+      .groupBy((l) => [bucket(l), substring(l.delivery, 1, 1)])
+      .having(() => count().gt(1))
+      .orderBy((l) => bucket(l))
+      .select((l) => ({
+        bucket: bucket(l),
+        prefix: substring(l.delivery, 1, 1),
+        lines: count(),
+        total: sum(caseWhen(l.unit.eq("EA"), l.quantity).otherwise("0")),
+      }));
+  }),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -205,6 +250,11 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
           day: toDate(l.delivery, "YYYYMMDD"),
           size: length(l.material),
         })),
+    ),
+    "hana-regexpr": plain(() =>
+      from(Lips)
+        .where((l) => likeRegexpr(l.delivery, "^D[0-9]+$"))
+        .select((l) => ({ text: toNvarchar(l.quantity), day: toNvarchar(lit(DAY, date), "YYYYMMDD") })),
     ),
     "hana-string-agg": plain(() =>
       from(Lips)

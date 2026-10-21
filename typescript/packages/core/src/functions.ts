@@ -96,6 +96,34 @@ export function trim<T extends string | null>(e: Expr<T>): Expr<T> {
   return functionCall(e.type, "TRIM", [e]);
 }
 
+function textPosition(start: number): number {
+  if (!Number.isInteger(start) || start < 1) throw new RangeError("Text positions are integers from 1; negative positions differ between databases");
+  return start;
+}
+
+function textLength(length: number): number {
+  if (!Number.isInteger(length) || length < 0) throw new RangeError("A length must be a non-negative integer");
+  return length;
+}
+
+/** SUBSTRING(e, start[, length]), counting from 1; the positions are literals, so the call can be a GROUP BY key. */
+export function substring<T extends string | null>(e: Expr<T>, start: number, length?: number): Expr<T> {
+  const args = length === undefined ? [e, lit(textPosition(start))] : [e, lit(textPosition(start)), lit(textLength(length))];
+  return functionCall(text as SqlType<NonNullable<T>>, "SUBSTRING", args);
+}
+
+export function left<T extends string | null>(e: Expr<T>, length: number): Expr<T> {
+  return functionCall(text as SqlType<NonNullable<T>>, "LEFT", [e, lit(textLength(length))]);
+}
+
+export function right<T extends string | null>(e: Expr<T>, length: number): Expr<T> {
+  return functionCall(text as SqlType<NonNullable<T>>, "RIGHT", [e, lit(textLength(length))]);
+}
+
+export function replace<T extends string | null>(e: Expr<T>, search: string, replacement: string): Expr<T> {
+  return functionCall(text as SqlType<NonNullable<T>>, "REPLACE", [e, param(text, search), param(text, replacement)]);
+}
+
 export function concat(...parts: Expr<string>[]): Expr<string>;
 export function concat(...parts: Expr<string | null>[]): Expr<string | null>;
 export function concat(...parts: Expr<string | null>[]): Expr<string | null> {
@@ -107,9 +135,20 @@ export function concat(...parts: Expr<string | null>[]): Expr<string | null> {
 
 type Numeric = number | bigint | string | null;
 
-/** The result has the first operand's type. */
-export function plus<T extends Numeric>(first: Expr<T>, ...rest: Expr<Numeric>[]): Expr<T> {
-  return arithmetic("+", first, rest);
+/** The result has the first operand's type. A list sums all its terms, e.g. sixteen period columns. */
+export function plus<T extends Numeric>(terms: readonly Expr<T>[]): Expr<T>;
+export function plus<T extends Numeric>(first: Expr<T>, ...rest: Expr<Numeric>[]): Expr<T>;
+export function plus<T extends Numeric>(first: Expr<T> | readonly Expr<T>[], ...rest: Expr<Numeric>[]): Expr<T> {
+  if (!Array.isArray(first)) return arithmetic("+", first as Expr<T>, rest);
+  const [head, ...tail] = first as readonly Expr<T>[];
+  if (head === undefined) throw new TypeError("plus() needs at least one term");
+  return arithmetic("+", head, tail);
+}
+
+/** Unary minus: `-(e)`; the parentheses keep a negative literal from turning into a comment. */
+export function negate<T extends Numeric>(e: Expr<T>): Expr<T> {
+  numeric(e as Expr<unknown>, "negate");
+  return expression(e.type, (w) => w.sql("-(").render(e).sql(")"));
 }
 
 export function times<T extends Numeric>(first: Expr<T>, ...rest: Expr<Numeric>[]): Expr<T> {

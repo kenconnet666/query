@@ -13,8 +13,10 @@ import {
   FunctionDef,
   ifPresent,
   onlyIf,
+  scalar,
   sql,
   text,
+  values,
   type Clause,
   type Cond,
   type From,
@@ -99,11 +101,11 @@ ORDER BY LIPS.VBELN ASC`,
   it("泛型模板生成的 UNION 只在第一段写别名", () => {
     assert.equal(
       stock("2026").toSql(DIALECT).sql,
-      `SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, ?) AS "quantity"
+      `SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, 0) AS "quantity"
 FROM QUERY_IT.MARDH MARDH
 WHERE MARDH.LFGJA = ?
 UNION ALL
-SELECT MCHBH.MATNR, MCHBH.LFGJA, MCHBH.LFMON, COALESCE(MCHBH.CLABS, ?)
+SELECT MCHBH.MATNR, MCHBH.LFGJA, MCHBH.LFMON, COALESCE(MCHBH.CLABS, 0)
 FROM QUERY_IT.MCHBH MCHBH
 WHERE MCHBH.LFGJA = ?`,
     );
@@ -212,7 +214,49 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     assert.notEqual(db.render(q), new TestDatabase().render(q));
   });
 
-  it("CASE 与类型化原生片段", () => {
+  it("SELECT 列表里的标量子查询仍然绑定 WHERE 参数", () => {
+    const r = from(Mara)
+      .select((m) => ({
+        n: scalar(
+          from(Lips)
+            .where((l) => l.material.eq("M1"))
+            .selectValue(() => count()),
+        ),
+        material: m.material.coalesce("none"),
+      }))
+      .toSql(DIALECT);
+    assert.equal(
+      r.sql,
+      `SELECT (SELECT COUNT(*)
+FROM QUERY_IT.LIPS LIPS
+WHERE LIPS.MATNR = ?) AS "n", COALESCE(MARA.MATNR, 'none') AS "material"
+FROM QUERY_IT.MARA MARA`,
+    );
+    assert.deepEqual(r.parameters, ["M1"]);
+  });
+
+  it("DISTINCT 查询的排序表达式里的常量也写成字面量", () => {
+    const r = from(Mara)
+      .distinct()
+      .orderBy((m) => m.material.coalesce("~"))
+      .selectValue((m) => m.material.coalesce("~"))
+      .toSql(DIALECT);
+    assert.ok(r.sql.endsWith("ORDER BY COALESCE(MARA.MATNR, '~') ASC"), r.sql);
+    assert.deepEqual(r.parameters, []);
+  });
+
+  it("常量行每行一个字面量 SELECT 并用 UNION ALL 连接", () => {
+    const sqlText = values([
+      { code: "A", sort: 1 },
+      { code: "B", sort: 2 },
+    ]).toSql(DIALECT).sql;
+    assert.equal(sqlText, `SELECT 'A' AS "code", 1 AS "sort"\nUNION ALL\nSELECT 'B', 2`);
+    assert.throws(() => values([]), /at least one row/);
+    assert.throws(() => values([{ a: "x" }, { a: "y", b: "z" }] as { a: string }[]), /keys the first row lacks: b/);
+    assert.throws(() => values([{ a: null as unknown as string }]), /no value for 'a'/);
+  });
+
+  it("CASE 与类型化原生片段，SELECT 列表里的常量写成字面量", () => {
     const s = from(Mara)
       .selectValue((m) =>
         caseWhen(m.materialType.eq("ZMAT"), "material")
@@ -220,7 +264,7 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
           .otherwise(sql(text)`LOWER(${m.materialType})`),
       )
       .toSql(DIALECT).sql;
-    assert.ok(s.startsWith("SELECT CASE WHEN MARA.MTART = ? THEN ? WHEN MARA.MTART = ? THEN ? ELSE LOWER(MARA.MTART) END"), s);
+    assert.ok(s.startsWith("SELECT CASE WHEN MARA.MTART = 'ZMAT' THEN 'material' WHEN MARA.MTART = 'ZOTH' THEN 'other' ELSE LOWER(MARA.MTART) END"), s);
   });
 
   it("可复用的片段是作用域到作用域的泛型函数", () => {

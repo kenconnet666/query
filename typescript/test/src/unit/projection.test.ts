@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, cte, from, max, rowNumber, sum, type Query } from "@query/core";
+import { count, cte, date, from, max, rowNumber, sum, values, type Query } from "@query/core";
 import { DeliveryVO, LineVO, Lips, Mara } from "../erp.js";
 import { deliveries, lines, partTotals } from "../scenarios.js";
 import { FakeDriver, rows, TestDatabase } from "../support.js";
@@ -134,6 +134,19 @@ describe("投影与映射", () => {
   it("解码失败时报出列名", async () => {
     const { db } = answering([], ["D1", "M1", "2026-01-15", "Pump"]);
     await assert.rejects(db.list(from(Lips).selectValue((l) => l.quantity)), /Column 'quantity'/);
+  });
+
+  it("常量行按值推断列类型，也可以指定类型", async () => {
+    const q = values([
+      { code: "A", rate: 1, day: "2026-01-31" },
+      { code: "B", rate: 1.5, day: "2026-02-28" },
+    ], { day: date });
+    const { db, driver } = answering([], ["A", "1", "2026-01-31"], ["B", "1.5", "2026-02-28"]);
+    assert.deepEqual(await db.list(q), [
+      { code: "A", rate: 1, day: "2026-01-31" },
+      { code: "B", rate: 1.5, day: "2026-02-28" },
+    ]);
+    assert.ok(driver.statements[0]!.sql.includes("DATE '2026-01-31'"), driver.statements[0]!.sql);
   });
 
   it("SUM 等数值函数拒绝文本列", () => {

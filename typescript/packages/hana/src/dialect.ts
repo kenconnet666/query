@@ -1,4 +1,4 @@
-import { Dialect, type CastType } from "@query/core";
+import { Dialect, type CastType, type SqlWriter } from "@query/core";
 
 /** SAP HANA 2.0. Unquoted identifiers fold to upper case. */
 export class HanaDialect extends Dialect {
@@ -16,6 +16,11 @@ export class HanaDialect extends Dialect {
 
   foldCase(identifier: string): string {
     return identifier.toUpperCase();
+  }
+
+  /** HANA has no SELECT without FROM; DUMMY is its one-row table. */
+  override fromNothing(w: SqlWriter): void {
+    w.sql("\nFROM DUMMY");
   }
 
   /** N'...' keeps non-ASCII text intact. */

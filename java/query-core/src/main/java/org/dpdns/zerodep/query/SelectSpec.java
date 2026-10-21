@@ -42,6 +42,11 @@ final class SelectSpec {
         this.clauses = clauses;
     }
 
+    /** A SELECT without a table, such as one row of constants. */
+    static SelectSpec none() {
+        return new SelectSpec(List.of(), List.of(), List.of(), List.of(), List.of(), false, null, null, true, List.of());
+    }
+
     static SelectSpec from(Ref<?> ref) {
         return new SelectSpec(List.of(new Join(JoinKind.FROM, ref, Cond.EMPTY)), List.of(), List.of(), List.of(), List.of(),
             false, null, null, true, List.of());

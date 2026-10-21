@@ -24,6 +24,7 @@ public final class SqlWriter {
     private final Map<String, CteDefinition> ctes = new LinkedHashMap<>();
     private final StringBuilder sql = new StringBuilder();
     private final List<Binding> bindings = new ArrayList<>();
+    private boolean inlining;
 
     /** Table aliases are unique per statement, across subqueries and CTE bodies, so correlation never shadows. */
     private static final class Aliases {
@@ -80,6 +81,21 @@ public final class SqlWriter {
     public SqlWriter literal(Object value) {
         dialect.literal(this, value);
         return this;
+    }
+
+    /**
+     * Whether constants render as literals instead of parameters. Every SELECT list turns it on, because
+     * HANA cannot infer the type of a parameter there. Grouped and DISTINCT SELECTs also turn it on for
+     * GROUP BY, HAVING and ORDER BY: HANA, PostgreSQL and MySQL all reject {@code GROUP BY SUBSTRING(x, ?, ?)}
+     * because two placeholders never count as the same expression. WHERE and ON keep parameters.
+     */
+    public boolean inlining() { return inlining; }
+
+    /** Sets {@link #inlining()} and returns the previous setting, so the caller can restore it. */
+    public boolean inlining(boolean on) {
+        boolean previous = inlining;
+        inlining = on;
+        return previous;
     }
 
     public SqlWriter render(Renderable node) {

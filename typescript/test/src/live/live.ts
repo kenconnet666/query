@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { count, filter, from, inMemoryCache, type Database, type DatabaseOptions, type Driver, type QueryEvent } from "@query/core";
+import {
+  caseWhen,
+  count,
+  cte,
+  filter,
+  from,
+  inMemoryCache,
+  left,
+  negate,
+  plus,
+  replace,
+  right,
+  substring,
+  sum,
+  values,
+  type Database,
+  type DatabaseOptions,
+  type Driver,
+  type QueryEvent,
+  type Ref,
+} from "@query/core";
 import { ClientEntity, Event, LineVO, Lips } from "../erp.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
@@ -262,6 +282,66 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         if (original === undefined) delete process.env.TZ;
         else process.env.TZ = original;
       }
+    });
+
+    it("常量行与带常量的分组在实库上可执行", async () => {
+      const size = (l: Ref<Lips>) => caseWhen(l.quantity.le("2"), "small").when(l.quantity.le("5"), "medium").otherwise("large");
+      const sizes = cte(
+        "sizes",
+        values([
+          { name: "small", ord: 1 },
+          { name: "medium", ord: 2 },
+          { name: "large", ord: 3 },
+        ]),
+      );
+      const totals = cte(
+        "totals",
+        from(Lips)
+          .groupBy((l) => size(l))
+          .select((l) => ({ bucket: size(l), total: sum(l.quantity) })),
+      );
+      const rows = await live().db.list(
+        from(sizes)
+          .leftJoin(totals, (s, t) => t.bucket.eq(s.name))
+          .orderBy((s) => s.ord)
+          .select((s, t) => ({ name: s.name, total: t.total.coalesce("0") })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.name}=${Number(r.total)}`),
+        ["small=3", "medium=8", "large=7"],
+      );
+    });
+
+    it("文本函数取负与多项求和以及按子串分组", async () => {
+      const { db } = live();
+      const [pieces] = await db.list(
+        from(Lips)
+          .where((l) => l.delivery.eq("D1"))
+          .select((l) => ({
+            prefix: left(l.delivery, 1),
+            tail: substring(l.material, 2),
+            mid: substring(l.unit, 1, 1),
+            suffix: right(l.salesOrder, 1),
+            cleaned: replace(l.unit, "A", "-"),
+            negative: negate(l.quantity),
+            twice: plus([l.quantity, l.quantity]),
+          })),
+      );
+      assert.deepEqual({ ...pieces!, negative: Number(pieces!.negative), twice: Number(pieces!.twice) }, {
+        prefix: "D",
+        tail: "1",
+        mid: "E",
+        suffix: "1",
+        cleaned: "E-",
+        negative: -3,
+        twice: 6,
+      });
+      const prefixes = await db.list(
+        from(Lips)
+          .groupBy((l) => substring(l.delivery, 1, 1))
+          .select((l) => ({ prefix: substring(l.delivery, 1, 1), n: count() })),
+      );
+      assert.deepEqual(prefixes, [{ prefix: "D", n: 5 }]);
     });
 
     extra?.(live);
