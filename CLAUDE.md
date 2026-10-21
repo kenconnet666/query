@@ -10,12 +10,12 @@
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），也不在使用方生成代码。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，工程在 `typescript/`。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@query/*`）和私有测试包 `test`。
 - **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
 - **文档**：
   - API 方向以 0002 为准；
-  - 用法写在 [docs/api.md](docs/api.md)，API 变化时同步更新；
+  - 用法写在 [docs/api.md](docs/api.md)（Java）和 [docs/api-typescript.md](docs/api-typescript.md)（TS），API 变化时同步更新；
   - 其余文档只记录决定、取舍和验证证据，过时的内容直接删改，不堆叠。
 
 ## 必须参考的本地仓库
@@ -65,26 +65,33 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 cd typescript
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固定
-corepack pnpm typecheck
+corepack pnpm test                       # tsc -b，再跑单元、编译期与金样例测试
+corepack pnpm test:live                  # 三库实库场景，变量见下文
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql`。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql`。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
 - **生成代码**：`From1..From8` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
-  - Java 单元与渲染测试；
-  - PostgreSQL、MySQL、HANA 三个实库 job，容器定义在 `infra/`；
-  - TypeScript 类型检查。
+  - Java 单元、渲染与金样例测试；
+  - PostgreSQL、MySQL、HANA 三个实库 job，容器定义在 `infra/`，每个 job 先跑 Java 再跑 TS 的实库场景；
+  - TypeScript 编译、编译期检查、单元与金样例测试。
 - **本地只跑与改动相关的测试**：
   - 用 `-pl <模块>`，必要时加 `-Dtest=...` 和 `-Dsurefire.failIfNoSpecifiedTests=false`；
-  - PowerShell 里带点的 `-D` 参数要加引号。
+  - PowerShell 里带点的 `-D` 参数要加引号；
+  - TS 编译后可以只跑一个文件：`node --test test/dist/unit/render.test.js`。
+- **金样例**（`spec/render/<场景>.<方言>.sql`）：
+  - 两端的方言测试都读取它，渲染出的 SQL 和参数必须完全相同；Java 的样例清单在 `testing/SpecCases` 和各方言的 `*SpecTest`，TS 的在 `test/src/spec-cases.ts`；
+  - 改了渲染或新增能力时，两端同时改，再用 Java 重写文件：`$env:QUERY_SPEC_WRITE = '1'` 后运行 `*SpecTest`，然后审查 diff；
+  - 投影的列名要两端一致：Java 的函数式投影用 `.as("key")` 对上 TS 的对象键。
 - **提交前排查 CI 风险**：
   - 文件的可执行位（`mvnw`、`infra/hana/*.sh` 要求 100755）；
   - 行尾；
   - 新模块是否已加进 workflow；
-  - 实库变量名是否与 workflow 一致。
+  - 实库变量名是否与 workflow 一致；
+  - `typescript/pnpm-lock.yaml` 是否与各 `package.json` 一致（CI 用 `--frozen-lockfile` 安装）。
 - **实库测试的变量**：
-  - 共享场景在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；
-  - 读取 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`，缺少时跳过；
+  - 共享场景：Java 在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；TS 在 `test/src/live/live.ts`，各方言一个 `*.live.test.ts`；
+  - 两端读取同一组 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
   - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
   - 本机从容器里取密码，不打印也不落盘：
 
@@ -136,7 +143,7 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
 ## IDE 与 Claude 工具
 
 - **IDEA MCP**：服务名 `idea`，用户级配置，地址 `http://127.0.0.1:64343/stream`，需要 IDEA 开着。Java 的语义问题都走它：符号查找、调用链、重命名、文件问题，以及运行配置、数据库和 DebugTools。保持用户级配置，不在仓库里加 `.mcp.json`。
-- **TypeScript LSP**：仓库内插件 `query-lsp@query`，由 `.claude/settings.json` 启用，源文件在 `.claude/marketplace`。它运行 `typescript/` 固定的 TS 7 编译器自带的 LSP。要求 `typescript/` 已经安装依赖，且会话从本仓库目录启动，否则 `${CLAUDE_PROJECT_DIR}` 指向别处。不启动 Claude 也可以验证：`node tools/lsp/verify.mjs typescript typescript/src/index.ts 2 14`。
+- **TypeScript LSP**：仓库内插件 `query-lsp@query`，由 `.claude/settings.json` 启用，源文件在 `.claude/marketplace`。它运行 `typescript/` 固定的 TS 7 编译器自带的 LSP。要求 `typescript/` 已经安装依赖，且会话从本仓库目录启动，否则 `${CLAUDE_PROJECT_DIR}` 指向别处。不启动 Claude 也可以验证：`node tools/lsp/verify.mjs typescript typescript/packages/core/src/index.ts 2 3`。
 - **Java LSP**：
   - 暂不配置，也不要用 Eclipse JDT LS（用户已明确拒绝）。
   - JetBrains 的 Java 语言服务器目前只随 VS Code / Cursor 扩展 "Java and Kotlin by IntelliJ IDEA" 提供，许可证限定由人使用。

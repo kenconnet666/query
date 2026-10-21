@@ -2,13 +2,13 @@
 
 本表以 EasyQuery 3.2.17 的公开 API 和测试覆盖的场景为清单，列出本库在每个场景上的做法和计划分期。EasyQuery 增强包的报表类场景按需并入，不逐项复刻。设计依据见 [0002](decisions/0002-api-architecture.md)。
 
-"期"的含义：1 为第一期 Java（已实现，HANA、PostgreSQL、MySQL 三个方言同步），2 为 TypeScript 对齐，3 为后续扩展，"—"为不做。
+"期"的含义：1 为已实现（Java 第一期、TypeScript 第二期，HANA、PostgreSQL、MySQL 三个方言同步），3 为后续扩展，"—"为不做。表中写的是 Java 写法；TypeScript 的对应写法见 [TypeScript API 使用说明](api-typescript.md)，例如 `l.col(Lips::getMaterial)` 写作 `l.material`。
 
 ## 查询结构
 
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
-| 单表、多表连接 | APT 生成代理，`queryable(A).leftJoin(B, (a, b) -> ...)`，最多 10 张表 | 注解实体，`from(A).leftJoin(B, (a, b) -> ...)`，最多 8 张表，不需要代码生成 | 1 |
+| 单表、多表连接 | APT 生成代理，`queryable(A).leftJoin(B, (a, b) -> ...)`，最多 10 张表 | 注解实体，`from(A).leftJoin(B, (a, b) -> ...)`，Java 最多 8 张表、TS 不限，不需要代码生成 | 1 |
 | 自连接 | 为每张表分别建代理 | 同一实体作为下一个 lambda 参数，别名自动生成 | 1 |
 | 隐式连接（导航属性 `t.author().name()`） | `@Navigate` 声明关系 | 不做导航。常用连接写成可复用的函数，`(l, ma) -> Joins.material(l, ma)` | — |
 | 子查询：`EXISTS`、`IN`、标量 | `subQuery`，以及导航上的 `any()`、`none()` | `exists(...)`、`in(query)`、`scalar(query)`，lambda 直接捕获外层参数 | 1 |

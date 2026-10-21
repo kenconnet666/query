@@ -1,11 +1,11 @@
 # 0002 API 与整体架构
 
-- 状态：已采纳（2026-10-21）；Java 第一期已实现并通过三库实库验证
+- 状态：已采纳（2026-10-21）；Java 第一期与 TypeScript 第二期均已实现，并通过三库实库验证
 - 修订 0001：
   - TypeScript 改以 7 为唯一基准；
   - 首批方言为 HANA、PostgreSQL、MySQL，三者同步推进；
   - DuckDB 延后。
-- 用法见 [API 使用说明](../api.md)，场景覆盖计划见[场景对照](../scenarios.md)
+- 用法见 [Java API 使用说明](../api.md) 与 [TypeScript API 使用说明](../api-typescript.md)，场景覆盖计划见[场景对照](../scenarios.md)
 
 ## 背景
 
@@ -84,10 +84,67 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 ### 9. TypeScript（第二期）
 
-- 使用标准装饰器（TS 7 不需要编译开关），装饰器上下文检查转换器类型和 `@mapFrom` 的键。
-- 回调作用域按元组位置跟踪 LEFT JOIN 的可空性。
-- 嵌套投影得到嵌套的结果类型；`selectAs(VO)` 按同名字段自动取列。
-- 已有探针证据，见下文。旧版 `experimentalDecorators` 是非标准语义，不采用。
+概念与 Java 一一对应，写法按 TS 的长处调整。
+
+**包与构建**
+
+- `@query/core` 加 `@query/hana`、`@query/postgres`、`@query/mysql`，放在 `typescript/` 下的 pnpm 工作区里，用 `tsc -b` 项目引用构建。
+- 方言包 `export * from "@query/core"`，所以一个 import 就能拿到核心与方言的全部函数，相当于 Java 的门面静态导入。
+- 测试放在私有包 `typescript/test`，相当于 Java 的共享 test-jar。
+
+**实体**
+
+- 使用标准装饰器：`@table`、`@column(name, type?)`、`@mapFrom(Entity, "key")`、`@ignore`。
+- 元数据存放在 `Symbol.metadata` 上，沿继承链合并。Node 24 还没有这个符号，由核心包补上。
+- 旧版 `experimentalDecorators` 是非标准语义，不采用。
+
+**值类型**
+
+- TS 没有运行时类型，所以列的类型由 `@column` 的第二个参数（`SqlType<T>`）声明，默认为 `text`。装饰器上下文会检查 `T` 与字段的声明类型是否一致（字段可以带 `| null`）。
+- 内置类型：
+
+  | 类型 | 值 |
+  | --- | --- |
+  | `text` | `string` |
+  | `integer`、`double` | `number` |
+  | `bigint` | `bigint` |
+  | `decimal` | 精确的十进制字符串 |
+  | `boolean` | `boolean` |
+  | `date` | `'YYYY-MM-DD'` |
+  | `timestamp` | `'YYYY-MM-DD HH:MM:SS[.ffffff]'` |
+  | `bytes` | `Uint8Array` |
+
+- 日期和精确小数用字符串表示，不经过 `Date`，因此不受进程时区影响。
+- 转换器写作 `converted(storage, { toDatabase, fromDatabase })`，作用相当于 Java 的组合注解。
+
+**作用域与表达式**
+
+- 写法是 `from(Lips).leftJoin(Makt, (l, mk) => ...)`。回调参数是 `Ref<E>`，实体的每个字段对应一个 `Expr`，用 `l.material` 这样的属性访问代替 Java 的 getter 引用。
+- LEFT JOIN 之后，该位置的参数变成 `NullableRef<E>`，即按元组位置跟踪可空性。表数不设上限。
+- 同类型运算是实例方法，规则同第 4 条。比较值的参数用重载，不用 `value | Expr` 联合类型（联合类型会破坏推断，已实测）。
+
+**投影**
+
+- 对象投影 `select((l, mk) => ({ part: …, stock: { qty: sum(…) } }))` 同时承担 Java 的函数式投影和按名投影：
+  - 对象的键就是列标签；
+  - 嵌套对象得到嵌套的结果类型；
+  - 扁平的对象投影可以直接作为 CTE 或派生表，引用它的 `Ref` 类型由行类型推出。
+- 其余投影：
+  - `selectValue`：单列；
+  - `selectOne`：用于 `EXISTS`；
+  - `selectAs(VO)`：按同名字段和 `@mapFrom` 自动取列。
+- 在 JS 端计算用 `query.map(fn)`。`mapTo(VO)` 在编译期检查行类型是否覆盖 VO 的字段。
+- 按位置读列，不依赖数据库返回的标签大小写。
+
+**执行**
+
+- 方言包把各自的驱动包装成 `Driver`：`@sap/hana-client`、`pg`、`mysql2`。方言包只引用驱动的类型，驱动由使用方安装。
+- 执行方法都返回 Promise；`stream` 返回 AsyncIterable，在一个游标上逐行读取。
+- 驱动把 DECIMAL、BIGINT 和日期时间都读成字符串，再由列的类型解码。
+
+**两端一致**
+
+- 金样例放在 `spec/render/<场景>.<方言>.sql`，Java 与 TS 的方言测试都读取它，保证两端渲染出完全相同的 SQL 和参数。
 
 ## 验证证据
 
@@ -97,16 +154,28 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 - 静态多参数泛型函数会推断成公共父类型；实例方法可以拦住类型不符。
 - TS 装饰器能检查字段类型；TS 能按位置跟踪 LEFT JOIN 的可空性。
 
-**第一期实现的测试**（中文命名），本机三个开发库上全部通过：
+**第一期 Java 的测试**（中文命名），本机三个开发库上全部通过：
 
 | 模块 | 测试 | 内容 |
 | --- | --- | --- |
 | query-core | 65 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
-| query-hana | 18 | 14 个实库场景（HANA 2.00.088）加方言渲染 |
-| query-postgres | 19 | 15 个实库场景（PostgreSQL 17）加方言渲染 |
-| query-mysql | 20 | 13 个实库场景（MySQL 8.4）加方言渲染 |
+| query-hana | 36 | 14 个实库场景（HANA 2.00.088）、4 个方言渲染、18 个金样例 |
+| query-postgres | 37 | 15 个实库场景（PostgreSQL 17）、4 个方言渲染、18 个金样例 |
+| query-mysql | 37 | 13 个实库场景（MySQL 8.4）、7 个方言渲染、17 个金样例 |
 
-三个方言共用 `LiveScenarios` 这一组场景：
+**第二期 TypeScript 的测试**（TS 7.0.2、Node 24，`node:test`），本机三个开发库上全部通过：
+
+| 内容 | 测试 |
+| --- | --- |
+| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 20 |
+| 金样例：三个方言共 50 个用例，再加 3 个"每个样例都有查询"的检查 | 53 |
+| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 44 |
+| 编译期检查：`@ts-expect-error` 验证 16 种错误写法不能编译 | 1 |
+| 实库场景：HANA 14、PostgreSQL 15、MySQL 13 | 42 |
+
+**两端一致**：`spec/render/` 下的 50 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询，以及三个方言的专属函数。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
+
+三个方言共用一组实库场景（Java 的 `LiveScenarios`、TS 的 `live/live.ts`）：
 
 - CTE 加 EXISTS 加 LEFT JOIN 的汇总；
 - 全局过滤与关闭过滤；
@@ -116,9 +185,15 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 - SAP 日期转换器的绑定与读取；
 - 嵌套投影；
 - 分页、流式读取、原生 SQL 的集合参数、缓存命中；
-- 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变。
+- 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变（TS 通过切换 `process.env.TZ` 验证）。
 
 实库还发现并修复了一个 bug：`db.one()` 曾经覆盖用户自己设置的 LIMIT。
+
+TS 驱动的实测（2026-10-21，`@sap/hana-client` 2.30.27、`pg` 8.23.1、`mysql2` 3.24.6）：
+
+- 三个驱动按我们的配置都把 DECIMAL、超出安全范围的 BIGINT、DATE 和 TIMESTAMP 读成字符串；
+- PostgreSQL 的 `DECLARE CURSOR` 可以带绑定参数，所以流式读取用服务端游标实现；
+- 金样例顺带统一了 Java 的 TIMESTAMP 字面量：秒数总是写出（此前 `02:30:00` 会写成 `02:30`）。
 
 HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 
@@ -132,11 +207,17 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 - 作用域最多 8 张表，更多时用 CTE 拆开。
 - 方言专属函数在渲染时才报错，由各方言包的"在别的方言上渲染应当失败"测试兜底。
 - Java 不跟踪可空性，结果属性要用包装类型。
+- TS：
+  - DTO 靠实例化取得字段列表，需要无参构造器，字段要按 ES2022 类字段声明；
+  - `Symbol.metadata` 由核心包补上，实体模块必须在导入本库之后定义（导入方言包即可满足）；
+  - decimal 与文本在类型上都是 `string`，`sum` 等函数对列类型的检查只能在构造查询时进行；
+  - PostgreSQL 与 MySQL 的流式读取需要连接池，传入单个连接时会先读完全部行；
+  - MySQL 的流式读取走文本协议，参数由 mysql2 转义后写进语句。
 
 ## 分期
 
 1. **第一期（已完成）**：Java 的 core、hana、postgres、mysql 四个模块，单元测试与三库实库场景，GitHub Actions 并行运行。
-2. **第二期**：TypeScript 的 core、hana、postgres、mysql；`spec/` 金样例由两端测试共同读取。
+2. **第二期（已完成）**：TypeScript 的 core、hana、postgres、mysql，单元、编译期与三库实库测试；`spec/render/` 金样例由两端测试共同读取。
 3. **第三期**：
    - Spring 适配；
    - 方言扩展：分组集合、HANA 计算视图与表函数、JSON；

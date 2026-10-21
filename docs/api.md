@@ -2,7 +2,7 @@
 
 本文是第一期 Java API 的用法。设计理由见 [0002](decisions/0002-api-architecture.md)。文中示例都能在测试里找到对应的可运行版本：`java/query-core/src/test/java/.../testing/Scenarios.java`，以及三个方言模块的 `*LiveTest`。
 
-TypeScript 版本在第二期实现，届时补充到本文。
+TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)。两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
 ## 1. 依赖与数据库实例
 

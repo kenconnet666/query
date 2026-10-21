@@ -2,9 +2,9 @@
 
 面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
 
-当前进度：Java 第一期已实现，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；TypeScript 在第二期。
+当前进度：Java 第一期与 TypeScript 第二期均已实现，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
-- 用法：[API 使用说明](docs/api.md)
+- 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)
 - 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)
 - 场景覆盖计划：[场景对照](docs/scenarios.md)
 
@@ -23,7 +23,10 @@
 | --- | --- |
 | `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存；运行时无第三方依赖 |
 | `java/query-hana`、`java/query-postgres`、`java/query-mysql` | 各方言的门面、数据库实例、专属函数与子句 |
-| `typescript/` | TypeScript 实现（第二期） |
+| `typescript/packages/core` | `@query/core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存；运行时无第三方依赖 |
+| `typescript/packages/hana`、`postgres`、`mysql` | `@query/hana`、`@query/postgres`、`@query/mysql`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`） |
+| `typescript/test` | TS 的单元、编译期、金样例与实库测试 |
+| `spec/render/` | Java 与 TS 共用的渲染金样例 |
 | `infra/` | CI 用的数据库容器定义 |
 | `tools/` | 生成 `From1..From8` 的脚本，以及 LSP 验证脚本 |
 
@@ -42,14 +45,15 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 - `QUERY_PG_URL`、`QUERY_PG_USER`、`QUERY_PG_PASSWORD`
 - `QUERY_MYSQL_URL`、`QUERY_MYSQL_USER`、`QUERY_MYSQL_PASSWORD`
 
-GitHub Actions 会并行运行单元测试、三个数据库的实库场景，以及 TypeScript 类型检查。
+GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试，以及三个数据库的实库场景（每个数据库 job 先跑 Java，再跑 TypeScript）。
 
-TypeScript 部分在 `typescript/` 目录，开发编译器固定为 TypeScript 7.0.2：
+TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.0.2：
 
 ```powershell
 cd typescript
 corepack pnpm install
-corepack pnpm typecheck
+corepack pnpm test          # tsc -b 编译，再运行单元、编译期与金样例测试
+corepack pnpm test:live     # 实库场景，需要上面的环境变量
 ```
 
 ## Claude Code 语言服务
@@ -66,5 +70,5 @@ Java 暂时不配置 LSP。JetBrains 的 Java 语言服务器目前只随 VS Cod
 不启动 Claude 也可以直接验证 TypeScript 的配置。下面的命令按 `.lsp.json` 的原样命令启动服务器，并在指定位置检查悬停和跳转定义（行号、列号从 1 开始）：
 
 ```powershell
-node tools/lsp/verify.mjs typescript typescript/src/index.ts 2 14
+node tools/lsp/verify.mjs typescript typescript/packages/core/src/index.ts 2 3
 ```
