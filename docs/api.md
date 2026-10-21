@@ -178,10 +178,12 @@ from(Lips.class)
 | --- | --- | --- |
 | `select((r, a, b) -> new X(...))` | `Query<X>` | 默认写法。lambda 里用 `r.get(expr)` 或 `r.get(ref, Getter)` 读值，构造任意对象：record、Builder、嵌套 DTO，也可以做 Java 计算 |
 | `selectAs(VO.class)` | `Query<VO>` | 按同名属性从作用域里的表自动取列；改了名的属性用 `@MapFrom` 指定来源 |
-| `selectAs(Shape.class, (a, b) -> keys(...))` | `Query<Shape>` | 显式列，每列用 `.as(Shape::getX)` 命名，或直接沿用属性名；必须恰好覆盖 Shape 的全部属性 |
+| `selectAs(Shape.class, (a, b) -> keys(...))` | `Query<Shape>` | 显式列，每列用 `.as(Shape::getX)` 命名，或直接沿用属性名；没有列出的属性按 `selectAs(VO.class)` 的规则取同名列，相当于 `SELECT p.*, 额外列` |
 | `selectValue(a -> expr)` / `selectOne()` | `Query<T>` | 单列查询；也可以作为标量子查询或 `IN` 子查询 |
 
-函数式投影会先运行一次 lambda 记录读取顺序，然后每行重放一次。不要在 lambda 里根据某个列的值决定是否读取另一列，这种情况会被检测到并报错。
+函数式投影会先运行一次 lambda 记录读取顺序，然后每行重放一次。不要在 lambda 里根据某个列的值决定是否读取另一列，这种情况会被检测到并报错：重放时按表达式的结构核对，读到的列、函数或常量不同都算。
+
+命名投影（`selectAs`）的列一律按 Shape 的属性顺序输出，所以同一个 Shape 的 UNION 各段按属性名对齐。
 
 同一个查询可以映射到不同的类：
 
@@ -244,7 +246,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`。参数可以是值、表达式，或 `(ref, Getter)`。
 - 区间与集合：`between`、`in(Collection | Query)`、`notIn`、`isNull`、`isNotNull`。
 - 可选条件：`eqIfPresent` 等，以及 `betweenIfPresent`、`inIfPresent`。值为 null（集合为空）时省略该条件。
-- 同类型函数：`coalesce`、`nullif`。
+- 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, val("EA"))`，渲染成一个 COALESCE）、`nullif`。
 - 别名、排序与转换：`as("x")`、`as(VO::getX)`、`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`。
 
 **`Sql` 的静态函数**（各方言语义一致的部分）：
@@ -253,11 +255,11 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
 | 值 | `val(x)`（参数）、`lit(x)`（字面量，只用于固定代码值）、`nullOf(Type.class)` |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
-| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round` |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
+| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
-| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
+| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(Integer.class, "DAYS_BETWEEN({0}, {1})", a, b)`、`sqlCond("{0} ~ {1}", a, b)` |
 
 **方言专属能力**只在对应门面里提供，放到别的方言上渲染时会明确报错：
@@ -270,6 +272,10 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `length`（按 UTF-16 单元计） | `ilike`、`filter(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, order...)`、`hint(...)` | `stringAgg(e, sep, order...)` | — |
 | `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
+| `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
+| `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+
+`greatest`、`least` 的常量参数写成 `val(x)`。三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。
 
 `cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy(l -> keys(groupingSets(keys(a, b), keys(a), keys())))`，空的 `keys()` 是总计。
 

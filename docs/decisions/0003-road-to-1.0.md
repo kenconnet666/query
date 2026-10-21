@@ -75,3 +75,12 @@
 - `{{X}}` 拼出的 CTE：返回 CTE 的函数。
 - 由运行时的值组成的常量行：`values(...)`。
 - 整数相除：先 CAST 成小数（`divide` 只接受小数，避免各库整数除法的差异）。
+
+### M2 补缺口（2026-10-21）
+
+- 缺口 1 到 8 都已补上，Java 与 TS 同时实现，三个方言都有金样例和实库测试：
+  - LOCATE 在 PostgreSQL 上渲染为 `STRPOS(text, search)`，在 MySQL 上为 `LOCATE(search, text)`（参数顺序相反）；
+  - 起止位置为表达式时，`SUBSTRING(text, 1, (STRPOS(text, ',') - 1))` 在三个库上都按预期截取。
+- 实库确认 GREATEST 遇到 NULL 的差异：HANA、MySQL 返回 NULL，PostgreSQL 跳过 NULL。
+- Java 的 `greatest(列, 常量)` 原本有"表达式加常量"的重载，但 `l.col(getter)` 本身是泛型方法，javac 把 T 推断成 Object，选中了常量重载（0002 第 4 条的问题）。实库测试抓到了这一点，于是去掉这个重载，常量统一写成 `val(x)`。
+- Java 命名投影改为按形状的属性顺序输出列，同一形状的 UNION 各段因此按名字对齐（TS 本来就按键名对齐）。原有的 76 个金样例没有变化。
