@@ -100,6 +100,31 @@ public abstract class Dialect {
     /** Longer IN lists are split into several IN predicates joined by OR. */
     public int maxInListSize() { return 1000; }
 
+    /**
+     * Where a quoted part of hand-written SQL that starts at {@code start} ends: the index of its last
+     * character, or -1 when none starts there. Native queries look for {@code :name} only outside such
+     * parts. The default knows '...' and "..." with doubled quotes inside.
+     */
+    public int quotedEnd(String sql, int start) {
+        char c = sql.charAt(start);
+        return c == '\'' || c == '"' ? closingQuote(sql, start, false) : -1;
+    }
+
+    /**
+     * The index of the quote closing the one at {@code start}, past doubled quotes and, with
+     * {@code backslashEscapes}, past escaped characters; the last index when it never closes.
+     */
+    protected static int closingQuote(String sql, int start, boolean backslashEscapes) {
+        char quote = sql.charAt(start);
+        for (int i = start + 1; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (backslashEscapes && c == '\\') i++;
+            else if (c == quote && i + 1 < sql.length() && sql.charAt(i + 1) == quote) i++;
+            else if (c == quote) return i;
+        }
+        return sql.length() - 1;
+    }
+
     public TypeRegistry types() { return TypeRegistry.defaults(); }
 
     /** Undoes what {@link #openCursor} changed on a connection; runs when the stream closes. */

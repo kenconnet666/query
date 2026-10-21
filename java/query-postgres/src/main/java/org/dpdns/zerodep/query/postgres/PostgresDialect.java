@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.type.CastType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** PostgreSQL. Unquoted identifiers fold to lower case. */
@@ -16,6 +17,9 @@ public class PostgresDialect extends Dialect {
 
     /** Rows per round trip of a stream when the database has no fetch size configured. */
     static final int STREAM_FETCH_SIZE = 1000;
+
+    /** A dollar-quote delimiter: the tag follows the rules of a name, without dollar signs. */
+    private static final Pattern DOLLAR_TAG = Pattern.compile("\\$(?:[\\p{L}_][\\p{L}\\p{N}_]*)?\\$");
 
     protected PostgresDialect() { }
 
@@ -31,6 +35,18 @@ public class PostgresDialect extends Dialect {
             default -> super.castType(type);
         };
     }
+
+    /** Also $$...$$ and $tag$...$tag$, as in function bodies; $1 or a $ inside a name starts none. */
+    @Override public int quotedEnd(String sql, int start) {
+        if (sql.charAt(start) != '$') return super.quotedEnd(sql, start);
+        if (start > 0 && isNamePart(sql.charAt(start - 1))) return -1;
+        Matcher tag = DOLLAR_TAG.matcher(sql).region(start, sql.length());
+        if (!tag.lookingAt()) return -1;
+        int close = sql.indexOf(tag.group(), tag.end());
+        return close < 0 ? sql.length() - 1 : close + tag.group().length() - 1;
+    }
+
+    private static boolean isNamePart(char c) { return Character.isLetterOrDigit(c) || c == '_' || c == '$'; }
 
     /**
      * pgJDBC reads from a cursor only inside a transaction and with a positive fetch size; otherwise it

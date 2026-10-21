@@ -125,6 +125,12 @@ class PostgresLiveTest extends LiveScenarios {
         }
     }
 
+    @Test
+    void 原生SQL不在美元引号里找参数() {
+        List<String> rows = db.sql("SELECT $$:not_a_parameter$$ || $tag$ it's :also $tag$ || :x AS v").bind("x", "!").list(String.class);
+        assertEquals(List.of(":not_a_parameter it's :also !"), rows);
+    }
+
     private static long transactionId(Connection c) throws SQLException {
         try (Statement s = c.createStatement(); ResultSet r = s.executeQuery("SELECT txid_current()")) {
             r.next();

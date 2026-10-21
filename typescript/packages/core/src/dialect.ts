@@ -185,6 +185,31 @@ export abstract class Dialect {
     return 1000;
   }
 
+  /**
+   * Where a quoted part of hand-written SQL that starts at `start` ends: the index of its last
+   * character, or -1 when none starts there. Native queries look for `:name` only outside such parts.
+   * The default knows '...' and "..." with doubled quotes inside.
+   */
+  quotedEnd(sql: string, start: number): number {
+    const c = sql[start];
+    return c === "'" || c === '"' ? Dialect.closingQuote(sql, start, false) : -1;
+  }
+
+  /**
+   * The index of the quote closing the one at `start`, past doubled quotes and, with
+   * `backslashEscapes`, past escaped characters; the last index when it never closes.
+   */
+  protected static closingQuote(sql: string, start: number, backslashEscapes: boolean): number {
+    const quote = sql[start];
+    for (let i = start + 1; i < sql.length; i++) {
+      const c = sql[i];
+      if (backslashEscapes && c === "\\") i++;
+      else if (c === quote && sql[i + 1] === quote) i++;
+      else if (c === quote) return i;
+    }
+    return sql.length - 1;
+  }
+
   protected register(fn: FunctionDef, renderer: FunctionRenderer): void {
     this.#functions.set(fn, renderer);
   }

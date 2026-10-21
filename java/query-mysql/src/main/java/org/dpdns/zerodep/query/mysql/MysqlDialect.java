@@ -29,6 +29,15 @@ public class MysqlDialect extends Dialect {
 
     @Override public String quote(String identifier) { return '`' + identifier.replace("`", "``") + '`'; }
 
+    /** Names are also quoted with backticks, and inside strings a backslash escapes the next character. */
+    @Override public int quotedEnd(String sql, int start) {
+        return switch (sql.charAt(start)) {
+            case '\'', '"' -> closingQuote(sql, start, true);
+            case '`' -> closingQuote(sql, start, false);
+            default -> -1;
+        };
+    }
+
     @Override protected String stringLiteral(String s) { return "'" + s.replace("\\", "\\\\").replace("'", "''") + "'"; }
 
     /** MySQL needs LIMIT before OFFSET; the documented way to say "no limit" is the largest BIGINT UNSIGNED. */

@@ -46,5 +46,10 @@ liveScenarios(
       );
       assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);
     });
+
+    it("原生 SQL 不在反引号和反斜杠转义的字符串里找参数", async () => {
+      const rows = await live().db.sql("SELECT CONCAT('it\\'s :no', :x) AS `v:w`").bind("x", "!").values();
+      assert.deepEqual(rows, ["it's :no!"]);
+    });
   },
 );

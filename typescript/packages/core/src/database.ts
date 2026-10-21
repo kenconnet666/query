@@ -342,9 +342,10 @@ export class NativeQuery {
     return rows[0]!;
   }
 
-  /** Replaces :name outside quotes, comments and PostgreSQL's :: casts. */
+  /** Replaces :name outside the dialect's quoted parts, comments and PostgreSQL's :: casts. */
   render(): Rendered {
-    const w = new SqlWriter(this.database.dialect);
+    const dialect = this.database.dialect;
+    const w = new SqlWriter(dialect);
     const s = this.text;
     let plain = 0;
     const flush = (to: number) => {
@@ -352,10 +353,9 @@ export class NativeQuery {
     };
     for (let i = 0; i < s.length; i++) {
       const c = s[i]!;
-      if (c === "'" || c === '"' || c === "`") {
-        let end = s.indexOf(c, i + 1);
-        while (end >= 0 && s[end + 1] === c) end = s.indexOf(c, end + 2);
-        i = end < 0 ? s.length - 1 : end;
+      const quoted = dialect.quotedEnd(s, i);
+      if (quoted >= 0) {
+        i = quoted;
       } else if (c === "-" && s[i + 1] === "-") {
         const end = s.indexOf("\n", i);
         i = end < 0 ? s.length - 1 : end;

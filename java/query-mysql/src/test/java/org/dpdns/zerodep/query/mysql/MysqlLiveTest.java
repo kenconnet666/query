@@ -43,4 +43,10 @@ class MysqlLiveTest extends LiveScenarios {
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(groupConcat(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
+
+    @Test
+    void 原生SQL不在反引号和反斜杠转义的字符串里找参数() {
+        List<String> rows = db.sql("SELECT CONCAT('it\\'s :no', :x) AS `v:w`").bind("x", "!").list(String.class);
+        assertEquals(List.of("it's :no!"), rows);
+    }
 }

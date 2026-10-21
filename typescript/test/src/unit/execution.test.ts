@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { count, from, inMemoryCache, QueryExecutionError, type QueryEvent } from "@query/core";
+import { MysqlDatabase } from "@query/mysql";
 import { PostgresDatabase } from "@query/postgres";
 import { DeliveryVO, Lips } from "../erp.js";
 import { FakeDriver, rows, TestDatabase } from "../support.js";
@@ -20,6 +21,14 @@ describe("执行", () => {
     const never = { query: () => Promise.reject(new Error("never")) };
     const r = new PostgresDatabase(never).sql("SELECT * FROM t WHERE a = :a AND b IN (:b)").bind("a", "x").bind("b", [1, 2]).render();
     assert.equal(r.sql, "SELECT * FROM t WHERE a = $1 AND b IN ($2, $3)");
+  });
+
+  it("原生 SQL 按方言跳过引用：PostgreSQL 的美元引号、MySQL 的反引号和反斜杠转义", () => {
+    const never = { query: () => Promise.reject(new Error("never")) };
+    const pgSql = "SELECT $$:a$$, $fn$ :b $fn$, a$1 FROM t WHERE x = :x";
+    assert.equal(new PostgresDatabase(never).sql(pgSql).bind("x", 1).render().sql, "SELECT $$:a$$, $fn$ :b $fn$, a$1 FROM t WHERE x = $1");
+    const mysqlSql = "SELECT 'it\\'s :a', `b:c` FROM t WHERE x = :x";
+    assert.equal(new MysqlDatabase(never).sql(mysqlSql).bind("x", 1).render().sql, "SELECT 'it\\'s :a', `b:c` FROM t WHERE x = ?");
   });
 
   it("原生 SQL 的未绑定参数和空数组立刻报错", () => {

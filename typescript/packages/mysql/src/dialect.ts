@@ -27,6 +27,13 @@ export class MysqlDialect extends Dialect {
     return `\`${identifier.replaceAll("`", "``")}\``;
   }
 
+  /** Names are also quoted with backticks, and inside strings a backslash escapes the next character. */
+  override quotedEnd(sql: string, start: number): number {
+    const c = sql[start];
+    if (c === "'" || c === '"') return MysqlDialect.closingQuote(sql, start, true);
+    return c === "`" ? MysqlDialect.closingQuote(sql, start, false) : -1;
+  }
+
   protected override stringLiteral(s: string): string {
     return `'${s.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
   }

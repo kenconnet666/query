@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Binding;
+import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.exec.MappingPlan;
 import org.dpdns.zerodep.query.type.SqlType;
@@ -76,19 +77,18 @@ public final class NativeQuery {
         return out;
     }
 
-    /** Replaces :name outside quotes, comments and PostgreSQL's :: casts. */
+    /** Replaces :name outside the dialect's quoted parts, comments and PostgreSQL's :: casts. */
     Rendered render() {
         StringBuilder out = new StringBuilder();
         List<Binding> bindings = new ArrayList<>();
+        Dialect dialect = database.dialect();
         int n = sql.length();
         for (int i = 0; i < n; i++) {
             char c = sql.charAt(i);
-            if (c == '\'' || c == '"') {
-                int end = sql.indexOf(c, i + 1);
-                while (end >= 0 && end + 1 < n && sql.charAt(end + 1) == c) end = sql.indexOf(c, end + 2);
-                if (end < 0) end = n - 1;
-                out.append(sql, i, end + 1);
-                i = end;
+            int quoted = dialect.quotedEnd(sql, i);
+            if (quoted >= 0) {
+                out.append(sql, i, quoted + 1);
+                i = quoted;
             } else if (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-') {
                 int end = sql.indexOf('\n', i);
                 if (end < 0) end = n - 1;

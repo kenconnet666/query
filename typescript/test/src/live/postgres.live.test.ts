@@ -77,5 +77,10 @@ liveScenarios(
       );
       assert.equal(cells.length, 6, "material x unit, material, unit and the grand total");
     });
+
+    it("原生 SQL 不在美元引号里找参数", async () => {
+      const rows = await live().db.sql("SELECT $$:not_a_parameter$$ || $tag$ it's :also $tag$ || :x AS v").bind("x", "!").values();
+      assert.deepEqual(rows, [":not_a_parameter it's :also !"]);
+    });
   },
 );
