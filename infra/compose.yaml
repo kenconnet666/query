@@ -1,0 +1,47 @@
+# Databases for CI live tests. Local development still uses the predecessor project's instances on the
+# same ports; do not start both at once. Memory limits live only here; CI reads them back and checks them.
+services:
+  mysql:
+    profiles: [mysql]
+    image: mysql:8.4.11@sha256:1f8411cc085d2f2f92060fca926746cbf97f87b76c3008e9741ad62e604c4ffa
+    platform: linux/amd64
+    mem_limit: 1g
+    memswap_limit: 1g
+    mem_reservation: 256m
+    cpus: 1.0
+    pids_limit: 256
+    environment:
+      MYSQL_DATABASE: query
+      MYSQL_USER: query
+      MYSQL_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
+      MYSQL_ROOT_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
+    command: [--innodb-buffer-pool-size=128M, --max-connections=30, --performance-schema=OFF]
+    ports:
+      - "${QUERY_MYSQL_PORT:-53306}:3306"
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u query -D query -e "SELECT 1" >/dev/null']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+  postgres:
+    profiles: [postgres]
+    image: postgres:17.11-bookworm@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df
+    platform: linux/amd64
+    mem_limit: 512m
+    memswap_limit: 512m
+    mem_reservation: 128m
+    cpus: 1.0
+    pids_limit: 128
+    environment:
+      POSTGRES_DB: query
+      POSTGRES_USER: query
+      POSTGRES_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
+    command: [postgres, -c, shared_buffers=128MB, -c, max_connections=30]
+    ports:
+      - "${QUERY_PG_PORT:-55432}:5432"
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, query, -d, query]
+      interval: 3s
+      timeout: 3s
+      retries: 20

@@ -1,0 +1,39 @@
+# HANA Express for CI live tests; 8 GiB is SAP's published minimum. HANA treats the cgroup limit as
+# physical memory, so do not raise the limit to hide a failure. Business data lives in tenant HXE.
+services:
+  hana:
+    image: saplabs/hanaexpress:2.00.088.00.20251110.1@sha256:432be2785506e97cefc413f495393fc22fcdda034c2c80db2f0f88efeb16dfaf
+    platform: linux/amd64
+    hostname: hxehost
+    mem_limit: 8g
+    memswap_limit: 8g
+    mem_reservation: 4g
+    cpus: 4.0
+    pids_limit: 4096
+    shm_size: 2g
+    stop_grace_period: 2m
+    environment:
+      QUERY_HANA_PASSWORD: ${QUERY_HANA_PASSWORD:?Set QUERY_HANA_PASSWORD in the environment}
+    ports:
+      - "${QUERY_HANA_PORT:-39041}:39041"
+      - "${QUERY_HANA_SYSTEM_PORT:-39017}:39017"
+    volumes:
+      - ./hana:/query:ro
+    tmpfs:
+      - /run/query:size=1m,mode=0700,uid=12000,gid=79
+    entrypoint: [/bin/bash, /query/start.sh]
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    sysctls:
+      kernel.shmmax: 1073741824
+      kernel.shmmni: 32768
+      kernel.shmall: 8388608
+      net.ipv4.ip_local_port_range: "40000 60999"
+    healthcheck:
+      test: [CMD, /bin/bash, /query/health.sh]
+      interval: 10s
+      timeout: 5s
+      retries: 90
+      start_period: 2m
