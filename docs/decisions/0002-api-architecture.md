@@ -146,6 +146,25 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 - 金样例放在 `spec/render/<场景>.<方言>.sql`，Java 与 TS 的方言测试都读取它，保证两端渲染出完全相同的 SQL 和参数。
 
+### 10. SELECT 列表与分组表达式里的常量写成字面量
+
+- SELECT 列表中的常量一律渲染为字面量。
+- 带 GROUP BY 或 DISTINCT 的 SELECT，GROUP BY、HAVING、ORDER BY 中的常量也渲染为字面量。
+- WHERE 和 ON 中的值仍然绑定为参数。
+- 字面量由方言转义：文本中的引号加倍，MySQL 另外转义反斜杠，HANA 的非 ASCII 文本加 `N` 前缀。字节等写不成字面量的值仍然绑定为参数。
+
+理由（2026-10-21 在三个库上实测）：
+
+- 三个库都拒绝 `SELECT SUBSTRING(x, ?, ?) … GROUP BY SUBSTRING(x, ?, ?)`：两个占位符永远不算同一个表达式。写成字面量后三个库都能执行。按序号分组在 HANA 上也不行。
+- HANA 推断不出 SELECT 列表里参数的类型：CTE 中的 `COALESCE(x, ?)` 交给外层 `SUM` 时会报错 [266]。
+- PostgreSQL 在参数类型未知时，可能把 `SUBSTRING(x, $1, $2)` 解析成正则形式的重载。
+
+代价：SELECT 列表里随请求变化的值会改变语句文本，影响数据库的语句缓存。需要绑定的值应写在 WHERE 中。
+
+### 11. 常量行（码表）
+
+HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。常量行可以作为 CTE 或派生表，列类型取自形状类（Java）或值本身（TS，可以另外指定）。
+
 ## 验证证据
 
 **临时探针**（2026-10-21，JBR 17.0.14、Lombok 1.18.46、TS 7.0.2），结论已体现在上面的决定里：
@@ -158,22 +177,22 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 | 模块 | 测试 | 内容 |
 | --- | --- | --- |
-| query-core | 65 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
-| query-hana | 36 | 14 个实库场景（HANA 2.00.088）、4 个方言渲染、18 个金样例 |
-| query-postgres | 37 | 15 个实库场景（PostgreSQL 17）、4 个方言渲染、18 个金样例 |
-| query-mysql | 37 | 13 个实库场景（MySQL 8.4）、7 个方言渲染、17 个金样例 |
+| query-core | 67 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
+| query-hana | 42 | 16 个实库场景（HANA 2.00.088）、4 个方言渲染、22 个金样例 |
+| query-postgres | 42 | 17 个实库场景（PostgreSQL 17）、4 个方言渲染、21 个金样例 |
+| query-mysql | 42 | 15 个实库场景（MySQL 8.4）、7 个方言渲染、20 个金样例 |
 
 **第二期 TypeScript 的测试**（TS 7.0.2、Node 24，`node:test`），本机三个开发库上全部通过：
 
 | 内容 | 测试 |
 | --- | --- |
-| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 20 |
-| 金样例：三个方言共 50 个用例，再加 3 个"每个样例都有查询"的检查 | 53 |
-| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 44 |
+| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 23 |
+| 金样例：三个方言共 60 个用例，再加 3 个"每个样例都有查询"的检查 | 63 |
+| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 45 |
 | 编译期检查：`@ts-expect-error` 验证 16 种错误写法不能编译 | 1 |
-| 实库场景：HANA 14、PostgreSQL 15、MySQL 13 | 42 |
+| 实库场景：HANA 16、PostgreSQL 17、MySQL 15 | 48 |
 
-**两端一致**：`spec/render/` 下的 50 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询，以及三个方言的专属函数。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
+**两端一致**：`spec/render/` 下的 60 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量，以及三个方言的专属函数。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
 
 三个方言共用一组实库场景（Java 的 `LiveScenarios`、TS 的 `live/live.ts`）：
 
@@ -185,7 +204,8 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 - SAP 日期转换器的绑定与读取；
 - 嵌套投影；
 - 分页、流式读取、原生 SQL 的集合参数、缓存命中；
-- 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变（TS 通过切换 `process.env.TZ` 验证）。
+- 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变（TS 通过切换 `process.env.TZ` 验证）；
+- 常量行与带常量的分组（分桶汇总）、文本函数、取负、多项求和、按子串分组。
 
 实库还发现并修复了一个 bug：`db.one()` 曾经覆盖用户自己设置的 LIMIT。
 
@@ -194,6 +214,18 @@ TS 驱动的实测（2026-10-21，`@sap/hana-client` 2.30.27、`pg` 8.23.1、`my
 - 三个驱动按我们的配置都把 DECIMAL、超出安全范围的 BIGINT、DATE 和 TIMESTAMP 读成字符串；
 - PostgreSQL 的 `DECLARE CURSOR` 可以带绑定参数，所以流式读取用服务端游标实现；
 - 金样例顺带统一了 Java 的 TIMESTAMP 字面量：秒数总是写出（此前 `02:30:00` 会写成 `02:30`）。
+
+**真实查询对照**（2026-10-21）：
+
+- 从内部 ERP 分析大屏选了三条查询：按期间汇总的收入、带分桶的应收账龄、按类别的报废与库存。它们覆盖了码表 CTE、十六个期间列求和、贷项凭证自连接、HANA 正则与安全日期转换、`GROUP BY` 中的 CASE、窗口函数取最新供应商，以及可选的 EXISTS 过滤。
+- 在本机 HANA 上建合成数据，原 SQL、本库的 Java 改写、TS 改写三者对比，各 21 组参数的结果逐行一致。
+- 对照暴露并已补上的缺口：
+  - 常量行（第 11 条）；
+  - `substring`、`left`、`right`、`replace`、`negate`、接收列表的 `plus`；
+  - HANA 的 `likeRegexpr` 与 `toNvarchar`；
+  - 第 10 条的两类渲染问题。
+- 原查询里拼接 SQL 片段（`{{...}}`、`%s`）和 `(:flag = FALSE OR …)` 的写法，改写后分别是返回 CTE 或条件的普通函数，以及 `eqIfPresent`、`ifPresent`。按条件拼接的 JOIN 改写成可选的 EXISTS。
+- 改写代码含业务常量，不放进仓库。
 
 HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 
@@ -206,6 +238,7 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 - 函数式投影每行都会重跑一次 lambda；lambda 里不能有副作用，也不能按行值有条件地读列（已有检测）。
 - 作用域最多 8 张表，更多时用 CTE 拆开。
 - 方言专属函数在渲染时才报错，由各方言包的"在别的方言上渲染应当失败"测试兜底。
+- SELECT 列表里的常量写成字面量（第 10 条），随请求变化的值放进 SELECT 列表会让语句文本变化。
 - Java 不跟踪可空性，结果属性要用包装类型。
 - TS：
   - DTO 靠实例化取得字段列表，需要无参构造器，字段要按 ES2022 类字段声明；
@@ -219,6 +252,7 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 1. **第一期（已完成）**：Java 的 core、hana、postgres、mysql 四个模块，单元测试与三库实库场景，GitHub Actions 并行运行。
 2. **第二期（已完成）**：TypeScript 的 core、hana、postgres、mysql，单元、编译期与三库实库测试；`spec/render/` 金样例由两端测试共同读取。
 3. **第三期**：
+   - 真实查询对照与补齐的能力（已完成，见验证证据）；
    - Spring 适配；
    - 方言扩展：分组集合、HANA 计算视图与表函数、JSON；
    - SQL 级列转换；一对多的批量组装；

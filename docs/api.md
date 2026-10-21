@@ -155,6 +155,12 @@ from(scope).join(Lips.class, (ms, l) -> l.col(Lips::getMaterial).eq(ms, Material
 - **派生表**：`from(query.asTable())`。
 - **UNION**：`q1.unionAll(q2)` 或 `union`。两段的结果类型必须相同，否则编译失败；分页和排序加在合并之后。
 - **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`，聚合也可以 `.over(...)`，ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。
+- **常量行**（码表）：`values(Shape.class, List.of(new Shape(...), ...))` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。可以用 `cte(...)` 包成 CTE，再参与连接。
+
+```java
+record Bucket(String name, Integer ord) { }
+Cte<Bucket> buckets = cte("buckets", values(Bucket.class, List.of(new Bucket("未逾期", 1), new Bucket("逾期两个月内", 2))));
+```
 
 业务口径写成普通方法，用接口约束适用的表：
 
@@ -170,6 +176,11 @@ static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, Fn.F1<Re
 stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZERO), "2026")
     .unionAll(stockArm(Mchbh.class, h -> h.col(Mchbh::getBatchUnrestricted).coalesce(BigDecimal.ZERO), "2026"));
 ```
+
+**两种常见写法**：
+
+- **一组列求和**，例如十六个期间列：先把 getter 放进一个常量列表，再 `plus(PERIODS.stream().map(p -> f.col(p).coalesce(BigDecimal.ZERO)).toList())`。按期间展开成行，则是对同一个列表逐个生成 `select`，再用 `unionAll` 合并。
+- **按条件追加的过滤**：需要连接另一张表才能判断时，写成可选的 EXISTS，不要按条件拼接 JOIN：`ifPresent(supplier, code -> exists(from(sup).where(s -> ...).selectOne()))`。这样作用域里的表不变，类型也不变。
 
 ## 6. 表达式与函数
 
@@ -187,8 +198,8 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
 | 值 | `val(x)`（参数）、`lit(x)`（字面量，只用于固定代码值）、`nullOf(Type.class)` |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`） |
-| 数值 | `plus`、`minus`、`times`、`divide`（仅 BigDecimal）、`abs`、`round` |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
+| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
@@ -199,9 +210,17 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | HANA | PostgreSQL | MySQL |
 | --- | --- | --- |
 | `daysBetween`、`addDays`、`addMonths`、`addYears` | `distinctOn(...)` 子句 | `dateDiff`、`dateFormat` |
-| `toVarchar(e, "YYYYMMDD")`、`toDate` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | `groupConcat(e, sep, order...)` |
+| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | `groupConcat(e, sep, order...)` |
+| `likeRegexpr(e, pattern)` | — | — |
 | `length`（按 UTF-16 单元计） | `ilike`、`filter(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, order...)`、`hint(...)` | `stringAgg(e, sep, order...)` | — |
+
+**常量与参数**：
+
+- SELECT 列表里的常量写成字面量；带 GROUP BY 或 DISTINCT 的查询，GROUP BY、HAVING、ORDER BY 里的常量也写成字面量。
+- WHERE 和 ON 里的值仍然绑定为参数。
+- 这样分组表达式（例如按 CASE 分桶）在三个库上都能执行，HANA 也能确定 SELECT 列的类型。
+- 需要绑定的值写在 WHERE 中。
 
 ## 7. 执行
 

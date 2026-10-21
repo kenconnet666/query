@@ -15,6 +15,7 @@
 | CTE | `toCteAs`，相同查询自动去重 | `cte(name, query)`，渲染时统一提升到最外层的 `WITH`，以规避 HANA 嵌套 `WITH` 的问题 | 1 |
 | 递归 CTE / 树 | `asTreeCTE` | HANA 2.0 不支持递归 CTE，改用层级函数；PostgreSQL 由方言包提供 | 3 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
+| 常量行（码表 CTE） | 原生 SQL 片段 | `values(Shape.class, rows)`：每行一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY` | 1 |
 | 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy((a, b) -> keys(...))`、`having(...)` | 1 |
 | ROLLUP / GROUPING SETS | 增强包提供 | MySQL 只支持 `WITH ROLLUP`，所以不进核心包；由 HANA、PostgreSQL 方言包提供 | 3 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包，`RANGE` 由方言包提供 | 1 |
@@ -43,6 +44,9 @@
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 显式写 `eqIfPresent`、`inIfPresent`、`ifPresent(v, x -> cond)`，不做全局隐式忽略 | 1 |
 | 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | 在请求 DTO 上用注解声明条件，键用 Lombok 常量 | 3 |
 | 动态排序 | `orderByObject` | `orderBy((a, b) -> ...)` 接收任意 `List<Order>`，可以由运行时数据生成 | 1 |
+| 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`ifPresent(v, x -> exists(...))`），作用域与类型不变 | 1 |
+| 复用的 SQL 片段 | 字符串拼接 | 返回 CTE、条件或表达式的普通方法 | 1 |
+| 分组表达式中的常量 | 由用户处理 | SELECT 列表与分组相关子句中的常量自动写成字面量，WHERE 与 ON 仍绑定参数（0002 第 10 条） | 1 |
 | `IN` 大列表 | 由用户自行分批 | 超过方言上限时自动拆成多个 `IN` 并用 OR 连接；空列表渲染成恒假条件 | 1 |
 | 多租户、逻辑删除（读） | 谓词拦截器 `PredicateFilterInterceptor` | 全局过滤器 `filter(Type.class, ref -> cond)`，按实体的父类型或接口匹配；单个查询可用 `unfiltered()` 关闭 | 1 |
 
