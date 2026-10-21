@@ -67,7 +67,7 @@
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
 | 多数据源 | 动态数据源 | 每个数据源对应一个方言实例 | 1 |
-| 事务 | 自带事务管理，或接入 Spring | 只通过 `ConnectionProvider` 取连接；Spring 适配模块使用 `DataSourceUtils` | 3 |
+| 事务 | 自带事务管理，或接入 Spring | 只通过 `ConnectionProvider` 取连接；`query-spring` 用 `DataSourceUtils` 加入外层的 `@Transactional`（Java）；TS 把事务中的连接交给驱动适配 | 1 |
 | 结果缓存 | `sql-cache` 模块 | `QueryCache` SPI，自带进程内的 TTL 实现；缓存解码后的原始行 | 1 |
 | SQL 日志 | `SQLParameterPrintFormat` | `QueryListener` | 1 |
 | 分库分表 | sharding 模块 | — | — |

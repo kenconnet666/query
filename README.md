@@ -23,6 +23,7 @@
 | --- | --- |
 | `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存；运行时无第三方依赖 |
 | `java/query-hana`、`java/query-postgres`、`java/query-mysql` | 各方言的门面、数据库实例、专属函数与子句 |
+| `java/query-spring` | Spring 适配：通过 `DataSourceUtils` 取连接，查询加入外层的 `@Transactional` 事务；Spring 5.3 到 7.0 都可用 |
 | `typescript/packages/core` | `@query/core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存；运行时无第三方依赖 |
 | `typescript/packages/hana`、`postgres`、`mysql` | `@query/hana`、`@query/postgres`、`@query/mysql`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`） |
 | `typescript/test` | TS 的单元、编译期、金样例与实库测试 |
@@ -45,7 +46,7 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 - `QUERY_PG_URL`、`QUERY_PG_USER`、`QUERY_PG_PASSWORD`
 - `QUERY_MYSQL_URL`、`QUERY_MYSQL_USER`、`QUERY_MYSQL_PASSWORD`
 
-GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试，以及三个数据库的实库场景（每个数据库 job 先跑 Java，再跑 TypeScript）。
+GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及三个数据库的实库场景（每个数据库 job 先跑 Java，再跑 TypeScript）。
 
 TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.0.2：
 

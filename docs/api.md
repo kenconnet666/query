@@ -34,7 +34,29 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | PostgreSQL | `org.dpdns.zerodep.query.postgres.Postgres` | `PostgresDatabase` |
 | MySQL 8 | `org.dpdns.zerodep.query.mysql.Mysql` | `MysqlDatabase` |
 
-`database(...)` 可以接收 `DataSource`，也可以接收自定义的 `ConnectionProvider`，例如加入外部事务时使用。
+`database(...)` 可以接收 `DataSource`，也可以接收自定义的 `ConnectionProvider`。
+
+**在 Spring 中使用**：引入 `query-spring`，用 `SpringConnections.of(dataSource)` 取连接。
+
+```xml
+<dependency>
+    <groupId>org.dpdns.zerodep.query</groupId>
+    <artifactId>query-spring</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+```java
+@Bean
+HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource) {
+    return Hana.database(SpringConnections.of(dataSource), c -> c.filter(...));
+}
+```
+
+- 它通过 Spring 的 `DataSourceUtils` 取连接，所以在 `@Transactional` 方法里，查询使用事务的连接：能看到同一事务里 MyBatis、JdbcTemplate 尚未提交的写入，也随事务一起回滚。不在事务里时，每条语句借一个连接，用完归还。
+- 查询失败抛出的 `QueryExecutionException` 是运行时异常，按 Spring 的默认规则触发回滚。
+- 路由型数据源（动态数据源）可以直接传入，连接在取用时按当前线程的路由选择。
+- 模块只依赖 spring-jdbc，范围是 `provided`：Spring 由应用提供，5.3（Spring Boot 2.7）、6.2（Boot 3）、7.0（Boot 4）都在 CI 中验证。
 
 ## 2. 声明实体
 

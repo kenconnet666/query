@@ -69,11 +69,12 @@ corepack pnpm test                       # tsc -b，再跑单元、编译期与�
 corepack pnpm test:live                  # 三库实库场景，变量见下文
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql`。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|spring`。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
 - **生成代码**：`From1..From8` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
   - Java 单元、渲染与金样例测试；
   - PostgreSQL、MySQL、HANA 三个实库 job，容器定义在 `infra/`，每个 job 先跑 Java 再跑 TS 的实库场景；
+  - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
   - TypeScript 编译、编译期检查、单元与金样例测试。
 - **本地只跑与改动相关的测试**：
   - 用 `-pl <模块>`，必要时加 `-Dtest=...` 和 `-Dsurefire.failIfNoSpecifiedTests=false`；

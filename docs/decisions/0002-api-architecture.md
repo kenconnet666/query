@@ -69,6 +69,8 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 ### 7. 执行只依赖 `ConnectionProvider`
 
+- 事务由使用方管理。Spring 应用用 `query-spring` 的 `SpringConnections` 取连接，查询就加入外层的 `@Transactional`（0001 第 6 条）。
+
 - **全局过滤器**按实体类型匹配：FROM 的表加到 WHERE，JOIN 的表加到 ON；CTE 和子查询内的表同样生效。
 - **结果缓存**存解码后的原始行，而不是映射后的对象，因为投影 lambda 可能捕获了外部变量。
 
@@ -253,7 +255,7 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 2. **第二期（已完成）**：TypeScript 的 core、hana、postgres、mysql，单元、编译期与三库实库测试；`spec/render/` 金样例由两端测试共同读取。
 3. **第三期**：
    - 真实查询对照与补齐的能力（已完成，见验证证据）；
-   - Spring 适配；
+   - Spring 适配（已完成）：`query-spring` 只有 `SpringConnections` 一个类，spring-jdbc 为 `provided`；H2 上的事务测试在 Spring 5.3、6.2、7.0 下都通过；
    - 方言扩展：分组集合、HANA 计算视图与表函数、JSON；
    - SQL 级列转换；一对多的批量组装；
    - 根据请求对象注解生成条件。
