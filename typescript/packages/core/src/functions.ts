@@ -42,12 +42,23 @@ function numeric(e: Expr<unknown>, fn: string): void {
 
 // ---------- values ----------
 
-/** A bound parameter, typed by the value or by the given type. */
+/**
+ * A bound parameter, typed by the value or by the given type. Text, numbers and booleans widen to
+ * `string`, `number` and `boolean`, so `val("A")` and `val("B")` have the same type.
+ */
+export function val(value: string): Expr<string>;
+export function val(value: number): Expr<number>;
+export function val(value: boolean): Expr<boolean>;
+export function val<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): Expr<T>;
 export function val<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): Expr<T> {
   return param((type ?? typeOf(value)) as SqlType<NonNullable<T>>, value);
 }
 
-/** A literal written into the SQL text; use for fixed codes, never for user input. */
+/** A literal written into the SQL text; use for fixed codes, never for user input. Widens like `val`. */
+export function lit(value: string): Expr<string>;
+export function lit(value: number): Expr<number>;
+export function lit(value: boolean): Expr<boolean>;
+export function lit<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): Expr<T>;
 export function lit<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): Expr<T> {
   if (value == null) throw new TypeError("lit() needs a value; use nullOf(type) for NULL");
   return new Literal((type ?? typeOf(value)) as SqlType<NonNullable<T>>, value);
