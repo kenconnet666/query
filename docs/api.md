@@ -208,7 +208,7 @@ from(scope).join(Lips.class, (ms, l) -> l.col(Lips::getMaterial).eq(ms, Material
 
 - **CTE**：只有 `selectAs` 的查询（列有名字）能作为 CTE。无论被引用多深，渲染时都只在语句开头的 `WITH` 里出现一次。
 - **派生表**：`from(query.asTable())`。
-- **UNION**：`q1.unionAll(q2)` 或 `union`。两段的结果类型必须相同，否则编译失败；分页和排序加在合并之后。
+- **UNION**：`q1.unionAll(q2)` 或 `union`。两段的结果类型必须相同，否则编译失败；分页和排序加在合并之后。右侧是混用 UNION 与 UNION ALL 的组合时自动加括号，保持原来的分组。
 - **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`，聚合也可以 `.over(...)`，ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。
 - **常量行**（码表）：`values(Shape.class, List.of(new Shape(...), ...))` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。可以用 `cte(...)` 包成 CTE，再参与连接。
 
@@ -287,7 +287,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `db.list(q)` | 全部行 |
 | `db.one(q)` | 恰好一行，否则报错；最多读 2 行 |
 | `db.first(q)` | `Optional`，最多读 1 行 |
-| `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭 |
+| `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭。PostgreSQL 在自动提交的连接上自动开临时事务；MySQL 要配置 `fetchSize(Integer.MIN_VALUE)` 才逐行读取 |
 | `db.count(q)` | 外包 `COUNT(*)` |
 | `db.page(q, page, size)` | 页号从 1 开始，同时返回总数 |
 | `db.sql("... :name IN (:ids)").bind(...).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射 |

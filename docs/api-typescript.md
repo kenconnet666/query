@@ -175,7 +175,7 @@ from(scope).join(Lips, (ms, l) => l.material.eq(ms.material))...   // ms 的字�
 
 - **CTE**：只有扁平对象投影的查询能作为 CTE。无论被引用多深，渲染时都只在语句开头的 `WITH` 里出现一次。
 - **派生表**：`from(query.asTable())`。
-- **UNION**：`q1.unionAll(q2)` 或 `union`。两段的行类型必须相同，否则编译失败。对象投影按键名对齐各段的列，键的书写顺序不同也不会错位。分页和排序加在合并之后。
+- **UNION**：`q1.unionAll(q2)` 或 `union`。两段的行类型必须相同，否则编译失败。对象投影按键名对齐各段的列，键的书写顺序不同也不会错位。分页和排序加在合并之后。右侧是混用 UNION 与 UNION ALL 的组合时自动加括号，保持原来的分组。
 - **窗口**：`rowNumber().over((w) => w.partitionBy(a).orderBy(b.desc()))`。聚合也可以 `.over(...)`，ROWS 框架写作 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。
 - **常量行**（码表）：`values([{ name: "未逾期", ord: 1 }, ...])` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。列类型按值推断（文本、整数、小数），日期或精确小数用第二个参数指定，例如 `values(rows, { day: date })`。可以用 `cte(...)` 包成 CTE，再参与连接。
 

@@ -84,6 +84,14 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 | 渲染结果 | 查询首次在某个数据库实例上执行时 | 记在不可变的查询对象上 |
 | 大结果集 | `stream` / `forEach` 在单个游标上逐行读取 | — |
 
+游标的前提由方言的 `openCursor` 钩子准备，因为各驱动的要求不同：
+
+- **PostgreSQL**：pgJDBC 只在事务中、fetch size 为正时才用游标，否则先缓冲全部结果。方言在自动提交的连接上临时关闭自动提交，流关闭时回滚并恢复；外层已有事务（例如 Spring 的 `@Transactional`）时保持不动；没有配置 fetch size 时每批 1000 行。
+- **HANA**：驱动本身分批读取，不需要准备。
+- **MySQL**：Connector/J 默认也缓冲全部结果。逐行读取要配置 `fetchSize(Integer.MIN_VALUE)`（读完之前同一连接不能执行别的语句），或在 URL 中加 `useCursorFetch=true` 并配置正的 fetch size。两种做法都会改变连接的用法，所以不自动切换。
+
+**UNION 的分组**：各段按左结合渲染，`a.union(b).unionAll(c)` 就是 `a UNION b UNION ALL c`。右侧本身是混用 UNION 与 UNION ALL 的组合时（`a.unionAll(b.union(c))`），渲染时给右侧加括号，三库都支持；右侧只用同一种运算符时满足结合律，不加括号。
+
 ### 9. TypeScript（第二期）
 
 概念与 Java 一一对应，写法按 TS 的长处调整。
@@ -202,22 +210,22 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 
 | 模块 | 测试 | 内容 |
 | --- | --- | --- |
-| query-core | 69 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
-| query-hana | 49 | 19 个实库场景（HANA 2.00.088）、4 个方言渲染、26 个金样例 |
-| query-postgres | 49 | 20 个实库场景（PostgreSQL 17）、4 个方言渲染、25 个金样例 |
-| query-mysql | 46 | 17 个实库场景（MySQL 8.4）、7 个方言渲染、22 个金样例 |
+| query-core | 70 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
+| query-hana | 51 | 20 个实库场景（HANA 2.00.088）、4 个方言渲染、27 个金样例 |
+| query-postgres | 53 | 23 个实库场景（PostgreSQL 17）、4 个方言渲染、26 个金样例 |
+| query-mysql | 48 | 18 个实库场景（MySQL 8.4）、7 个方言渲染、23 个金样例 |
 
 **第二期 TypeScript 的测试**（TS 7.0.2、Node 24，`node:test`），本机三个开发库上全部通过：
 
 | 内容 | 测试 |
 | --- | --- |
-| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 24 |
-| 金样例：三个方言共 70 个用例，再加 3 个"每个样例都有查询"的检查 | 73 |
+| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 25 |
+| 金样例：三个方言共 73 个用例，再加 3 个"每个样例都有查询"的检查 | 76 |
 | 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 46 |
 | 编译期检查：`@ts-expect-error` 验证 16 种错误写法不能编译 | 1 |
-| 实库场景：HANA 19、PostgreSQL 20、MySQL 17 | 56 |
+| 实库场景：HANA 20、PostgreSQL 21、MySQL 18 | 59 |
 
-**两端一致**：`spec/render/` 下的 70 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量、列转换、ROLLUP，以及三个方言的专属函数（含 HANA 与 PostgreSQL 的 CUBE、GROUPING SETS）。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
+**两端一致**：`spec/render/` 下的 73 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量、列转换、ROLLUP、UNION 的分组，以及三个方言的专属函数（含 HANA 与 PostgreSQL 的 CUBE、GROUPING SETS）。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
 
 三个方言共用一组实库场景（Java 的 `LiveScenarios`、TS 的 `live/live.ts`）：
 
@@ -232,7 +240,13 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 - 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变（TS 通过切换 `process.env.TZ` 验证）；
 - 常量行与带常量的分组（分桶汇总）、文本函数、取负、多项求和、按子串分组；
 - 列转换：`@Trimmed`、`@BlankAsNull` 字段与同一列的原值字段并存，分组、`COUNT(DISTINCT …)` 与 `IS NULL` 都按转换后的值；
-- ROLLUP 的小计与总计，按 `GROUPING()` 排序；HANA 与 PostgreSQL 另有 GROUPING SETS 与 CUBE。
+- ROLLUP 的小计与总计，按 `GROUPING()` 排序；HANA 与 PostgreSQL 另有 GROUPING SETS 与 CUBE；
+- `a UNION ALL (b UNION c)` 保留 a 与 c 共有的行（不加括号时会被去重）。
+
+PostgreSQL 另有两个流式读取的实库测试：
+
+- 自动提交的连接上，fetch size 为 1 时能先读到前两行，第三行除以零的错误在取到那一批时才出现，证明按游标逐批读取；去掉方言钩子后，错误在执行时就出现，测试失败。连接归还前已恢复自动提交。
+- 外层事务中的流式读取前后，`txid_current()` 不变，外层事务没有被提交或回滚。
 
 实库还发现并修复了一个 bug：`db.one()` 曾经覆盖用户自己设置的 LIMIT。
 
@@ -268,6 +282,7 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 - 方言专属函数在渲染时才报错，由各方言包的"在别的方言上渲染应当失败"测试兜底。
 - SELECT 列表里的常量写成字面量（第 10 条），随请求变化的值放进 SELECT 列表会让语句文本变化。
 - Java 不跟踪可空性，结果属性要用包装类型。
+- Java 的 MySQL 流式读取默认会缓冲全部结果，需要逐行读取时按第 8 条配置 fetch size。
 - TS：
   - DTO 靠实例化取得字段列表，需要无参构造器，字段要按 ES2022 类字段声明；
   - `Symbol.metadata` 由核心包补上，实体模块必须在导入本库之后定义（导入方言包即可满足）；
