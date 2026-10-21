@@ -1,4 +1,4 @@
-import { Database, Dialect, type DatabaseOptions, type Driver, type DriverResult } from "@query/core";
+import { Database, Dialect, type DatabaseOptions, type Driver, type DriverResult, type ExecuteOptions } from "@query/core";
 
 /** A neutral dialect for rendering tests: upper-case bare identifiers and a configurable IN limit. */
 export class TestDialect extends Dialect {
@@ -23,12 +23,12 @@ export class TestDialect extends Dialect {
 
 /** A driver answering from canned rows and recording what it was asked. */
 export class FakeDriver implements Driver {
-  readonly statements: { sql: string; parameters: readonly unknown[] }[] = [];
+  readonly statements: { sql: string; parameters: readonly unknown[]; options: ExecuteOptions | undefined }[] = [];
 
   constructor(private readonly answer: (sql: string) => DriverResult = () => ({ columns: [], rows: [] })) {}
 
-  async query(sql: string, parameters: readonly unknown[]): Promise<DriverResult> {
-    this.statements.push({ sql, parameters });
+  async query(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): Promise<DriverResult> {
+    this.statements.push({ sql, parameters, options });
     return this.answer(sql);
   }
 }

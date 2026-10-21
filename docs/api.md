@@ -25,6 +25,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
     .filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100"))  // 全局过滤器
     .cache(QueryCache.inMemory())                                               // 结果缓存（按查询开启）
     .listener(e -> log.debug("{} {}ms", e.statement().sql(), e.elapsed().toMillis()))
+    .queryTimeout(Duration.ofSeconds(30))        // 每条语句的默认时限，超时由数据库取消
     .naming(NamingStrategy.UPPER_SNAKE));        // 没写 @Column 的属性按此推导列名
 ```
 
@@ -55,6 +56,7 @@ HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource) {
 
 - 它通过 Spring 的 `DataSourceUtils` 取连接，所以在 `@Transactional` 方法里，查询使用事务的连接：能看到同一事务里 MyBatis、JdbcTemplate 尚未提交的写入，也随事务一起回滚。不在事务里时，每条语句借一个连接，用完归还。
 - 查询失败抛出的 `QueryExecutionException` 是运行时异常，按 Spring 的默认规则触发回滚。
+- `@Transactional(timeout = 30)` 的事务里，每条语句的时限是事务剩余的时间，优先于 `queryTimeout`，与 JdbcTemplate 相同；时间已经用完时直接抛出 Spring 的 `TransactionTimedOutException`。
 - 路由型数据源（动态数据源）可以直接传入，连接在取用时按当前线程的路由选择。
 - 模块只依赖 spring-jdbc，范围是 `provided`：Spring 由应用提供，5.3（Spring Boot 2.7）、6.2（Boot 3）、7.0（Boot 4）都在 CI 中验证。
 
@@ -316,6 +318,11 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `db.sql("... :name IN (:ids)").bind(...).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `db.render(q)` | 查看将要执行的 SQL 与参数 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
+| `q.timeout(Duration.ofSeconds(10))`、`db.sql(...).timeout(...)` | 这条语句的时限，覆盖 `config.queryTimeout` |
+
+**超时**：通过 JDBC 的 `setQueryTimeout` 交给驱动，三个库都在服务端取消语句，连接之后照常可用（实库测试验证过）。JDBC 按整秒计时，不足一秒的部分按一秒算。超时抛出 `QueryExecutionException`，它的 `isTimeout()` 为 true，页面可以据此提示"查询超时"。底层原因分别是 HANA 的 `SQLTimeoutException`（错误码 613）、PostgreSQL 的 SQLState `57014`、MySQL 的 `MySQLTimeoutException`。
+
+**参数个数**：HANA 和 PostgreSQL 的一条语句最多绑定 65535 个参数。超过时在连接数据库之前就报错，而不是等数据库返回难懂的错误。很长的 IN 列表请拆成几次查询，或者改成子查询。MySQL Connector/J 默认在客户端把参数写进语句，所以不设这个上限。
 
 **全局过滤器**按实体的父类型或接口匹配：FROM 中的表把条件加到 WHERE，JOIN 的表加到 ON（LEFT JOIN 语义不变）；CTE 和子查询里的表同样生效。
 
@@ -358,3 +365,35 @@ Database db = Hana.database(dataSource, c -> c.listener(e -> {
 - 窗口函数没有 `over`。
 
 Java 不跟踪可空性，所以结果属性要用包装类型。
+
+## 10. 安全与上线前检查
+
+**值和 SQL 文本**：
+
+- 条件里的值一律绑定为参数。写成字面量的只有 SELECT 列表、GROUP BY 等位置的常量（见第 6 节）、`values(...)` 的行和 `lit(...)`。
+- 字面量由方言转义：单引号加倍；MySQL 的反斜杠加倍；PostgreSQL 的值含反斜杠时写成 `E'...'`，不受 `standard_conforming_strings` 设置的影响；HANA 的非 ASCII 文本加 `N` 前缀。三库实库测试用含引号、反斜杠、注释符和问号的文本验证过往返。
+- `NaN`、`Infinity` 没有字面量形式：在 SELECT 列表里仍然绑定为参数，`lit(...)` 时直接报错。
+- `sql(Type.class, "模板", ...)`、`sqlCond(...)` 的模板和 `db.sql("...")` 的文本原样执行。这些文本里只放代码中的常量，用户输入一律作为参数传入（模板参数或 `bind`）。
+- 标识符来自注解和 `as("x")`，渲染时加引号并转义。
+- `like(e, pattern)` 的模式原样使用，`%` 和 `_` 是通配符。模式来自用户输入时要先自行转义；各库的默认转义字符不同，HANA 需要 ESCAPE 子句，目前不提供自动转义。
+
+**上线前检查**：
+
+1. **超时**：给数据库实例配置 `queryTimeout`，耗时的报表查询单独设置 `q.timeout(...)`。在 Spring 里也可以用事务超时。
+2. **大结果集**：用 `stream` 或 `forEach` 逐行处理，并用 try-with-resources 关闭流。PostgreSQL 会自动用游标；MySQL 需要配置 `fetchSize(Integer.MIN_VALUE)`，读完之前同一连接不能执行别的语句。
+3. **投影方式**：读很多行时用 `selectAs` 或 `mapTo`，函数式投影每行都要重放 lambda，慢约一半。
+4. **连接池**：库每条语句借一个连接、用完归还，不持有连接。连接池的大小、校验和泄漏检测仍由 Druid、HikariCP 等配置。
+5. **日志**：用监听器记录慢查询和失败（示例见第 8 节）。事件里有 SQL 和参数，参数可能含业务数据，按日志规范脱敏。
+6. **缓存**：`cached(...)` 按 SQL 和参数缓存，适合多人同时看的大屏。内存缓存只在本进程有效，多实例部署时实现 `QueryCache` 接到 Redis。
+7. **方言实例**：每个数据源一个 `Database`，作为单例长期复用。元数据、映射计划和渲染结果都缓存在里面，并发使用是安全的。
+
+**兼容性承诺**：1.x 内不破坏下列公开 API：
+
+- `org.dpdns.zerodep.query` 包里的全部公开类型：`Sql`、`Query`、`Database`、表达式与条件、`From1..From8` 作用域、`Row`、`Fn`、`Nest`、`Page`、`NativeQuery` 等；
+- `annotation`、`type` 包；
+- `meta` 包里的 `Getter`、`NamingStrategy`；
+- `exec` 包里的 `ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`；
+- 各方言门面与数据库实例；
+- `query-spring` 的 `SpringConnections`。
+
+`dialect` 包是扩展点，方法签名可能在次版本中增加参数。`exec.JdbcExecutor`、`MappingPlan` 等其余公开类型只供库内部跨包使用，不在承诺范围内。

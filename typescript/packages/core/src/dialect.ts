@@ -76,6 +76,12 @@ export interface Clause extends Renderable {
  * literals, placeholders, paging and CAST type names. Function renderings a dialect knows are
  * registered in its constructor with {@link register}; nothing switches on a dialect name.
  */
+/** Kinds a dialect can write as literals; others stay parameters even when the writer inlines. */
+const LITERAL_KINDS = new Set(["text", "integer", "bigint", "double", "decimal", "boolean", "date", "timestamp"]);
+
+/** Number text a literal may carry as it is: the forms `decimal` accepts, all valid SQL numeric literals. */
+const NUMBER_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
 /** Reserved words of standard SQL, PostgreSQL and HANA; see `Dialect.isReserved`. */
 const RESERVED = new Set(
   `ALL ALTER ANALYSE ANALYZE AND ANY ARRAY AS ASC ASYMMETRIC AUTHORIZATION BEFORE BEGIN BETWEEN BINARY BOTH BY CASE CAST CHAR CHECK COLLATE COLLATION COLUMN CONCURRENTLY CONDITION CONNECT CONSTRAINT CREATE CROSS CUBE CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR DECLARE DEFAULT DEFERRABLE DELETE DESC DISTINCT DO DROP ELSE ELSEIF END EXCEPT EXCEPTION EXEC EXISTS FALSE FETCH FOR FOREIGN FREEZE FROM FULL GRANT GROUP HAVING IF ILIKE IN INITIALLY INNER INOUT INSERT INTERSECT INTO IS ISNULL JOIN LATERAL LEADING LEFT LIKE LIMIT LOCALTIME LOCALTIMESTAMP LOOP MINUS NATURAL NCHAR NOT NOTNULL NULL OFFSET ON ONLY OR ORDER OUT OUTER OVERLAPS PLACING PRIMARY PRIOR REFERENCES RETURN RETURNING RETURNS RIGHT ROLLUP ROWID SELECT SESSION_USER SET SIMILAR SOME SQL START SYMMETRIC SYSTEM_USER TABLE TABLESAMPLE THEN TO TOP TRAILING TRUE UNION UNIQUE UNKNOWN UPDATE USER USING VALUES VARIADIC VERBOSE WHEN WHERE WHILE WINDOW WITH`.split(" "),
@@ -134,12 +140,21 @@ export abstract class Dialect {
     if (nullsFirst !== undefined) w.sql(nullsFirst ? " NULLS FIRST" : " NULLS LAST");
   }
 
+  /** Whether {@link literal} can write the value; others, such as NaN, stay parameters even when inlining. */
+  hasLiteral(value: unknown, type: SqlType<unknown>): boolean {
+    if (value === null) return true;
+    if (!LITERAL_KINDS.has(type.kind)) return false;
+    const stored = type.encode(value);
+    return typeof stored !== "number" || Number.isFinite(stored);
+  }
+
   /** A literal of the value's stored form; converters apply first. */
   literal(w: SqlWriter, value: unknown, type: SqlType<unknown>): void {
     if (value === null) {
       w.sql("NULL");
       return;
     }
+    if (!this.hasLiteral(value, type)) throw new TypeError(`No literal form for ${String(value)} (${type.name}); bind it as a parameter`);
     const stored = type.encode(value);
     switch (type.kind) {
       case "text":
@@ -149,7 +164,7 @@ export abstract class Dialect {
       case "bigint":
       case "double":
       case "decimal":
-        if (typeof stored !== "number" && typeof stored !== "bigint" && !(typeof stored === "string" && stored.trim() !== "" && !Number.isNaN(Number(stored)))) {
+        if (typeof stored !== "number" && typeof stored !== "bigint" && !(typeof stored === "string" && NUMBER_TEXT.test(stored))) {
           throw new TypeError(`${String(stored)} is not a number literal`);
         }
         w.sql(String(stored));
@@ -196,6 +211,21 @@ export abstract class Dialect {
   /** Longer IN lists are split into several IN predicates joined by OR. */
   get maxInListSize(): number {
     return 1000;
+  }
+
+  /** Bound parameters one statement may carry; the wire protocols of HANA, PostgreSQL and MySQL count them in 16 bits. */
+  get maxParameters(): number {
+    return 65535;
+  }
+
+  /** Whether a driver error means the database cancelled the statement for running past its timeout. */
+  isTimeout(_error: unknown): boolean {
+    return false;
+  }
+
+  /** The `code` (or another property) a driver puts on its errors, if any. */
+  protected static errorProperty(error: unknown, name: string): unknown {
+    return typeof error === "object" && error !== null ? (error as Record<string, unknown>)[name] : undefined;
   }
 
   /**

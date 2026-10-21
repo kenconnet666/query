@@ -33,6 +33,17 @@ public class PostgresDialect extends Dialect {
 
     @Override public String foldCase(String identifier) { return identifier.toLowerCase(); }
 
+    /**
+     * With standard_conforming_strings off, a backslash in '...' escapes the next character, so a
+     * value could end the literal early. E'...' reads backslashes the same way under either setting.
+     */
+    @Override protected String stringLiteral(String s) {
+        return s.indexOf('\\') < 0 ? super.stringLiteral(s) : "E'" + s.replace("\\", "\\\\").replace("'", "''") + "'";
+    }
+
+    /** pgjdbc reports a timeout as query_canceled (57014), since it cancels the statement through a separate request. */
+    @Override public boolean isTimeout(SQLException e) { return super.isTimeout(e) || "57014".equals(e.getSQLState()); }
+
     @Override public String castType(CastType<?> type) {
         return switch (type.kind()) {
             case DECIMAL -> "NUMERIC(" + type.length() + "," + type.scale() + ")";

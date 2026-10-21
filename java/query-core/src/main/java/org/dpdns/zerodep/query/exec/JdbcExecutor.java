@@ -38,15 +38,17 @@ public final class JdbcExecutor {
     private final TypeRegistry types;
     private final List<QueryListener> listeners;
     private final int fetchSize;
+    private final Duration defaultTimeout;
 
     public JdbcExecutor(String database, Dialect dialect, ConnectionProvider connections, TypeRegistry types, List<QueryListener> listeners,
-                        int fetchSize) {
+                        int fetchSize, Duration defaultTimeout) {
         this.database = database;
         this.dialect = dialect;
         this.connections = connections;
         this.types = types;
         this.listeners = List.copyOf(listeners);
         this.fetchSize = fetchSize;
+        this.defaultTimeout = defaultTimeout;
     }
 
     public TypeRegistry types() { return types; }
@@ -61,28 +63,30 @@ public final class JdbcExecutor {
         };
     }
 
-    public List<Object[]> fetch(Rendered statement, RowReader reader) {
+    /** {@code timeout} null means the database instance's default. */
+    public List<Object[]> fetch(Rendered statement, RowReader reader, Duration timeout) {
         return query(statement, rs -> {
             List<Object[]> rows = new ArrayList<>();
             while (rs.next()) rows.add(reader.read(rs));
             return rows;
-        }, List::size);
+        }, List::size, timeout);
     }
 
     /** Runs a statement and hands its result set to the handler; rowCount reports the size to listeners. */
-    public <T> T query(Rendered statement, ResultHandler<T> handler, java.util.function.ToLongFunction<T> rowCount) {
+    public <T> T query(Rendered statement, ResultHandler<T> handler, java.util.function.ToLongFunction<T> rowCount, Duration timeout) {
+        checkParameterCount(statement);
         long start = System.nanoTime();
         Connection connection = null;
         try {
             connection = connections.acquire();
-            try (PreparedStatement ps = prepare(connection, statement); ResultSet rs = ps.executeQuery()) {
+            try (PreparedStatement ps = prepare(connection, statement, timeout); ResultSet rs = ps.executeQuery()) {
                 T result = handler.handle(rs);
                 notify(statement, start, rowCount.applyAsLong(result), null, false);
                 return result;
             }
         } catch (SQLException e) {
             notify(statement, start, 0, e, false);
-            throw new QueryExecutionException(database, statement, e);
+            throw new QueryExecutionException(database, statement, e, timedOut(e));
         } catch (RuntimeException e) {
             notify(statement, start, 0, e, false);
             throw e;
@@ -92,7 +96,8 @@ public final class JdbcExecutor {
     }
 
     /** A lazily read result; closing the stream closes the cursor and releases the connection. */
-    public Stream<Object[]> stream(Rendered statement, RowReader reader) {
+    public Stream<Object[]> stream(Rendered statement, RowReader reader, Duration timeout) {
+        checkParameterCount(statement);
         long start = System.nanoTime();
         Connection connection = null;
         PreparedStatement ps = null;
@@ -100,7 +105,7 @@ public final class JdbcExecutor {
         ResultSet rs = null;
         try {
             connection = connections.acquire();
-            ps = prepare(connection, statement);
+            ps = prepare(connection, statement, timeout);
             cleanup = dialect.openCursor(connection, ps);
             rs = ps.executeQuery();
         } catch (SQLException | RuntimeException e) {
@@ -108,7 +113,7 @@ public final class JdbcExecutor {
             cleanUpQuietly(cleanup);
             release(connection);
             notify(statement, start, 0, e, false);
-            throw new QueryExecutionException(database, statement, e);
+            throw new QueryExecutionException(database, statement, e, timedOut(e));
         }
         Connection c = connection;
         PreparedStatement p = ps;
@@ -124,7 +129,7 @@ public final class JdbcExecutor {
                     action.accept(reader.read(r));
                     return true;
                 } catch (SQLException e) {
-                    throw new QueryExecutionException(database, statement, e);
+                    throw new QueryExecutionException(database, statement, e, timedOut(e));
                 }
             }
         };
@@ -139,10 +144,24 @@ public final class JdbcExecutor {
     /** Lets the database report a cache hit to listeners without running anything. */
     public void cacheHit(Rendered statement, long rows) { notify(statement, System.nanoTime(), rows, null, true); }
 
-    private PreparedStatement prepare(Connection connection, Rendered statement) throws SQLException {
+    private boolean timedOut(Throwable e) { return e instanceof SQLException s && dialect.isTimeout(s); }
+
+    /** Fails before contacting the database, whose own error for too many parameters is often cryptic. */
+    private void checkParameterCount(Rendered statement) {
+        int count = statement.bindings().size();
+        if (count > dialect.maxParameters()) {
+            throw new IllegalStateException(database + ": the statement binds " + count + " parameters; " + dialect.name() + " accepts at most "
+                + dialect.maxParameters() + ". Split the list into several queries, or select the values with a subquery instead of passing them");
+        }
+    }
+
+    private PreparedStatement prepare(Connection connection, Rendered statement, Duration timeout) throws SQLException {
         PreparedStatement ps = connection.prepareStatement(statement.sql());
         try {
             if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL streams row by row with Integer.MIN_VALUE
+            Duration limit = timeout != null ? timeout : defaultTimeout;
+            if (limit != null) ps.setQueryTimeout(seconds(limit));
+            connections.prepared(ps);
             List<Binding> bindings = statement.bindings();
             for (int i = 0; i < bindings.size(); i++) {
                 Binding b = bindings.get(i);
@@ -153,6 +172,12 @@ public final class JdbcExecutor {
             ps.close();
             throw e;
         }
+    }
+
+    /** JDBC counts whole seconds; a shorter timeout still cancels after one. */
+    private static int seconds(Duration timeout) {
+        long seconds = (timeout.toMillis() + 999) / 1000;
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(1, seconds));
     }
 
     private void release(Connection connection) {

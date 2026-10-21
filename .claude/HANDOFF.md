@@ -2,14 +2,15 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6 都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
+[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6 和 [0004 生产就绪](../docs/decisions/0004-production-readiness.md)都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
 
 ## 当前状态
 
 ### 分支
 
 - 第一到第三期在 [PR #1](https://github.com/kenconnet666/query/pull/1) 合并进了 `master`。
-- M1 到 M6 在 `feat/v1` 上，通过 PR #2 合并进 `master`（用户已允许合并）。合并后新的工作从 `master` 开分支。
+- M1 到 M6 在 `feat/v1` 上，已通过 [PR #2](https://github.com/kenconnet666/query/pull/2) 合并进 `master`。
+- 生产就绪在 `feat/production` 上，通过 PR #3 合并进 `master`。用户已授权自行合并，不必再问。合并后新的工作从 `master` 开分支。
 
 ### 1.0 完成了什么
 
@@ -35,12 +36,26 @@
   - [CHANGELOG](../CHANGELOG.md)、README 快速上手、[迁移指南](../docs/migration.md)、[手动发布步骤](../docs/release.md)。
 - 各项的证据与取舍记在 0003 的"验证证据"一节。
 
+### 生产就绪完成了什么（0004）
+
+- **查询超时**：数据库实例的默认值，查询和原生 SQL 可以覆盖。三库都在服务端取消语句，异常能用 `isTimeout()` / `timedOut` 区分。
+- **Spring 事务超时**：`ConnectionProvider.prepared` 钩子，行为与 JdbcTemplate 一致。
+- **参数个数上限**：超过时在连接数据库之前报出可读的错误。
+- **字面量加固**：
+  - PostgreSQL 的值含反斜杠时写成 `E'...'`；
+  - `NaN`、`Infinity` 不写成字面量；
+  - 三库都做了恶意文本的往返测试。
+- **CI**：增加 JDK 21 与 25。
+- **文档**：API 说明第 10 节（安全、上线前检查、兼容性承诺）。
+- **影子试点**：在使用方同款技术栈上验证通过（Spring Boot 2.7.11、Druid、dynamic-datasource、ngdbc 2.29.7）。
+- **顺带修复**：Java 分页遇到 NULL 行时抛 NPE；TS 约 7 万个参数时渲染栈溢出。
+
 ### 测试（本机三库全部通过）
 
 - **Java**：`-P release -Dgpg.skip verify` 通过。
-  - 各模块的测试数：core 78，HANA 65，PostgreSQL 67，MySQL 62，Spring 3；
+  - 各模块的测试数：core 86，HANA 67，PostgreSQL 71，MySQL 64，Spring 5；
   - 金样例 88 个文件，覆盖 38 个场景。
-- **TS**：单元、编译期与金样例 165 个，实库 83 个。
+- **TS**：单元、编译期与金样例 169 个，实库 91 个。
 
 ## 待用户决定或执行
 
@@ -58,7 +73,7 @@
    - 打 `v1.0.0` 标签；
    - 用 `versions:set` 进入 `1.1.0-SNAPSHOT`；
    - `CHANGELOG.md` 顶部加"未发布"。
-3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。
+3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。影子试点已证明技术栈兼容。
 4. 0003 列出的延后项，等有使用证据再做：
    - DuckDB；
    - HANA 计算视图与表函数、JSON、层级查询；

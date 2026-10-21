@@ -24,6 +24,11 @@ export class HanaDialect extends Dialect {
   }
 
   /** N'...' keeps non-ASCII text intact. */
+  /** 613: execution aborted by timeout. */
+  override isTimeout(error: unknown): boolean {
+    return HanaDialect.errorProperty(error, "code") === 613;
+  }
+
   protected override stringLiteral(s: string): string {
     const quoted = `'${s.replaceAll("'", "''")}'`;
     return /^[\x00-\x7f]*$/.test(s) ? quoted : "N" + quoted;

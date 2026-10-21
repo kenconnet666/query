@@ -5,10 +5,12 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.function.Consumer;
@@ -28,6 +30,15 @@ class HanaLiveTest extends LiveScenarios {
     }
 
     @Override protected String text(int length) { return "NVARCHAR(" + length + ")"; }
+
+    /** HANA SQL has no sleep function; SQLScript's built-in SQLSCRIPT_SYNC library does. */
+    @BeforeAll
+    void createSlowProcedure() throws SQLException {
+        live.execute(List.of("-DROP PROCEDURE QUERY_IT.SLOW_ROW", "CREATE PROCEDURE QUERY_IT.SLOW_ROW(IN SECONDS INTEGER) READS SQL DATA AS BEGIN "
+            + "USING SQLSCRIPT_SYNC AS SYNCLIB; CALL SYNCLIB:SLEEP_SECONDS(:SECONDS); SELECT 1 AS X FROM DUMMY; END"));
+    }
+
+    @Override protected String slowStatement() { return "CALL QUERY_IT.SLOW_ROW(3)"; }
 
     @Test
     void HANA日期函数在实库上可用() {

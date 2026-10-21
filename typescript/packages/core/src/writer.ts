@@ -156,8 +156,8 @@ export class SqlWriter {
 
   /** Appends another writer's text and parameters, and adopts the CTEs it registered. */
   append(other: SqlWriter): this {
-    this.#chunks.push(...other.#chunks);
-    this.#bindings.push(...other.#bindings);
+    pushAll(this.#chunks, other.#chunks);
+    pushAll(this.#bindings, other.#bindings);
     for (const c of other.#ctes.values()) this.cte(c);
     return this;
   }
@@ -178,12 +178,14 @@ export class SqlWriter {
     const bindings: Binding[] = [];
     order.forEach((c, i) => {
       const body = bodies.get(c)!;
-      chunks.push(`${i > 0 ? ",\n" : "WITH "}${this.dialect.quote(c.name)} AS (\n`, ...body.#chunks, "\n)");
-      bindings.push(...body.#bindings);
+      chunks.push(`${i > 0 ? ",\n" : "WITH "}${this.dialect.quote(c.name)} AS (\n`);
+      pushAll(chunks, body.#chunks);
+      chunks.push("\n)");
+      pushAll(bindings, body.#bindings);
     });
     if (order.length > 0) chunks.push("\n");
-    chunks.push(...this.#chunks);
-    bindings.push(...this.#bindings);
+    pushAll(chunks, this.#chunks);
+    pushAll(bindings, this.#bindings);
     let n = 0;
     const sql = chunks.map((c) => (c === PARAMETER ? this.dialect.placeholder(++n) : c)).join("");
     return new Rendered(sql, bindings);
@@ -200,4 +202,9 @@ export class SqlWriter {
     for (const dependency of body.#ctes.values()) this.#emit(dependency, order, bodies, names);
     order.push(c);
   }
+}
+
+/** push(...items) passes every item as an argument and overflows the stack on long IN lists. */
+function pushAll<T>(target: T[], items: readonly T[]): void {
+  for (const item of items) target.push(item);
 }

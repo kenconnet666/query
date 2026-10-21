@@ -77,14 +77,17 @@ public abstract class Dialect {
     /** What a SELECT without a table needs: nothing on most databases, {@code FROM DUMMY} on HANA. */
     public void fromNothing(SqlWriter w) { }
 
-    /** Whether {@link #literal} can write the value; others stay parameters even when inlining. */
+    /** Whether {@link #literal} can write the value; others, such as NaN, stay parameters even when inlining. */
     public boolean hasLiteral(Object value) {
+        if (value instanceof Double d) return Double.isFinite(d);
+        if (value instanceof Float f) return Float.isFinite(f);
         return value instanceof String || value instanceof Boolean || value instanceof Number || value instanceof LocalDate
             || value instanceof LocalDateTime || value instanceof Enum<?>;
     }
 
     public void literal(SqlWriter w, Object value) {
         if (value == null) w.sql("NULL");
+        else if (!hasLiteral(value)) throw new IllegalArgumentException("No literal form for " + value + " (" + value.getClass().getName() + "); bind it as a parameter");
         else if (value instanceof String s) w.sql(stringLiteral(s));
         else if (value instanceof Boolean b) w.sql(b ? "TRUE" : "FALSE");
         else if (value instanceof BigDecimal d) w.sql(d.toPlainString());
@@ -118,6 +121,12 @@ public abstract class Dialect {
 
     /** Longer IN lists are split into several IN predicates joined by OR. */
     public int maxInListSize() { return 1000; }
+
+    /** Bound parameters one statement may carry; the wire protocols of HANA and PostgreSQL count them in 16 bits. */
+    public int maxParameters() { return 65535; }
+
+    /** Whether the database cancelled a statement for running past its query timeout. */
+    public boolean isTimeout(SQLException e) { return e instanceof java.sql.SQLTimeoutException; }
 
     /**
      * Where a quoted part of hand-written SQL that starts at {@code start} ends: the index of its last

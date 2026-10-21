@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
-import { count, cube, decimal, distinctOn, filterWhere, from, greatest, grouping, groupingSets, ilike, least, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
+import { count, cube, decimal, distinctOn, filterWhere, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
 import { Lips } from "../erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -14,8 +14,23 @@ liveScenarios(
     },
     database: (driver, options) => new PostgresDatabase(driver, options),
     text: (length) => `VARCHAR(${length})`,
+    slowStatement: "SELECT pg_sleep(3)",
   },
   (live) => {
+    it("关闭 standard_conforming_strings 的会话里含反斜杠的字面量仍原样往返", async () => {
+      const { config } = live();
+      const client = new pg.Client({ host: config.host, port: config.port, database: config.database, user: config.user, password: config.password, options: "-c standard_conforming_strings=off" });
+      await client.connect();
+      try {
+        const legacy = new PostgresDatabase(pgDriver(client));
+        for (const text of ["back\\slash", "\\'; SELECT 1; --", "ends with \\"]) {
+          assert.equal(await legacy.one(from(Lips).limit(1).selectValue(() => lit(text))), text);
+        }
+      } finally {
+        await client.end();
+      }
+    });
+
     it("DISTINCT ON 取每个物料最新的交货", async () => {
       const rows = await live().db.list(
         from(Lips)

@@ -41,6 +41,14 @@ class PostgresRenderTest {
     }
 
     @Test
+    void 含反斜杠的字面量写成E字符串以免受standard_conforming_strings影响() {
+        String sql = from(Lips.class).selectValue(l -> lit("a\\'; --")).toSql(PostgresDialect.INSTANCE).sql();
+        assertTrue(sql.startsWith("SELECT E'a\\\\''; --' AS value"), sql);
+        String plain = from(Lips.class).selectValue(l -> lit("O'Brien")).toSql(PostgresDialect.INSTANCE).sql();
+        assertTrue(plain.startsWith("SELECT 'O''Brien' AS value"), plain);
+    }
+
+    @Test
     void PostgreSQL专属操作不能在别的方言上渲染() {
         Query<String> q = from(Lips.class).where(l -> ilike(l.col(Lips::getUnit), "ea")).selectValue(l -> l.col(Lips::getDelivery));
         assertThrows(UnsupportedOperationException.class, () -> q.toSql(new TestDialect()));

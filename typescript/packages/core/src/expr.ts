@@ -355,13 +355,10 @@ class Param<T> extends Expr<T> {
 
   render(w: SqlWriter): void {
     const type = this.type as SqlType<unknown>;
-    if (w.inlining && INLINABLE.has(type.kind)) w.literal(this.value, type);
+    if (w.inlining && w.dialect.hasLiteral(this.value, type)) w.literal(this.value, type);
     else w.bind(this.value, type);
   }
 }
-
-/** Kinds a dialect can write as literals; others stay parameters even when the writer inlines. */
-const INLINABLE = new Set(["text", "integer", "bigint", "double", "decimal", "boolean", "date", "timestamp"]);
 
 export class Literal<T> extends Expr<T> {
   constructor(

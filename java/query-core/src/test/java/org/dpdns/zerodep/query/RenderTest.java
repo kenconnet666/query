@@ -55,6 +55,15 @@ class RenderTest {
     }
 
     @Test
+    void 非有限的浮点数没有字面量形式() {
+        Rendered r = from(Lips.class).selectValue(l -> val(Double.NaN)).toSql(DIALECT);
+        assertTrue(r.sql().startsWith("SELECT ? AS \"value\""), "SELECT-list constants stay parameters when no literal exists: " + r.sql());
+        assertEquals(1, r.parameters().size());
+        var e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).selectValue(l -> lit(Double.POSITIVE_INFINITY)).toSql(DIALECT));
+        assertTrue(e.getMessage().contains("No literal form for Infinity"), e.getMessage());
+    }
+
+    @Test
     void 全局过滤器进入FROM表的WHERE和连接表的ON() {
         var db = new TestDatabase(c -> c.filter(ClientEntity.class, ref -> ref.col(ClientEntity::getClient).eq("100")));
         Rendered r = db.render(Scenarios.lines());

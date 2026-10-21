@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, from, inMemoryCache, QueryExecutionError, type QueryEvent } from "@query/core";
+import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@query/core";
 import { MysqlDatabase } from "@query/mysql";
 import { PostgresDatabase } from "@query/postgres";
 import { DeliveryVO, Lips } from "../erp.js";
@@ -97,6 +97,38 @@ describe("执行", () => {
     assert.match(error.message, /^erp: table not found\nSELECT LIPS.VBELN/);
     assert.equal(events.length, 1);
     assert.ok(events[0]!.error instanceof Error);
+  });
+
+  it("超时取数据库实例的默认值，查询和原生 SQL 自己的值优先", async () => {
+    const driver = new FakeDriver(() => rows(["C"], [1]));
+    const db = new TestDatabase({ queryTimeoutMs: 1500 }, driver);
+    const q = from(Lips).selectValue((l) => l.delivery);
+    await db.list(q);
+    await db.list(q.timeout(200));
+    await db.count(q.timeout(3000));
+    await db.sql("SELECT 1").timeout(5000).list();
+    await db.sql("SELECT 1").list();
+    await new TestDatabase({}, driver).list(q);
+    assert.deepEqual(
+      driver.statements.map((s) => s.options?.timeoutMs),
+      [1500, 200, 3000, 5000, 1500, undefined],
+    );
+    assert.throws(() => q.timeout(0), /timeout must be positive/);
+    assert.throws(() => new TestDatabase({ queryTimeoutMs: -1 }), /queryTimeoutMs must be positive/);
+  });
+
+  it("参数个数超过方言上限时在连接数据库之前报错", async () => {
+    const many = Array.from({ length: 70_000 }, (_, i) => `D${i}`);
+    const q = from(Lips).where((l) => l.delivery.in(many)).selectValue((l) => l.delivery);
+    await assert.rejects(new TestDatabase().list(q), /binds 70000 parameters; .* accepts at most 65535/);
+  });
+
+  it("非有限的浮点数在 SELECT 列表里仍绑定为参数，写成字面量时报错", () => {
+    const db = new TestDatabase();
+    const r = db.render(from(Lips).selectValue(() => val(Number.NaN)));
+    assert.match(r.sql, /^SELECT \? AS /);
+    assert.equal(r.parameters.length, 1);
+    assert.throws(() => db.render(from(Lips).selectValue(() => lit(Number.POSITIVE_INFINITY))), /No literal form for Infinity/);
   });
 
   it("监听器抛出的异常不影响查询", async () => {

@@ -23,6 +23,19 @@ export class PostgresDialect extends Dialect {
     return `$${index}`;
   }
 
+  /** 57014: query_canceled, which statement_timeout raises. */
+  override isTimeout(error: unknown): boolean {
+    return PostgresDialect.errorProperty(error, "code") === "57014";
+  }
+
+  /**
+   * With standard_conforming_strings off, a backslash in '...' escapes the next character, so a
+   * value could end the literal early. E'...' reads backslashes the same way under either setting.
+   */
+  protected override stringLiteral(s: string): string {
+    return s.includes("\\") ? `E'${s.replaceAll("\\", "\\\\").replaceAll("'", "''")}'` : super.stringLiteral(s);
+  }
+
   override castType(type: CastType<unknown>): string {
     if (type.kind === "decimal") return `NUMERIC(${type.length},${type.scale})`;
     return super.castType(type);

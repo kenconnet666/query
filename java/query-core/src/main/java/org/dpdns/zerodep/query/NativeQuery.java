@@ -9,6 +9,7 @@ import org.dpdns.zerodep.query.type.TypeRegistry;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -25,6 +26,7 @@ public final class NativeQuery {
     private final Database database;
     private final String sql;
     private final Map<String, Binding> parameters = new HashMap<>();
+    private Duration timeout;
 
     NativeQuery(Database database, String sql) {
         this.database = database;
@@ -43,10 +45,17 @@ public final class NativeQuery {
         return this;
     }
 
+    /** Cancels the statement when it runs longer; overrides the database instance's queryTimeout. */
+    public NativeQuery timeout(Duration timeout) {
+        if (timeout == null || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
+        this.timeout = timeout;
+        return this;
+    }
+
     public <R> List<R> list(Class<R> type) {
         Rendered statement = render();
         TypeRegistry types = database.executor().types();
-        return database.executor().query(statement, rs -> read(rs, type, types), List::size);
+        return database.executor().query(statement, rs -> read(rs, type, types), List::size, timeout);
     }
 
     public <R> Optional<R> first(Class<R> type) {

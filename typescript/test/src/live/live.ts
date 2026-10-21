@@ -16,7 +16,9 @@ import {
   right,
   substring,
   sum,
+  val,
   values,
+  QueryExecutionError,
   type Database,
   type DatabaseOptions,
   type Driver,
@@ -54,6 +56,9 @@ function liveConfig(name: string): LiveConfig | string {
   return { host: parsed.hostname, port: Number(parsed.port), database: database === "" ? undefined : database, user, password };
 }
 
+/** Text that would end a string literal early, open a comment or look like a parameter. */
+const HOSTILE = ["O'Brien", "back\\slash", "\\'; DROP TABLE x; --", "ends with \\", "-- not a comment", "/* nor this */", "? :name $1 $$", "中文 Ünïcødé"];
+
 /** One dialect's side of the shared scenarios: how to connect, and its DDL spelling. */
 export interface LiveTarget {
   /** The QUERY_{NAME}_ prefix and the suite name. */
@@ -66,9 +71,14 @@ export interface LiveTarget {
   q?(identifier: string): string;
   /** The column type for a local date-time without time zone conversion. */
   timestamp?: string;
+  /** A hand-written statement that runs for several seconds before returning a row. */
+  readonly slowStatement: string;
+  /** Statements run after the shared tables exist; one starting with "-" may fail. */
+  readonly setup?: readonly string[];
 }
 
 export interface LiveContext {
+  readonly config: LiveConfig;
   readonly db: Database;
   readonly driver: Driver;
   q(identifier: string): string;
@@ -125,6 +135,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         insert("MCHBH", "'100', 'M1', '2026', '02', 6.000"),
         insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
         insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'"),
+        ...(target.setup ?? []),
       ];
       // A statement starting with "-" may fail, e.g. dropping what does not exist.
       for (const statement of statements) {
@@ -136,7 +147,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         }
       }
       const db = target.database(driver, { filters: [filter(ClientEntity, (r) => r.client.eq("100"))] });
-      context = { db, driver, q, table: t };
+      context = { config: config as LiveConfig, db, driver, q, table: t };
     });
 
     after(async () => {
@@ -444,6 +455,32 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     it("右侧的 UNION 保持原有分组", async () => {
       assert.deepEqual((await live().db.list(unionGrouping())).sort(), ["M1", "M1", "M2"]);
+    });
+
+    it("带引号、反斜杠和注释符的文本作为字面量和参数都原样往返", async () => {
+      const { db } = live();
+      const texts = cte("texts", values(HOSTILE.map((value, ord) => ({ value, ord }))));
+      assert.deepEqual(await db.list(from(texts).orderBy((t) => t.ord).selectValue((t) => t.value)), HOSTILE, "values(...) writes every row as literals");
+      for (const text of HOSTILE) {
+        assert.equal(await db.one(from(Lips).limit(1).selectValue(() => val(text))), text, "a SELECT-list constant is written as a literal");
+        assert.deepEqual(await db.list(from(texts).where((t) => t.value.eq(text)).selectValue((t) => t.value)), [text], "a WHERE value is bound as a parameter");
+      }
+    });
+
+    it("超过超时的语句在数据库端被取消且连接仍可用", async () => {
+      const { db, driver } = live();
+      const start = Date.now();
+      const timedOut = (e: unknown) => e instanceof QueryExecutionError && e.timedOut;
+      await assert.rejects(db.sql(target.slowStatement).timeout(1000).list(), timedOut);
+      const limited = target.database(driver, { queryTimeoutMs: 1000 });
+      await assert.rejects(limited.sql(target.slowStatement).list(), timedOut);
+      await assert.rejects(db.sql(`SELECT * FROM ${live().table("NO_SUCH_TABLE")}`).list(), (e: unknown) => e instanceof QueryExecutionError && !e.timedOut);
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < 5000, `both statements were cancelled after about a second instead of running to the end: ${elapsed} ms`);
+      assert.equal(await limited.one(from(Lips).where((l) => l.client.eq("100")).selectValue(() => count())), 5);
+      const streamed: string[] = [];
+      for await (const d of limited.stream(from(Lips).where((l) => l.client.eq("100")).selectValue((l) => l.delivery).timeout(5000))) streamed.push(d);
+      assert.equal(streamed.length, 5, "a stream applies its timeout and still reads every row");
     });
 
     extra?.(live);

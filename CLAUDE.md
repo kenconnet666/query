@@ -1,6 +1,6 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
@@ -74,6 +74,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
 - **发布**：Maven 中央仓库由维护者手动发布，步骤见 [docs/release.md](docs/release.md)；不要替维护者执行 `deploy`。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
   - Java 单元、渲染与金样例测试（Maven `--threads 1C` 并行构建模块；带 `release` profile、跳过签名，顺带检查 javadoc）；
+  - JDK 21 与 25 上的 Java 单元测试（字节码仍按 release 17 生成）；
   - PostgreSQL、MySQL 实库：按"库 × 语言"拆成 4 个 job；
   - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；

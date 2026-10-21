@@ -28,6 +28,8 @@
 - `list`、`one`、`first`、`count`、`page`、`stream` / `forEach`（PostgreSQL 在自动提交的连接上自动用游标）。
 - 原生 SQL：命名参数、集合展开，跳过引号、注释和方言引用里的 `:name`。
 - 结果缓存、语句监听器、`render` 查看 SQL 与参数。
+- 查询超时：数据库实例的默认值，查询与原生 SQL 的 `timeout(...)` 覆盖它，三库都在服务端取消语句。Java 在 Spring 事务里沿用事务剩余的时间。超时的异常可以用 `isTimeout()` / `timedOut` 区分。
+- 参数个数超过数据库上限（HANA、PostgreSQL 65535）时，在连接数据库之前给出可读的错误。
 - `query-spring`：通过 `DataSourceUtils` 取连接，查询加入外层事务；Spring 5.3、6.2、7.0 都在 CI 中验证。
 
 ### 保证
@@ -35,6 +37,8 @@
 - Java 与 TS 渲染出的 SQL 和参数由 `spec/render/` 的 88 个金样例文件（38 个场景在各方言上的渲染）保证相同。
 - 三个数据库上的实库场景逐项验证这些能力，另有连接泄漏与并发渲染的测试。
 - 保留字作标识符时自动加引号。
+- 字面量的转义经过恶意文本的三库往返测试；PostgreSQL 的值含反斜杠时写成 `E'...'`，不受 `standard_conforming_strings` 影响；`NaN`、`Infinity` 不会写成字面量。
+- CI 在 JDK 17、21、25 上运行单元测试。
 
 ### 已知限制
 
