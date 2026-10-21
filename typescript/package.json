@@ -1,15 +1,17 @@
 {
-  "name": "query",
+  "name": "query-workspace",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Type-safe analytic SQL builder for TypeScript",
+  "description": "Analytic SQL builder for TypeScript: a core package and one package per dialect",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "tsc -b && node --test \"test/dist/unit/**/*.test.js\"",
+    "test:live": "tsc -b && node --test --test-concurrency=1 \"test/dist/live/**/*.test.js\""
   },
   "devDependencies": {
     "typescript": "7.0.2"

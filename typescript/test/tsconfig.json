@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../packages/core" },
+    { "path": "../packages/hana" },
+    { "path": "../packages/postgres" },
+    { "path": "../packages/mysql" }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@query/hana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SAP HANA dialect: functions, clauses and an @sap/hana-client driver",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "dependencies": {
+    "@query/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@sap/hana-client": "^2.30.27"
+  },
+  "peerDependenciesMeta": {
+    "@sap/hana-client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@sap/hana-client": "2.30.27",
+    "@types/node": "24.19.2"
+  }
+}

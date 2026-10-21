@@ -40,5 +40,6 @@ build/
 /.idea/
 
 node_modules/
-typescript/dist/
+typescript/**/dist/
+*.tsbuildinfo
 .claude/settings.local.json
