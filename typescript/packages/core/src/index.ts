@@ -61,6 +61,7 @@ export {
   type TemplateArg,
 } from "./expr.js";
 export { Cte, Derived, type NullableRef, type Ref, type Source } from "./source.js";
+export { nest } from "./nest.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query.js";
 export {
   abs,

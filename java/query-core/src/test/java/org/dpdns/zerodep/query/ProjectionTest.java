@@ -41,6 +41,15 @@ class ProjectionTest {
     }
 
     @Test
+    void 结果按键分组为父项与子项并保持首次出现的顺序() {
+        record Line(String order, String item) { }
+        record Order(String order, List<String> items) { }
+        List<Line> lines = List.of(new Line("B", "b1"), new Line("A", "a1"), new Line("B", "b2"), new Line("C", null));
+        assertEquals(List.of(new Order("B", List.of("b1", "b2")), new Order("A", List.of("a1")), new Order("C", List.of())),
+            Nest.into(lines, Line::order, Line::item, (first, items) -> new Order(first.order(), items)));
+    }
+
+    @Test
     void 按行值有条件地读列会被拒绝() {
         Query<String> q = from(Lips.class).select((r, l) -> r.get(l, Lips::getUnit).isEmpty()
             ? r.get(l, Lips::getDelivery) : r.get(l, Lips::getMaterial));

@@ -10,6 +10,7 @@ import {
   inMemoryCache,
   left,
   negate,
+  nest,
   plus,
   replace,
   right,
@@ -22,7 +23,7 @@ import {
   type QueryEvent,
   type Ref,
 } from "@query/core";
-import { ClientEntity, Event, LineVO, Lips, MaraView } from "../erp.js";
+import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../erp.js";
 import { floorCeil, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
@@ -372,6 +373,19 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.deepEqual(
         rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
         ["M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"],
+      );
+    });
+
+    it("扁平结果按键分组为父项与子项", async () => {
+      const rows = await live().db.list(
+        from(Mara)
+          .leftJoin(Lips, (m, l) => l.material.eq(m.material))
+          .orderBy((m, l) => [m.material, l.delivery])
+          .select((m, l) => ({ material: m.material, delivery: l.delivery })),
+      );
+      assert.deepEqual(
+        nest(rows, (r) => r.material, (r) => r.delivery, (first, deliveries) => `${first.material}=${deliveries.join(",")}`),
+        ["M1=D1,D2,D5", "M2=D3,D4", "M3=", "M4="],
       );
     });
 

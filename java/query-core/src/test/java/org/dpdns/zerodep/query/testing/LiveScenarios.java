@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
+import org.dpdns.zerodep.query.Nest;
 import org.dpdns.zerodep.query.Page;
 import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.Ref;
@@ -13,6 +14,7 @@ import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Erp.StockRow;
@@ -25,6 +27,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.TimeZone;
@@ -296,6 +299,16 @@ public abstract class LiveScenarios {
             .map(r -> r.get(0) + "/" + r.get(1) + "/" + ((BigDecimal) r.get(2)).stripTrailingZeros().toPlainString() + "/" + r.get(3))
             .toList();
         assertEquals(List.of("M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"), rows);
+    }
+
+    @Test
+    void 扁平结果按键分组为父项与子项() {
+        List<List<Object>> rows = db.list(from(Mara.class)
+            .leftJoin(Lips.class, (m, l) -> l.col(Lips::getMaterial).eq(m, Mara::getMaterial))
+            .orderBy((m, l) -> orders(m.col(Mara::getMaterial).asc(), l.col(Lips::getDelivery).asc()))
+            .select((r, m, l) -> Arrays.asList(r.get(m, Mara::getMaterial), r.get(l, Lips::getDelivery))));
+        List<String> groups = Nest.into(rows, row -> row.get(0), row -> (String) row.get(1), (first, deliveries) -> first.get(0) + "=" + deliveries);
+        assertEquals(List.of("M1=[D1, D2, D5]", "M2=[D3, D4]", "M3=[]", "M4=[]"), groups);
     }
 
     @Test
