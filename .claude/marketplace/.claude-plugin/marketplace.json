@@ -1,0 +1,12 @@
+{
+  "name": "query",
+  "description": "In-repo plugin marketplace that only serves this project's Claude Code plugins",
+  "owner": { "name": "query" },
+  "plugins": [
+    {
+      "name": "query-lsp",
+      "source": "./query-lsp",
+      "description": "Native LSP for TypeScript, served by the repo's TypeScript 7 compiler"
+    }
+  ]
+}

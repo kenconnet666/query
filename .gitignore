@@ -38,3 +38,7 @@ build/
 ### Mac OS ###
 .DS_Store
 /.idea/
+
+node_modules/
+typescript/dist/
+.claude/settings.local.json

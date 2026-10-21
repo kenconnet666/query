@@ -1,0 +1,6 @@
+{
+  "name": "query-lsp",
+  "version": "1.0.0",
+  "description": "TypeScript language server for the LSP tool and post-edit diagnostics. It runs the compiler pinned in typescript/package.json, so results match its typecheck",
+  "author": { "name": "query" }
+}

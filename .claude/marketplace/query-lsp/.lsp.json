@@ -1,0 +1,13 @@
+{
+  "typescript": {
+    "command": "node",
+    "args": ["${CLAUDE_PROJECT_DIR}/typescript/node_modules/typescript/bin/tsc", "--lsp", "--stdio"],
+    "extensionToLanguage": {
+      ".ts": "typescript",
+      ".mts": "typescript",
+      ".cts": "typescript"
+    },
+    "workspaceFolder": "${CLAUDE_PROJECT_DIR}/typescript",
+    "startupTimeout": 30000
+  }
+}

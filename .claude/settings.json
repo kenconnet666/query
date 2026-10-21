@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "query-lsp@query": true
+  },
+  "extraKnownMarketplaces": {
+    "query": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/marketplace"
+      }
+    }
+  }
+}

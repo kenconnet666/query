@@ -21,3 +21,28 @@
 $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 .\mvnw.cmd --batch-mode verify
 ```
+
+TypeScript 部分在 `typescript/` 目录，开发编译器固定为 TypeScript 7.0.2：
+
+```powershell
+cd typescript
+corepack pnpm install
+corepack pnpm typecheck
+```
+
+## Claude Code 语言服务
+
+`.claude/settings.json` 启用了仓库内插件 `query-lsp@query`（位于 `.claude/marketplace`）。Claude 通过它查定义、引用和悬停信息，并在编辑后收到诊断。插件在会话启动时加载，首次打开项目时 Claude Code 会询问是否信任并安装。
+
+| 语言 | 来源 | 准备 |
+| --- | --- | --- |
+| TypeScript | LSP：`typescript/` 固定的 TypeScript 7 编译器自带的语言服务（`tsc --lsp --stdio`），结果与 `typecheck` 一致 | 在 `typescript/` 执行 `pnpm install` |
+| Java | IntelliJ IDEA 内置的 MCP 服务器（用户级配置的 `idea`），提供符号查找、调用链、重命名和文件问题等能力 | 在 IDEA 中打开本项目 |
+
+Java 暂时不配置 LSP。JetBrains 的 Java 语言服务器目前只随 VS Code / Cursor 扩展 "Java and Kotlin by IntelliJ IDEA" 提供，许可证限定由人使用；Claude Code 这类终端代理的用法，JetBrains 尚未发布。
+
+不启动 Claude 也可以直接验证 TypeScript 的配置。下面的命令按 `.lsp.json` 的原样命令启动服务器，并在指定位置检查悬停和跳转定义（行号、列号从 1 开始）：
+
+```powershell
+node tools/lsp/verify.mjs typescript typescript/src/index.ts 2 14
+```
