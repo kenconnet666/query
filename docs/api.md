@@ -195,6 +195,21 @@ q.map(d -> d.partNumber());          // 在映射结果上再套一层 Java 函�
 
 标签匹配时忽略大小写和下划线，所以 `PART_NUMBER` 能映射到 `partNumber`。查询多出来的列会被忽略；目标属性缺少对应列时报错。数值类型宽松转换，例如 BigDecimal 可以赋给 Double。
 
+**一对多**：用一条查询取出扁平的行（例如表头 LEFT JOIN 明细），再用 `Nest.into` 分组成父项加子项列表：
+
+```java
+List<Line> lines = db.list(from(Head.class)
+    .leftJoin(Item.class, (h, i) -> i.col(Item::getOrderNo).eq(h, Head::getOrderNo))
+    .orderBy((h, i) -> orders(h.col(Head::getOrderNo).asc(), i.col(Item::getPosition).asc()))
+    .selectAs(Line.class));
+List<Order> orders = Nest.into(lines, Line::orderNo, Line::position, (first, positions) -> new Order(first.orderNo(), positions));
+```
+
+- 每个键一个父项，顺序与键第一次出现的顺序相同；父项由该键的第一行构造。
+- 子项函数返回 null 时（LEFT JOIN 没有匹配）不加子项，父项得到空列表。
+- 复合键用 record 或 `List.of(a, b)`。
+- 子表要单独查询时，先查父项，再用 `in(父项的键)` 查一次子表，然后对子表的行用 `Nest.into` 或 `Collectors.groupingBy` 按键分组，挂到父项上。
+
 ## 5. CTE、派生表、UNION、窗口
 
 ```java

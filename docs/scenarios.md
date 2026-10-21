@@ -32,7 +32,7 @@
 | 映射到 DTO | `select(VO.class, ...)`、`selectAutoInclude` | `selectAs(VO.class)` 按同名属性取列；`@MapFrom` 处理改名的属性；`.as(VO::getX)` 指定计算列 | 1 |
 | 元组 / 匿名结果 | `Draft2..`、`selectColumn` | 函数式投影 `select((r, a, b) -> new X(...))`，可以构造任意类型，包括嵌套对象 | 1 |
 | 嵌套 DTO（一对一） | `selectAutoInclude` 加导航属性 | 在函数式投影中直接构造嵌套 record | 1 |
-| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | 一条查询的扁平结果按键分组成父项加子项列表（`nest`）；需要两次查询时由 `nest` 加一次 `IN` 查询组合 | 3 |
+| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | 一条查询的扁平结果按键分组成父项加子项列表（Java `Nest.into`、TS `nest`）；需要两次查询时，用 `IN` 查一次子表再分组 | 1 |
 | 单列 / 标量结果 | `selectColumn`、`count`、`sum` | `selectValue(...)` 加 `db.one(...)`、`db.count(q)` | 1 |
 | Lombok `@Data`、链式 setter、`@Builder`、record | 部分支持 | 均支持：映射计划用 `MethodHandle` 调用 | 1 |
 

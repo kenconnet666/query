@@ -162,6 +162,22 @@ q.map((r) => ({ ...r, wan: Number(r.quantity) / 10_000 }));   // 在 JS 端计�
 - 结果按列的位置读取，不依赖数据库返回的标签大小写。
 - 扁平的对象投影可以作为 CTE 或派生表。
 
+**一对多**：用一条查询取出扁平的行（例如表头 LEFT JOIN 明细），再用 `nest` 分组成父项加子项列表：
+
+```ts
+const rows = await db.list(
+  from(Head)
+    .leftJoin(Item, (h, i) => i.orderNo.eq(h.orderNo))
+    .orderBy((h, i) => [h.orderNo, i.position])
+    .select((h, i) => ({ orderNo: h.orderNo, position: i.position })),
+);
+const orders = nest(rows, (r) => r.orderNo, (r) => r.position, (first, positions) => ({ orderNo: first.orderNo, positions }));
+```
+
+- 每个键一个父项，顺序与键第一次出现的顺序相同；父项由该键的第一行构造。
+- 子项函数返回 null 或 undefined 时（LEFT JOIN 没有匹配）不加子项，父项得到空数组。
+- 键按 Map 的规则比较，复合键拼成字符串：`` (r) => `${r.a}|${r.b}` ``。
+
 ## 5. CTE、派生表、UNION、窗口
 
 ```ts
