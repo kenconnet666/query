@@ -1,0 +1,6 @@
+packages:
+  - packages/*
+  - test
+# The SAP client checks its prebuilt native binding on install.
+allowBuilds:
+  "@sap/hana-client": true

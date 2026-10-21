@@ -1,0 +1,15 @@
+{
+  "name": "@query/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Entities, expressions, scoped queries, rendering and execution shared by every dialect",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "sideEffects": ["./dist/metadata.js"]
+}

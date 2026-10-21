@@ -1,14 +1,22 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的类型安全 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
-- **Java**：17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。不使用注解处理器（APT）。
-- **TypeScript**：最低支持 6.0；开发编译器固定为 7.0.2（原生编译器），工程在 `typescript/`。
-- **首批方言**：SAP HANA 和 DuckDB，然后是 PostgreSQL 和 MySQL。
-- **API 尚未稳定**：0001 里的代码只是方向示意。原型验证之前，不写详细的 API 文档或使用手册；文档只记录决定、取舍和验证证据。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
+- **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
+- **Java**：
+  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
+  - 实体用注解声明，可以要求用户使用 Lombok。
+  - 不使用注解处理器（APT），也不在使用方生成代码。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@query/*`）和私有测试包 `test`。
+- **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
+- **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
+- **文档**：
+  - API 方向以 0002 为准；
+  - 用法写在 [docs/api.md](docs/api.md)（Java）和 [docs/api-typescript.md](docs/api-typescript.md)（TS），API 变化时同步更新；
+  - 其余文档只记录决定、取舍和验证证据，过时的内容直接删改，不堆叠。
 
 ## 必须参考的本地仓库
 
@@ -57,10 +65,55 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 cd typescript
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固定
-corepack pnpm typecheck
+corepack pnpm test                       # tsc -b，再跑单元、编译期与金样例测试
+corepack pnpm test:live                  # 三库实库场景，变量见下文
 ```
 
-目前还没有 CI。加 CI 时参考前身仓库的 workflow：`setup-java` 用 Temurin，并在 Actions 里起数据库服务和 HANA 容器。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|spring`。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **生成代码**：`From1..From8` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
+- **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
+  - Java 单元、渲染与金样例测试（Maven `--threads 1C` 并行构建模块）；
+  - PostgreSQL、MySQL 实库：按"库 × 语言"拆成 4 个 job；
+  - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
+  - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
+  - TypeScript 编译、编译期检查、单元与金样例测试。
+
+  容器定义在 `infra/`。
+- **CI 的提速规则**：
+  - 实库 job 先在后台启动数据库，安装、编译、构建都放在数据库启动的等待时间里，最后才等待就绪；
+  - 托管 runner 用完即销毁，不写清理步骤；
+  - Node 用 runner 预装的 24.x，TS 编译器与 pnpm 仍由锁文件和 `packageManager` 固定；
+  - 关键路径是 HANA 的拉取与启动（约 26 秒加 200 秒），调整前先用 `gh api repos/kenconnet666/query/actions/runs/<id>/jobs` 看各步骤耗时。
+- **本地只跑与改动相关的测试**：
+  - 用 `-pl <模块>`，必要时加 `-Dtest=...` 和 `-Dsurefire.failIfNoSpecifiedTests=false`；
+  - PowerShell 里带点的 `-D` 参数要加引号；
+  - TS 编译后可以只跑一个文件：`node --test test/dist/unit/render.test.js`。
+- **金样例**（`spec/render/<场景>.<方言>.sql`）：
+  - 两端的方言测试都读取它，渲染出的 SQL 和参数必须完全相同；Java 的样例清单在 `testing/SpecCases` 和各方言的 `*SpecTest`，TS 的在 `test/src/spec-cases.ts`；
+  - 改了渲染或新增能力时，两端同时改，再用 Java 重写文件：`$env:QUERY_SPEC_WRITE = '1'` 后运行 `*SpecTest`，然后审查 diff；
+  - 投影的列名要两端一致：Java 的函数式投影用 `.as("key")` 对上 TS 的对象键。
+- **提交前排查 CI 风险**：
+  - 文件的可执行位（`mvnw`、`infra/hana/*.sh` 要求 100755）；
+  - 行尾；
+  - 新模块是否已加进 workflow；
+  - 实库变量名是否与 workflow 一致；
+  - `typescript/pnpm-lock.yaml` 是否与各 `package.json` 一致（CI 用 `--frozen-lockfile` 安装）。
+- **实库测试的变量**：
+  - 共享场景：Java 在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；TS 在 `test/src/live/live.ts`，各方言一个 `*.live.test.ts`；
+  - 两端读取同一组 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
+  - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
+  - 本机从容器里取密码，不打印也不落盘：
+
+    ```powershell
+    $env:QUERY_PG_URL = 'jdbc:postgresql://localhost:55432/eqp'; $env:QUERY_PG_USER = 'eqp'
+    $env:QUERY_PG_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-postgres-1 printenv POSTGRES_PASSWORD).Trim()
+    $env:QUERY_MYSQL_URL = 'jdbc:mysql://localhost:53306/eqp?sslMode=DISABLED&allowPublicKeyRetrieval=true'; $env:QUERY_MYSQL_USER = 'root'
+    $env:QUERY_MYSQL_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-mysql-1 printenv MYSQL_ROOT_PASSWORD).Trim()
+    $env:QUERY_HANA_URL = 'jdbc:sap://localhost:39041'; $env:QUERY_HANA_USER = 'SYSTEM'
+    $env:QUERY_HANA_PASSWORD = (wsl -d Debian --exec docker exec eqp-hana-hana-1 printenv EQP_HANA_PASSWORD).Trim()
+    ```
+
+  - 测试会在各库的 `QUERY_IT` schema 里重建测试表。
 
 ## 开发数据库（WSL Debian 上的 Docker）
 
@@ -86,13 +139,20 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
   - `global_allocation_limit` 设为 80% 时，查询编译阶段会内存不足，所以保持默认值。
   - IDEA 连接 HANA 必须用 ngdbc 2.30.11。
 - **内存限制**：只在 Compose 文件里写一处，`mem_limit` 和 `memswap_limit` 相同，脚本通过 `docker compose config` 读回并核对。不要用调大限制来掩盖失败。
-- **迁移到本仓库**：等本仓库需要实库测试时，再把基础设施有计划地迁过来，保持相同的限制和规则；不要同时跑两套占用相同端口的实例。
-- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的 SQL 工具查询。
+- **本仓库的 `infra/`**：CI 用的容器定义，沿用相同的内存限制和规则，端口默认值与前身相同。本机开发仍使用前身仓库启动的实例，不要同时跑两套占用相同端口的实例。
+- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的数据库工具查询。2026-10-21 的实测结论如下：
+  - **连接 ID**：
+    - PostgreSQL `7d39150c-eb7e-44db-b0e5-2aa784f1714f`（databaseName `eqp`，schema `public`）；
+    - HANA HXE `30a1b705-a891-4d16-a137-d57e09706aab`（databaseName 留空，schema `SYSTEM`）；
+    - MySQL `6c21da65-0c0a-47ca-b636-6644156e9150`。
+  - **可用的工具**：`test_database_connection`（能看到版本和大小写规则）、`list_database_schemas`、`list_schema_objects`、`get_database_object_description`、`preview_table_data`。
+  - **`execute_sql_query`**：能执行 SELECT、DDL 和 DML，一次调用中的多条语句也能执行，返回最后一条的结果。
+  - **限制**：语句出错时只返回 "Unknown error"，看不到错误码，需要错误详情时改用 JDBC（例如写一个测试）。
 
 ## IDE 与 Claude 工具
 
 - **IDEA MCP**：服务名 `idea`，用户级配置，地址 `http://127.0.0.1:64343/stream`，需要 IDEA 开着。Java 的语义问题都走它：符号查找、调用链、重命名、文件问题，以及运行配置、数据库和 DebugTools。保持用户级配置，不在仓库里加 `.mcp.json`。
-- **TypeScript LSP**：仓库内插件 `query-lsp@query`，由 `.claude/settings.json` 启用，源文件在 `.claude/marketplace`。它运行 `typescript/` 固定的 TS 7 编译器自带的 LSP。要求 `typescript/` 已经安装依赖，且会话从本仓库目录启动，否则 `${CLAUDE_PROJECT_DIR}` 指向别处。不启动 Claude 也可以验证：`node tools/lsp/verify.mjs typescript typescript/src/index.ts 2 14`。
+- **TypeScript LSP**：仓库内插件 `query-lsp@query`，由 `.claude/settings.json` 启用，源文件在 `.claude/marketplace`。它运行 `typescript/` 固定的 TS 7 编译器自带的 LSP。要求 `typescript/` 已经安装依赖，且会话从本仓库目录启动，否则 `${CLAUDE_PROJECT_DIR}` 指向别处。不启动 Claude 也可以验证：`node tools/lsp/verify.mjs typescript typescript/packages/core/src/index.ts 2 3`。
 - **Java LSP**：
   - 暂不配置，也不要用 Eclipse JDT LS（用户已明确拒绝）。
   - JetBrains 的 Java 语言服务器目前只随 VS Code / Cursor 扩展 "Java and Kotlin by IntelliJ IDEA" 提供，许可证限定由人使用。
@@ -113,5 +173,6 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
 - **仓库**：GitHub `kenconnet666/query`，公开，默认分支 `master`。
 - **提交与推送**：完成的工作直接提交并推送，不必询问：先建分支，再推这个分支。force-push、改写历史、推 `master`、合并 PR 都需要用户明确要求。
 - **公开仓库的限制**：仓库是公开的，绝不写入凭据，也不写入实际使用方的信息（公司、项目名、内部路径、业务常量）。使用方的说明只保存在本机 Claude 项目记忆中，文档里统称"内部 ERP 分析大屏"。
-- **提交格式**：commit message 用英文，结尾加 `Co-Authored-By` trailer；文档用中文。
+- **提交格式**：commit message 用中文，结尾加 `Co-Authored-By` trailer；文档用中文。
+- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为；代码标识符、注释和日志仍用英文。
 - **行尾**：由 `.gitattributes` 统一为 LF，`*.cmd` 为 CRLF。

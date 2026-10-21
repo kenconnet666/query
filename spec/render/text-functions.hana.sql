@@ -1,0 +1,3 @@
+-- parameters: []
+SELECT LEFT(LIPS.VBELN, 2) AS "prefix", RIGHT(LIPS.VBELN, 3) AS "suffix", SUBSTRING(LIPS.MATNR, 2, 3) AS "middle", SUBSTRING(LIPS.MATNR, 2) AS "tail", REPLACE(LIPS.VRKME, '-', '') AS "cleaned", -(LIPS.LFIMG) AS "negative", (LIPS.LFIMG + COALESCE(LIPS.LFIMG, 0)) AS "periods"
+FROM QUERY_IT.LIPS LIPS

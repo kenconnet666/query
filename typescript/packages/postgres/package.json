@@ -1,0 +1,34 @@
+{
+  "name": "@query/postgres",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PostgreSQL dialect: functions, clauses and a pg driver",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "dependencies": {
+    "@query/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1"
+  },
+  "peerDependenciesMeta": {
+    "@types/pg": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "pg": "8.23.1"
+  }
+}
