@@ -6,13 +6,9 @@
 
 ### 分支
 
-| 分支 | 最新提交 | 内容 |
-| --- | --- | --- |
-| `master` | `038430b` | IDEA 生成的 Maven 骨架 |
-| `docs/direction` | `5067513` | README、[0001 方向决定](../docs/decisions/0001-standalone-analytic-query-library.md)、Maven wrapper、`.gitattributes` |
-| `tooling/claude-lsp` | 叠在 `docs/direction` 之上 | `typescript/` 工程（TS 7.0.2）、TypeScript LSP 插件、`tools/lsp/verify.mjs`、项目 `CLAUDE.md` 与本交接文件 |
-
-- 两个分支都已推送，但都还没进 `master`。合并方式（开 PR 还是直接合并）需要用户决定，不要自行推 `master`。
+- 全部工作都已快进合并到 `master` 并推送，两个功能分支（`docs/direction`、`tooling/claude-lsp`）已删除。
+- `master` 现在包含：IDEA 生成的 Maven 骨架、README、[0001 方向决定](../docs/decisions/0001-standalone-analytic-query-library.md)、Maven wrapper、`.gitattributes`、`typescript/` 工程（TS 7.0.2）、TypeScript LSP 插件、`tools/lsp/verify.mjs`、项目 `CLAUDE.md` 与本交接文件。
+- 新工作照常先建分支，再推送这个分支。
 - 还没有 CI。
 
 ### 已完成
@@ -29,7 +25,6 @@
 2. TypeScript 与 Java 同步推进，还是 Java 先行？
 3. 前身仓库 `easy_query_pro` 是否冻结？它停在 `8dd39a4`，CI 全绿，没有开 PR。
 4. 方言顺序是否确认为 HANA、DuckDB 首发，PostgreSQL、MySQL 其次？
-5. 上面两个分支如何进入 `master`？
 
 ## 下一步（建议）
 
