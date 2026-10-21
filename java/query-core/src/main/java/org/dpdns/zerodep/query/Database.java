@@ -48,7 +48,7 @@ public abstract class Database {
         attributes.put(NamingStrategy.class, config.naming);
         this.settings = new Settings(filters, config.cache, config.naming, Map.copyOf(config.functions), Map.copyOf(attributes));
         TypeRegistry types = dialect.types().with(config.types);
-        this.executor = new JdbcExecutor(name, Objects.requireNonNull(connections, "connections"), types, config.listeners, config.fetchSize);
+        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, config.listeners, config.fetchSize);
     }
 
     public final Dialect dialect() { return dialect; }

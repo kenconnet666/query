@@ -1,6 +1,8 @@
 package org.dpdns.zerodep.query.exec;
 
 import org.dpdns.zerodep.query.dialect.Binding;
+import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.Dialect.CursorCleanup;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
@@ -31,13 +33,16 @@ public final class JdbcExecutor {
     }
 
     private final String database;
+    private final Dialect dialect;
     private final ConnectionProvider connections;
     private final TypeRegistry types;
     private final List<QueryListener> listeners;
     private final int fetchSize;
 
-    public JdbcExecutor(String database, ConnectionProvider connections, TypeRegistry types, List<QueryListener> listeners, int fetchSize) {
+    public JdbcExecutor(String database, Dialect dialect, ConnectionProvider connections, TypeRegistry types, List<QueryListener> listeners,
+                        int fetchSize) {
         this.database = database;
+        this.dialect = dialect;
         this.connections = connections;
         this.types = types;
         this.listeners = List.copyOf(listeners);
@@ -91,19 +96,23 @@ public final class JdbcExecutor {
         long start = System.nanoTime();
         Connection connection = null;
         PreparedStatement ps = null;
+        CursorCleanup cleanup = CursorCleanup.NONE;
         ResultSet rs = null;
         try {
             connection = connections.acquire();
             ps = prepare(connection, statement);
+            cleanup = dialect.openCursor(connection, ps);
             rs = ps.executeQuery();
         } catch (SQLException | RuntimeException e) {
             closeQuietly(rs, ps);
+            cleanUpQuietly(cleanup);
             release(connection);
             notify(statement, start, 0, e, false);
             throw new QueryExecutionException(database, statement, e);
         }
         Connection c = connection;
         PreparedStatement p = ps;
+        CursorCleanup undo = cleanup;
         ResultSet r = rs;
         long[] count = {0};
         Spliterator<Object[]> rows = new Spliterators.AbstractSpliterator<>(Long.MAX_VALUE, Spliterator.ORDERED | Spliterator.NONNULL) {
@@ -121,6 +130,7 @@ public final class JdbcExecutor {
         };
         return StreamSupport.stream(rows, false).onClose(() -> {
             closeQuietly(r, p);
+            cleanUpQuietly(undo);
             release(c);
             notify(statement, start, count[0], null, false);
         });
@@ -132,7 +142,7 @@ public final class JdbcExecutor {
     private PreparedStatement prepare(Connection connection, Rendered statement) throws SQLException {
         PreparedStatement ps = connection.prepareStatement(statement.sql());
         try {
-            if (fetchSize > 0) ps.setFetchSize(fetchSize);
+            if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL streams row by row with Integer.MIN_VALUE
             List<Binding> bindings = statement.bindings();
             for (int i = 0; i < bindings.size(); i++) {
                 Binding b = bindings.get(i);
@@ -164,6 +174,14 @@ public final class JdbcExecutor {
             if (ps != null) ps.close();
         } catch (SQLException ignored) {
             // closing is best effort
+        }
+    }
+
+    private static void cleanUpQuietly(CursorCleanup cleanup) {
+        try {
+            cleanup.run();
+        } catch (SQLException ignored) {
+            // like closing: the stream's own outcome matters more
         }
     }
 

@@ -4,6 +4,9 @@ import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -12,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * An open base class for dialects. It owns only syntax: identifier quoting and case folding,
- * literals, paging, CAST type names and JDBC type handling. Function renderings a dialect knows are
+ * literals, paging, CAST type names, JDBC type handling and what a driver needs to stream rows. Function renderings a dialect knows are
  * registered in its constructor with {@link #register}; nothing switches on a dialect name.
  */
 public abstract class Dialect {
@@ -98,6 +101,22 @@ public abstract class Dialect {
     public int maxInListSize() { return 1000; }
 
     public TypeRegistry types() { return TypeRegistry.defaults(); }
+
+    /** Undoes what {@link #openCursor} changed on a connection; runs when the stream closes. */
+    @FunctionalInterface
+    public interface CursorCleanup {
+        CursorCleanup NONE = () -> { };
+
+        void run() throws SQLException;
+    }
+
+    /**
+     * Readies a statement for {@code Database.stream} so that rows come from a server cursor instead
+     * of a buffer of the whole result. Most drivers need nothing: HANA's fetches in chunks on its own.
+     */
+    public CursorCleanup openCursor(Connection connection, PreparedStatement statement) throws SQLException {
+        return CursorCleanup.NONE;
+    }
 
     protected final void register(FunctionDef function, FunctionRenderer renderer) { functions.put(function, renderer); }
 
