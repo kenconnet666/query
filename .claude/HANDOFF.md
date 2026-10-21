@@ -9,7 +9,7 @@
 - 三个分支依次叠加，都已推送：
   1. `feat/java-core`：第一期 Java；
   2. `feat/typescript-core`：第二期 TypeScript；
-  3. `feat/real-query-parity`：真实查询对照、补齐的能力、Spring 适配和 CI 提速。
+  3. `feat/real-query-parity`：真实查询对照、补齐的能力、Spring 适配、CI 提速、SQL 级列转换与 ROLLUP/分组集合。
 - [PR #1](https://github.com/kenconnet666/query/pull/1) 把 `feat/real-query-parity` 合并进 `master`，三个分支的内容都在里面。
   - 按用户要求**不开自动合并**，由用户手动合并。
   - 新电脑上继续时，在 `feat/real-query-parity` 上开发即可。
@@ -21,7 +21,7 @@
 
 - **文档**：
   - [0001](../docs/decisions/0001-standalone-analytic-query-library.md)：方向决定；从 HANA 目录生成实体的工具暂时不做；
-  - [0002](../docs/decisions/0002-api-architecture.md)：API 与架构；第 9 条是 TS，第 10 条是常量字面量规则，第 11 条是常量行；
+  - [0002](../docs/decisions/0002-api-architecture.md)：API 与架构；第 9 条是 TS，第 10 条是常量字面量规则，第 11 条是常量行，第 12 条是 SQL 级列转换，第 13 条是 ROLLUP 与分组集合；
   - 用法说明：[Java](../docs/api.md)、[TypeScript](../docs/api-typescript.md)；
   - [场景对照](../docs/scenarios.md)。
 - **Java**：`query-core`、`query-hana`、`query-postgres`、`query-mysql`、`query-spring` 五个模块：
@@ -40,15 +40,17 @@
   - `substring`、`left`、`right`、`replace`、`negate`，以及接收列表的 `plus`；
   - HANA 的 `likeRegexpr`、`toNvarchar`；
   - SELECT 列表与分组表达式里的常量写成字面量。
-- **两端一致**：`spec/render/` 下 60 个金样例，Java 与 TS 的测试都读取，SQL 与参数逐字相同。
+- **SQL 级列转换**（0002 第 12 条）：`@ReadAs("…{0}…")` 与内置的 `@BlankAsNull`、`@Trimmed`（TS 为 `readAs`、`blankAsNull`、`trimmed`），列在语句的每个位置都按模板读取。对照程序换用 `@BlankAsNull` 后两端仍是 21 组全部一致。
+- **ROLLUP 与分组集合**（0002 第 13 条）：核心包 `groupByRollup`、`grouping`，MySQL 渲染为 `WITH ROLLUP`；HANA、PostgreSQL 包里有 `cube`、`groupingSets`。
+- **两端一致**：`spec/render/` 下 70 个金样例，Java 与 TS 的测试都读取，SQL 与参数逐字相同。
 - **测试**（中文命名，本机三库全部通过）：
-  - Java 196 个（含 63 个金样例、48 个实库场景、javac 编译期检查、3 个 Spring 事务测试）；
-  - TS 180 个（含 63 个金样例、48 个实库场景、16 条 `@ts-expect-error` 编译期检查）。
+  - Java 216 个（含 73 个金样例、56 个实库场景、javac 编译期检查、3 个 Spring 事务测试）；
+  - TS 200 个（含 73 个金样例、56 个实库场景、16 条 `@ts-expect-error` 编译期检查）。
 - **CI**：
   - 并行的 job：Java 单元、TS 单元、Spring 6.2 与 7.0、PostgreSQL 和 MySQL 按"库 × 语言"拆成的 4 个 job、HANA（一个 job 跑两种语言）。
   - 提速规则见 CLAUDE.md 的"CI 的提速规则"。
   - 调整前，整次运行约 5 分钟，关键路径是 HANA：拉镜像约 26 秒，启动约 200 秒。
-  - 最后一次提交改成：后台启动数据库，构建与数据库启动重叠，去掉清理步骤，HANA 健康检查改为 3 秒一次。这个调整是否生效、省了多少时间，要看这次推送后的 CI 结果。
+  - 之后改成：后台启动数据库，构建与数据库启动重叠，去掉清理步骤，HANA 健康检查改为 3 秒一次。改后整次运行约 4 分 20 秒，关键路径仍是 HANA job（约 260 秒）。
 
 ### 待用户决定
 
@@ -57,13 +59,11 @@
 
 ## 下一步（建议）
 
-1. 看 PR #1 上这次推送的 CI 是否全绿，记下各 job 的耗时，与调整前约 5 分钟的结果对比。
+1. 看 PR #1 上这次推送的 CI 是否全绿。
 2. **第三期剩余**（见 0002 的分期）：
-   - 分组集合（HANA、PostgreSQL 用 `GROUPING SETS`，MySQL 用 `WITH ROLLUP`）；
-   - HANA 计算视图与带参数的表函数；
-   - SQL 级列转换；
    - 一对多的批量组装；
-   - 按请求对象生成条件。
+   - 按请求对象生成条件；
+   - HANA 计算视图与带参数的表函数、JSON。
 3. 在使用方仓库挑一个服务试点迁移。需要用户同意，目前使用方代码只读。
 
 ## 换电脑后的准备

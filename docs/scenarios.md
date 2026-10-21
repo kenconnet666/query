@@ -17,7 +17,7 @@
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
 | 常量行（码表 CTE） | 原生 SQL 片段 | `values(Shape.class, rows)`：每行一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY` | 1 |
 | 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy((a, b) -> keys(...))`、`having(...)` | 1 |
-| ROLLUP / GROUPING SETS | 增强包提供 | MySQL 只支持 `WITH ROLLUP`，所以不进核心包；由 HANA、PostgreSQL 方言包提供 | 3 |
+| ROLLUP / CUBE / GROUPING SETS | 增强包提供 | 核心包 `groupByRollup(...)` 与 `grouping(e)`，MySQL 渲染为 `WITH ROLLUP`；MySQL 不支持的 `cube`、`groupingSets` 由 HANA、PostgreSQL 方言包提供 | 1 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包，`RANGE` 由方言包提供 | 1 |
 | `QUALIFY` / 分区取第一行 | `partitionBy` | HANA 不支持 `QUALIFY`；用 CTE 加 `rowNumber` 再过滤 | 1 |
 | 分页 | `toPageResult` | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)` | 1 |
@@ -56,8 +56,8 @@
 | --- | --- | --- | --- |
 | 值转换 | `ValueConverter<T, P>`、`@Column(conversion)` | `Converter<J, D>`，配合组合注解 `@ConvertWith` 使用 | 1 |
 | 枚举 | `@Enumerated` 等 | 默认按名称映射；按编码映射由转换器提供 | 1 |
-| SQL 级列转换（如加解密函数） | `ColumnValueSQLConverter` | 列读取和参数渲染都可以挂 SQL 包装，例如 `TRIM(col)` | 3 |
-| 加密列 | `@Encryption` | 由 SQL 级列转换实现 | 3 |
+| SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
+| 加密列 | `@Encryption` | 读取一侧可用 `@ReadAs`；参数一侧的包装与写入一起评估 | 3 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
 | 自定义方言 | 继承上游的内部类 | 继承开放的 `Dialect` 类，覆盖其中的钩子 | 1 |

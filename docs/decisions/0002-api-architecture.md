@@ -167,6 +167,29 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。常量行可以作为 CTE 或派生表，列类型取自形状类（Java）或值本身（TS，可以另外指定）。
 
+### 12. SQL 级列转换只管读取，写在字段上
+
+- 字段上的 `@ReadAs("NULLIF({0}, '')")`（TS 为 `@readAs(...)`）规定这一列怎样读，`{0}` 代表带别名的列，做法同 Hibernate 的 `@ColumnTransformer(read = ...)`。
+- 转换写进 SQL，列出现的每个位置都套上模板：SELECT、WHERE、GROUP BY、ORDER BY、连接条件、聚合参数。比较值仍然绑定为参数。
+- 内置两个组合注解：`@BlankAsNull`（`NULLIF({0}, '')`）和 `@Trimmed`（`TRIM({0})`）。Java 的 `@ReadAs` 可以作元注解，组合出自己的注解；TS 的 `readAs(...)` 返回的装饰器可以赋给常量复用。
+- 一个字段最多一个读取模板，模板必须包含 `{0}`，否则在读取元数据时报错。
+- 需要原值时，在同一个实体上再声明一个映射到同一列的字段。
+- 只做读取：本库不做写入，参数一侧的包装（如加密）以后与写入一起评估。
+
+理由：
+
+- 真实查询里 `NULLIF(col, '')` 出现了十几次，分散在 SELECT、分组和条件里，逐处手写既啰嗦又容易漏。
+- 转换器（`Converter`、`converted`）只在 Java/TS 端改值，分组、聚合和条件看到的仍是原值；空串和 NULL 在 `COUNT(DISTINCT …)` 里结果不同，所以这类转换必须进 SQL。
+
+代价：条件写在转换后的列上时，数据库可能用不上这一列的索引；需要命中索引时，把条件写在原值字段上。
+
+### 13. ROLLUP 进核心包，CUBE 与 GROUPING SETS 留在方言包
+
+- 核心包：`groupByRollup(keys)` 与 `grouping(key)`。HANA 和 PostgreSQL 渲染 `GROUP BY ROLLUP(a, b)`，MySQL 渲染 `GROUP BY a, b WITH ROLLUP`，三库的结果相同；`GROUPING()` 三库都支持，也都允许出现在 ORDER BY 中。
+- `groupByRollup` 一次列出全部分组键，不能与 `groupBy` 混用：MySQL 的 `WITH ROLLUP` 作用于整个 GROUP BY 列表，`GROUP BY a, ROLLUP(b)` 这种部分汇总在 MySQL 上写不出来。
+- `cube(...)` 与 `groupingSets(...)` 只在 HANA 和 PostgreSQL 包里，作为 `groupBy` 的键使用；MySQL 不支持，在别的方言上渲染时报错。
+- 汇总行里被汇总掉的列读出 NULL，用 `grouping(col)`（汇总行为 1）区分汇总行和本身为 NULL 的值，也用它把小计、总计排在明细之后。
+
 ## 验证证据
 
 **临时探针**（2026-10-21，JBR 17.0.14、Lombok 1.18.46、TS 7.0.2），结论已体现在上面的决定里：
@@ -179,22 +202,22 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 
 | 模块 | 测试 | 内容 |
 | --- | --- | --- |
-| query-core | 67 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
-| query-hana | 42 | 16 个实库场景（HANA 2.00.088）、4 个方言渲染、22 个金样例 |
-| query-postgres | 42 | 17 个实库场景（PostgreSQL 17）、4 个方言渲染、21 个金样例 |
-| query-mysql | 42 | 15 个实库场景（MySQL 8.4）、7 个方言渲染、20 个金样例 |
+| query-core | 69 | 渲染、投影、映射计划、元数据、原生 SQL、缓存；`CompileTimeSafetyTest` 用 javac 验证 11 种错误写法不能编译 |
+| query-hana | 49 | 19 个实库场景（HANA 2.00.088）、4 个方言渲染、26 个金样例 |
+| query-postgres | 49 | 20 个实库场景（PostgreSQL 17）、4 个方言渲染、25 个金样例 |
+| query-mysql | 46 | 17 个实库场景（MySQL 8.4）、7 个方言渲染、22 个金样例 |
 
 **第二期 TypeScript 的测试**（TS 7.0.2、Node 24，`node:test`），本机三个开发库上全部通过：
 
 | 内容 | 测试 |
 | --- | --- |
-| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 23 |
-| 金样例：三个方言共 60 个用例，再加 3 个"每个样例都有查询"的检查 | 63 |
-| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 45 |
+| 渲染（与 Java 的 `RenderTest` 逐条对应，SQL 逐字相同） | 24 |
+| 金样例：三个方言共 70 个用例，再加 3 个"每个样例都有查询"的检查 | 73 |
+| 投影与映射、元数据、值类型、执行（原生 SQL、缓存、错误、监听）、方言 | 46 |
 | 编译期检查：`@ts-expect-error` 验证 16 种错误写法不能编译 | 1 |
-| 实库场景：HANA 16、PostgreSQL 17、MySQL 15 | 48 |
+| 实库场景：HANA 19、PostgreSQL 20、MySQL 17 | 56 |
 
-**两端一致**：`spec/render/` 下的 60 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量，以及三个方言的专属函数。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
+**两端一致**：`spec/render/` 下的 70 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量、列转换、ROLLUP，以及三个方言的专属函数（含 HANA 与 PostgreSQL 的 CUBE、GROUPING SETS）。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
 
 三个方言共用一组实库场景（Java 的 `LiveScenarios`、TS 的 `live/live.ts`）：
 
@@ -207,7 +230,9 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 - 嵌套投影；
 - 分页、流式读取、原生 SQL 的集合参数、缓存命中；
 - 在 Europe/Berlin、Pacific/Apia、Asia/Shanghai 三个时区下，DATE 与 TIMESTAMP 的读写都不变（TS 通过切换 `process.env.TZ` 验证）；
-- 常量行与带常量的分组（分桶汇总）、文本函数、取负、多项求和、按子串分组。
+- 常量行与带常量的分组（分桶汇总）、文本函数、取负、多项求和、按子串分组；
+- 列转换：`@Trimmed`、`@BlankAsNull` 字段与同一列的原值字段并存，分组、`COUNT(DISTINCT …)` 与 `IS NULL` 都按转换后的值；
+- ROLLUP 的小计与总计，按 `GROUPING()` 排序；HANA 与 PostgreSQL 另有 GROUPING SETS 与 CUBE。
 
 实库还发现并修复了一个 bug：`db.one()` 曾经覆盖用户自己设置的 LIMIT。
 
@@ -226,12 +251,13 @@ TS 驱动的实测（2026-10-21，`@sap/hana-client` 2.30.27、`pg` 8.23.1、`my
   - `substring`、`left`、`right`、`replace`、`negate`、接收列表的 `plus`；
   - HANA 的 `likeRegexpr` 与 `toNvarchar`；
   - 第 10 条的两类渲染问题。
+- 列转换（第 12 条）完成后，改写把八处手写的 `nullif("")` 换成七个 `@BlankAsNull` 字段，Java 与 TS 再次与原 SQL 逐行一致（各 21 组）。
 - 原查询里拼接 SQL 片段（`{{...}}`、`%s`）和 `(:flag = FALSE OR …)` 的写法，改写后分别是返回 CTE 或条件的普通函数，以及 `eqIfPresent`、`ifPresent`。按条件拼接的 JOIN 改写成可选的 EXISTS。
 - 改写代码含业务常量，不放进仓库。
 
 HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 
-- **可用**：`DATE` / `TIMESTAMP` 字面量、`N'…'`、`WITH HINT`、带排序的 `STRING_AGG`、`NULLS FIRST/LAST`、ROWS 框架、`GROUPING SETS`；
+- **可用**：`DATE` / `TIMESTAMP` 字面量、`N'…'`、`WITH HINT`、带排序的 `STRING_AGG`、`NULLS FIRST/LAST`、ROWS 框架、`ROLLUP`、`CUBE`、`GROUPING SETS`、`GROUPING()`；
 - **不可用**：`VALUES` 表构造、`QUALIFY`、`GROUP BY` 别名、行值比较、`IS DISTINCT FROM`、`LATERAL`。
 
 ## 代价与风险
@@ -256,7 +282,8 @@ HANA 2.00.088 的语法边界（用 IDEA 的 SQL 工具实测）：
 3. **第三期**：
    - 真实查询对照与补齐的能力（已完成，见验证证据）；
    - Spring 适配（已完成）：`query-spring` 只有 `SpringConnections` 一个类，spring-jdbc 为 `provided`；H2 上的事务测试在 Spring 5.3、6.2、7.0 下都通过；
-   - 方言扩展：分组集合、HANA 计算视图与表函数、JSON；
-   - SQL 级列转换；一对多的批量组装；
+   - 分组集合（已完成，第 13 条）与 SQL 级列转换（已完成，第 12 条）；
+   - 方言扩展：HANA 计算视图与表函数、JSON；
+   - 一对多的批量组装；
    - 根据请求对象注解生成条件。
 4. **之后**：写入与 DuckDB。

@@ -87,6 +87,8 @@ public record MaterialScope(String client, String material, String partNumber) {
 | `@ConvertWith(Converter.class)` | 元注解，用来组合出自己的类型注解，例如 `@SapDate` |
 | `@MapFrom(value = Lips.class, property = Lips.Fields.material)` | DTO 字段的值来自哪个实体的哪个属性；属性名用 Lombok 常量，改名后编译失败 |
 | `@Ignore` | 不参与映射的字段 |
+| `@ReadAs("NULLIF({0}, '')")` | SQL 级列转换：列在语句的每个位置都按模板读取，`{0}` 是带别名的列；也可作元注解 |
+| `@BlankAsNull`、`@Trimmed` | 内置的列转换：空串读作 NULL（`NULLIF(col, '')`）、去掉首尾空格（`TRIM(col)`） |
 
 自定义类型：实现 `Converter<J, D>`，再声明一个组合注解。
 
@@ -101,6 +103,23 @@ public @interface SapDate { }
 ```
 
 字段的值与比较时的参数都会经过转换器，例如 `l.col(Lips::getCreatedOn).between(start, end)` 绑定的是 `'20260101'`。
+
+**SQL 级列转换**：转换器只在 Java 端改值，数据库看到的仍是原值；列转换写进 SQL，分组、聚合和条件看到的都是转换后的值。
+
+```java
+@Data @EqualsAndHashCode(callSuper = true)
+@Table(schema = "ERP", value = "MARA")
+public class MaraView extends ClientEntity {
+    @Column("MATNR") private String material;
+    @Column("MFRPN") @Trimmed private String partNumber;       // TRIM(MARAVIEW.MFRPN)
+    @Column("MFRNR") @BlankAsNull private String maker;        // NULLIF(MARAVIEW.MFRNR, '')
+    @Column("MFRNR") private String storedMaker;               // 同一列的原值
+}
+```
+
+- `maker.eq("X")` 渲染为 `NULLIF(…, '') = ?`，比较值仍然绑定为参数。
+- 一个字段只能有一个读取模板，模板必须包含 `{0}`，否则读取元数据时报错。
+- 需要原值时再声明一个映射到同一列的字段。条件写在原值字段上，数据库才能用上这一列的索引。
 
 ## 3. 写查询
 
@@ -132,12 +151,26 @@ List<Delivery> rows = db.list(q);
 | `crossJoin(...)` | 笛卡尔积 |
 | `where`、`whereIf(test, …)`、`having` | 条件；`Cond.EMPTY` 会被自动丢弃 |
 | `groupBy(… -> keys(...))`、`orderBy(… -> orders(...))` | 分组与排序 |
+| `groupByRollup(… -> keys(...))` | 分组并加上各级小计和总计；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `distinct()`、`limit(n)`、`offset(n)` | — |
 | `unfiltered()` | 本查询不加全局过滤器 |
 | `with(clause)` / `with(… -> clause)` | 方言子句，例如 `Hana.hint(...)` |
 
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
 - 关联子查询直接捕获外层 lambda 的参数。
+
+**小计与总计**：
+
+```java
+from(Lips.class)
+    .groupByRollup(l -> keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
+    .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
+    .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total"))));
+```
+
+- HANA 和 PostgreSQL 渲染 `GROUP BY ROLLUP(a, b)`，MySQL 渲染 `GROUP BY a, b WITH ROLLUP`。
+- 汇总行里被汇总掉的列读出 NULL。`grouping(col)` 在汇总行为 1，用来区分汇总行和本身为 NULL 的值，也用来把小计排在明细之后。
+- 任意组合的分组用 HANA、PostgreSQL 门面里的 `cube(...)` 和 `groupingSets(...)`，见第 6 节。
 
 ## 4. 投影：三种写法
 
@@ -222,7 +255,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | 值 | `val(x)`（参数）、`lit(x)`（字面量，只用于固定代码值）、`nullOf(Type.class)` |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
 | 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max` |
+| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(Integer.class, "DAYS_BETWEEN({0}, {1})", a, b)`、`sqlCond("{0} ~ {1}", a, b)` |
@@ -236,6 +269,9 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `likeRegexpr(e, pattern)` | — | — |
 | `length`（按 UTF-16 单元计） | `ilike`、`filter(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, order...)`、`hint(...)` | `stringAgg(e, sep, order...)` | — |
+| `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
+
+`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy(l -> keys(groupingSets(keys(a, b), keys(a), keys())))`，空的 `keys()` 是总计。
 
 **常量与参数**：
 

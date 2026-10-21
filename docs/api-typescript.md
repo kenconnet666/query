@@ -38,7 +38,7 @@ const db = database(new pg.Pool({ /* ... */ }), {
 实体是带标准装饰器的普通类，只声明查询用到的列。列的类型由 `@column` 的第二个参数给出，默认为 `text`。装饰器会检查字段的声明类型：类型对不上就编译失败，字段可以带 `| null`。
 
 ```ts
-import { column, converted, decimal, mapFrom, ignore, table, text } from "@query/hana";
+import { blankAsNull, column, converted, decimal, mapFrom, ignore, table, text, trimmed } from "@query/hana";
 
 export const sapDate = converted<string, string>(text, {     // 'yyyyMMdd' 文本 <-> 'YYYY-MM-DD'
   toDatabase: (day) => day.replaceAll("-", ""),
@@ -57,6 +57,14 @@ export class Lips extends ClientEntity {
   @column("LFIMG", decimal) quantity!: string;                   // 精确小数：字符串
 }
 
+@table("MARA", { schema: "ERP" })
+export class MaraView extends ClientEntity {
+  @column("MATNR") material!: string;
+  @column("MFRPN") @trimmed partNumber!: string;                 // TRIM(MARAVIEW.MFRPN)
+  @column("MFRNR") @blankAsNull maker!: string | null;           // NULLIF(MARAVIEW.MFRNR, '')
+  @column("MFRNR") storedMaker!: string;                         // 同一列的原值
+}
+
 export class LineVO {                                           // DTO：不需要装饰器
   delivery!: string;
   @mapFrom(Lips, "material") materialNo!: string;               // 键和字段类型都检查
@@ -71,6 +79,10 @@ export class LineVO {                                           // DTO：不需�
 | `@column(name?, type?)` | 列名（不写时按命名策略推导）与列的类型 |
 | `@mapFrom(Entity, "key")` | DTO 字段的值来自哪个实体的哪个字段 |
 | `@ignore` | 不参与映射的字段 |
+| `@readAs("NULLIF({0}, '')")` | SQL 级列转换：列在语句的每个位置都按模板读取，`{0}` 是带别名的列；返回的装饰器可以赋给常量复用 |
+| `@blankAsNull`、`@trimmed` | 内置的列转换：空串读作 NULL（`NULLIF(col, '')`）、去掉首尾空格（`TRIM(col)`） |
+
+**SQL 级列转换**与 `converted` 不同：`converted` 只在 JS 端改值，列转换写进 SQL，分组、聚合和条件看到的都是转换后的值。一个字段只能有一个读取模板；需要原值时再声明一个映射到同一列的字段，条件写在原值字段上才能用上索引。
 
 **值类型**：TS 在运行时没有类型信息，所以非文本列必须声明类型。日期和精确小数用字符串表示，不经过 `Date`，因此不受进程时区影响。
 
@@ -120,6 +132,7 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 | `crossJoin(...)` | 笛卡尔积 |
 | `where`、`whereIf(test, …)`、`having` | 条件；`Cond.EMPTY` 会被自动丢弃 |
 | `groupBy(… => expr 或 [expr, ...])` | 分组 |
+| `groupByRollup(… => [expr, ...])` | 分组并加上各级小计和总计：HANA、PostgreSQL 渲染 `ROLLUP(a, b)`，MySQL 渲染 `a, b WITH ROLLUP`；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `orderBy(… => item 或 [item, ...])` | 排序项可以是 `expr`（升序）、`expr.desc()`、`.nullsLast()` 等 |
 | `distinct()`、`limit(n)`、`offset(n)`、`unfiltered()` | — |
 | `with(clause)` / `with((…) => clause)` | 方言子句，例如 `hint("NO_CS_JOIN")` |
@@ -203,7 +216,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)` |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
 | 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max` |
+| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `` sql(integer)`DAYS_BETWEEN(${a}, ${b})` ``、`` sqlCond`${a} ~ ${b}` ``：表达式原样渲染，普通值成为参数 |
@@ -219,6 +232,9 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | `likeRegexpr(e, pattern)` | — | — |
 | `length`（按 UTF-16 单元计） | `ilike`、`filterWhere(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, ...order)`、`hint(...)` | `stringAgg(e, sep, ...order)` | — |
+| `cube(a, b)`、`groupingSets([a, b], [a], [])` | 同左 | — |
+
+`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。
 
 PostgreSQL 的聚合过滤叫 `filterWhere`，用来和核心包里定义全局过滤器的 `filter` 区分。
 
