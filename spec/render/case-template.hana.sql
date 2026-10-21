@@ -1,0 +1,3 @@
+-- parameters: ["ZMAT","material","ZOTH","other"]
+SELECT CASE WHEN MARA.MTART = ? THEN ? WHEN MARA.MTART = ? THEN ? ELSE LOWER(MARA.MTART) END AS "value"
+FROM QUERY_IT.MARA MARA

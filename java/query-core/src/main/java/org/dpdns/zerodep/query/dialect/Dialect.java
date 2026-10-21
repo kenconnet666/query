@@ -52,12 +52,18 @@ public abstract class Dialect {
         else if (value instanceof BigDecimal d) w.sql(d.toPlainString());
         else if (value instanceof Number n) w.sql(n.toString());
         else if (value instanceof LocalDate d) w.sql("DATE '" + d + "'");
-        else if (value instanceof LocalDateTime t) w.sql("TIMESTAMP '" + t.toLocalDate() + " " + t.toLocalTime() + "'");
+        else if (value instanceof LocalDateTime t) w.sql("TIMESTAMP '" + timestampText(t) + "'");
         else if (value instanceof Enum<?> e) w.sql(stringLiteral(e.name()));
         else throw new IllegalArgumentException("No literal form for " + value.getClass().getName() + "; bind it as a parameter");
     }
 
     protected String stringLiteral(String s) { return "'" + s.replace("'", "''") + "'"; }
+
+    /** Always with seconds, the fraction without trailing zeros: the form the TypeScript port writes too. */
+    private static String timestampText(LocalDateTime t) {
+        String fraction = t.getNano() == 0 ? "" : ("." + String.format("%09d", t.getNano())).replaceAll("0+$", "");
+        return String.format("%s %02d:%02d:%02d%s", t.toLocalDate(), t.getHour(), t.getMinute(), t.getSecond(), fraction);
+    }
 
     public String castType(CastType<?> type) {
         return switch (type.kind()) {

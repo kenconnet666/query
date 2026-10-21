@@ -1,0 +1,5 @@
+-- parameters: []
+SELECT `mara`.`MATNR` AS `material`
+FROM `QUERY_IT`.`MARA` `mara`
+ORDER BY `mara`.`MATNR` ASC
+LIMIT 18446744073709551615 OFFSET 5

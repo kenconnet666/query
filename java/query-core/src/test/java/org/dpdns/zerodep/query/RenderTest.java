@@ -40,8 +40,8 @@ class RenderTest {
             FROM QUERY_IT.MARA MARA
             WHERE MARA.MTART = ?
             )
-            SELECT MATERIAL_SCOPE."partNumber" AS "partNumber", MAX(COALESCE(MAKT.MAKTX, MATERIAL_SCOPE."partNumber")) AS "c2", \
-            SUM(LIPS.LFIMG) AS "c3"
+            SELECT MATERIAL_SCOPE."partNumber" AS "partNumber", MAX(COALESCE(MAKT.MAKTX, MATERIAL_SCOPE."partNumber")) AS "name", \
+            SUM(LIPS.LFIMG) AS "quantity"
             FROM "material_scope" MATERIAL_SCOPE
             JOIN QUERY_IT.LIPS LIPS ON LIPS.MANDT = MATERIAL_SCOPE."client" AND LIPS.MATNR = MATERIAL_SCOPE."material"
             LEFT JOIN QUERY_IT.MAKT MAKT ON MAKT.MATNR = MATERIAL_SCOPE."material" AND MAKT.SPRAS = ?
@@ -85,7 +85,7 @@ class RenderTest {
     void 泛型模板生成的UNION只在第一段写别名() {
         Rendered r = Scenarios.stock("2026").toSql(DIALECT);
         assertEquals("""
-            SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, ?) AS "c4"
+            SELECT MARDH.MATNR AS "material", MARDH.LFGJA AS "year", MARDH.LFMON AS "period", COALESCE(MARDH.LABST, ?) AS "quantity"
             FROM QUERY_IT.MARDH MARDH
             WHERE MARDH.LFGJA = ?
             UNION ALL

@@ -1,0 +1,5 @@
+-- parameters: ["1"]
+SELECT LIPS.MATNR AS "material", COUNT(*) AS "lines", COUNT(DISTINCT LIPS.VGBEL) AS "orders", AVG(LIPS.LFIMG) AS "average", MIN(LIPS.LFIMG) AS "smallest", MAX(LIPS.LFIMG) AS "largest", SUM(LIPS.LFIMG) AS "total"
+FROM QUERY_IT.LIPS LIPS
+GROUP BY LIPS.MATNR
+HAVING COUNT(*) > ?

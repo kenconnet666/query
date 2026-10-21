@@ -36,7 +36,7 @@ public final class Scenarios {
         return caseWhen(part.ne(trim(part)), trim(part)).otherwise(part);
     }
 
-    /** CTE, EXISTS, LEFT JOIN, optional filter and GROUP BY, read by a functional projection. */
+    /** CTE, EXISTS, LEFT JOIN, optional filter and GROUP BY, read by a functional projection; labels match the TypeScript keys. */
     public static Query<Delivery> deliveries(LocalDate start, LocalDate end, String maker) {
         Cte<MaterialScope> scope = cte("material_scope", from(Mara.class)
             .where(ma -> all(activeMaterial(ma), ma.col(Mara::getManufacturer).eqIfPresent(maker)))
@@ -57,8 +57,8 @@ public final class Scenarios {
             .orderBy((ms, l, mk) -> orders(ms.col(MaterialScope::partNumber).asc()))
             .select((r, ms, l, mk) -> new Delivery(
                 r.get(ms, MaterialScope::partNumber),
-                r.get(max(mk.col(Makt::getText).coalesce(ms.col(MaterialScope::partNumber)))),
-                r.get(sum(l.col(Lips::getQuantity)))));
+                r.get(max(mk.col(Makt::getText).coalesce(ms.col(MaterialScope::partNumber))).as("name")),
+                r.get(sum(l.col(Lips::getQuantity)).as("quantity"))));
     }
 
     /** One template for every table with the PeriodStock shape; the quantity column differs, so it is a lambda. */
@@ -67,7 +67,7 @@ public final class Scenarios {
             .where(h -> h.col(PeriodStock::getYear).eq(year))
             .select((r, h) -> new StockRow(
                 r.get(h, PeriodStock::getMaterial), r.get(h, PeriodStock::getYear), r.get(h, PeriodStock::getPeriod),
-                r.get(quantity.apply(h))));
+                r.get(quantity.apply(h).as("quantity"))));
     }
 
     public static Query<StockRow> stock(String year) {

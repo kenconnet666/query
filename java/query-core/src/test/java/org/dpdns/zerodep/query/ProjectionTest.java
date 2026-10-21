@@ -27,7 +27,7 @@ class ProjectionTest {
     @Test
     void 函数式投影按记录的列重放构造record() {
         Query<Delivery> q = Scenarios.deliveries(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30), null);
-        assertEquals(List.of("partNumber", "c2", "c3"), q.labels());
+        assertEquals(List.of("partNumber", "name", "quantity"), q.labels());
         assertEquals(new Delivery("P1", "Pump", new BigDecimal("5.000")), q.mapRow(new Object[] {"P1", "Pump", new BigDecimal("5.000")}));
     }
 
