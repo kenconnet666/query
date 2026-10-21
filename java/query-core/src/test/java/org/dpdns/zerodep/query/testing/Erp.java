@@ -140,6 +140,10 @@ public final class Erp {
     /** A temporary entity: the row of a CTE. */
     public record MaterialScope(String client, String material, String partNumber) { }
 
+    /** LIPS under a class name that is a reserved word, so the generated alias needs quotes. */
+    @Table(schema = SCHEMA, value = "LIPS")
+    public record Order(@Column("VBELN") String delivery, @Column("MATNR") String material) { }
+
     public record Delivery(String partNumber, String name, BigDecimal quantity) { }
 
     @Data @Accessors(chain = true)

@@ -31,9 +31,28 @@ public abstract class Dialect {
     /** The case unquoted identifiers fold to, so generated aliases stay unquoted. */
     public abstract String foldCase(String identifier);
 
+    /**
+     * Words that must be quoted even in bare form, such as an entity {@code Order} aliased {@code order}.
+     * Reserved words of standard SQL, PostgreSQL and HANA together; quoting one more word is harmless.
+     */
+    protected boolean isReserved(String identifier) { return RESERVED.contains(identifier.toUpperCase(java.util.Locale.ROOT)); }
+
     public String quote(String identifier) {
-        return isBare(identifier) ? identifier : '"' + identifier.replace("\"", "\"\"") + '"';
+        return isBare(identifier) && !isReserved(identifier) ? identifier : '"' + identifier.replace("\"", "\"\"") + '"';
     }
+
+    private static final java.util.Set<String> RESERVED = java.util.Set.of(
+        "ALL", "ALTER", "ANALYSE", "ANALYZE", "AND", "ANY", "ARRAY", "AS", "ASC", "ASYMMETRIC", "AUTHORIZATION", "BEFORE", "BEGIN", "BETWEEN",
+        "BINARY", "BOTH", "BY", "CASE", "CAST", "CHAR", "CHECK", "COLLATE", "COLLATION", "COLUMN", "CONCURRENTLY", "CONDITION", "CONNECT",
+        "CONSTRAINT", "CREATE", "CROSS", "CUBE", "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_ROLE", "CURRENT_SCHEMA", "CURRENT_TIME",
+        "CURRENT_TIMESTAMP", "CURRENT_USER", "CURSOR", "DECLARE", "DEFAULT", "DEFERRABLE", "DELETE", "DESC", "DISTINCT", "DO", "DROP", "ELSE",
+        "ELSEIF", "END", "EXCEPT", "EXCEPTION", "EXEC", "EXISTS", "FALSE", "FETCH", "FOR", "FOREIGN", "FREEZE", "FROM", "FULL", "GRANT", "GROUP",
+        "HAVING", "IF", "ILIKE", "IN", "INITIALLY", "INNER", "INOUT", "INSERT", "INTERSECT", "INTO", "IS", "ISNULL", "JOIN", "LATERAL", "LEADING",
+        "LEFT", "LIKE", "LIMIT", "LOCALTIME", "LOCALTIMESTAMP", "LOOP", "MINUS", "NATURAL", "NCHAR", "NOT", "NOTNULL", "NULL", "OFFSET", "ON",
+        "ONLY", "OR", "ORDER", "OUT", "OUTER", "OVERLAPS", "PLACING", "PRIMARY", "PRIOR", "REFERENCES", "RETURN", "RETURNING", "RETURNS",
+        "RIGHT", "ROLLUP", "ROWID", "SELECT", "SESSION_USER", "SET", "SIMILAR", "SOME", "SQL", "START", "SYMMETRIC", "SYSTEM_USER", "TABLE",
+        "TABLESAMPLE", "THEN", "TO", "TOP", "TRAILING", "TRUE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES", "VARIADIC",
+        "VERBOSE", "WHEN", "WHERE", "WHILE", "WINDOW", "WITH");
 
     /** Aliases come from {@link SqlWriter#aliasFor}, already case-folded. */
     public String alias(String alias) { return quote(alias); }

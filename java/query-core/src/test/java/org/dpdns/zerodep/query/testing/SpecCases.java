@@ -9,6 +9,7 @@ import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Makt;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
+import org.dpdns.zerodep.query.testing.Erp.Order;
 import org.dpdns.zerodep.query.testing.Erp.Vbkd;
 import org.dpdns.zerodep.query.testing.RenderSpec.SpecCase;
 import org.dpdns.zerodep.query.type.CastType;
@@ -118,6 +119,7 @@ public final class SpecCases {
         cases.put("text-positions", SpecCase.plain(SpecCases::textPositions));
         cases.put("simple-case", SpecCase.plain(SpecCases::simpleCase));
         cases.put("floor-ceil", SpecCase.plain(SpecCases::floorCeil));
+        cases.put("reserved-alias", SpecCase.plain(SpecCases::reservedAlias));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         return cases;
     }
@@ -233,6 +235,14 @@ public final class SpecCases {
                 Expr<BigDecimal> half = divide(l.col(Lips::getQuantity), lit(new BigDecimal("2")));
                 return Arrays.asList(r.get(l, Lips::getDelivery), r.get(floor(half).as("down")), r.get(ceil(half).as("up")));
             });
+    }
+
+    /** An entity named Order: its alias is a reserved word and must be quoted. */
+    public static Query<String> reservedAlias() {
+        return from(Order.class)
+            .where(o -> o.col(Order::material).eq("M1"))
+            .orderBy(o -> orders(o.col(Order::delivery).asc()))
+            .selectValue(o -> o.col(Order::delivery));
     }
 
     /** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */

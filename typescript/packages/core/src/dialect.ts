@@ -76,6 +76,11 @@ export interface Clause extends Renderable {
  * literals, placeholders, paging and CAST type names. Function renderings a dialect knows are
  * registered in its constructor with {@link register}; nothing switches on a dialect name.
  */
+/** Reserved words of standard SQL, PostgreSQL and HANA; see `Dialect.isReserved`. */
+const RESERVED = new Set(
+  `ALL ALTER ANALYSE ANALYZE AND ANY ARRAY AS ASC ASYMMETRIC AUTHORIZATION BEFORE BEGIN BETWEEN BINARY BOTH BY CASE CAST CHAR CHECK COLLATE COLLATION COLUMN CONCURRENTLY CONDITION CONNECT CONSTRAINT CREATE CROSS CUBE CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR DECLARE DEFAULT DEFERRABLE DELETE DESC DISTINCT DO DROP ELSE ELSEIF END EXCEPT EXCEPTION EXEC EXISTS FALSE FETCH FOR FOREIGN FREEZE FROM FULL GRANT GROUP HAVING IF ILIKE IN INITIALLY INNER INOUT INSERT INTERSECT INTO IS ISNULL JOIN LATERAL LEADING LEFT LIKE LIMIT LOCALTIME LOCALTIMESTAMP LOOP MINUS NATURAL NCHAR NOT NOTNULL NULL OFFSET ON ONLY OR ORDER OUT OUTER OVERLAPS PLACING PRIMARY PRIOR REFERENCES RETURN RETURNING RETURNS RIGHT ROLLUP ROWID SELECT SESSION_USER SET SIMILAR SOME SQL START SYMMETRIC SYSTEM_USER TABLE TABLESAMPLE THEN TO TOP TRAILING TRUE UNION UNIQUE UNKNOWN UPDATE USER USING VALUES VARIADIC VERBOSE WHEN WHERE WHILE WINDOW WITH`.split(" "),
+);
+
 export abstract class Dialect {
   readonly #functions = new Map<FunctionDef, FunctionRenderer>();
 
@@ -87,8 +92,16 @@ export abstract class Dialect {
   /** The case unquoted identifiers fold to, so generated aliases stay unquoted. */
   abstract foldCase(identifier: string): string;
 
+  /**
+   * Words that must be quoted even in bare form, such as an entity `Order` aliased `order`.
+   * Reserved words of standard SQL, PostgreSQL and HANA together; quoting one more word is harmless.
+   */
+  protected isReserved(identifier: string): boolean {
+    return RESERVED.has(identifier.toUpperCase());
+  }
+
   quote(identifier: string): string {
-    return this.isBare(identifier) ? identifier : `"${identifier.replaceAll('"', '""')}"`;
+    return this.isBare(identifier) && !this.isReserved(identifier) ? identifier : `"${identifier.replaceAll('"', '""')}"`;
   }
 
   /** Aliases come from {@link SqlWriter.aliasFor}, already case-folded. */

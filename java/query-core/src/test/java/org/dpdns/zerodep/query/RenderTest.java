@@ -277,6 +277,57 @@ class RenderTest {
         assertTrue(sql.startsWith("SELECT CASE WHEN MARA.MTART = 'ZMAT' THEN 'material' WHEN MARA.MTART = 'ZOTH' THEN 'other' ELSE LOWER(MARA.MTART) END"), sql);
     }
 
+    @org.dpdns.zerodep.query.annotation.Table("PROBE")
+    record ConcurrencyProbe(@org.dpdns.zerodep.query.annotation.Column("ID") String id, @org.dpdns.zerodep.query.annotation.Column("NAME") String name) { }
+
+    @Test
+    void 多线程同时首次渲染得到相同的结果() throws Exception {
+        TestDatabase db = new TestDatabase(null);
+        Query<ConcurrencyProbe> q = from(ConcurrencyProbe.class).where(p -> p.col(ConcurrencyProbe::id).eq("1")).selectAs(ConcurrencyProbe.class);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            List<java.util.concurrent.Future<Rendered>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 64; i++) {
+                boolean viaDatabase = i % 2 == 0;
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return viaDatabase ? db.render(q) : q.toSql(DIALECT);
+                }));
+            }
+            start.countDown();
+            java.util.Set<String> sqls = new java.util.HashSet<>();
+            for (var f : results) sqls.add(f.get().sql() + f.get().parameters());
+            assertEquals(1, sqls.size(), sqls::toString);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void 可选比较条件在值为null时省略() {
+        Rendered r = from(Mara.class)
+            .where(m -> {
+                Expr<String> material = m.col(Mara::getMaterial);
+                return all(material.geIfPresent(null), material.gtIfPresent("A"), material.leIfPresent(null), material.ltIfPresent("Z"),
+                    material.neIfPresent(null));
+            })
+            .selectValue(m -> m.col(Mara::getMaterial))
+            .toSql(DIALECT);
+        assertTrue(r.sql().endsWith("WHERE MARA.MATNR > ? AND MARA.MATNR < ?"), r.sql());
+        assertEquals(List.of("A", "Z"), r.parameters());
+    }
+
+    @Test
+    void 原生条件片段与当前日期时间() {
+        String sql = from(Mara.class)
+            .where(m -> sqlCond("{0} LIKE {1}", m.col(Mara::getMaterial), val("M%")))
+            .select((r, m) -> java.util.Arrays.asList(r.get(currentDate().as("today")), r.get(currentTimestamp().as("now"))))
+            .toSql(DIALECT).sql();
+        assertTrue(sql.startsWith("SELECT CURRENT_DATE AS \"today\", CURRENT_TIMESTAMP AS \"now\""), sql);
+        assertTrue(sql.endsWith("WHERE MARA.MATNR LIKE ?"), sql);
+    }
+
     private static String where(Fn.F1<Ref<Mara>, Cond> cond) {
         return from(Mara.class).where(cond).selectValue(m -> m.col(Mara::getMaterial)).toSql(DIALECT).sql();
     }

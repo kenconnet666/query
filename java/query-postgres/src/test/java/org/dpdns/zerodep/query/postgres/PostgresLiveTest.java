@@ -32,8 +32,8 @@ class PostgresLiveTest extends LiveScenarios {
 
     @Override protected LiveDatabase connect() { return LiveDatabase.fromEnvironment("PG"); }
 
-    @Override protected Database database(LiveDatabase live, Consumer<Database.Config> configure) {
-        return Postgres.database(live.connections(), configure);
+    @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return Postgres.database(connections, configure);
     }
 
     @Override protected String text(int length) { return "VARCHAR(" + length + ")"; }

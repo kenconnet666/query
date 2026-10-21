@@ -35,6 +35,13 @@ export class MaraView extends ClientEntity {
   @column("MFRNR") storedMaker!: string;
 }
 
+/** LIPS under a class name that is a reserved word, so the generated alias needs quotes. */
+@table("LIPS", { schema: SCHEMA })
+export class Order {
+  @column("VBELN") delivery!: string;
+  @column("MATNR") material!: string;
+}
+
 @table("LIPS", { schema: SCHEMA })
 export class Lips extends ClientEntity {
   @column("VBELN") delivery!: string;

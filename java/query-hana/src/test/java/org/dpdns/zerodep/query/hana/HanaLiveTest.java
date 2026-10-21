@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.Database;
+import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
@@ -22,8 +23,8 @@ class HanaLiveTest extends LiveScenarios {
 
     @Override protected LiveDatabase connect() { return LiveDatabase.fromEnvironment("HANA"); }
 
-    @Override protected Database database(LiveDatabase live, Consumer<Database.Config> configure) {
-        return Hana.database(live.connections(), configure);
+    @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return Hana.database(connections, configure);
     }
 
     @Override protected String text(int length) { return "NVARCHAR(" + length + ")"; }

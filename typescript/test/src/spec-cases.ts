@@ -59,7 +59,7 @@ import {
 import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toInteger, toNvarchar, toVarchar } from "@query/hana";
 import { dateDiff, dateFormat, greatest as mysqlGreatest, groupConcat, least as mysqlLeast, maxExecutionTime } from "@query/mysql";
 import { cube as pgCube, distinctOn, filterWhere, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg, stringAgg as pgStringAgg } from "@query/postgres";
-import { Lips, Makt, Mara, MaraView, Vbkd } from "./erp.js";
+import { Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 
 /**
@@ -235,6 +235,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "text-positions": plain(() => textPositions()),
   "simple-case": plain(() => simpleCase()),
   "floor-ceil": plain(() => floorCeil()),
+  "reserved-alias": plain(() => reservedAlias()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -296,6 +297,14 @@ export function floorCeil() {
       const half = divide(l.quantity, lit("2", decimal));
       return { delivery: l.delivery, down: floor(half), up: ceil(half) };
     });
+}
+
+/** An entity named Order: its alias is a reserved word and must be quoted. */
+export function reservedAlias() {
+  return from(Order)
+    .where((o) => o.material.eq("M1"))
+    .orderBy((o) => o.delivery)
+    .selectValue((o) => o.delivery);
 }
 
 export function unionGrouping() {

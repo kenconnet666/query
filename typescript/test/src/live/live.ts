@@ -24,7 +24,7 @@ import {
   type Ref,
 } from "@query/core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../erp.js";
-import { floorCeil, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
+import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
 /**
@@ -374,6 +374,35 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
         ["M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"],
       );
+    });
+
+    it("查询出错、映射出错或提前结束流时都归还连接", { timeout: 30_000 }, async () => {
+      const { db } = live();
+      const deliveries = from(Lips)
+        .orderBy((l) => l.delivery)
+        .selectValue((l) => l.delivery);
+      const failsOnD3 = deliveries.map((d) => {
+        if (d === "D3") throw new Error("mapping failed");
+        return d;
+      });
+      // The pools hold four connections: a leak in any of these would exhaust them before the last query.
+      for (let i = 0; i < 5; i++) {
+        await assert.rejects(db.sql("SELECT * FROM NO_SUCH_TABLE").list());
+        await assert.rejects(db.list(failsOnD3), /mapping failed/);
+        for await (const d of db.stream(deliveries)) {
+          assert.equal(d, "D1");
+          break;
+        }
+        await assert.rejects(async () => {
+          for await (const d of db.stream(failsOnD3)) assert.ok(d);
+        }, /mapping failed/);
+        await assert.rejects(db.forEach(deliveries, () => Promise.reject(new Error("consumer failed"))), /consumer failed/);
+      }
+      assert.equal((await db.list(deliveries)).length, 5);
+    });
+
+    it("类名是保留字的实体也能查询", async () => {
+      assert.deepEqual(await live().db.list(reservedAlias()), ["D1", "D2", "D5", "D6"]);
     });
 
     it("扁平结果按键分组为父项与子项", async () => {
