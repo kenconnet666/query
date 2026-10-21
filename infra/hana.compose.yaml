@@ -31,9 +31,10 @@ services:
       kernel.shmmni: 32768
       kernel.shmall: 8388608
       net.ipv4.ip_local_port_range: "40000 60999"
+    # Checked every 3 s so a ready HANA is noticed quickly; 300 retries keep the 15-minute ceiling.
     healthcheck:
       test: [CMD, /bin/bash, /query/health.sh]
-      interval: 10s
+      interval: 3s
       timeout: 5s
-      retries: 90
+      retries: 300
       start_period: 2m
