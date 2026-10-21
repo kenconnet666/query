@@ -40,6 +40,7 @@ export {
   any,
   Bound,
   Case,
+  CaseOf,
   Cond,
   condition,
   exists,
@@ -50,6 +51,7 @@ export {
   Order,
   param,
   raw,
+  SimpleCase,
   toOrder,
   Window,
   WindowFunction,
@@ -59,13 +61,16 @@ export {
   type TemplateArg,
 } from "./expr.js";
 export { Cte, Derived, type NullableRef, type Ref, type Source } from "./source.js";
+export { nest } from "./nest.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query.js";
 export {
   abs,
   avg,
   call,
+  caseOf,
   caseWhen,
   cast,
+  ceil,
   CONCAT,
   concat,
   count,
@@ -74,6 +79,7 @@ export {
   currentTimestamp,
   denseRank,
   divide,
+  floor,
   grouping,
   ifPresent,
   lag,
@@ -82,6 +88,8 @@ export {
   like,
   likeIfPresent,
   lit,
+  locate,
+  LOCATE,
   lower,
   max,
   min,

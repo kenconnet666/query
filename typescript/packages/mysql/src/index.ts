@@ -7,7 +7,7 @@ import { mysqlDriver } from "./driver.js";
 export * from "@query/core";
 export { MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
-export { dateDiff, dateFormat, groupConcat, maxExecutionTime } from "./functions.js";
+export { dateDiff, dateFormat, greatest, groupConcat, least, maxExecutionTime } from "./functions.js";
 
 /** A MySQL database: queries render as MySQL SQL and run through the given driver. */
 export class MysqlDatabase extends Database {

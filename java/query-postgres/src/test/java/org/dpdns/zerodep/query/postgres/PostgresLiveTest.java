@@ -32,8 +32,8 @@ class PostgresLiveTest extends LiveScenarios {
 
     @Override protected LiveDatabase connect() { return LiveDatabase.fromEnvironment("PG"); }
 
-    @Override protected Database database(LiveDatabase live, Consumer<Database.Config> configure) {
-        return Postgres.database(live.connections(), configure);
+    @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return Postgres.database(connections, configure);
     }
 
     @Override protected String text(int length) { return "VARCHAR(" + length + ")"; }
@@ -136,5 +136,16 @@ class PostgresLiveTest extends LiveScenarios {
             r.next();
             return r.getLong(1);
         }
+    }
+
+    @Test
+    void GREATEST与LEAST跳过NULL() {
+        List<String> rows = db.list(from(Lips.class)
+            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
+                + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
+        assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
+        assertEquals("3", plain(db.one(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("D1"))
+            .selectValue(l -> greatest(l.col(Lips::getQuantity), nullOf(BigDecimal.class))))));
     }
 }

@@ -19,6 +19,7 @@ public class MysqlDialect extends Dialect {
 
     protected MysqlDialect() {
         register(Sql.CONCAT, (w, args) -> FunctionDef.call(w, "CONCAT", args));
+        register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "LOCATE", List.of(args.get(1), args.get(0))));
     }
 
     @Override public String name() { return "MySQL"; }

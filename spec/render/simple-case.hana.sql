@@ -1,0 +1,4 @@
+-- parameters: []
+SELECT MARA.MATNR AS "material", CASE MARA.MTART WHEN 'ZMAT' THEN 'material' ELSE 'other' END AS "kind", COALESCE(NULLIF(MARA.MFRNR, ''), NULLIF(MARA.MFRPN, ''), 'none') AS "maker"
+FROM QUERY_IT.MARA MARA
+ORDER BY MARA.MATNR ASC

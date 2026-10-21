@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
-import { count, cube, distinctOn, filterWhere, from, grouping, groupingSets, ilike, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
+import { count, cube, decimal, distinctOn, filterWhere, from, greatest, grouping, groupingSets, ilike, least, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
 import { Lips } from "../erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -81,6 +81,25 @@ liveScenarios(
     it("原生 SQL 不在美元引号里找参数", async () => {
       const rows = await live().db.sql("SELECT $$:not_a_parameter$$ || $tag$ it's :also $tag$ || :x AS v").bind("x", "!").values();
       assert.deepEqual(rows, [":not_a_parameter it's :also !"]);
+    });
+
+    it("GREATEST 与 LEAST 跳过 NULL", async () => {
+      const { db } = live();
+      const rows = await db.list(
+        from(Lips)
+          .orderBy((l) => l.delivery)
+          .select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, "4"), low: least(l.quantity, "4") })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.delivery}:${Number(r.high)}:${Number(r.low)}`),
+        ["D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"],
+      );
+      const withNull = await db.one(
+        from(Lips)
+          .where((l) => l.delivery.eq("D1"))
+          .selectValue((l) => greatest(l.quantity, nullOf(decimal))),
+      );
+      assert.equal(Number(withNull), 3);
     });
   },
 );

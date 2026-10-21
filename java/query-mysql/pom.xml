@@ -7,13 +7,17 @@
     <parent>
         <groupId>org.dpdns.zerodep.query</groupId>
         <artifactId>query-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>query-mysql</artifactId>
     <name>query-mysql</name>
     <description>MySQL 8 dialect: facade, database instance, MySQL-only functions and clauses.</description>
+
+    <properties>
+        <automatic.module.name>org.dpdns.zerodep.query.mysql</automatic.module.name>
+    </properties>
 
     <dependencies>
         <dependency>

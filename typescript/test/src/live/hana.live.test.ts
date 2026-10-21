@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import hana from "@sap/hana-client";
-import { addDays, addMonths, count, cube, date, daysBetween, from, grouping, groupingSets, hanaDriver, HanaDatabase, hint, lit, stringAgg, sum, toVarchar } from "@query/hana";
+import { addDays, addMonths, count, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@query/hana";
 import { Lips } from "../erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -54,6 +54,34 @@ liveScenarios(
           .selectValue(() => count()),
       );
       assert.equal(cells.length, 6, "material x unit, material, unit and the grand total");
+    });
+
+    it("GREATEST 与 LEAST 遇到 NULL 时返回 NULL", async () => {
+      const { db } = live();
+      const rows = await db.list(
+        from(Lips)
+          .orderBy((l) => l.delivery)
+          .select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, "4"), low: least(l.quantity, "4") })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.delivery}:${Number(r.high)}:${Number(r.low)}`),
+        ["D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"],
+      );
+      const withNull = await db.one(
+        from(Lips)
+          .where((l) => l.delivery.eq("D1"))
+          .selectValue((l) => greatest(l.quantity, nullOf(decimal))),
+      );
+      assert.equal(withNull, null);
+    });
+
+    it("TO_INTEGER 把文本转成整数", async () => {
+      const numbers = await live().db.list(
+        from(Lips)
+          .orderBy((l) => l.delivery)
+          .selectValue((l) => toInteger(substring(l.delivery, 2))),
+      );
+      assert.deepEqual(numbers, [1, 2, 3, 4, 5]);
     });
   },
 );

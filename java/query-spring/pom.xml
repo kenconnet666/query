@@ -7,13 +7,17 @@
     <parent>
         <groupId>org.dpdns.zerodep.query</groupId>
         <artifactId>query-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>query-spring</artifactId>
     <name>query-spring</name>
     <description>Spring adapter: connections through DataSourceUtils, so queries join the surrounding Spring transaction.</description>
+
+    <properties>
+        <automatic.module.name>org.dpdns.zerodep.query.spring</automatic.module.name>
+    </properties>
 
     <dependencies>
         <dependency>

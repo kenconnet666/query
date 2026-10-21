@@ -162,6 +162,22 @@ q.map((r) => ({ ...r, wan: Number(r.quantity) / 10_000 }));   // 在 JS 端计�
 - 结果按列的位置读取，不依赖数据库返回的标签大小写。
 - 扁平的对象投影可以作为 CTE 或派生表。
 
+**一对多**：用一条查询取出扁平的行（例如表头 LEFT JOIN 明细），再用 `nest` 分组成父项加子项列表：
+
+```ts
+const rows = await db.list(
+  from(Head)
+    .leftJoin(Item, (h, i) => i.orderNo.eq(h.orderNo))
+    .orderBy((h, i) => [h.orderNo, i.position])
+    .select((h, i) => ({ orderNo: h.orderNo, position: i.position })),
+);
+const orders = nest(rows, (r) => r.orderNo, (r) => r.position, (first, positions) => ({ orderNo: first.orderNo, positions }));
+```
+
+- 每个键一个父项，顺序与键第一次出现的顺序相同；父项由该键的第一行构造。
+- 子项函数返回 null 或 undefined 时（LEFT JOIN 没有匹配）不加子项，父项得到空数组。
+- 键按 Map 的规则比较，复合键拼成字符串：`` (r) => `${r.a}|${r.b}` ``。
+
 ## 5. CTE、派生表、UNION、窗口
 
 ```ts
@@ -205,7 +221,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`，参数可以是值或表达式。
 - 区间与集合：`between`、`in(数组 | 查询)`、`notIn`、`isNull`、`isNotNull`。
 - 可选条件：`eqIfPresent` 等，以及 `betweenIfPresent`、`inIfPresent`；值为 null 或 undefined（数组为空）时省略。
-- 同类型函数：`coalesce`、`nullif`。
+- 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, "EA")`，渲染成一个 COALESCE）、`nullif`。
 - 排序与转换：`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`、`as("label")`。
 
 **核心函数**（各方言语义一致的部分）：
@@ -213,12 +229,12 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 类别 | 函数 |
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () => cond)`、`ifPresent(v, (x) => cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
-| 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)` |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
-| 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round` |
+| 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)`；文本、数字、布尔的类型放宽为 `string`、`number`、`boolean`，所以只差一个常量的 UNION 各段类型相同 |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
+| 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
-| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
+| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `` sql(integer)`DAYS_BETWEEN(${a}, ${b})` ``、`` sqlCond`${a} ~ ${b}` ``：表达式原样渲染，普通值成为参数 |
 
 `sum`、`avg` 等数值函数在构造时检查列的类型，用在文本列上会立刻报错。TS 的类型系统区分不了 decimal 字符串和文本，所以这一项只能在运行时检查。
@@ -233,6 +249,10 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | `length`（按 UTF-16 单元计） | `ilike`、`filterWhere(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, ...order)`、`hint(...)` | `stringAgg(e, sep, ...order)` | — |
 | `cube(a, b)`、`groupingSets([a, b], [a], [])` | 同左 | — |
+| `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
+| `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+
+`greatest`、`least` 的参数可以是表达式或值。三个库对 NULL 的处理不同，所以它们放在各自的方言包里。
 
 `cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。
 
@@ -276,6 +296,20 @@ PostgreSQL 的聚合过滤叫 `filterWhere`，用来和核心包里定义全局�
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect` 或某个现成方言，覆盖引号、字面量、占位符、分页、排序项和类型名 |
 | 驱动、监听、缓存 | `Driver`、`listener`、`QueryCache` |
+
+**记录语句**：监听器里接上项目已有的日志（pino、winston 或 console）。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
+
+```ts
+const db = new HanaDatabase(driver, {
+  listener: (e) => {
+    if (e.error !== undefined) logger.warn({ db: e.database, sql: e.statement.sql, params: e.statement.parameters, ms: e.elapsedMs, err: e.error });
+    else if (e.elapsedMs > 500) logger.info({ slow: true, sql: e.statement.sql, rows: e.rows, ms: e.elapsedMs });
+    else logger.debug({ sql: e.statement.sql, rows: e.rows, ms: e.elapsedMs, cached: e.cached });
+  },
+});
+```
+
+监听器抛出的异常会被忽略，不影响查询。
 
 ## 9. 编译期能拦住的错误
 

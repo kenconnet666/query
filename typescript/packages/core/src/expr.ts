@@ -133,11 +133,14 @@ export abstract class Expr<T> implements Renderable {
 
   // ---------- same-type functions ----------
 
+  /** The first non-null of this and the fallbacks; only a last fallback that is never null makes the result non-null. */
   coalesce(fallback: NonNullable<T>): Expr<NonNullable<T>>;
   coalesce(fallback: Expr<NonNullable<T>>): Expr<NonNullable<T>>;
-  coalesce(fallback: Expr<NonNullable<T> | null>): Expr<NonNullable<T> | null>;
-  coalesce(fallback: NonNullable<T> | Expr<NonNullable<T> | null>): Expr<NonNullable<T> | null> {
-    return functionCall<NonNullable<T> | null>(this.type, "COALESCE", [this, this.#operand(fallback)]);
+  coalesce(...fallbacks: [...Expr<NonNullable<T> | null>[], NonNullable<T> | Expr<NonNullable<T>>]): Expr<NonNullable<T>>;
+  coalesce(...fallbacks: Expr<NonNullable<T> | null>[]): Expr<NonNullable<T> | null>;
+  coalesce(...fallbacks: (NonNullable<T> | Expr<NonNullable<T> | null>)[]): Expr<NonNullable<T> | null> {
+    if (fallbacks.length === 0) throw new TypeError("coalesce() needs at least one fallback");
+    return functionCall<NonNullable<T> | null>(this.type, "COALESCE", [this, ...fallbacks.map((f) => this.#operand(f))]);
   }
 
   nullif(value: NonNullable<T>): Expr<NonNullable<T> | null> {
@@ -651,15 +654,68 @@ export class Case<T> {
   }
 
   #build(otherwise: Expr<unknown> | undefined): Expr<T | null> {
-    const branches = this.branches;
-    return expression<T | null>(this.type, (w) => {
-      w.sql("CASE");
-      for (const [c, result] of branches) {
-        if (c.isEmpty) throw new Error("A CASE branch has no condition");
-        w.sql(" WHEN ").render(c).sql(" THEN ").render(result);
-      }
-      if (otherwise !== undefined) w.sql(" ELSE ").render(otherwise);
-      w.sql(" END");
-    });
+    return caseExpression<T | null>(this.type, undefined, this.branches, otherwise);
   }
+}
+
+/** The subject of a simple CASE before its first branch; see `caseOf`. */
+export class CaseOf<V> {
+  constructor(readonly subject: Expr<V>) {}
+
+  when(value: NonNullable<V>, result: string): SimpleCase<V, string>;
+  when(value: NonNullable<V>, result: number): SimpleCase<V, number>;
+  when(value: NonNullable<V>, result: boolean): SimpleCase<V, boolean>;
+  when<T>(value: NonNullable<V>, result: Expr<T>): SimpleCase<V, T>;
+  when(value: NonNullable<V>, result: unknown): SimpleCase<V, unknown> {
+    const e = result instanceof Expr ? (result as Expr<unknown>) : param(typeOf(result), result);
+    return new SimpleCase<V, unknown>(this.subject, e.type as SqlType<{}>, [[param(this.subject.type, value), e]]);
+  }
+}
+
+/** `CASE subject WHEN value THEN result ... END`, a code table written inline; the first branch fixes T. */
+export class SimpleCase<V, T> {
+  constructor(
+    readonly subject: Expr<V>,
+    readonly type: SqlType<NonNullable<T>>,
+    readonly branches: readonly (readonly [Expr<unknown>, Expr<unknown>])[],
+  ) {}
+
+  when(value: NonNullable<V>, result: NonNullable<T>): SimpleCase<V, T>;
+  when(value: NonNullable<V>, result: Expr<NonNullable<T>>): SimpleCase<V, T>;
+  when(value: NonNullable<V>, result: Expr<NonNullable<T> | null>): SimpleCase<V, T | null>;
+  when(value: NonNullable<V>, result: NonNullable<T> | Expr<NonNullable<T> | null>): SimpleCase<V, T | null> {
+    const e = result instanceof Expr ? result : param(this.type, result);
+    return new SimpleCase<V, T | null>(this.subject, this.type, [...this.branches, [param(this.subject.type, value), e]]);
+  }
+
+  otherwise(result: NonNullable<T>): Expr<T>;
+  otherwise(result: Expr<NonNullable<T>>): Expr<T>;
+  otherwise(result: Expr<NonNullable<T> | null>): Expr<T | null>;
+  otherwise(result: NonNullable<T> | Expr<NonNullable<T> | null>): Expr<T | null> {
+    return caseExpression<T | null>(this.type, this.subject, this.branches, result instanceof Expr ? result : param(this.type, result));
+  }
+
+  /** No ELSE: unmatched rows give NULL. */
+  end(): Expr<T | null> {
+    return caseExpression<T | null>(this.type, this.subject, this.branches, undefined);
+  }
+}
+
+/** `CASE [subject] WHEN key THEN result ... [ELSE otherwise] END`; the keys are conditions, or values with a subject. */
+function caseExpression<T>(
+  type: SqlType<NonNullable<T>>,
+  subject: Expr<unknown> | undefined,
+  branches: readonly (readonly [Renderable, Expr<unknown>])[],
+  otherwise: Expr<unknown> | undefined,
+): Expr<T> {
+  return expression<T>(type, (w) => {
+    w.sql("CASE");
+    if (subject !== undefined) w.sql(" ").render(subject);
+    for (const [key, result] of branches) {
+      if (key instanceof Cond && key.isEmpty) throw new Error("A CASE branch has no condition");
+      w.sql(" WHEN ").render(key).sql(" THEN ").render(result);
+    }
+    if (otherwise !== undefined) w.sql(" ELSE ").render(otherwise);
+    w.sql(" END");
+  });
 }

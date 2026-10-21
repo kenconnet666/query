@@ -11,9 +11,10 @@ import org.dpdns.zerodep.query.type.SqlType;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -95,8 +96,9 @@ public final class Query<R> {
         projection.apply(Row.recording(items));
         if (items.isEmpty()) throw new IllegalArgumentException("The projection reads no column; read values with row.get(...)");
         List<Expr<?>> fixed = List.copyOf(items);
+        List<Object> shapes = fixed.stream().map(Expr::shape).toList();
         RowMapper<R> mapper = values -> {
-            Row row = Row.replay(fixed, values);
+            Row row = Row.replay(shapes, values);
             R result = projection.apply(row);
             row.finish();
             return result;
@@ -105,17 +107,16 @@ public final class Query<R> {
     }
 
     /** Every property of the shape is taken from the same-named property of exactly one source, or from its @MapFrom. */
-    static <V> Query<V> auto(SelectSpec spec, Class<V> shape) {
-        List<Expr<?>> items = new ArrayList<>();
-        for (PropertyMeta target : Metadata.entity(shape).properties()) items.add(autoColumn(spec, shape, target).as(target.name()));
-        return named(spec, shape, items);
-    }
+    static <V> Query<V> auto(SelectSpec spec, Class<V> shape) { return named(spec, shape, List.of()); }
 
-    /** Labels must be exactly the shape's properties, so the result can also serve as a CTE or derived table. */
+    /**
+     * The listed columns, and for every other property of the shape its same-named source column, as in
+     * {@link #auto}. Columns follow the shape's property order, so UNION arms of one shape line up by name
+     * and the result can serve as a CTE or derived table.
+     */
     static <V> Query<V> named(SelectSpec spec, Class<V> shape, List<? extends Expr<?>> items) {
         EntityMeta<V> meta = Metadata.entity(shape);
-        List<String> labels = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
+        Map<String, Expr<?>> listed = new HashMap<>();
         for (Expr<?> item : items) {
             String label = item.label();
             if (label == null) {
@@ -123,14 +124,17 @@ public final class Query<R> {
                     + shape.getSimpleName() + "::getX)");
             }
             if (!meta.has(label)) throw new IllegalArgumentException(shape.getSimpleName() + " has no property '" + label + "'");
-            if (!seen.add(label)) throw new IllegalArgumentException("Column '" + label + "' is selected twice");
-            labels.add(label);
+            if (listed.put(label, item) != null) throw new IllegalArgumentException("Column '" + label + "' is selected twice");
         }
-        Set<String> missing = new LinkedHashSet<>();
-        for (PropertyMeta p : meta.properties()) if (!seen.contains(p.name())) missing.add(p.name());
-        if (!missing.isEmpty()) throw new IllegalArgumentException(shape.getSimpleName() + " properties without a column: " + missing);
+        List<Expr<?>> ordered = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        for (PropertyMeta p : meta.properties()) {
+            Expr<?> item = listed.get(p.name());
+            ordered.add(item != null ? item : autoColumn(spec, shape, p).as(p.name()));
+            labels.add(p.name());
+        }
         MappingPlan<V> plan = MappingPlan.of(shape, labels);
-        return new Query<>(List.of(new Arm(spec, List.copyOf(items))), Combination.NONE, labels, plan::map, shape, null, null, null);
+        return new Query<>(List.of(new Arm(spec, ordered)), Combination.NONE, labels, plan::map, shape, null, null, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -187,7 +191,7 @@ public final class Query<R> {
         }
         if (hits.size() == 1) return hits.get(0);
         throw new IllegalArgumentException(shape.getSimpleName() + "." + target.name() + (hits.isEmpty()
-            ? " has no same-named property in the joined sources; use selectAs(" + shape.getSimpleName() + ", ...) or @MapFrom"
+            ? " has no same-named property in the joined sources; list it in selectAs(" + shape.getSimpleName() + ", ...) or add @MapFrom"
             : " matches " + hits.size() + " sources; pick one with @MapFrom or selectAs(" + shape.getSimpleName() + ", ...)"));
     }
 

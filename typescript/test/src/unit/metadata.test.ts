@@ -35,9 +35,9 @@ describe("元数据", () => {
     const q = from(Order).select((o) => ({ ...o }));
     assert.equal(
       new TestDatabase({ naming: NamingStrategy.UPPER_SNAKE }).render(q).sql,
-      'SELECT ORDER.ORDER_NUMBER AS "orderNumber", ORDER.ITEM_COUNT AS "items"\nFROM ORDERS ORDER',
+      'SELECT "ORDER".ORDER_NUMBER AS "orderNumber", "ORDER".ITEM_COUNT AS "items"\nFROM ORDERS "ORDER"',
     );
-    assert.ok(new TestDatabase().render(q).sql.startsWith('SELECT ORDER."orderNumber"'));
+    assert.ok(new TestDatabase().render(q).sql.startsWith('SELECT "ORDER"."orderNumber"'));
     assert.equal(NamingStrategy.LOWER_SNAKE("partNumber2Code"), "part_number2_code");
   });
 

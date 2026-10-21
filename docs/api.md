@@ -12,7 +12,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)。两
 <dependency>
     <groupId>org.dpdns.zerodep.query</groupId>
     <artifactId>query-hana</artifactId>      <!-- 或 query-postgres、query-mysql -->
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -42,7 +42,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 <dependency>
     <groupId>org.dpdns.zerodep.query</groupId>
     <artifactId>query-spring</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -158,6 +158,8 @@ List<Delivery> rows = db.list(q);
 
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
 - 关联子查询直接捕获外层 lambda 的参数。
+- 函数式投影每行都会重放 lambda，读 10 万行时比 `selectAs` 慢约一半（0003 的 M5 粗测）；大结果集优先用 `selectAs` 或 `mapTo`。
+- 一个类里引用的不同 getter 超过约 500 个时，javac 生成的 `$deserializeLambda$` 可能超出 64KB 方法上限，编译报 "code too large"；把查询分到多个类即可。
 
 **小计与总计**：
 
@@ -178,10 +180,12 @@ from(Lips.class)
 | --- | --- | --- |
 | `select((r, a, b) -> new X(...))` | `Query<X>` | 默认写法。lambda 里用 `r.get(expr)` 或 `r.get(ref, Getter)` 读值，构造任意对象：record、Builder、嵌套 DTO，也可以做 Java 计算 |
 | `selectAs(VO.class)` | `Query<VO>` | 按同名属性从作用域里的表自动取列；改了名的属性用 `@MapFrom` 指定来源 |
-| `selectAs(Shape.class, (a, b) -> keys(...))` | `Query<Shape>` | 显式列，每列用 `.as(Shape::getX)` 命名，或直接沿用属性名；必须恰好覆盖 Shape 的全部属性 |
+| `selectAs(Shape.class, (a, b) -> keys(...))` | `Query<Shape>` | 显式列，每列用 `.as(Shape::getX)` 命名，或直接沿用属性名；没有列出的属性按 `selectAs(VO.class)` 的规则取同名列，相当于 `SELECT p.*, 额外列` |
 | `selectValue(a -> expr)` / `selectOne()` | `Query<T>` | 单列查询；也可以作为标量子查询或 `IN` 子查询 |
 
-函数式投影会先运行一次 lambda 记录读取顺序，然后每行重放一次。不要在 lambda 里根据某个列的值决定是否读取另一列，这种情况会被检测到并报错。
+函数式投影会先运行一次 lambda 记录读取顺序，然后每行重放一次。不要在 lambda 里根据某个列的值决定是否读取另一列，这种情况会被检测到并报错：重放时按表达式的结构核对，读到的列、函数或常量不同都算。
+
+命名投影（`selectAs`）的列一律按 Shape 的属性顺序输出，所以同一个 Shape 的 UNION 各段按属性名对齐。
 
 同一个查询可以映射到不同的类：
 
@@ -192,6 +196,21 @@ q.map(d -> d.partNumber());          // 在映射结果上再套一层 Java 函�
 ```
 
 标签匹配时忽略大小写和下划线，所以 `PART_NUMBER` 能映射到 `partNumber`。查询多出来的列会被忽略；目标属性缺少对应列时报错。数值类型宽松转换，例如 BigDecimal 可以赋给 Double。
+
+**一对多**：用一条查询取出扁平的行（例如表头 LEFT JOIN 明细），再用 `Nest.into` 分组成父项加子项列表：
+
+```java
+List<Line> lines = db.list(from(Head.class)
+    .leftJoin(Item.class, (h, i) -> i.col(Item::getOrderNo).eq(h, Head::getOrderNo))
+    .orderBy((h, i) -> orders(h.col(Head::getOrderNo).asc(), i.col(Item::getPosition).asc()))
+    .selectAs(Line.class));
+List<Order> orders = Nest.into(lines, Line::orderNo, Line::position, (first, positions) -> new Order(first.orderNo(), positions));
+```
+
+- 每个键一个父项，顺序与键第一次出现的顺序相同；父项由该键的第一行构造。
+- 子项函数返回 null 时（LEFT JOIN 没有匹配）不加子项，父项得到空列表。
+- 复合键用 record 或 `List.of(a, b)`。
+- 子表要单独查询时，先查父项，再用 `in(父项的键)` 查一次子表，然后对子表的行用 `Nest.into` 或 `Collectors.groupingBy` 按键分组，挂到父项上。
 
 ## 5. CTE、派生表、UNION、窗口
 
@@ -244,7 +263,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`。参数可以是值、表达式，或 `(ref, Getter)`。
 - 区间与集合：`between`、`in(Collection | Query)`、`notIn`、`isNull`、`isNotNull`。
 - 可选条件：`eqIfPresent` 等，以及 `betweenIfPresent`、`inIfPresent`。值为 null（集合为空）时省略该条件。
-- 同类型函数：`coalesce`、`nullif`。
+- 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, val("EA"))`，渲染成一个 COALESCE）、`nullif`。
 - 别名、排序与转换：`as("x")`、`as(VO::getX)`、`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`。
 
 **`Sql` 的静态函数**（各方言语义一致的部分）：
@@ -253,11 +272,11 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
 | 值 | `val(x)`（参数）、`lit(x)`（字面量，只用于固定代码值）、`nullOf(Type.class)` |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`；位置从 1 开始 |
-| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round` |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
+| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
-| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
+| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(Integer.class, "DAYS_BETWEEN({0}, {1})", a, b)`、`sqlCond("{0} ~ {1}", a, b)` |
 
 **方言专属能力**只在对应门面里提供，放到别的方言上渲染时会明确报错：
@@ -270,6 +289,10 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | `length`（按 UTF-16 单元计） | `ilike`、`filter(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
 | `stringAgg(e, sep, order...)`、`hint(...)` | `stringAgg(e, sep, order...)` | — |
 | `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
+| `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
+| `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+
+`greatest`、`least` 的常量参数写成 `val(x)`。三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。
 
 `cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy(l -> keys(groupingSets(keys(a, b), keys(a), keys())))`，空的 `keys()` 是总计。
 
@@ -307,6 +330,19 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect`（或某个现成方言），覆盖引号、字面量、分页、排序项、类型名、函数渲染和 JDBC 读写 |
 | 连接与监听 | `ConnectionProvider`、`QueryListener`、`QueryCache` |
+
+**用 SLF4J 记录语句**：本库不依赖任何日志框架，监听器里接上项目已有的日志即可。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
+
+```java
+Logger log = LoggerFactory.getLogger("query");
+Database db = Hana.database(dataSource, c -> c.listener(e -> {
+    if (e.error() != null) log.warn("{} failed after {} ms: {}", e.database(), e.elapsed().toMillis(), e.statement(), e.error());
+    else if (e.elapsed().toMillis() > 500) log.info("slow: {} rows in {} ms: {}", e.rows(), e.elapsed().toMillis(), e.statement());
+    else log.debug("{} rows in {} ms{}: {}", e.rows(), e.elapsed().toMillis(), e.cached() ? " (cached)" : "", e.statement().sql());
+}));
+```
+
+`e.statement()` 打印出 SQL 和参数。监听器抛出的异常会被忽略，不影响查询。
 
 ## 9. 编译期能拦住的错误
 

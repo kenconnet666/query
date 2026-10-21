@@ -1,18 +1,21 @@
 package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.Database;
+import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.function.Consumer;
 
 import static org.dpdns.zerodep.query.hana.Hana.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** Needs QUERY_HANA_URL, QUERY_HANA_USER and QUERY_HANA_PASSWORD; skipped otherwise. */
 @DisplayName("HANA 实库场景")
@@ -20,8 +23,8 @@ class HanaLiveTest extends LiveScenarios {
 
     @Override protected LiveDatabase connect() { return LiveDatabase.fromEnvironment("HANA"); }
 
-    @Override protected Database database(LiveDatabase live, Consumer<Database.Config> configure) {
-        return Hana.database(live.connections(), configure);
+    @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return Hana.database(connections, configure);
     }
 
     @Override protected String text(int length) { return "NVARCHAR(" + length + ")"; }
@@ -55,5 +58,23 @@ class HanaLiveTest extends LiveScenarios {
             .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
             .selectValue(l -> count()));
         assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
+    }
+
+    @Test
+    void GREATEST与LEAST遇到NULL时返回NULL() {
+        List<String> rows = db.list(from(Lips.class)
+            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
+                + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
+        assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
+        assertNull(db.one(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("D1"))
+            .selectValue(l -> greatest(l.col(Lips::getQuantity), nullOf(BigDecimal.class)))));
+    }
+
+    @Test
+    void TO_INTEGER把文本转成整数() {
+        assertEquals(List.of(1, 2, 3, 4, 5), db.list(from(Lips.class)
+            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .selectValue(l -> toInteger(substring(l.col(Lips::getDelivery), 2)))));
     }
 }

@@ -1,4 +1,4 @@
-import { CONCAT, Dialect, FunctionDef, type CastType, type Renderable, type SqlWriter } from "@query/core";
+import { CONCAT, Dialect, FunctionDef, LOCATE, type CastType, type Renderable, type SqlWriter } from "@query/core";
 
 /**
  * MySQL 8 with its default SQL mode. Identifiers are always quoted with backticks (window function
@@ -13,6 +13,7 @@ export class MysqlDialect extends Dialect {
   protected constructor() {
     super();
     this.register(CONCAT, (w, args) => FunctionDef.call(w, "CONCAT", args));
+    this.register(LOCATE, (w, args) => FunctionDef.call(w, "LOCATE", [args[1]!, args[0]!]));
   }
 
   protected isBare(): boolean {

@@ -32,7 +32,7 @@
 | 映射到 DTO | `select(VO.class, ...)`、`selectAutoInclude` | `selectAs(VO.class)` 按同名属性取列；`@MapFrom` 处理改名的属性；`.as(VO::getX)` 指定计算列 | 1 |
 | 元组 / 匿名结果 | `Draft2..`、`selectColumn` | 函数式投影 `select((r, a, b) -> new X(...))`，可以构造任意类型，包括嵌套对象 | 1 |
 | 嵌套 DTO（一对一） | `selectAutoInclude` 加导航属性 | 在函数式投影中直接构造嵌套 record | 1 |
-| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | 父查询与子查询分别执行，再按键在内存中分组。API 为 `nest`（暂定名） | 3 |
+| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | 一条查询的扁平结果按键分组成父项加子项列表（Java `Nest.into`、TS `nest`）；需要两次查询时，用 `IN` 查一次子表再分组 | 1 |
 | 单列 / 标量结果 | `selectColumn`、`count`、`sum` | `selectValue(...)` 加 `db.one(...)`、`db.count(q)` | 1 |
 | Lombok `@Data`、链式 setter、`@Builder`、record | 部分支持 | 均支持：映射计划用 `MethodHandle` 调用 | 1 |
 
@@ -42,7 +42,7 @@
 | --- | --- | --- | --- |
 | 按开关加条件 | `where(boolean, ...)` | `whereIf(test, ...)`、`onlyIf(test, () -> cond)` | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 显式写 `eqIfPresent`、`inIfPresent`、`ifPresent(v, x -> cond)`，不做全局隐式忽略 | 1 |
-| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | 在请求 DTO 上用注解声明条件，键用 Lombok 常量 | 3 |
+| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | 不做：每个条件一行 `eqIfPresent` 等，保留类型检查（见 0003） | — |
 | 动态排序 | `orderByObject` | `orderBy((a, b) -> ...)` 接收任意 `List<Order>`，可以由运行时数据生成 | 1 |
 | 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`ifPresent(v, x -> exists(...))`），作用域与类型不变 | 1 |
 | 复用的 SQL 片段 | 字符串拼接 | 返回 CTE、条件或表达式的普通方法 | 1 |

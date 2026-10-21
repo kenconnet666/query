@@ -2,11 +2,72 @@
 
 面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
 
-当前进度：Java 第一期与 TypeScript 第二期均已实现，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
+当前版本 1.0.0（尚未发布到 Maven 中央仓库）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
-- 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)
-- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)
+- 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[从手写 SQL 迁移](docs/migration.md)
+- 版本：[变更记录](CHANGELOG.md)、[手动发布步骤](docs/release.md)
+- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)
 - 场景覆盖计划：[场景对照](docs/scenarios.md)
+
+## 快速上手
+
+**Java**：引入所用方言的包，JDBC 驱动由项目自己提供。发布到中央仓库之前，先在本仓库执行 `.\mvnw.cmd install -DskipTests` 装到本地仓库。
+
+```xml
+<dependency>
+    <groupId>org.dpdns.zerodep.query</groupId>
+    <artifactId>query-postgres</artifactId>   <!-- 或 query-hana、query-mysql；Spring 项目再加 query-spring -->
+    <version>1.0.0</version>
+</dependency>
+```
+
+```java
+import static org.dpdns.zerodep.query.postgres.Postgres.*;   // 核心函数加 PostgreSQL 函数
+
+@Data
+@Table(schema = "erp", value = "lips")
+public class Lips {
+    @Column("matnr") private String material;
+    @Column("erdat") private LocalDate createdOn;
+    @Column("lfimg") private BigDecimal quantity;
+}
+
+public record MaterialTotal(String material, BigDecimal quantity) { }
+
+PostgresDatabase db = Postgres.database(dataSource);              // 每个数据源一个，长期复用
+
+List<MaterialTotal> rows = db.list(from(Lips.class)
+    .where(l -> l.col(Lips::getCreatedOn).ge(start))
+    .groupBy(l -> keys(l.col(Lips::getMaterial)))
+    .orderBy(l -> orders(l.col(Lips::getMaterial).asc()))
+    .select((r, l) -> new MaterialTotal(r.get(l, Lips::getMaterial), r.get(sum(l.col(Lips::getQuantity))))));
+```
+
+**TypeScript**（包暂不发布到 npm，在工作区内引用）：
+
+```ts
+import pg from "pg";
+import { column, database, date, decimal, from, sum, table } from "@query/postgres";
+
+@table("lips", { schema: "erp" })
+class Lips {
+  @column("matnr") material!: string;
+  @column("erdat", date) createdOn!: string;
+  @column("lfimg", decimal) quantity!: string;
+}
+
+const db = database(new pg.Pool({ connectionString: process.env.DATABASE_URL }));
+
+const rows = await db.list(
+  from(Lips)
+    .where((l) => l.createdOn.ge("2026-01-01"))
+    .groupBy((l) => l.material)
+    .orderBy((l) => l.material.asc())
+    .select((l) => ({ material: l.material, quantity: sum(l.quantity) })),
+);   // { material: string; quantity: string | null }[]
+```
+
+`db.render(q)` 可以查看将要执行的 SQL 和参数。完整用法见上面的 API 使用说明。
 
 ## 基线
 

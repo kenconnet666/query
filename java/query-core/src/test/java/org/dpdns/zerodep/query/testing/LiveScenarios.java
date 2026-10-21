@@ -3,16 +3,20 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
+import org.dpdns.zerodep.query.Nest;
 import org.dpdns.zerodep.query.Page;
 import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.Ref;
+import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.QueryCache;
+import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.exec.QueryListener;
 import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
 import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Erp.StockRow;
@@ -21,11 +25,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.function.Consumer;
@@ -48,6 +56,7 @@ import static org.dpdns.zerodep.query.Sql.substring;
 import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -61,7 +70,7 @@ public abstract class LiveScenarios {
 
     protected abstract LiveDatabase connect();
 
-    protected abstract Database database(LiveDatabase live, Consumer<Database.Config> configure);
+    protected abstract Database database(ConnectionProvider connections, Consumer<Database.Config> configure);
 
     /** The dialect's type for bounded Unicode text. */
     protected abstract String text(int length);
@@ -111,7 +120,7 @@ public abstract class LiveScenarios {
             insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
             insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
         live.execute(sql);
-        db = database(live, c -> c.filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100")));
+        db = database(live.connections(), c -> c.filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100")));
     }
 
     private String t(String table) { return q("QUERY_IT") + "." + q(table); }
@@ -206,13 +215,67 @@ public abstract class LiveScenarios {
     @Test
     void 结果缓存命中时不再查询数据库() {
         List<QueryListener.Event> events = new ArrayList<>();
-        Database cached = database(live, c -> c.cache(QueryCache.inMemory()).listener(events::add));
+        Database cached = database(live.connections(), c -> c.cache(QueryCache.inMemory()).listener(events::add));
         Query<Long> q = from(Lips.class).selectValue(l -> count()).cached(Duration.ofMinutes(1));
         long first = cached.one(q);
         long second = cached.one(q);
         assertEquals(6, first);
         assertEquals(6, second);
         assertEquals(List.of(false, true), events.stream().map(QueryListener.Event::cached).toList());
+        cached.clearCache();
+        assertEquals(6, cached.one(q));
+        assertEquals(List.of(false, true, false), events.stream().map(QueryListener.Event::cached).toList());
+    }
+
+    @Test
+    void 查询出错映射出错或提前关闭流时都归还连接() {
+        int[] open = {0};
+        ConnectionProvider counting = new ConnectionProvider() {
+            @Override public Connection acquire() throws SQLException {
+                Connection c = live.open();
+                open[0]++;
+                return c;
+            }
+
+            @Override public void release(Connection connection) throws SQLException {
+                open[0]--;
+                connection.close();
+            }
+        };
+        Database counted = database(counting, null);
+        Query<String> deliveries = from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).selectValue(l -> l.col(Lips::getDelivery));
+        Query<String> failsOnD3 = from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).select((r, l) -> {
+            String d = r.get(l, Lips::getDelivery);
+            if ("D3".equals(d)) throw new IllegalStateException("mapping failed");
+            return d;
+        });
+        assertThrows(QueryExecutionException.class, () -> counted.sql("SELECT * FROM NO_SUCH_TABLE").list(String.class));
+        assertThrows(IllegalStateException.class, () -> counted.list(failsOnD3));
+        try (Stream<String> rows = counted.stream(deliveries)) {
+            assertEquals("D1", rows.findFirst().orElseThrow());
+            assertEquals(1, open[0], "the stream holds its connection until closed");
+        }
+        assertThrows(IllegalStateException.class, () -> {
+            try (Stream<String> rows = counted.stream(failsOnD3)) {
+                rows.forEach(d -> { });
+            }
+        });
+        assertThrows(IllegalStateException.class, () -> counted.forEach(deliveries, d -> {
+            throw new IllegalStateException("consumer failed");
+        }));
+        assertEquals(6, counted.page(deliveries, 1, 2).total());
+        assertEquals(0, open[0]);
+    }
+
+    @Test
+    void 类名是保留字的实体也能查询() {
+        assertEquals(List.of("D1", "D2", "D5", "D6"), db.list(SpecCases.reservedAlias()));
+    }
+
+    @Test
+    void first取第一行或在没有行时为空() {
+        assertEquals(Optional.of("D1"), db.first(from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).selectValue(l -> l.col(Lips::getDelivery))));
+        assertEquals(Optional.empty(), db.first(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("none")).selectValue(l -> l.col(Lips::getDelivery))));
     }
 
     @Test
@@ -297,6 +360,37 @@ public abstract class LiveScenarios {
             .toList();
         assertEquals(List.of("M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"), rows);
     }
+
+    @Test
+    void 扁平结果按键分组为父项与子项() {
+        List<List<Object>> rows = db.list(from(Mara.class)
+            .leftJoin(Lips.class, (m, l) -> l.col(Lips::getMaterial).eq(m, Mara::getMaterial))
+            .orderBy((m, l) -> orders(m.col(Mara::getMaterial).asc(), l.col(Lips::getDelivery).asc()))
+            .select((r, m, l) -> Arrays.asList(r.get(m, Mara::getMaterial), r.get(l, Lips::getDelivery))));
+        List<String> groups = Nest.into(rows, row -> row.get(0), row -> (String) row.get(1), (first, deliveries) -> first.get(0) + "=" + deliveries);
+        assertEquals(List.of("M1=[D1, D2, D5]", "M2=[D3, D4]", "M3=[]", "M4=[]"), groups);
+    }
+
+    @Test
+    void 按LOCATE找到的位置截取文本() {
+        List<String> rows = db.list(SpecCases.textPositions()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2) + ":" + r.get(3)).toList();
+        assertEquals(List.of("05:0:05:null", "21,32:3:21:32"), rows);
+    }
+
+    @Test
+    void 简单CASE与多参数COALESCE() {
+        List<String> rows = db.list(SpecCases.simpleCase()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2)).toList();
+        assertEquals(List.of("M1:material:MK1", "M2:material:MK2", "M3:other:MK1", "M4:other:P1"), rows);
+    }
+
+    @Test
+    void FLOOR与CEIL() {
+        List<String> rows = db.list(SpecCases.floorCeil()).stream()
+            .map(r -> r.get(0) + ":" + plain(r.get(1)) + ":" + plain(r.get(2))).toList();
+        assertEquals(List.of("D1:1:2", "D2:1:1", "D3:2:3", "D4:3:4", "D5:0:1"), rows);
+    }
+
+    protected static String plain(Object decimal) { return ((BigDecimal) decimal).stripTrailingZeros().toPlainString(); }
 
     @Test
     void 右侧的UNION保持原有分组() {

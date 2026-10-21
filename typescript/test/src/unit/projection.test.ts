@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, cte, date, from, max, rowNumber, sum, values, type Query } from "@query/core";
+import { count, cte, date, from, max, nest, rowNumber, sum, values, type Query } from "@query/core";
 import { DeliveryVO, LineVO, Lips, Mara } from "../erp.js";
 import { deliveries, lines, partTotals } from "../scenarios.js";
 import { FakeDriver, rows, TestDatabase } from "../support.js";
@@ -12,6 +12,23 @@ function answering(columns: readonly string[], ...values: unknown[][]): { db: Te
 }
 
 describe("投影与映射", () => {
+  it("结果按键分组为父项与子项并保持首次出现的顺序", () => {
+    const lines = [
+      { order: "B", item: "b1" },
+      { order: "A", item: "a1" },
+      { order: "B", item: "b2" },
+      { order: "C", item: null },
+    ];
+    assert.deepEqual(
+      nest(lines, (l) => l.order, (l) => l.item, (first, items) => ({ order: first.order, items })),
+      [
+        { order: "B", items: ["b1", "b2"] },
+        { order: "A", items: ["a1"] },
+        { order: "C", items: [] },
+      ],
+    );
+  });
+
   it("对象投影的键就是列标签，结果按位置解码", async () => {
     const q = deliveries("2026-01-01", "2026-06-30", null);
     assert.deepEqual(q.labels, ["partNumber", "name", "quantity"]);

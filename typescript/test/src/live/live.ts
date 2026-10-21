@@ -10,6 +10,7 @@ import {
   inMemoryCache,
   left,
   negate,
+  nest,
   plus,
   replace,
   right,
@@ -22,8 +23,8 @@ import {
   type QueryEvent,
   type Ref,
 } from "@query/core";
-import { ClientEntity, Event, LineVO, Lips, MaraView } from "../erp.js";
-import { rollup, unionGrouping } from "../spec-cases.js";
+import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../erp.js";
+import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
 /**
@@ -372,6 +373,72 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.deepEqual(
         rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
         ["M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"],
+      );
+    });
+
+    it("查询出错、映射出错或提前结束流时都归还连接", { timeout: 30_000 }, async () => {
+      const { db } = live();
+      const deliveries = from(Lips)
+        .orderBy((l) => l.delivery)
+        .selectValue((l) => l.delivery);
+      const failsOnD3 = deliveries.map((d) => {
+        if (d === "D3") throw new Error("mapping failed");
+        return d;
+      });
+      // The pools hold four connections: a leak in any of these would exhaust them before the last query.
+      for (let i = 0; i < 5; i++) {
+        await assert.rejects(db.sql("SELECT * FROM NO_SUCH_TABLE").list());
+        await assert.rejects(db.list(failsOnD3), /mapping failed/);
+        for await (const d of db.stream(deliveries)) {
+          assert.equal(d, "D1");
+          break;
+        }
+        await assert.rejects(async () => {
+          for await (const d of db.stream(failsOnD3)) assert.ok(d);
+        }, /mapping failed/);
+        await assert.rejects(db.forEach(deliveries, () => Promise.reject(new Error("consumer failed"))), /consumer failed/);
+      }
+      assert.equal((await db.list(deliveries)).length, 5);
+    });
+
+    it("类名是保留字的实体也能查询", async () => {
+      assert.deepEqual(await live().db.list(reservedAlias()), ["D1", "D2", "D5", "D6"]);
+    });
+
+    it("扁平结果按键分组为父项与子项", async () => {
+      const rows = await live().db.list(
+        from(Mara)
+          .leftJoin(Lips, (m, l) => l.material.eq(m.material))
+          .orderBy((m, l) => [m.material, l.delivery])
+          .select((m, l) => ({ material: m.material, delivery: l.delivery })),
+      );
+      assert.deepEqual(
+        nest(rows, (r) => r.material, (r) => r.delivery, (first, deliveries) => `${first.material}=${deliveries.join(",")}`),
+        ["M1=D1,D2,D5", "M2=D3,D4", "M3=", "M4="],
+      );
+    });
+
+    it("按 LOCATE 找到的位置截取文本", async () => {
+      const rows = await live().db.list(textPositions());
+      assert.deepEqual(
+        rows.map((r) => `${r.text}:${r.comma}:${r.head}:${r.tail}`),
+        ["05:0:05:null", "21,32:3:21:32"],
+      );
+    });
+
+    it("简单 CASE 与多参数 COALESCE", async () => {
+      const rows = await live().db.list(simpleCase());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.kind}:${r.maker}`),
+        ["M1:material:MK1", "M2:material:MK2", "M3:other:MK1", "M4:other:P1"],
+      );
+    });
+
+    it("FLOOR 与 CEIL", async () => {
+      const rows = await live().db.list(floorCeil());
+      assert.deepEqual(
+        rows.map((r) => `${r.delivery}:${Number(r.down)}:${Number(r.up)}`),
+        ["D1:1:2", "D2:1:1", "D3:2:3", "D4:3:4", "D5:0:1"],
       );
     });
 

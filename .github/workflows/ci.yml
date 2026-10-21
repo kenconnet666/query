@@ -29,8 +29,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: 编译并运行全部单元测试（实库场景在此跳过）
-        run: ./mvnw --batch-mode --threads 1C verify
+      - name: 编译、运行全部单元测试并生成发布用的源码与 javadoc 包（实库场景在此跳过，不签名）
+        run: ./mvnw --batch-mode --threads 1C -P release -Dgpg.skip verify
       - name: 保存测试报告
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

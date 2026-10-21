@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, decimal, from, integer, mapFrom, max, rowNumber, sum, type Expr, type Query } from "@query/core";
+import { column, decimal, from, integer, lit, mapFrom, max, rowNumber, sum, val, type Expr, type Query } from "@query/core";
 import { DeliveryVO, Event, Lips, Makt, Mara } from "../erp.js";
 import { stockArm } from "../scenarios.js";
 
@@ -87,7 +87,13 @@ export function typeChecks(): unknown[] {
 
   const quantityOf = (q: Expr<string | null>): Expr<string> => q.coalesce("0");
 
-  return [joined, notNull, BadColumns, BadMapping, quantityOf, expectType];
+  // Constants widen, so arms that differ only in a constant combine.
+  const codes = from(Lips)
+    .select(() => ({ code: lit("A"), rank: val(1) }))
+    .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
+  expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
+
+  return [joined, notNull, BadColumns, BadMapping, quantityOf, expectType, codes];
 }
 
 describe("编译期类型检查", () => {

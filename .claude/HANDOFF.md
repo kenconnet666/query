@@ -1,79 +1,68 @@
 # 交接（2026-10-21）
 
-长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。下一次会在另一台电脑上继续，先看[换电脑后的准备](#换电脑后的准备)。
+长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-最后一次提交是 `feat/real-query-parity` 上的评审修复与本文件更新，本机三库全部测试通过，工作区干净。
+[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6 都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
 
 ## 当前状态
 
-### 分支与 PR
+### 分支
 
-- 三个分支依次叠加，都已推送：
-  1. `feat/java-core`：第一期 Java；
-  2. `feat/typescript-core`：第二期 TypeScript；
-  3. `feat/real-query-parity`：真实查询对照、补齐的能力、Spring 适配、CI 提速、SQL 级列转换、ROLLUP/分组集合，以及 PR 评审意见的修复。
-- [PR #1](https://github.com/kenconnet666/query/pull/1) 把 `feat/real-query-parity` 合并进 `master`，三个分支的内容都在里面。
-  - 按用户要求**不开自动合并**，由用户手动合并。
-  - 新电脑上继续时，在 `feat/real-query-parity` 上开发即可。
-  - 也可以等 PR 合并后从 `master` 新开分支。
-- Codex 评审机器人在 PR 上提了四条意见（两条 P1、两条 P2），都已修复、在讨论里回复并标为已解决，PR 上没有未解决的讨论。之后它提示代码评审用量已到上限，暂时不会再自动评审。
-- 桌面应用的 Auto-fix 在监视 PR #1：新评论或 CI 失败时会通知会话处理。
-- `master` 目前只有方向文档、TS 工程骨架和 LSP 插件。
+- 第一到第三期在 [PR #1](https://github.com/kenconnet666/query/pull/1) 合并进了 `master`。
+- M1 到 M6 在 `feat/v1` 上，通过 PR #2 合并进 `master`（用户已允许合并）。合并后新的工作从 `master` 开分支。
 
-### 已完成
+### 1.0 完成了什么
 
-- **文档**：
-  - [0001](../docs/decisions/0001-standalone-analytic-query-library.md)：方向决定；从 HANA 目录生成实体的工具暂时不做；
-  - [0002](../docs/decisions/0002-api-architecture.md)：API 与架构；第 9 条是 TS，第 10 条是常量字面量规则，第 11 条是常量行，第 12 条是 SQL 级列转换，第 13 条是 ROLLUP 与分组集合；
-  - 用法说明：[Java](../docs/api.md)、[TypeScript](../docs/api-typescript.md)；
-  - [场景对照](../docs/scenarios.md)。
-- **Java**：`query-core`、`query-hana`、`query-postgres`、`query-mysql`、`query-spring` 五个模块：
-  - 注解实体、getter 引用、lambda 作用域（1 到 8 张表），以及函数式、按名、单列三种投影；
-  - CTE 提升、UNION、窗口函数、子查询；
-  - 全局过滤器、分页、流式读取、原生 SQL、结果缓存、映射计划缓存；
-  - 三个方言的门面、专属函数与子句；
-  - `SpringConnections` 通过 `DataSourceUtils` 取连接，查询加入外层的 `@Transactional`。
-- **TypeScript**：`typescript/` 下的 pnpm 工作区，包括 `@query/core|hana|postgres|mysql`：
-  - 标准装饰器实体；
-  - 回调作用域按位置跟踪 LEFT JOIN 的可空性；
-  - 对象投影即列标签；
-  - 驱动适配 `@sap/hana-client`、`pg`、`mysql2`。
-- **真实查询对照**：内部 ERP 分析大屏的三条查询在本机 HANA 上用合成数据对比，原 SQL 与 Java、TS 改写各 21 组参数结果一致。由此补上：
-  - 常量行 `values`；
-  - `substring`、`left`、`right`、`replace`、`negate`，以及接收列表的 `plus`；
-  - HANA 的 `likeRegexpr`、`toNvarchar`；
-  - SELECT 列表与分组表达式里的常量写成字面量。
-- **SQL 级列转换**（0002 第 12 条）：`@ReadAs("…{0}…")` 与内置的 `@BlankAsNull`、`@Trimmed`（TS 为 `readAs`、`blankAsNull`、`trimmed`），列在语句的每个位置都按模板读取。对照程序换用 `@BlankAsNull` 后两端仍是 21 组全部一致。
-- **ROLLUP 与分组集合**（0002 第 13 条）：核心包 `groupByRollup`、`grouping`，MySQL 渲染为 `WITH ROLLUP`；HANA、PostgreSQL 包里有 `cube`、`groupingSets`。
-- **PR 评审意见**（Codex 机器人的两条 P1、两条 P2，均已修复、回复并标为已解决；机器人随后提示用量已到上限，暂时不会再评审）：
-  - 右侧混用 UNION 与 UNION ALL 时加括号，保持原有分组（Java `Query.Combination`，TS `State.groups`）；
-  - Java 函数式投影重放时按表达式结构核对（`Expr.shape()`），按行值在两个 `coalesce(...)` 之间切换也会报错；
-  - 原生 SQL 的参数扫描改由方言钩子 `quotedEnd` 判断引用：PostgreSQL 认美元引号，MySQL 认反引号和反斜杠转义（TS 以前对所有方言都认反引号，Java 都不认，现在两端一致）；
-  - PostgreSQL 的流式读取改由方言钩子 `Dialect.openCursor` 准备游标：自动提交的连接上临时开事务，外层事务不动，默认每批 1000 行。MySQL 仍默认缓冲，`fetchSize(Integer.MIN_VALUE)` 现在可以生效（以前只接受正数）。是否让 MySQL 默认逐行读取待定，见下文。
-- **两端一致**：`spec/render/` 下 73 个金样例，Java 与 TS 的测试都读取，SQL 与参数逐字相同。
-- **测试**（中文命名，本机三库全部通过）：
-  - Java 229 个（含 76 个金样例、63 个实库场景、javac 编译期检查、3 个 Spring 事务测试）；
-  - TS 210 个（含 76 个金样例、61 个实库场景、16 条 `@ts-expect-error` 编译期检查）。
-- **CI**：
-  - 并行的 job：Java 单元、TS 单元、Spring 6.2 与 7.0、PostgreSQL 和 MySQL 按"库 × 语言"拆成的 4 个 job、HANA（一个 job 跑两种语言）。
-  - 提速规则见 CLAUDE.md 的"CI 的提速规则"。
-  - 调整前，整次运行约 5 分钟，关键路径是 HANA：拉镜像约 26 秒，启动约 200 秒。
-  - 之后改成：后台启动数据库，构建与数据库启动重叠，去掉清理步骤，HANA 健康检查改为 3 秒一次。改后整次运行约 4 分 20 秒，关键路径仍是 HANA job（约 260 秒）。
+- **M1 表达力审计**：读了使用方的 121 段 HANA SQL，列出 8 个缺口。不需要新 API 的写法整理进了[迁移指南](../docs/migration.md)。
+- **M2 补缺口**：两端、三库同时补齐，都有金样例和实库测试：
+  - `locate`；起止位置是表达式的 `substring`、`left`、`right`；
+  - `floor`、`ceil`；
+  - 简单 CASE `caseOf`；多参数 `coalesce`；
+  - 方言包里的 `greatest`、`least`，HANA 的 `toInteger`；
+  - Java 命名投影自动补齐没有列出的属性。
+- **M3 结果分组**：`Nest.into`（TS 为 `nest`）。
+- **M4 扩大对照**：8 条代表性查询、36 组参数，原 SQL、Java 改写、TS 改写三者的结果逐行一致。顺带修了 TS 的 `lit`/`val` 字面量类型问题。
+- **M5 1.0 准备**：
+  - 补齐公开 API 的测试；
+  - 修了保留字作别名的 bug；
+  - 连接泄漏与并发测试；
+  - 性能粗测，并让函数式投影的结构核对每个查询只算一次；
+  - 日志监听器示例。
+- **M6 发布准备**：
+  - 中央仓库要求的 POM 元数据、`LICENSE`、`release` profile（源码包、javadoc 包、签名、central-publishing）；
+  - `Automatic-Module-Name`；
+  - CI 带 release profile 构建；
+  - [CHANGELOG](../CHANGELOG.md)、README 快速上手、[迁移指南](../docs/migration.md)、[手动发布步骤](../docs/release.md)。
+- 各项的证据与取舍记在 0003 的"验证证据"一节。
 
-### 待用户决定
+### 测试（本机三库全部通过）
 
-- 是否手动合并 PR #1。
-- 前身仓库是否冻结（0001 里唯一的待定项）。
-- Java 的 MySQL 流式读取是否默认改用 `Integer.MIN_VALUE`：好处是真正逐行读取，代价是读完之前同一连接不能执行别的语句（在 Spring 事务里边读边查会报错）。
+- **Java**：`-P release -Dgpg.skip verify` 通过。
+  - 各模块的测试数：core 78，HANA 65，PostgreSQL 67，MySQL 62，Spring 3；
+  - 金样例 88 个文件，覆盖 38 个场景。
+- **TS**：单元、编译期与金样例 165 个，实库 83 个。
+
+## 待用户决定或执行
+
+- **发布到中央仓库**：按 [docs/release.md](../docs/release.md) 手动执行。
+  - 先在 Central Portal 验证命名空间 `org.dpdns.zerodep`（给 `zerodep.dpdns.org` 加 DNS TXT 记录）。
+  - 验证不了时改用 `io.github.kenconnet666`，需要同步改 groupId。
+- **前身仓库是否冻结**：0001 里唯一的待定项。
+- **TS 包是否发布到 npm**：目前是私有包，`@query` 这个 scope 要先在 npm 注册。
+- **文档站**：用户说之后会用前端组件库另行安排，1.0 只提供仓库里的 Markdown。
 
 ## 下一步（建议）
 
-1. 看 PR #1 上最后一次推送的 CI 是否全绿（推送时还在运行）。
-2. **第三期剩余**（见 0002 的分期）：
-   - 一对多的批量组装；
-   - 按请求对象生成条件；
-   - HANA 计算视图与带参数的表函数、JSON。
-3. 在使用方仓库挑一个服务试点迁移。需要用户同意，目前使用方代码只读。
+1. 合并后看 `master` 上的 CI 是否全绿。
+2. 用户发布 1.0.0 后：
+   - 打 `v1.0.0` 标签；
+   - 用 `versions:set` 进入 `1.1.0-SNAPSHOT`；
+   - `CHANGELOG.md` 顶部加"未发布"。
+3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。
+4. 0003 列出的延后项，等有使用证据再做：
+   - DuckDB；
+   - HANA 计算视图与表函数、JSON、层级查询；
+   - 两次查询的批量加载。
 
 ## 换电脑后的准备
 
@@ -81,13 +70,13 @@
 
 | 东西 | 在旧电脑上的位置 | 新电脑上怎么办 |
 | --- | --- | --- |
-| 本仓库 | `C:\Users\Administrator\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，切到 `feat/real-query-parity` |
+| 本仓库 | `C:\Users\Administrator\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，在 `master` 上新开分支 |
 | 参考仓库（只读） | `IdeaProjects\easy_query_pro`、`IdeaProjects\easy-query`、`IdeaProjects\orm-references\*` | 按 CLAUDE.md 的说明重新克隆；不影响构建，只用于设计参考 |
 | 使用方代码（只读） | 旧电脑的本地目录 | 只在 Claude 项目记忆里有路径和说明，不进公开仓库 |
 | Claude 项目记忆 | `C:\Users\Administrator\.claude\projects\C--Users-Administrator-IdeaProjects-query\memory\` | 含使用方说明和设计证据，按需手动拷贝到新电脑对应目录；没有它也能继续，只是缺少使用方背景 |
 | 开发数据库 | WSL Debian 里的 Docker，由前身仓库的 `tools/*.ps1` 启动 | 见下文；没有本机库也能开发，实库测试交给 CI |
 | IDEA 的 MCP 与数据源 | 用户级配置 `idea` 与四个数据源 | 在新电脑的 IDEA 中重新配置，连接 ID 会变 |
-| 对照程序 | 旧电脑的会话临时目录，含使用方的业务常量，不进仓库 | 不需要；结论在 0002 里 |
+| 对照程序 | 旧电脑的会话临时目录，含使用方的业务常量，不进仓库 | 不需要；结论在 0002 与 0003 里 |
 
 **最小可用环境**：
 

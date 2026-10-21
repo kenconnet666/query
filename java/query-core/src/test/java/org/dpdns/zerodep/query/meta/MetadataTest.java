@@ -11,6 +11,7 @@ import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.Mardh;
 import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Erp.PeriodStock;
+import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -113,6 +114,18 @@ class MetadataTest {
 
     static class NoPlaceholder {
         @Column("X") @ReadAs("TRIM(X)") private String x;
+    }
+
+    @org.dpdns.zerodep.query.annotation.Table("ORDERS")
+    record Order(@Column String orderNumber, @Column("ITEM_COUNT") Integer items) { }
+
+    @Test
+    void 没写列名的字段按数据库的命名策略推导() {
+        TestDatabase snake = new TestDatabase(c -> c.naming(NamingStrategy.UPPER_SNAKE));
+        assertEquals("SELECT \"ORDER\".ORDER_NUMBER AS \"orderNumber\", \"ORDER\".ITEM_COUNT AS \"items\"\nFROM ORDERS \"ORDER\"",
+            snake.render(from(Order.class).selectAs(Order.class)).sql());
+        assertTrue(new TestDatabase(null).render(from(Order.class).selectAs(Order.class)).sql().startsWith("SELECT \"ORDER\".\"orderNumber\""));
+        assertEquals("part_number2_code", NamingStrategy.LOWER_SNAKE.column("partNumber2Code"));
     }
 
     @Test

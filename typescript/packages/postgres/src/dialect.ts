@@ -1,4 +1,4 @@
-import { Dialect, type CastType } from "@query/core";
+import { Dialect, FunctionDef, LOCATE, type CastType } from "@query/core";
 
 /** PostgreSQL. Unquoted identifiers fold to lower case; parameters are numbered. */
 export class PostgresDialect extends Dialect {
@@ -8,6 +8,7 @@ export class PostgresDialect extends Dialect {
 
   protected constructor() {
     super();
+    this.register(LOCATE, (w, args) => FunctionDef.call(w, "STRPOS", args));
   }
 
   protected isBare(identifier: string): boolean {

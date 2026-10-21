@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Map;
@@ -25,6 +26,11 @@ class HanaSpecTest extends RenderSpec {
         LocalDate first = LocalDate.of(2026, 1, 1);
         LocalDate day = LocalDate.of(2026, 1, 31);
         return Map.of(
+            "hana-extremes", SpecCase.plain(() -> from(Lips.class)
+                .select((r, l) -> Arrays.asList(
+                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
+                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4")),
+                    r.get(toInteger(substring(l.col(Lips::getDelivery), 2)).as("number"))))),
             "hana-grouping-sets", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys())))
                 .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),

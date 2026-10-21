@@ -34,6 +34,9 @@ public final class Hana extends Sql {
     private static final FunctionDef TO_DATE = FunctionDef.only(HanaDialect.class, "TO_DATE");
     private static final FunctionDef TO_NVARCHAR = FunctionDef.only(HanaDialect.class, "TO_NVARCHAR");
     private static final FunctionDef LENGTH = FunctionDef.only(HanaDialect.class, "LENGTH");
+    private static final FunctionDef TO_INTEGER = FunctionDef.only(HanaDialect.class, "TO_INTEGER");
+    private static final FunctionDef GREATEST = FunctionDef.only(HanaDialect.class, "GREATEST");
+    private static final FunctionDef LEAST = FunctionDef.only(HanaDialect.class, "LEAST");
     private static final FunctionDef CUBE = FunctionDef.only(HanaDialect.class, "CUBE");
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
@@ -96,6 +99,9 @@ public final class Hana extends Sql {
     /** HANA's LENGTH counts UTF-16 code units, so a character outside the BMP counts as 2. */
     public static Expr<Integer> length(Expr<String> text) { return call(LENGTH, Integer.class, text); }
 
+    /** TO_INTEGER(value), also written TO_INT: text or a number as an integer; text that is no number fails the query. */
+    public static Expr<Integer> toInteger(Expr<?> value) { return call(TO_INTEGER, Integer.class, value); }
+
     /** STRING_AGG(value, separator ORDER BY ...). */
     public static Expr<String> stringAgg(Expr<String> value, String separator, Order... order) {
         List<Renderable> args = new ArrayList<>();
@@ -145,5 +151,17 @@ public final class Hana extends Sql {
         }
 
         @Override public void render(SqlWriter w) { STRING_AGG.render(w, args); }
+    }
+
+    /** GREATEST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
+        return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
+    }
+
+    /** LEAST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
+        return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
     }
 }
