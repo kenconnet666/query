@@ -96,8 +96,9 @@ public final class Query<R> {
         projection.apply(Row.recording(items));
         if (items.isEmpty()) throw new IllegalArgumentException("The projection reads no column; read values with row.get(...)");
         List<Expr<?>> fixed = List.copyOf(items);
+        List<Object> shapes = fixed.stream().map(Expr::shape).toList();
         RowMapper<R> mapper = values -> {
-            Row row = Row.replay(fixed, values);
+            Row row = Row.replay(shapes, values);
             R result = projection.apply(row);
             row.finish();
             return result;
