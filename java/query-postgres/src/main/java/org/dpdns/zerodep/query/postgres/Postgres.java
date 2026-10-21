@@ -25,6 +25,8 @@ import java.util.function.Consumer;
  */
 public final class Postgres extends Sql {
     private static final FunctionDef CUBE = FunctionDef.only(PostgresDialect.class, "CUBE");
+    private static final FunctionDef GREATEST = FunctionDef.only(PostgresDialect.class, "GREATEST");
+    private static final FunctionDef LEAST = FunctionDef.only(PostgresDialect.class, "LEAST");
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(PostgresDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
 
@@ -139,5 +141,17 @@ public final class Postgres extends Sql {
         if (!(w.dialect() instanceof PostgresDialect)) {
             throw new UnsupportedOperationException("A PostgreSQL-only operation cannot run on " + w.dialect().name());
         }
+    }
+
+    /** GREATEST(a, b, ...), constants as {@code val(x)}: NULL arguments are skipped; NULL only when all are NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
+        return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
+    }
+
+    /** LEAST(a, b, ...), constants as {@code val(x)}: NULL arguments are skipped; NULL only when all are NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
+        return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
     }
 }

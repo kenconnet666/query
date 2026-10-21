@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query;
 
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -29,39 +30,45 @@ public final class Case<T> {
 
     public Case<T> when(Cond condition, T result) { return when(condition, new Nodes.Param<>(type, result)); }
 
-    public Expr<T> otherwise(Expr<T> result) { return new CaseExpr<>(type, conditions, results, result); }
+    public Expr<T> otherwise(Expr<T> result) { return new CaseExpr<>(type, null, conditions, results, result); }
 
     public Expr<T> otherwise(T result) { return otherwise(new Nodes.Param<>(type, result)); }
 
     /** No ELSE: unmatched rows give NULL. */
-    public Expr<T> end() { return new CaseExpr<>(type, conditions, results, null); }
+    public Expr<T> end() { return new CaseExpr<>(type, null, conditions, results, null); }
 
-    private static final class CaseExpr<T> extends Expr<T> {
-        private final List<Cond> conditions;
+    /** {@code CASE [subject] WHEN key THEN result ... [ELSE otherwise] END}; the keys are conditions, or values without a subject. */
+    static final class CaseExpr<T> extends Expr<T> {
+        private final Expr<?> subject;
+        private final List<? extends Renderable> keys;
         private final List<Expr<T>> results;
         private final Expr<T> otherwise;
 
-        CaseExpr(SqlType<T> type, List<Cond> conditions, List<Expr<T>> results, Expr<T> otherwise) {
+        CaseExpr(SqlType<T> type, Expr<?> subject, List<? extends Renderable> keys, List<Expr<T>> results, Expr<T> otherwise) {
             super(type);
-            this.conditions = List.copyOf(conditions);
+            this.subject = subject;
+            this.keys = List.copyOf(keys);
             this.results = List.copyOf(results);
             this.otherwise = otherwise;
         }
 
         @Override public void render(SqlWriter w) {
             w.sql("CASE");
-            for (int i = 0; i < conditions.size(); i++) {
-                Cond c = conditions.get(i);
-                if (c.isEmpty()) throw new IllegalStateException("A CASE branch has no condition");
-                w.sql(" WHEN ").render(c).sql(" THEN ").render(results.get(i));
+            if (subject != null) w.sql(" ").render(subject);
+            for (int i = 0; i < keys.size(); i++) {
+                Renderable key = keys.get(i);
+                if (key instanceof Cond c && c.isEmpty()) throw new IllegalStateException("A CASE branch has no condition");
+                w.sql(" WHEN ").render(key).sql(" THEN ").render(results.get(i));
             }
             if (otherwise != null) w.sql(" ELSE ").render(otherwise);
             w.sql(" END");
         }
 
-        /** Conditions are opaque renderers, so only their number counts. */
+        /** Conditions are opaque renderers, so only their position counts. */
         @Override Object shape() {
-            return Arrays.asList(CaseExpr.class, conditions.size(), Nodes.shapes(results), otherwise == null ? null : otherwise.shape());
+            List<Object> keyShapes = keys.stream().map(k -> k instanceof Expr<?> e ? e.shape() : Cond.class).toList();
+            return Arrays.asList(CaseExpr.class, subject == null ? null : subject.shape(), keyShapes, Nodes.shapes(results),
+                otherwise == null ? null : otherwise.shape());
         }
     }
 }

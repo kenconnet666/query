@@ -9,6 +9,7 @@ import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Scenarios;
+import org.dpdns.zerodep.query.testing.TestDialect;
 import org.dpdns.zerodep.query.type.CastType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -82,13 +83,15 @@ class ProjectionTest {
     }
 
     @Test
-    void 命名投影必须恰好覆盖形状的所有属性() {
-        var missing = assertThrows(IllegalArgumentException.class, () -> from(Mara.class)
-            .selectAs(MaterialScope.class, ma -> keys(ma.col(Mara::getClient), ma.col(Mara::getMaterial))));
-        assertTrue(missing.getMessage().contains("properties without a column: [partNumber]"), missing.getMessage());
+    void 命名投影未列出的属性按同名列补齐并按形状的属性顺序输出() {
+        Query<MaterialScope> q = from(Mara.class).selectAs(MaterialScope.class, ma -> keys(upper(ma.col(Mara::getPartNumber)).as(MaterialScope::partNumber)));
+        assertEquals(List.of("client", "material", "partNumber"), q.labels());
+        assertTrue(q.toSql(new TestDialect()).sql().startsWith("SELECT MARA.MANDT AS \"client\", MARA.MATNR AS \"material\", UPPER(MARA.MFRPN) AS \"partNumber\""));
+        var missing = assertThrows(IllegalArgumentException.class, () -> from(Lips.class)
+            .selectAs(MaterialScope.class, l -> keys(l.col(Lips::getMaterial).as(MaterialScope::material))));
+        assertTrue(missing.getMessage().contains("MaterialScope.partNumber has no same-named property"), missing.getMessage());
         var unknown = assertThrows(IllegalArgumentException.class, () -> from(Mara.class)
-            .selectAs(MaterialScope.class, ma -> keys(ma.col(Mara::getClient), ma.col(Mara::getMaterial), ma.col(Mara::getPartNumber),
-                ma.col(Mara::getManufacturer))));
+            .selectAs(MaterialScope.class, ma -> keys(ma.col(Mara::getManufacturer))));
         assertTrue(unknown.getMessage().contains("has no property 'manufacturer'"), unknown.getMessage());
     }
 

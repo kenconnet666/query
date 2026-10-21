@@ -7,12 +7,14 @@ import org.dpdns.zerodep.query.testing.LiveScenarios;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.function.Consumer;
 
 import static org.dpdns.zerodep.query.mysql.Mysql.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** Needs QUERY_MYSQL_URL, QUERY_MYSQL_USER and QUERY_MYSQL_PASSWORD; skipped otherwise. */
 @DisplayName("MySQL 实库场景")
@@ -48,5 +50,16 @@ class MysqlLiveTest extends LiveScenarios {
     void 原生SQL不在反引号和反斜杠转义的字符串里找参数() {
         List<String> rows = db.sql("SELECT CONCAT('it\\'s :no', :x) AS `v:w`").bind("x", "!").list(String.class);
         assertEquals(List.of("it's :no!"), rows);
+    }
+
+    @Test
+    void GREATEST与LEAST遇到NULL时返回NULL() {
+        List<String> rows = db.list(from(Lips.class)
+            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
+                + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
+        assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
+        assertNull(db.one(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("D1"))
+            .selectValue(l -> greatest(l.col(Lips::getQuantity), nullOf(BigDecimal.class)))));
     }
 }

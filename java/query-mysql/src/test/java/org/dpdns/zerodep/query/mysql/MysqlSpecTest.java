@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Map;
@@ -23,6 +24,10 @@ class MysqlSpecTest extends RenderSpec {
 
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of(
+            "mysql-extremes", SpecCase.plain(() -> from(Lips.class)
+                .select((r, l) -> Arrays.asList(
+                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
+                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4"))))),
             "mysql-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(maxExecutionTime(2000))
                 .groupBy(l -> keys(l.col(Lips::getMaterial)))

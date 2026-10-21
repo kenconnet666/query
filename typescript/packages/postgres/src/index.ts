@@ -7,7 +7,7 @@ import { pgDriver } from "./driver.js";
 export * from "@query/core";
 export { PostgresDialect } from "./dialect.js";
 export { pgDriver } from "./driver.js";
-export { cube, distinctOn, filterWhere, groupingSets, ilike, pg, PgOps, stringAgg } from "./functions.js";
+export { cube, distinctOn, filterWhere, greatest, groupingSets, ilike, least, pg, PgOps, stringAgg } from "./functions.js";
 
 /** A PostgreSQL database: queries render as PostgreSQL SQL and run through the given driver. */
 export class PostgresDatabase extends Database {

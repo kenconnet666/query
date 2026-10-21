@@ -4,8 +4,10 @@ import {
   any,
   avg,
   Bound,
+  caseOf,
   caseWhen,
   cast,
+  ceil,
   CastType,
   concat,
   count,
@@ -16,6 +18,7 @@ import {
   denseRank,
   divide,
   exists,
+  floor,
   from,
   grouping,
   lag,
@@ -24,6 +27,7 @@ import {
   like,
   likeIfPresent,
   lit,
+  locate,
   lower,
   max,
   min,
@@ -52,9 +56,9 @@ import {
   type Query,
   type Ref,
 } from "@query/core";
-import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, groupingSets as hanaGroupingSets, hint, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toNvarchar, toVarchar } from "@query/hana";
-import { dateDiff, dateFormat, groupConcat, maxExecutionTime } from "@query/mysql";
-import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, pg, stringAgg as pgStringAgg } from "@query/postgres";
+import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toInteger, toNvarchar, toVarchar } from "@query/hana";
+import { dateDiff, dateFormat, greatest as mysqlGreatest, groupConcat, least as mysqlLeast, maxExecutionTime } from "@query/mysql";
+import { cube as pgCube, distinctOn, filterWhere, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg, stringAgg as pgStringAgg } from "@query/postgres";
 import { Lips, Makt, Mara, MaraView, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 
@@ -228,6 +232,9 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   ),
   rollup: plain(() => rollup()),
   "union-grouping": plain(() => unionGrouping()),
+  "text-positions": plain(() => textPositions()),
+  "simple-case": plain(() => simpleCase()),
+  "floor-ceil": plain(() => floorCeil()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -255,6 +262,42 @@ export function rollup() {
 }
 
 /** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
+/** Cuts each comma-separated code where LOCATE finds the comma: computed SUBSTRING positions. */
+export function textPositions() {
+  const codes = cte("codes", values([{ text: "21,32" }, { text: "05" }]));
+  return from(codes)
+    .orderBy((c) => c.text)
+    .select((c) => {
+      const comma = locate(c.text, ",");
+      return {
+        text: c.text,
+        comma,
+        head: caseWhen(comma.gt(0), substring(c.text, 1, minus(comma, lit(1)))).otherwise(c.text),
+        tail: caseWhen(comma.gt(0), substring(c.text, plus(comma, lit(1)))).end(),
+      };
+    });
+}
+
+/** A code table written inline, and the first present of several values. */
+export function simpleCase() {
+  return from(Mara)
+    .orderBy((m) => m.material)
+    .select((m) => ({
+      material: m.material,
+      kind: caseOf(m.materialType).when("ZMAT", "material").otherwise("other"),
+      maker: m.manufacturer.nullif("").coalesce(m.partNumber.nullif(""), val("none")),
+    }));
+}
+
+export function floorCeil() {
+  return from(Lips)
+    .orderBy((l) => l.delivery)
+    .select((l) => {
+      const half = divide(l.quantity, lit("2", decimal));
+      return { delivery: l.delivery, down: floor(half), up: ceil(half) };
+    });
+}
+
 export function unionGrouping() {
   const materialOf = (delivery: string) =>
     from(Lips)
@@ -279,6 +322,9 @@ const groupingCases = (sets: typeof hanaGroupingSets, cubeOf: typeof hanaCube, p
 export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readonly<Record<string, SpecCase>>>> = {
   hana: {
     ...groupingCases(hanaGroupingSets, hanaCube, "hana"),
+    "hana-extremes": plain(() =>
+      from(Lips).select((l) => ({ atLeast4: hanaGreatest(l.quantity, val("4", decimal)), atMost4: hanaLeast(l.quantity, val("4", decimal)), number: toInteger(substring(l.delivery, 2)) })),
+    ),
     "hana-functions": plain(() =>
       from(Lips)
         .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
@@ -304,6 +350,9 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
   },
   postgres: {
     ...groupingCases(pgGroupingSets, pgCube, "postgres"),
+    "postgres-extremes": plain(() =>
+      from(Lips).select((l) => ({ atLeast4: pgGreatest(l.quantity, val("4", decimal)), atMost4: pgLeast(l.quantity, val("4", decimal)) })),
+    ),
     "postgres-functions": plain(() =>
       from(Lips)
         .with((l) => distinctOn(l.material))
@@ -322,6 +371,9 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     ),
   },
   mysql: {
+    "mysql-extremes": plain(() =>
+      from(Lips).select((l) => ({ atLeast4: mysqlGreatest(l.quantity, val("4", decimal)), atMost4: mysqlLeast(l.quantity, val("4", decimal)) })),
+    ),
     "mysql-functions": plain(() =>
       from(Lips)
         .with(maxExecutionTime(2000))

@@ -7,7 +7,7 @@ import { hanaDriver } from "./driver.js";
 export * from "@query/core";
 export { HanaDialect } from "./dialect.js";
 export { hanaDriver } from "./driver.js";
-export { addDays, addMonths, addYears, cube, daysBetween, groupingSets, hint, length, likeRegexpr, stringAgg, toDate, toNvarchar, toVarchar } from "./functions.js";
+export { addDays, addMonths, addYears, cube, daysBetween, greatest, groupingSets, hint, least, length, likeRegexpr, stringAgg, toDate, toInteger, toNvarchar, toVarchar } from "./functions.js";
 
 /** A HANA database: queries render as HANA SQL and run through the given driver. */
 export class HanaDatabase extends Database {

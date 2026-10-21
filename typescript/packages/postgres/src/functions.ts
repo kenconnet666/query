@@ -88,3 +88,21 @@ export function groupingSets(...sets: (readonly Expr<unknown>[])[]): Expr<unknow
   const args = sets.map((set) => ({ render: (w: SqlWriter) => void w.sql("(").join(set, ", ").sql(")") }));
   return expression(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
 }
+
+const GREATEST = FunctionDef.only(PostgresDialect, "GREATEST");
+const LEAST = FunctionDef.only(PostgresDialect, "LEAST");
+
+function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<unknown>[] {
+  if (rest.length === 0) throw new TypeError(`${name} needs at least two arguments`);
+  return [first, ...rest.map((v) => (v instanceof Expr ? v : param(first.type, v as NonNullable<T>)))];
+}
+
+/** GREATEST(a, b, ...): NULL arguments are skipped; NULL only when all are NULL. */
+export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
+}
+
+/** LEAST(a, b, ...): NULL arguments are skipped; NULL only when all are NULL. */
+export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
+}

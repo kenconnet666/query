@@ -1,0 +1,4 @@
+-- parameters: []
+SELECT LIPS.VBELN AS "delivery", FLOOR((LIPS.LFIMG / 2)) AS "down", CEIL((LIPS.LFIMG / 2)) AS "up"
+FROM QUERY_IT.LIPS LIPS
+ORDER BY LIPS.VBELN ASC

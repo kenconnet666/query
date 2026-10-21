@@ -8,6 +8,7 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
+import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Scenarios;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;
@@ -213,6 +214,15 @@ class RenderTest {
         Query<String> q = from(Mara.class).selectValue(m -> m.col(Mara::getMaterial));
         assertSame(db.render(q), db.render(q));
         assertNotSame(db.render(q), new TestDatabase(null).render(q));
+    }
+
+    @Test
+    void 命名投影的UNION各段按属性名对齐() {
+        Query<MaterialScope> a = from(Mara.class).selectAs(MaterialScope.class, ma -> keys(
+            ma.col(Mara::getPartNumber).as(MaterialScope::partNumber), ma.col(Mara::getMaterial).as(MaterialScope::material)));
+        Query<MaterialScope> b = from(Mara.class).selectAs(MaterialScope.class, ma -> keys(
+            ma.col(Mara::getMaterialType).as(MaterialScope::material), ma.col(Mara::getManufacturer).as(MaterialScope::partNumber)));
+        assertTrue(a.unionAll(b).toSql(DIALECT).sql().contains("SELECT MARA2.MANDT, MARA2.MTART, MARA2.MFRNR"));
     }
 
     @Test

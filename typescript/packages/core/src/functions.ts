@@ -3,6 +3,7 @@ import {
   Aggregate,
   Arithmetic,
   Case,
+  CaseOf,
   compare,
   condition,
   Cond,
@@ -29,6 +30,9 @@ import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType
 
 /** `a || b || ...`; dialects without the operator (MySQL) register their own rendering. */
 export const CONCAT = FunctionDef.of("CONCAT", (w, args) => w.sql("(").join(args, " || ").sql(")"));
+
+/** `LOCATE(text, search)`; PostgreSQL and MySQL register their own spelling. */
+export const LOCATE = FunctionDef.of("LOCATE");
 
 const NUMERIC: readonly TypeKind[] = ["integer", "bigint", "double", "decimal", "unknown"];
 
@@ -106,18 +110,31 @@ function textLength(length: number): number {
   return length;
 }
 
-/** SUBSTRING(e, start[, length]), counting from 1; the positions are literals, so the call can be a GROUP BY key. */
-export function substring<T extends string | null>(e: Expr<T>, start: number, length?: number): Expr<T> {
-  const args = length === undefined ? [e, lit(textPosition(start))] : [e, lit(textPosition(start)), lit(textLength(length))];
+/** A text position or length: a number becomes a literal, an expression is computed, e.g. from `locate`. */
+type Position = number | Expr<number> | Expr<number | null>;
+
+function positionArg(p: Position, check: (n: number) => number): Expr<unknown> {
+  return typeof p === "number" ? lit(check(p)) : p;
+}
+
+/** SUBSTRING(e, start[, length]), counting from 1. Literal positions keep the call usable as a GROUP BY key. */
+export function substring<T extends string | null>(e: Expr<T>, start: Position, length?: Position): Expr<T> {
+  const args: Expr<unknown>[] = [e, positionArg(start, textPosition)];
+  if (length !== undefined) args.push(positionArg(length, textLength));
   return functionCall(text as SqlType<NonNullable<T>>, "SUBSTRING", args);
 }
 
-export function left<T extends string | null>(e: Expr<T>, length: number): Expr<T> {
-  return functionCall(text as SqlType<NonNullable<T>>, "LEFT", [e, lit(textLength(length))]);
+export function left<T extends string | null>(e: Expr<T>, length: Position): Expr<T> {
+  return functionCall(text as SqlType<NonNullable<T>>, "LEFT", [e, positionArg(length, textLength)]);
 }
 
-export function right<T extends string | null>(e: Expr<T>, length: number): Expr<T> {
-  return functionCall(text as SqlType<NonNullable<T>>, "RIGHT", [e, lit(textLength(length))]);
+export function right<T extends string | null>(e: Expr<T>, length: Position): Expr<T> {
+  return functionCall(text as SqlType<NonNullable<T>>, "RIGHT", [e, positionArg(length, textLength)]);
+}
+
+/** Where search first occurs in value, counting from 1, or 0 when it does not. */
+export function locate<T extends string | null>(value: Expr<T>, search: string | Expr<string> | Expr<string | null>): Expr<KeepNull<T, number>> {
+  return functionCall(integer, LOCATE, [value, typeof search === "string" ? param(text, search) : search]);
 }
 
 export function replace<T extends string | null>(e: Expr<T>, search: string, replacement: string): Expr<T> {
@@ -173,6 +190,16 @@ function arithmetic<T>(operator: string, first: Expr<T>, rest: readonly Expr<unk
 export function abs<T extends Numeric>(e: Expr<T>): Expr<T> {
   numeric(e as Expr<unknown>, "ABS");
   return functionCall(e.type, "ABS", [e]);
+}
+
+export function floor<T extends Numeric>(e: Expr<T>): Expr<T> {
+  numeric(e as Expr<unknown>, "FLOOR");
+  return functionCall(e.type, "FLOOR", [e]);
+}
+
+export function ceil<T extends Numeric>(e: Expr<T>): Expr<T> {
+  numeric(e as Expr<unknown>, "CEIL");
+  return functionCall(e.type, "CEIL", [e]);
 }
 
 export function round<T extends Numeric>(e: Expr<T>, scale: number): Expr<T> {
@@ -245,6 +272,11 @@ export function caseWhen<T>(condition: Cond, result: Expr<T>): Case<T>;
 export function caseWhen(condition: Cond, result: unknown): Case<unknown> {
   const e = result instanceof Expr ? (result as Expr<unknown>) : val(result as {});
   return new Case(e.type, [[condition, e]]);
+}
+
+/** `CASE subject WHEN value THEN result ... END`: `caseOf(code).when("1", "own").when("2", "supplier").otherwise("other")`. */
+export function caseOf<V>(subject: Expr<V>): CaseOf<V> {
+  return new CaseOf(subject);
 }
 
 export function cast<T, U>(e: Expr<T>, target: CastType<U>): Expr<KeepNull<T, U>> {

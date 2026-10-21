@@ -1,4 +1,4 @@
-import { call, condition, date, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type Expr, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
+import { call, condition, date, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA-only functions and clauses; they refuse to render on another dialect. */
@@ -11,6 +11,7 @@ const TO_VARCHAR = FunctionDef.only(HanaDialect, "TO_VARCHAR");
 const TO_DATE = FunctionDef.only(HanaDialect, "TO_DATE");
 const TO_NVARCHAR = FunctionDef.only(HanaDialect, "TO_NVARCHAR");
 const LENGTH = FunctionDef.only(HanaDialect, "LENGTH");
+const TO_INTEGER = FunctionDef.only(HanaDialect, "TO_INTEGER");
 const STRING_AGG = FunctionDef.only(HanaDialect, "STRING_AGG", (w, args) => {
   w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
   if (args.length > 2) w.sql(" ORDER BY ").join(args.slice(2), ", ");
@@ -62,6 +63,11 @@ export function length<T extends string | null>(value: Expr<T>): Expr<KeepNull<T
   return call(LENGTH, integer, value);
 }
 
+/** TO_INTEGER(value), also written TO_INT: text or a number as an integer; text that is no number fails the query. */
+export function toInteger<T>(value: Expr<T>): Expr<KeepNull<T, number>> {
+  return call(TO_INTEGER, integer, value);
+}
+
 /** STRING_AGG(value, separator ORDER BY ...). */
 export function stringAgg(value: Expr<string | null>, separator: string, ...order: OrderItem[]): Expr<string | null> {
   const args = [value, lit(separator), ...order.map(toOrder)];
@@ -87,4 +93,22 @@ export function cube(...keys: Expr<unknown>[]): Expr<unknown> {
 export function groupingSets(...sets: (readonly Expr<unknown>[])[]): Expr<unknown> {
   const args = sets.map((set) => ({ render: (w: SqlWriter) => void w.sql("(").join(set, ", ").sql(")") }));
   return expression(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
+}
+
+const GREATEST = FunctionDef.only(HanaDialect, "GREATEST");
+const LEAST = FunctionDef.only(HanaDialect, "LEAST");
+
+function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<unknown>[] {
+  if (rest.length === 0) throw new TypeError(`${name} needs at least two arguments`);
+  return [first, ...rest.map((v) => (v instanceof Expr ? v : param(first.type, v as NonNullable<T>)))];
+}
+
+/** GREATEST(a, b, ...): NULL as soon as one argument is NULL. */
+export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
+}
+
+/** LEAST(a, b, ...): NULL as soon as one argument is NULL. */
+export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
 }

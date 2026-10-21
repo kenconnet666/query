@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -92,6 +93,14 @@ public abstract class Expr<T> implements Renderable {
     public final Expr<T> coalesce(T fallback) { return Nodes.call(type, "COALESCE", List.of(this, param(fallback))); }
     public final Expr<T> coalesce(Expr<T> fallback) { return Nodes.call(type, "COALESCE", List.of(this, fallback)); }
     public final <E> Expr<T> coalesce(Ref<E> ref, Getter<? super E, T> getter) { return coalesce(ref.col(getter)); }
+
+    /** COALESCE(this, a, b, ...): the first non-null of several fallbacks; a constant last one is {@code val(x)}. */
+    @SafeVarargs
+    public final Expr<T> coalesce(Expr<T> fallback, Expr<T>... more) {
+        List<Expr<?>> args = new ArrayList<>(List.of(this, fallback));
+        args.addAll(List.of(more));
+        return Nodes.call(type, "COALESCE", args);
+    }
     public final Expr<T> nullif(T value) { return Nodes.call(type, "NULLIF", List.of(this, param(value))); }
 
     // ---------- naming, ordering, conversion ----------

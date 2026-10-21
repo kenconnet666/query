@@ -26,6 +26,9 @@ public class Sql {
     /** {@code a || b || ...}; dialects without the operator register their own rendering. */
     public static final FunctionDef CONCAT = FunctionDef.of("CONCAT", (w, args) -> w.sql("(").join(args, " || ").sql(")"));
 
+    /** {@code LOCATE(text, search)}; PostgreSQL and MySQL register their own spelling. */
+    public static final FunctionDef LOCATE = FunctionDef.of("LOCATE");
+
     protected Sql() { }
 
     // ---------- sources ----------
@@ -112,12 +115,39 @@ public class Sql {
         return Nodes.call(SqlType.of(String.class), "SUBSTRING", List.of(e, lit(position(start))));
     }
 
+    /** SUBSTRING(e, start) with a computed start, e.g. one past a {@link #locate}. */
+    public static Expr<String> substring(Expr<String> e, Expr<Integer> start) {
+        return Nodes.call(SqlType.of(String.class), "SUBSTRING", List.of(e, start));
+    }
+
+    /** SUBSTRING(e, start, length) with computed positions; write constants with {@code lit(1)}. */
+    public static Expr<String> substring(Expr<String> e, Expr<Integer> start, Expr<Integer> length) {
+        return Nodes.call(SqlType.of(String.class), "SUBSTRING", List.of(e, start, length));
+    }
+
     public static Expr<String> left(Expr<String> e, int length) {
         return Nodes.call(SqlType.of(String.class), "LEFT", List.of(e, lit(count(length))));
     }
 
     public static Expr<String> right(Expr<String> e, int length) {
         return Nodes.call(SqlType.of(String.class), "RIGHT", List.of(e, lit(count(length))));
+    }
+
+    public static Expr<String> left(Expr<String> e, Expr<Integer> length) {
+        return Nodes.call(SqlType.of(String.class), "LEFT", List.of(e, length));
+    }
+
+    public static Expr<String> right(Expr<String> e, Expr<Integer> length) {
+        return Nodes.call(SqlType.of(String.class), "RIGHT", List.of(e, length));
+    }
+
+    /** Where search first occurs in text, counting from 1, or 0 when it does not. */
+    public static Expr<Integer> locate(Expr<String> text, String search) {
+        return locate(text, text.param(Objects.requireNonNull(search, "search")));
+    }
+
+    public static Expr<Integer> locate(Expr<String> text, Expr<String> search) {
+        return Nodes.call(SqlType.of(Integer.class), LOCATE, List.of(text, search));
     }
 
     public static Expr<String> replace(Expr<String> e, String search, String replacement) {
@@ -173,6 +203,10 @@ public class Sql {
 
     public static <N extends Number> Expr<N> abs(Expr<N> e) { return Nodes.call(e.type(), "ABS", List.of(e)); }
 
+    public static <N extends Number> Expr<N> floor(Expr<N> e) { return Nodes.call(e.type(), "FLOOR", List.of(e)); }
+
+    public static <N extends Number> Expr<N> ceil(Expr<N> e) { return Nodes.call(e.type(), "CEIL", List.of(e)); }
+
     public static <N extends Number> Expr<N> round(Expr<N> e, int scale) { return Nodes.call(e.type(), "ROUND", List.of(e, lit(scale))); }
 
     private static <N extends Number> Expr<N> arithmetic(String operator, Expr<N> first, Expr<? extends Number>[] rest) {
@@ -226,7 +260,20 @@ public class Sql {
         return caseWhen(condition, new Nodes.Param<>((SqlType<T>) SqlType.of(result.getClass()), result));
     }
 
+    /** {@code CASE subject WHEN value THEN result ... END}: {@code caseOf(code).when("1", "own").when("2", "supplier").otherwise("other")}. */
+    public static <V> SimpleCase.Start<V> caseOf(Expr<V> subject) { return new SimpleCase.Start<>(subject); }
+
     public static <U> Expr<U> cast(Expr<?> e, CastType<U> type) { return new Nodes.Cast<>(e, type); }
+
+    /** first followed by rest, for dialect functions such as GREATEST that take two or more arguments. */
+    @SafeVarargs
+    protected static <T> Expr<?>[] twoOrMore(String function, Expr<T> first, Expr<? extends T>... rest) {
+        if (rest.length == 0) throw new IllegalArgumentException(function + " needs at least two arguments");
+        Expr<?>[] all = new Expr<?>[rest.length + 1];
+        all[0] = first;
+        System.arraycopy(rest, 0, all, 1, rest.length);
+        return all;
+    }
 
     /** A typed escape hatch: {0}, {1} are the rendered arguments, the result type is declared. */
     public static <T> Expr<T> sql(Class<T> type, String template, Expr<?>... args) {

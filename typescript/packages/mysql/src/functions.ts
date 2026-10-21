@@ -1,4 +1,4 @@
-import { call, expression, FunctionDef, integer, lit, text, toOrder, type Clause, type Expr, type KeepNull, type OrderItem } from "@query/core";
+import { call, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, type Clause, type KeepNull, type OrderItem } from "@query/core";
 import { MysqlDialect } from "./dialect.js";
 
 /** MySQL-only functions and clauses; they refuse to render on another dialect. */
@@ -32,4 +32,22 @@ export function maxExecutionTime(milliseconds: number): Clause {
   if (!Number.isInteger(milliseconds) || milliseconds < 1) throw new RangeError("maxExecutionTime needs a positive number of milliseconds");
   const hint = `/*+ MAX_EXECUTION_TIME(${milliseconds}) */`;
   return { position: "hint", dialect: MysqlDialect, render: (w) => void w.sql(hint) };
+}
+
+const GREATEST = FunctionDef.only(MysqlDialect, "GREATEST");
+const LEAST = FunctionDef.only(MysqlDialect, "LEAST");
+
+function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<unknown>[] {
+  if (rest.length === 0) throw new TypeError(`${name} needs at least two arguments`);
+  return [first, ...rest.map((v) => (v instanceof Expr ? v : param(first.type, v as NonNullable<T>)))];
+}
+
+/** GREATEST(a, b, ...): NULL as soon as one argument is NULL. */
+export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
+}
+
+/** LEAST(a, b, ...): NULL as soon as one argument is NULL. */
+export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
+  return call(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
 }

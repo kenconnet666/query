@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { cast, CastType, date, from, lit, sum } from "@query/core";
-import { addDays, cube, daysBetween, groupingSets, HanaDatabase, hint } from "@query/hana";
-import { groupConcat, maxExecutionTime, MysqlDatabase } from "@query/mysql";
-import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, PostgresDatabase } from "@query/postgres";
+import { addDays, cube, daysBetween, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@query/hana";
+import { greatest as mysqlGreatest, groupConcat, maxExecutionTime, MysqlDatabase } from "@query/mysql";
+import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@query/postgres";
 import { Lips } from "../erp.js";
 import { deliveries } from "../scenarios.js";
 import { TestDialect } from "../support.js";
@@ -71,6 +71,10 @@ describe("方言", () => {
       from(Lips)
         .groupBy((l) => pgGroupingSets([l.material], []))
         .selectValue(() => sum(lit(1))),
+      from(Lips).selectValue((l) => greatest(l.quantity, "4")),
+      from(Lips).selectValue((l) => toInteger(l.delivery)),
+      from(Lips).selectValue((l) => pgLeast(l.quantity, "4")),
+      from(Lips).selectValue((l) => mysqlGreatest(l.quantity, "4")),
     ];
     for (const q of cases) assert.throws(() => q.toSql(other), /HanaDialect|MysqlDialect|PostgreSQL|PostgresDialect/);
     assert.throws(() => postgres.render(cases[0]!), /DAYS_BETWEEN is a HanaDialect function; this database uses PostgreSQL/);

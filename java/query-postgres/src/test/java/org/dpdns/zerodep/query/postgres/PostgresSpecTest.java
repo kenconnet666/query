@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -22,6 +23,10 @@ class PostgresSpecTest extends RenderSpec {
 
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of(
+            "postgres-extremes", SpecCase.plain(() -> from(Lips.class)
+                .select((r, l) -> Arrays.asList(
+                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
+                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4"))))),
             "postgres-grouping-sets", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys())))
                 .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),

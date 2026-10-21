@@ -299,6 +299,27 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 按LOCATE找到的位置截取文本() {
+        List<String> rows = db.list(SpecCases.textPositions()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2) + ":" + r.get(3)).toList();
+        assertEquals(List.of("05:0:05:null", "21,32:3:21:32"), rows);
+    }
+
+    @Test
+    void 简单CASE与多参数COALESCE() {
+        List<String> rows = db.list(SpecCases.simpleCase()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2)).toList();
+        assertEquals(List.of("M1:material:MK1", "M2:material:MK2", "M3:other:MK1", "M4:other:P1"), rows);
+    }
+
+    @Test
+    void FLOOR与CEIL() {
+        List<String> rows = db.list(SpecCases.floorCeil()).stream()
+            .map(r -> r.get(0) + ":" + plain(r.get(1)) + ":" + plain(r.get(2))).toList();
+        assertEquals(List.of("D1:1:2", "D2:1:1", "D3:2:3", "D4:3:4", "D5:0:1"), rows);
+    }
+
+    protected static String plain(Object decimal) { return ((BigDecimal) decimal).stripTrailingZeros().toPlainString(); }
+
+    @Test
     void 右侧的UNION保持原有分组() {
         assertEquals(List.of("M1", "M1", "M2"), db.list(SpecCases.unionGrouping()).stream().sorted().toList());
     }

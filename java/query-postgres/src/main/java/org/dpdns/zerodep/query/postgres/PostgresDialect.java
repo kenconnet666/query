@@ -1,6 +1,8 @@
 package org.dpdns.zerodep.query.postgres;
 
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.type.CastType;
 
 import java.sql.Connection;
@@ -21,7 +23,9 @@ public class PostgresDialect extends Dialect {
     /** A dollar-quote delimiter: the tag follows the rules of a name, without dollar signs. */
     private static final Pattern DOLLAR_TAG = Pattern.compile("\\$(?:[\\p{L}_][\\p{L}\\p{N}_]*)?\\$");
 
-    protected PostgresDialect() { }
+    protected PostgresDialect() {
+        register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "STRPOS", args));
+    }
 
     @Override public String name() { return "PostgreSQL"; }
 

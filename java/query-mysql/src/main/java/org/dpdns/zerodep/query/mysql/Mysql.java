@@ -23,6 +23,8 @@ import java.util.function.Consumer;
  */
 public final class Mysql extends Sql {
     private static final FunctionDef DATEDIFF = FunctionDef.only(MysqlDialect.class, "DATEDIFF");
+    private static final FunctionDef GREATEST = FunctionDef.only(MysqlDialect.class, "GREATEST");
+    private static final FunctionDef LEAST = FunctionDef.only(MysqlDialect.class, "LEAST");
     private static final FunctionDef DATE_FORMAT = FunctionDef.only(MysqlDialect.class, "DATE_FORMAT");
     private static final FunctionDef GROUP_CONCAT = FunctionDef.only(MysqlDialect.class, "GROUP_CONCAT", (w, args) -> {
         w.sql("GROUP_CONCAT(").render(args.get(0));
@@ -78,5 +80,17 @@ public final class Mysql extends Sql {
 
             @Override public void render(SqlWriter w) { w.sql(hint); }
         };
+    }
+
+    /** GREATEST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
+        return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
+    }
+
+    /** LEAST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    @SafeVarargs
+    public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
+        return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
     }
 }

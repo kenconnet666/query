@@ -115,6 +115,9 @@ public final class SpecCases {
             .select((r, m) -> Arrays.asList(r.get(m, MaraView::getPartNumber), r.get(countDistinct(m.col(MaraView::getMaker)).as("makers"))))));
         cases.put("rollup", SpecCase.plain(SpecCases::rollup));
         cases.put("union-grouping", SpecCase.plain(SpecCases::unionGrouping));
+        cases.put("text-positions", SpecCase.plain(SpecCases::textPositions));
+        cases.put("simple-case", SpecCase.plain(SpecCases::simpleCase));
+        cases.put("floor-ceil", SpecCase.plain(SpecCases::floorCeil));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         return cases;
     }
@@ -195,6 +198,41 @@ public final class SpecCases {
             .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
             .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total")),
                 r.get(grouping(l.col(Lips::getMaterial)).as("level"))));
+    }
+
+    /** A comma-separated code, as SAP keeps several ATA chapters in one field. */
+    public record Code(String text) { }
+
+    /** Cuts each code where LOCATE finds the comma: computed SUBSTRING positions. */
+    public static Query<List<Object>> textPositions() {
+        Cte<Code> codes = cte("codes", values(Code.class, List.of(new Code("21,32"), new Code("05"))));
+        return from(codes)
+            .orderBy(c -> orders(c.col(Code::text).asc()))
+            .select((r, c) -> {
+                Expr<String> text = c.col(Code::text);
+                Expr<Integer> comma = locate(text, ",");
+                return Arrays.asList(r.get(text.as("text")), r.get(comma.as("comma")),
+                    r.get(caseWhen(comma.gt(0), substring(text, lit(1), minus(comma, lit(1)))).otherwise(text).as("head")),
+                    r.get(caseWhen(comma.gt(0), substring(text, plus(comma, lit(1)))).end().as("tail")));
+            });
+    }
+
+    /** A code table written inline, and the first present of several values. */
+    public static Query<List<Object>> simpleCase() {
+        return from(Mara.class)
+            .orderBy(m -> orders(m.col(Mara::getMaterial).asc()))
+            .select((r, m) -> Arrays.asList(r.get(m, Mara::getMaterial),
+                r.get(caseOf(m.col(Mara::getMaterialType)).when("ZMAT", "material").otherwise("other").as("kind")),
+                r.get(m.col(Mara::getManufacturer).nullif("").coalesce(m.col(Mara::getPartNumber).nullif(""), val("none")).as("maker"))));
+    }
+
+    public static Query<List<Object>> floorCeil() {
+        return from(Lips.class)
+            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .select((r, l) -> {
+                Expr<BigDecimal> half = divide(l.col(Lips::getQuantity), lit(new BigDecimal("2")));
+                return Arrays.asList(r.get(l, Lips::getDelivery), r.get(floor(half).as("down")), r.get(ceil(half).as("up")));
+            });
     }
 
     /** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
