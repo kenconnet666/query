@@ -29,6 +29,12 @@ class MysqlLiveTest extends LiveScenarios {
 
     @Override protected String text(int length) { return "VARCHAR(" + length + ")"; }
 
+    /** SLEEP() interrupted by max_execution_time returns 1 instead of failing, so this counts a billion rows instead. */
+    @Override protected String slowStatement() {
+        String thousand = "(SELECT 1 FROM information_schema.columns LIMIT 1000)";
+        return "SELECT COUNT(*) FROM " + thousand + " a, " + thousand + " b, " + thousand + " c";
+    }
+
     @Override protected String q(String identifier) { return "`" + identifier + "`"; }
 
     /** TIMESTAMP converts through the session time zone and ends in 2038; DATETIME is a plain local value. */

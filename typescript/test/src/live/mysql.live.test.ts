@@ -23,6 +23,8 @@ liveScenarios(
     },
     database: (driver, options) => new MysqlDatabase(driver, options),
     text: (length) => `VARCHAR(${length})`,
+    // SLEEP() interrupted by max_execution_time returns 1 instead of failing, so this counts a billion rows instead.
+    slowStatement: "SELECT COUNT(*) FROM (SELECT 1 FROM information_schema.columns LIMIT 1000) a, (SELECT 1 FROM information_schema.columns LIMIT 1000) b, (SELECT 1 FROM information_schema.columns LIMIT 1000) c",
     q: (identifier) => `\`${identifier}\``,
     // TIMESTAMP converts through the session time zone and ends in 2038; DATETIME is a plain local value.
     timestamp: "DATETIME(6)",

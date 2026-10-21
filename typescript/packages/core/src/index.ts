@@ -123,6 +123,7 @@ export {
   type DatabaseOptions,
   type Driver,
   type DriverResult,
+  type ExecuteOptions,
   type NativeValue,
   type Page,
   type QueryCache,

@@ -14,8 +14,21 @@ liveScenarios(
     },
     database: (driver, options) => new HanaDatabase(driver, options),
     text: (length) => `NVARCHAR(${length})`,
+    // HANA SQL has no sleep function; SQLScript's built-in SQLSCRIPT_SYNC library does.
+    setup: [
+      "-DROP PROCEDURE QUERY_IT.SLOW_ROW",
+      "CREATE PROCEDURE QUERY_IT.SLOW_ROW(IN SECONDS INTEGER) READS SQL DATA AS BEGIN USING SQLSCRIPT_SYNC AS SYNCLIB; " +
+        "CALL SYNCLIB:SLEEP_SECONDS(:SECONDS); SELECT 1 AS X FROM DUMMY; END",
+    ],
+    slowStatement: "CALL QUERY_IT.SLOW_ROW(3)",
   },
   (live) => {
+    it("超时按整秒交给客户端，短于超时的语句照常完成", async () => {
+      const start = Date.now();
+      await live().db.sql("CALL QUERY_IT.SLOW_ROW(1)").timeout(2500).list();
+      assert.ok(Date.now() - start >= 1000, "the procedure slept its second");
+    });
+
     it("HANA 日期函数在实库上可用", async () => {
       const { db } = live();
       const day = lit("2026-01-01", date);

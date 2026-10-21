@@ -21,6 +21,13 @@ describe("方言", () => {
     assert.deepEqual(r.parameters, ["ZMAT", "MK1", "1", "20260101", "20260630"]);
   });
 
+  it("PostgreSQL 含反斜杠的字面量写成 E 字符串，以免受 standard_conforming_strings 影响", () => {
+    const escaped = postgres.render(from(Lips).selectValue(() => lit("a\\'; --"))).sql;
+    assert.ok(escaped.startsWith("SELECT E'a\\\\''; --' AS "), escaped);
+    const plain = postgres.render(from(Lips).selectValue(() => lit("O'Brien"))).sql;
+    assert.ok(plain.startsWith("SELECT 'O''Brien' AS "), plain);
+  });
+
   it("HANA 与 MySQL 用问号占位", () => {
     assert.equal(hana.render(deliveries("2026-01-01", "2026-06-30", null)).sql.match(/\?/g)?.length, 4);
     assert.equal(mysql.render(deliveries("2026-01-01", "2026-06-30", null)).sql.match(/\?/g)?.length, 4);

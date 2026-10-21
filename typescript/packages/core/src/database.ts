@@ -1,6 +1,6 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "./dialect.js";
 import { shapeFields, type NamingStrategy } from "./metadata.js";
-import { decoderOf, limitAtMost, renderCount, rendered, renderStatement, ttlOf, type Query, type SourceFilter } from "./query.js";
+import { decoderOf, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "./query.js";
 import { integer, untyped, type SqlType } from "./types.js";
 import { SqlWriter, type Rendered, type RenderSettings } from "./writer.js";
 
@@ -17,9 +17,15 @@ export interface DriverResult {
  * drivers hand decimals, big integers, dates and timestamps back as strings.
  */
 export interface Driver {
-  query(sql: string, parameters: readonly unknown[]): Promise<DriverResult>;
+  query(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): Promise<DriverResult>;
   /** Rows one at a time from one cursor; databases without it read everything first. */
-  stream?(sql: string, parameters: readonly unknown[]): AsyncIterable<readonly unknown[]>;
+  stream?(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): AsyncIterable<readonly unknown[]>;
+}
+
+/** Per-statement settings a driver applies; a driver that cannot honour one ignores it. */
+export interface ExecuteOptions {
+  /** Milliseconds after which the database cancels the statement. */
+  readonly timeoutMs?: number;
 }
 
 // ---------- listeners, caching, paging, errors ----------
@@ -115,10 +121,15 @@ export interface DatabaseOptions {
   readonly functions?: ReadonlyMap<FunctionDef, FunctionRenderer>;
   /** Shown in errors, listener events and cache keys; defaults to the dialect name and a number. */
   readonly name?: string;
+  /**
+   * Milliseconds after which statements are cancelled; a query's own `.timeout(ms)` takes precedence.
+   * HANA and PostgreSQL cancel on the server; see the dialect package's driver for details.
+   */
+  readonly queryTimeoutMs?: number;
 }
 
 let instances = 0;
-let executeNative: (db: Database, statement: Rendered) => Promise<DriverResult>;
+let executeNative: (db: Database, statement: Rendered, timeoutMs: number | undefined) => Promise<DriverResult>;
 
 /**
  * One database of one dialect. Each dialect package subclasses it; there is no dialect-neutral
@@ -130,6 +141,7 @@ export abstract class Database {
   readonly #settings: RenderSettings;
   readonly #cache: QueryCache | undefined;
   readonly #listener: QueryListener | undefined;
+  readonly #timeout: number | undefined;
 
   protected constructor(
     readonly dialect: Dialect,
@@ -145,6 +157,8 @@ export abstract class Database {
     });
     this.#cache = options.cache;
     this.#listener = options.listener;
+    if (options.queryTimeoutMs !== undefined && !(options.queryTimeoutMs > 0)) throw new RangeError("queryTimeoutMs must be positive");
+    this.#timeout = options.queryTimeoutMs;
   }
 
   // ---------- execution ----------
@@ -173,11 +187,12 @@ export abstract class Database {
       return;
     }
     const statement = this.render(q);
+    this.#checkParameterCount(statement);
     const { types, assemble } = decoderOf(q);
     const start = Date.now();
     let count = 0;
     try {
-      for await (const raw of this.#driver.stream(statement.sql, statement.parameters)) {
+      for await (const raw of this.#driver.stream(statement.sql, statement.parameters, this.#options(timeoutOf(q)))) {
         count++;
         yield assemble(decode(q, types, raw));
       }
@@ -194,7 +209,7 @@ export abstract class Database {
 
   async count(q: Query<unknown>): Promise<number> {
     const statement = renderCount(this.#writer(), q);
-    const result = await this.#execute(statement);
+    const result = await this.#execute(statement, timeoutOf(q));
     return integer.decode(result.rows[0]?.[0]);
   }
 
@@ -227,7 +242,7 @@ export abstract class Database {
 
   async #rows(q: Query<unknown>, statement: Rendered): Promise<Rows> {
     const { types } = decoderOf(q);
-    const fetch = async () => (await this.#execute(statement)).rows.map((raw) => decode(q, types, raw));
+    const fetch = async () => (await this.#execute(statement, timeoutOf(q))).rows.map((raw) => decode(q, types, raw));
     const ttl = ttlOf(q);
     if (ttl === undefined) return fetch();
     if (this.#cache === undefined) throw new Error(`The query is .cached(...) but database ${this.name} has no cache; pass cache: inMemoryCache()`);
@@ -241,16 +256,34 @@ export abstract class Database {
     return rows;
   }
 
-  /** Runs a statement and reports it to the listener. */
-  async #execute(statement: Rendered): Promise<DriverResult> {
+  /** Runs a statement and reports it to the listener; `timeoutMs` undefined means the instance's default. */
+  async #execute(statement: Rendered, timeoutMs: number | undefined): Promise<DriverResult> {
+    this.#checkParameterCount(statement);
     const start = Date.now();
     try {
-      const result = await this.#driver.query(statement.sql, statement.parameters);
+      const result = await this.#driver.query(statement.sql, statement.parameters, this.#options(timeoutMs));
       this.#notify(statement, start, result.rows.length, undefined, false);
       return result;
     } catch (e) {
       this.#notify(statement, start, 0, e, false);
       throw new QueryExecutionError(this.name, statement, e);
+    }
+  }
+
+  #options(timeoutMs: number | undefined): ExecuteOptions {
+    const limit = timeoutMs ?? this.#timeout;
+    return limit === undefined ? {} : { timeoutMs: limit };
+  }
+
+  /** Fails before contacting the database, whose own error for too many parameters is often cryptic. */
+  #checkParameterCount(statement: Rendered): void {
+    const count = statement.parameters.length;
+    const max = this.dialect.maxParameters;
+    if (count > max) {
+      throw new Error(
+        `${this.name}: the statement binds ${count} parameters; ${this.dialect.name} accepts at most ${max}. ` +
+          "Split the list into several queries, or select the values with a subquery instead of passing them",
+      );
     }
   }
 
@@ -264,7 +297,7 @@ export abstract class Database {
   }
 
   static {
-    executeNative = (db, statement) => db.#execute(statement);
+    executeNative = (db, statement, timeoutMs) => db.#execute(statement, timeoutMs);
   }
 }
 
@@ -293,6 +326,7 @@ const normalized = (label: string) => label.replaceAll("_", "").toLowerCase();
  */
 export class NativeQuery {
   readonly #params = new Map<string, NativeValue | readonly NativeValue[]>();
+  #timeout: number | undefined;
 
   constructor(
     private readonly database: Database,
@@ -305,11 +339,18 @@ export class NativeQuery {
     return this;
   }
 
+  /** Cancels the statement when it runs longer than this many milliseconds; overrides the database instance's queryTimeoutMs. */
+  timeout(ms: number): this {
+    if (!(ms > 0)) throw new RangeError("timeout must be positive");
+    this.#timeout = ms;
+    return this;
+  }
+
   /** Rows as objects keyed by column label, or as instances of a class matched by label ignoring case and underscores. */
   async list(): Promise<Record<string, unknown>[]>;
   async list<C extends object>(type: new () => C): Promise<C[]>;
   async list(type?: new () => object): Promise<object[]> {
-    const { columns, rows } = await executeNative(this.database, this.render());
+    const { columns, rows } = await executeNative(this.database, this.render(), this.#timeout);
     if (type === undefined) {
       return rows.map((row) => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
     }
@@ -328,7 +369,7 @@ export class NativeQuery {
 
   /** The first column of every row. */
   async values<T = unknown>(): Promise<T[]> {
-    const { rows } = await executeNative(this.database, this.render());
+    const { rows } = await executeNative(this.database, this.render(), this.#timeout);
     return rows.map((row) => row[0] as T);
   }
 

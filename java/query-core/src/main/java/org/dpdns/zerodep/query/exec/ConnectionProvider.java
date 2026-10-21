@@ -2,6 +2,7 @@ package org.dpdns.zerodep.query.exec;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 /**
@@ -12,6 +13,12 @@ public interface ConnectionProvider {
     Connection acquire() throws SQLException;
 
     void release(Connection connection) throws SQLException;
+
+    /**
+     * Called for each statement after the database instance has set its query timeout and before
+     * it runs; a Spring adapter applies the remaining transaction timeout here.
+     */
+    default void prepared(PreparedStatement statement) throws SQLException { }
 
     /** Plain DataSource: a pooled connection per statement, closed (returned) afterwards. */
     static ConnectionProvider of(DataSource dataSource) {

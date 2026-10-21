@@ -137,6 +137,8 @@ interface State {
   readonly limit: number | undefined;
   readonly offset: number | undefined;
   readonly ttl: number | undefined;
+  /** Milliseconds before the database cancels the statement; undefined means the database instance's default. */
+  readonly timeout: number | undefined;
 }
 
 let makeQuery: <R>(s: State) => Query<R>;
@@ -194,7 +196,7 @@ export class Query<R> {
     const shift = a.arms.length;
     const groups = [...a.groups, ...b.groups.map(([first, last]) => [first + shift, last + shift] as const)];
     if (b.operators.some((op) => op !== operator)) groups.push([shift, shift + b.arms.length - 1]);
-    return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl });
+    return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl, timeout: a.timeout });
   }
 
   /** Same SQL, with a function applied to every row. */
@@ -227,6 +229,12 @@ export class Query<R> {
   cached(ttlMs: number): Query<R> {
     if (!(ttlMs > 0)) throw new RangeError("ttl must be positive");
     return makeQuery({ ...this.#s, ttl: ttlMs });
+  }
+
+  /** Cancels the statement when it runs longer than this many milliseconds; overrides the database instance's queryTimeoutMs. */
+  timeout(ms: number): Query<R> {
+    if (!(ms > 0)) throw new RangeError("timeout must be positive");
+    return makeQuery({ ...this.#s, timeout: ms });
   }
 
   limit(n: number): Query<R> {
@@ -319,6 +327,10 @@ export function decoderOf<R>(q: Query<R>): { readonly types: readonly SqlType<un
 
 export function ttlOf(q: Query<unknown>): number | undefined {
   return stateOf(q).ttl;
+}
+
+export function timeoutOf(q: Query<unknown>): number | undefined {
+  return stateOf(q).timeout;
 }
 
 /** Lowers the limit to at most n, keeping a smaller limit the query already has. */
@@ -523,6 +535,7 @@ export class From<T extends readonly unknown[]> {
       limit: undefined,
       offset: undefined,
       ttl: undefined,
+      timeout: undefined,
     });
   }
 
@@ -559,6 +572,7 @@ export class From<T extends readonly unknown[]> {
       limit: undefined,
       offset: undefined,
       ttl: undefined,
+      timeout: undefined,
     });
   }
 
@@ -596,6 +610,7 @@ export class From<T extends readonly unknown[]> {
       limit: undefined,
       offset: undefined,
       ttl: undefined,
+      timeout: undefined,
     });
   }
 
@@ -668,5 +683,6 @@ export function values<R extends Record<string, ConstantValue>>(rows: readonly R
     limit: undefined,
     offset: undefined,
     ttl: undefined,
+    timeout: undefined,
   });
 }

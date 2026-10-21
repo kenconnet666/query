@@ -67,6 +67,11 @@ public final class Query<R> {
 
     private record Memo(Object key, Rendered rendered) { }
 
+    /** How the query runs rather than what it selects; null means the database instance's default. */
+    private record Execution(Duration ttl, Duration timeout) {
+        static final Execution DEFAULT = new Execution(null, null);
+    }
+
     private final List<Arm> arms;
     private final Combination combination;
     private final List<String> labels;
@@ -74,11 +79,11 @@ public final class Query<R> {
     private final Class<R> shape;
     private final Integer limit;
     private final Integer offset;
-    private final Duration ttl;
+    private final Execution execution;
     private volatile Memo memo;
 
     private Query(List<Arm> arms, Combination combination, List<String> labels, RowMapper<R> mapper, Class<R> shape,
-                  Integer limit, Integer offset, Duration ttl) {
+                  Integer limit, Integer offset, Execution execution) {
         this.arms = List.copyOf(arms);
         this.combination = combination;
         this.labels = List.copyOf(labels);
@@ -86,7 +91,7 @@ public final class Query<R> {
         this.shape = shape;
         this.limit = limit;
         this.offset = offset;
-        this.ttl = ttl;
+        this.execution = execution;
     }
 
     // ---------- construction ----------
@@ -103,7 +108,7 @@ public final class Query<R> {
             row.finish();
             return result;
         };
-        return new Query<>(List.of(new Arm(spec, fixed)), Combination.NONE, labelsOf(fixed), mapper, null, null, null, null);
+        return new Query<>(List.of(new Arm(spec, fixed)), Combination.NONE, labelsOf(fixed), mapper, null, null, null, Execution.DEFAULT);
     }
 
     /** Every property of the shape is taken from the same-named property of exactly one source, or from its @MapFrom. */
@@ -134,13 +139,13 @@ public final class Query<R> {
             labels.add(p.name());
         }
         MappingPlan<V> plan = MappingPlan.of(shape, labels);
-        return new Query<>(List.of(new Arm(spec, ordered)), Combination.NONE, labels, plan::map, shape, null, null, null);
+        return new Query<>(List.of(new Arm(spec, ordered)), Combination.NONE, labels, plan::map, shape, null, null, Execution.DEFAULT);
     }
 
     @SuppressWarnings("unchecked")
     static <T> Query<T> value(SelectSpec spec, Expr<T> item) {
         String label = item.label() == null ? "value" : item.label();
-        return new Query<>(List.of(new Arm(spec, List.of(item))), Combination.NONE, List.of(label), values -> (T) values[0], null, null, null, null);
+        return new Query<>(List.of(new Arm(spec, List.of(item))), Combination.NONE, List.of(label), values -> (T) values[0], null, null, null, Execution.DEFAULT);
     }
 
     /** One SELECT of literals per row, combined with UNION ALL. */
@@ -230,7 +235,7 @@ public final class Query<R> {
         }
         List<Arm> allArms = new ArrayList<>(arms);
         allArms.addAll(other.arms);
-        return new Query<>(allArms, combination.then(operator, other.combination), labels, mapper, shape, null, null, ttl);
+        return new Query<>(allArms, combination.then(operator, other.combination), labels, mapper, shape, null, null, execution);
     }
 
     // ---------- result shaping ----------
@@ -238,32 +243,38 @@ public final class Query<R> {
     /** Same SQL, mapped by column label into another class (record, bean, builder or scalar). */
     public <V> Query<V> mapTo(Class<V> type) {
         MappingPlan<V> plan = MappingPlan.of(type, labels);
-        return new Query<>(arms, combination, labels, plan::map, null, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, plan::map, null, limit, offset, execution);
     }
 
     /** Same SQL, with a Java function applied to every mapped row. */
     public <V> Query<V> map(Function<? super R, ? extends V> function) {
         Objects.requireNonNull(function, "function");
         RowMapper<R> inner = mapper;
-        return new Query<>(arms, combination, labels, values -> function.apply(inner.map(values)), null, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, values -> function.apply(inner.map(values)), null, limit, offset, execution);
     }
 
     /** Results are kept in the database instance's cache for ttl, keyed by SQL and parameters. */
     public Query<R> cached(Duration ttl) {
         if (ttl == null || ttl.isNegative() || ttl.isZero()) throw new IllegalArgumentException("ttl must be positive");
-        return new Query<>(arms, combination, labels, mapper, shape, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, limit, offset, new Execution(ttl, execution.timeout()));
+    }
+
+    /** Cancels the statement on the database when it runs longer; overrides the database instance's queryTimeout. */
+    public Query<R> timeout(Duration timeout) {
+        if (timeout == null || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
+        return new Query<>(arms, combination, labels, mapper, shape, limit, offset, new Execution(execution.ttl(), timeout));
     }
 
     public Query<R> limit(int rows) {
         if (arms.size() == 1) return withSpec(arms.get(0).spec().limit(rows));
         if (rows < 0) throw new IllegalArgumentException("limit must not be negative");
-        return new Query<>(arms, combination, labels, mapper, shape, rows, offset, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, rows, offset, execution);
     }
 
     public Query<R> offset(int rows) {
         if (arms.size() == 1) return withSpec(arms.get(0).spec().offset(rows));
         if (rows < 0) throw new IllegalArgumentException("offset must not be negative");
-        return new Query<>(arms, combination, labels, mapper, shape, limit, rows, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, limit, rows, execution);
     }
 
     /** Lowers the limit to at most {@code rows}, keeping a smaller limit the query already has. */
@@ -273,7 +284,7 @@ public final class Query<R> {
     }
 
     private Query<R> withSpec(SelectSpec spec) {
-        return new Query<>(List.of(new Arm(spec, arms.get(0).items())), combination, labels, mapper, shape, limit, offset, ttl);
+        return new Query<>(List.of(new Arm(spec, arms.get(0).items())), combination, labels, mapper, shape, limit, offset, execution);
     }
 
     /** As a derived table: {@code from(query.asTable())}. Needs a named projection. */
@@ -301,7 +312,9 @@ public final class Query<R> {
 
     Integer offsetValue() { return offset; }
 
-    Duration ttl() { return ttl; }
+    Duration ttl() { return execution.ttl(); }
+
+    Duration timeout() { return execution.timeout(); }
 
     Class<R> shape() {
         requireShape("a CTE or derived table");

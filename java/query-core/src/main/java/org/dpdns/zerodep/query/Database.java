@@ -13,6 +13,7 @@ import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -48,7 +49,8 @@ public abstract class Database {
         attributes.put(NamingStrategy.class, config.naming);
         this.settings = new Settings(filters, config.cache, config.naming, Map.copyOf(config.functions), Map.copyOf(attributes));
         TypeRegistry types = dialect.types().with(config.types);
-        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, config.listeners, config.fetchSize);
+        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, config.listeners, config.fetchSize,
+            config.queryTimeout);
     }
 
     public final Dialect dialect() { return dialect; }
@@ -79,7 +81,7 @@ public abstract class Database {
 
     /** Rows read lazily from one cursor; close the stream (try-with-resources) to release the connection. */
     public <R> Stream<R> stream(Query<R> q) {
-        return executor.stream(render(q), executor.columns(q.columnTypes())).map(q::mapRow);
+        return executor.stream(render(q), executor.columns(q.columnTypes()), q.timeout()).map(q::mapRow);
     }
 
     public <R> void forEach(Query<R> q, Consumer<? super R> action) {
@@ -90,7 +92,7 @@ public abstract class Database {
 
     public long count(Query<?> q) {
         Rendered statement = QueryRenderer.count(writer(), q);
-        List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Long.class))));
+        List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Long.class))), q.timeout());
         return ((Number) rows.get(0)[0]).longValue();
     }
 
@@ -118,7 +120,7 @@ public abstract class Database {
     SqlWriter writer() { return new SqlWriter(dialect, settings.functions(), settings.attributes()); }
 
     private List<Object[]> rows(Query<?> q, Rendered statement) {
-        if (q.ttl() == null) return executor.fetch(statement, executor.columns(q.columnTypes()));
+        if (q.ttl() == null) return executor.fetch(statement, executor.columns(q.columnTypes()), q.timeout());
         if (settings.cache() == null) {
             throw new IllegalStateException("Query is .cached(...) but database " + name + " has no cache; configure config.cache(QueryCache.inMemory())");
         }
@@ -126,7 +128,7 @@ public abstract class Database {
         boolean[] loaded = {false};
         List<Object[]> rows = settings.cache().get(key, q.ttl(), () -> {
             loaded[0] = true;
-            return executor.fetch(statement, executor.columns(q.columnTypes()));
+            return executor.fetch(statement, executor.columns(q.columnTypes()), q.timeout());
         });
         if (!loaded[0]) executor.cacheHit(statement, rows.size());
         return rows;
@@ -141,6 +143,7 @@ public abstract class Database {
         private QueryCache cache;
         private NamingStrategy naming = NamingStrategy.AS_IS;
         private int fetchSize;
+        private Duration queryTimeout;
         private String name;
 
         Config() { }
@@ -185,6 +188,16 @@ public abstract class Database {
 
         public Config fetchSize(int rows) {
             this.fetchSize = rows;
+            return this;
+        }
+
+        /**
+         * Cancels statements that run longer, through JDBC {@code setQueryTimeout} (whole seconds,
+         * rounded up). A query's own {@code .timeout(...)} and a Spring transaction timeout take precedence.
+         */
+        public Config queryTimeout(Duration timeout) {
+            if (timeout != null && (timeout.isNegative() || timeout.isZero())) throw new IllegalArgumentException("queryTimeout must be positive");
+            this.queryTimeout = timeout;
             return this;
         }
 

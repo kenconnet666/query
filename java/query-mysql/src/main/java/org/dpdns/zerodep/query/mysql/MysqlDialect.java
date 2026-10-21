@@ -41,6 +41,9 @@ public class MysqlDialect extends Dialect {
 
     @Override protected String stringLiteral(String s) { return "'" + s.replace("\\", "\\\\").replace("'", "''") + "'"; }
 
+    /** Connector/J writes parameters into the statement text on the client unless useServerPrepStmts is on. */
+    @Override public int maxParameters() { return Integer.MAX_VALUE; }
+
     /** MySQL needs LIMIT before OFFSET; the documented way to say "no limit" is the largest BIGINT UNSIGNED. */
     @Override public void limit(SqlWriter w, Integer limit, Integer offset) {
         boolean hasOffset = offset != null && offset > 0;

@@ -38,6 +38,26 @@ class PostgresLiveTest extends LiveScenarios {
 
     @Override protected String text(int length) { return "VARCHAR(" + length + ")"; }
 
+    @Override protected String slowStatement() { return "SELECT pg_sleep(3)"; }
+
+    @Test
+    void 关闭standard_conforming_strings的会话里含反斜杠的字面量仍原样往返() {
+        Database legacy = database(new ConnectionProvider() {
+            @Override public Connection acquire() throws SQLException {
+                Connection c = live.open();
+                try (Statement s = c.createStatement()) {
+                    s.execute("SET standard_conforming_strings = off");
+                }
+                return c;
+            }
+
+            @Override public void release(Connection connection) throws SQLException { connection.close(); }
+        }, null);
+        for (String text : List.of("back\\slash", "\\'; SELECT 1; --", "ends with \\")) {
+            assertEquals(text, legacy.one(from(Lips.class).limit(1).selectValue(l -> lit(text))));
+        }
+    }
+
     @Test
     void DISTINCT_ON取每个物料最新的交货() {
         List<String> rows = db.list(from(Lips.class)

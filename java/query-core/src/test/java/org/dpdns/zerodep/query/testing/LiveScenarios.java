@@ -54,6 +54,7 @@ import static org.dpdns.zerodep.query.Sql.replace;
 import static org.dpdns.zerodep.query.Sql.right;
 import static org.dpdns.zerodep.query.Sql.substring;
 import static org.dpdns.zerodep.query.Sql.sum;
+import static org.dpdns.zerodep.query.Sql.val;
 import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -80,6 +81,9 @@ public abstract class LiveScenarios {
 
     /** The column type for a LocalDateTime without time zone conversion. */
     protected String timestamp() { return "TIMESTAMP"; }
+
+    /** A hand-written statement that runs for several seconds before returning a row. */
+    protected abstract String slowStatement();
 
     @BeforeAll
     void createSchema() throws Exception {
@@ -401,5 +405,40 @@ public abstract class LiveScenarios {
         assertEquals(part, d.partNumber());
         assertEquals(name, d.name());
         assertTrue(new BigDecimal(quantity).compareTo(d.quantity()) == 0, () -> "quantity " + d.quantity());
+    }
+
+    /** Text that would end a string literal early, open a comment or look like a parameter. */
+    private static final List<String> HOSTILE = List.of("O'Brien", "back\\slash", "\\'; DROP TABLE x; --", "ends with \\", "-- not a comment",
+        "/* nor this */", "? :name $1 $$", "中文 Ünïcødé");
+
+    public record Text(String value, Integer ord) { }
+
+    @Test
+    void 带引号反斜杠和注释符的文本作为字面量和参数都原样往返() {
+        List<Text> rows = new ArrayList<>();
+        for (int i = 0; i < HOSTILE.size(); i++) rows.add(new Text(HOSTILE.get(i), i));
+        Cte<Text> texts = cte("texts", values(Text.class, rows));
+        assertEquals(HOSTILE, db.list(from(texts).orderBy(t -> orders(t.col(Text::ord).asc())).selectValue(t -> t.col(Text::value))),
+            "values(...) writes every row as literals");
+        for (String text : HOSTILE) {
+            assertEquals(text, db.one(from(Lips.class).limit(1).selectValue(l -> val(text))), "a SELECT-list constant is written as a literal");
+            assertEquals(List.of(text), db.list(from(texts).where(t -> t.col(Text::value).eq(text)).selectValue(t -> t.col(Text::value))),
+                "a WHERE value is bound as a parameter");
+        }
+    }
+
+    @Test
+    void 超过超时的语句在数据库端被取消且连接仍可用() {
+        long start = System.nanoTime();
+        assertThrows(QueryExecutionException.class, () -> db.sql(slowStatement()).timeout(Duration.ofSeconds(1)).list(String.class));
+        Database limited = database(live.connections(), c -> c.queryTimeout(Duration.ofSeconds(1)));
+        assertThrows(QueryExecutionException.class, () -> limited.sql(slowStatement()).list(String.class));
+        long elapsed = Duration.ofNanos(System.nanoTime() - start).toMillis();
+        assertTrue(elapsed < 5000, "both statements were cancelled after about a second instead of running to the end: " + elapsed + " ms");
+        assertEquals(5, limited.count(from(Lips.class).where(l -> l.col(Lips::getClient).eq("100")).selectValue(l -> l.col(Lips::getDelivery))));
+        try (Stream<String> streamed = limited.stream(from(Lips.class).where(l -> l.col(Lips::getClient).eq("100")).selectValue(l -> l.col(Lips::getDelivery))
+            .timeout(Duration.ofSeconds(5)))) {
+            assertEquals(5, streamed.count(), "a stream applies its timeout and still reads every row");
+        }
     }
 }
