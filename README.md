@@ -46,7 +46,7 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 - `QUERY_PG_URL`、`QUERY_PG_USER`、`QUERY_PG_PASSWORD`
 - `QUERY_MYSQL_URL`、`QUERY_MYSQL_USER`、`QUERY_MYSQL_PASSWORD`
 
-GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及三个数据库的实库场景（每个数据库 job 先跑 Java，再跑 TypeScript）。
+GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及三个数据库的实库场景。PostgreSQL、MySQL 按语言各拆成两个 job；HANA 在一个 job 里先跑 Java、再跑 TypeScript。
 
 TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.0.2：
 
