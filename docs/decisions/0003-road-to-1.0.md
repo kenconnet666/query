@@ -1,6 +1,6 @@
 # 0003 通往 1.0 的蓝图
 
-- 状态：已采纳（2026-10-21），按里程碑执行中
+- 状态：已采纳（2026-10-21），M1 到 M6 已完成；发布由维护者按 [release.md](../release.md) 手动执行
 - 承接 [0002](0002-api-architecture.md) 的分期：第三期剩余的事项按本文重新取舍
 
 ## 背景
@@ -127,3 +127,12 @@
   - 构造并首次渲染一条带连接、分组、排序的查询约 13–18 µs；同一个查询对象再次渲染约 0.03 µs。
   - 函数式投影原本约 104 ms：M2 加的结构核对每行都会重新计算记录时表达式的结构。改为每个查询只算一次后降到约 89 ms，余下的开销来自每行重放 lambda、创建表达式节点。大结果集建议用 `selectAs` 或 `mapTo`。
 - **日志**：不引入日志依赖。两份用法说明各给了接 SLF4J（Java）和 pino 一类日志库（TS）的监听器示例。
+
+### M6 发布准备（2026-10-21）
+
+- **POM**：根 POM 补齐中央仓库要求的名称、描述、URL、Apache-2.0 许可、开发者和 SCM；仓库根目录加了 `LICENSE`。各模块的 jar 清单写入 `Automatic-Module-Name`，核心包与方言包没有拆分的包。
+- **`release` profile**：maven-source-plugin 3.4.0、maven-javadoc-plugin 3.12.0（doclint 只关掉 missing 一类）、maven-gpg-plugin 3.2.8、central-publishing-maven-plugin 0.11.0。插件版本都选发布超过一个月的；上传后等 Portal 校验完成，但不自动发布，最后一步留给维护者在网页上确认。
+- **CI**：Java 单元 job 改为带 `release` profile 运行 `verify`（跳过签名），javadoc 的错误在合并前就会暴露。
+- **版本**：Java 与 TS 包都改为 1.0.0。`query-core` 的 `tests` jar 也会发布：方言模块的测试依赖它，要排除就得拆出单独的测试模块，收益不大；发布测试构件对使用方也无害。
+- **文档**：README 快速上手（两端示例都编译并渲染过）、[迁移指南](../migration.md)（每段 Java 示例都编译并渲染过）、[CHANGELOG](../../CHANGELOG.md)、[手动发布步骤](../release.md)。
+- **迁移指南里的一处实测**：整数相除只有 PostgreSQL 取整，HANA 和 MySQL 的 `7 / 2` 都得 3.5。这正是 `divide` 只接受 BigDecimal 被除数的原因。

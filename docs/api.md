@@ -12,7 +12,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)。两
 <dependency>
     <groupId>org.dpdns.zerodep.query</groupId>
     <artifactId>query-hana</artifactId>      <!-- 或 query-postgres、query-mysql -->
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -42,7 +42,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 <dependency>
     <groupId>org.dpdns.zerodep.query</groupId>
     <artifactId>query-spring</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
