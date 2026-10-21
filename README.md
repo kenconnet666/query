@@ -1,17 +1,17 @@
 # query
 
-面向分析型复杂查询的类型安全 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
+面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
 
-当前处于设计阶段，还没有可用的 API。方向、范围和待定事项见 [0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)。
+当前处于第一期实现阶段。方向见 [0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)，API 与架构见 [0002](docs/decisions/0002-api-architecture.md)，场景覆盖计划见[场景对照](docs/scenarios.md)。
 
 ## 基线
 
 | 项 | 要求 |
 | --- | --- |
-| Java | 17 及以上，`maven.compiler.release=17` |
-| TypeScript | 6.0 及以上 |
-| 代码生成 | 不使用注解处理器（APT） |
-| 首批方言 | SAP HANA、DuckDB；随后是 PostgreSQL、MySQL |
+| Java | 17 及以上，`maven.compiler.release=17`；实体用注解声明，支持 Lombok |
+| TypeScript | 以 7 为基准，使用标准装饰器 |
+| 代码生成 | 不使用注解处理器（APT），也不在使用方生成代码 |
+| 首批方言 | SAP HANA、PostgreSQL；随后是 MySQL |
 
 ## 开发环境
 

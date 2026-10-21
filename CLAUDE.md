@@ -1,14 +1,19 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的类型安全 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
-- **Java**：17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。不使用注解处理器（APT）。
-- **TypeScript**：最低支持 6.0；开发编译器固定为 7.0.2（原生编译器），工程在 `typescript/`。
-- **首批方言**：SAP HANA 和 DuckDB，然后是 PostgreSQL 和 MySQL。
-- **API 尚未稳定**：0001 里的代码只是方向示意。原型验证之前，不写详细的 API 文档或使用手册；文档只记录决定、取舍和验证证据。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
+- **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
+- **Java**：
+  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
+  - 实体用注解声明，可以要求用户使用 Lombok。
+  - 不使用注解处理器（APT），也不在使用方生成代码。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，工程在 `typescript/`。
+- **首批方言**：SAP HANA 和 PostgreSQL，然后是 MySQL；DuckDB 延后。
+- **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含各库语义一致的能力，方言专属能力只出现在对应的方言包里。
+- **API 尚在第一期**：方向以 0002 为准。不写使用手册；文档只记录决定、取舍和验证证据。
 
 ## 必须参考的本地仓库
 

@@ -1,6 +1,6 @@
 # 0001 独立的分析查询库
 
-- 状态：方向已采纳（2026-10-21）；Java API 待原型验证
+- 状态：方向已采纳（2026-10-21）。API、TypeScript 基准和方言顺序由 [0002](0002-api-architecture.md) 修订
 - 前身：`easy_query_pro`（EasyQuery 3.2.17 的 Java 8 增强包，以及仓库内的 TypeScript ORM 子项目）
 
 ## 背景
