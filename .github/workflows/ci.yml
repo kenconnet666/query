@@ -39,6 +39,24 @@ jobs:
           path: java/*/target/surefire-reports/
           retention-days: 7
 
+  newer-jdk:
+    name: Java ${{ matrix.java }} 单元测试
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['21', '25']
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: 在较新的 JDK 上编译并运行全部单元测试（字节码仍按 release 17 生成）
+        run: ./mvnw --batch-mode --threads 1C verify
+
   live:
     name: 实库 / ${{ matrix.database }} / ${{ matrix.language == 'java' && 'Java' || 'TypeScript' }}
     strategy:
