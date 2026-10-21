@@ -1,6 +1,6 @@
 {
   "name": "@query/core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Entities, expressions, scoped queries, rendering and execution shared by every dialect",

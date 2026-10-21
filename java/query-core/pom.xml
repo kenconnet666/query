@@ -7,13 +7,17 @@
     <parent>
         <groupId>org.dpdns.zerodep.query</groupId>
         <artifactId>query-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>query-core</artifactId>
     <name>query-core</name>
     <description>Annotations, metadata, expressions, query building, rendering and execution; no runtime dependencies.</description>
+
+    <properties>
+        <automatic.module.name>org.dpdns.zerodep.query</automatic.module.name>
+    </properties>
 
     <dependencies>
         <dependency>
