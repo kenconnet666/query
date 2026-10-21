@@ -158,6 +158,7 @@ List<Delivery> rows = db.list(q);
 
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
 - 关联子查询直接捕获外层 lambda 的参数。
+- 一个类里引用的不同 getter 超过约 500 个时，javac 生成的 `$deserializeLambda$` 可能超出 64KB 方法上限，编译报 "code too large"；把查询分到多个类即可。
 
 **小计与总计**：
 

@@ -229,7 +229,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 类别 | 函数 |
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () => cond)`、`ifPresent(v, (x) => cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
-| 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)` |
+| 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)`；文本、数字、布尔的类型放宽为 `string`、`number`、`boolean`，所以只差一个常量的 UNION 各段类型相同 |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
 | 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
