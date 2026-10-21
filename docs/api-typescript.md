@@ -20,6 +20,7 @@ const db = database(new pg.Pool({ /* ... */ }), {
   filters: [filter(ClientEntity, (r) => r.client.eq("100"))],   // 全局过滤器
   cache: inMemoryCache(),                                        // 结果缓存（按查询开启）
   listener: (e) => log.debug(`${e.statement.sql} ${e.elapsedMs}ms`),
+  queryTimeoutMs: 30_000,                                        // 每条语句的默认时限，超时由数据库取消
   naming: NamingStrategy.UPPER_SNAKE,                            // 没写列名的字段按此推导
 });
 ```
@@ -280,6 +281,21 @@ PostgreSQL 的聚合过滤叫 `filterWhere`，用来和核心包里定义全局�
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `db.render(q)` | 查看将要执行的 SQL 与参数 |
 | `q.cached(60_000)` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的值；并发读取同一个键只查询一次 |
+| `q.timeout(10_000)`、`db.sql(...).timeout(...)` | 这条语句的时限（毫秒），覆盖选项 `queryTimeoutMs` |
+
+**超时**：由驱动适配器交给数据库，三个库都在服务端取消语句，之后的查询照常进行（实库测试验证过）：
+
+| 方言 | 做法 |
+| --- | --- |
+| HANA | `Statement.setTimeout`，按整秒计，不足一秒按一秒。客户端 2.30 会忽略 `exec` 的 `queryTimeout` 选项 |
+| PostgreSQL | 在语句前后设置并恢复 `statement_timeout`。传入连接池时借一个连接来做，恢复失败的连接会被丢弃；流式读取在自己的事务里用 `SET LOCAL` |
+| MySQL | 在语句前后设置并恢复会话的 `max_execution_time`，只对 SELECT 生效；恢复失败的连接会被销毁。`SLEEP()` 被它打断时返回 1 而不报错 |
+
+超时抛出的 `QueryExecutionError` 的 `timedOut` 为 true，由方言识别各驱动的错误：HANA 613、PostgreSQL `57014`、MySQL 3024。
+
+自己实现的 `Driver` 从第三个参数 `options.timeoutMs` 拿到时限，不支持时可以忽略。
+
+**参数个数**：三个库的一条语句最多绑定 65535 个参数（mysql2 用服务端预处理语句，同样受这个限制）。超过时在连接数据库之前就报错；很长的 IN 列表请拆成几次查询，或者改成子查询。
 
 **全局过滤器**按实体的基类匹配：FROM 中的表把条件加到 WHERE，JOIN 的表加到 ON（LEFT JOIN 语义不变）；CTE 和子查询里的表同样生效。
 
@@ -324,7 +340,24 @@ const db = new HanaDatabase(driver, {
 - 泛型模板套用到缺少共享字段的表；
 - `@column` 的类型与字段类型不符；`@mapFrom` 的键不存在，或字段装不下实体的值。
 
-## 10. 与 Java 版的差异
+## 10. 安全与上线前检查
+
+安全规则与 Java 版相同（见 [Java 版第 10 节](api.md#10-安全与上线前检查)）：
+
+- 条件里的值一律绑定为参数；字面量由方言转义，PostgreSQL 的值含反斜杠时写成 `E'...'`；
+- `NaN`、`Infinity` 不会写成字面量；数值文本只有符合 `decimal` 格式时才写成字面量；
+- `sql(...)`、`sqlCond(...)` 的模板和 `db.sql(...)` 的文本原样执行，用户输入一律作为参数传入；
+- `like` 的模式原样使用，不转义 `%` 和 `_`。
+
+上线前：
+
+1. 配置 `queryTimeoutMs`；耗时的报表单独设置 `q.timeout(...)`。
+2. 大结果集用 `stream` 或 `forEach`。PostgreSQL 和 MySQL 需要传入连接池，才能借出一个连接做流式读取。
+3. 连接池大小由驱动的连接池决定；每条语句借一个连接，用完归还。
+4. 监听器事件里有 SQL 和参数，参数可能含业务数据，记录日志时脱敏。
+5. 多实例部署时，实现 `QueryCache` 接到 Redis 一类的共享缓存。
+
+## 11. 与 Java 版的差异
 
 | 方面 | Java | TypeScript |
 | --- | --- | --- |
@@ -336,5 +369,7 @@ const db = new HanaDatabase(driver, {
 | 表数 | 最多 8 张 | 不限 |
 | 执行 | 同步，JDBC | Promise，各库的 Node 驱动 |
 | 聚合过滤（PostgreSQL） | `filter(agg, cond)` | `filterWhere(agg, cond)` |
+| 超时 | `Duration`，JDBC 按整秒 | 毫秒；HANA 按整秒，PostgreSQL、MySQL 按毫秒 |
+| 事务超时 | 在 Spring 里沿用事务剩余的时间 | 不涉及 |
 
 两端渲染出的 SQL 完全相同，由 `spec/render/` 的金样例保证。
