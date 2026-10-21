@@ -10,7 +10,8 @@
 
 - 注解（Java）和标准装饰器（TS）声明实体：列名、命名策略、转换器、组合注解、DTO 的 `@MapFrom`，以及 SQL 级列转换 `@ReadAs`、`@Trimmed`、`@BlankAsNull`。
 - lambda / 回调作用域：`from` 加最多 8 张表的 `join`、`leftJoin`、`crossJoin`，参数类型随作用域增长，用错表或类型不符时编译失败。
-- 条件：`all`、`any`、`not`、`exists`，可选条件 `eqIfPresent` 等、`ifPresent`、`onlyIf`，空条件自动丢弃。
+- 条件：`all`、`any`、`not`，`exists(from(...).where(...))` 不需要 SELECT 列表，可选条件 `eqIfPresent` 等、`ifPresent`、`onlyIf`，空条件自动丢弃；比较另一张表的列可以简写为 `a.eq(l, Lips::getMaterial)`。
+- 只有一个分组键、排序键或命名列时直接写表达式，多个时用 `keys(...)`、`orders(...)`；裸表达式按升序排序。
 - 分组：`groupBy`、`having`、`groupByRollup`；HANA、PostgreSQL 的 `cube`、`groupingSets`；`grouping(e)`。
 - CTE（任意深度引用只渲染一次）、派生表、`union` / `unionAll`（混用时保留分组括号）、窗口函数与 ROWS 框架、常量行 `values`。
 - 函数：文本（含表达式起止位置的 `substring`、`locate`）、数值（`floor`、`ceil`、`round`、`divide`）、聚合、简单与搜索 CASE、多参数 `coalesce`、`cast`、标量子查询，以及模板兜底 `sql(...)`、`sqlCond(...)`。

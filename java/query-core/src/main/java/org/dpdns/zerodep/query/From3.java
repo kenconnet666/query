@@ -3,8 +3,6 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-import java.util.List;
-
 /** A scope of 3 tables; each is a typed lambda parameter. */
 public final class From3<A, B, C> extends AbstractFrom<From3<A, B, C>> {
     private final Ref<A> a;
@@ -41,16 +39,16 @@ public final class From3<A, B, C> extends AbstractFrom<From3<A, B, C>> {
 
     public From3<A, B, C> where(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Cond> cond) { return rebuild(spec.where(cond.apply(a, b, c))); }
 
-    public From3<A, B, C> whereIf(boolean test, Fn.F3<Ref<A>, Ref<B>, Ref<C>, Cond> cond) { return test ? where(cond) : this; }
-
-    public From3<A, B, C> groupBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c))); }
+    /** One key, or several with keys(...). */
+    public From3<A, B, C> groupBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a, b, c)))); }
 
     /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From3<A, B, C> groupByRollup(Fn.F3<Ref<A>, Ref<B>, Ref<C>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c))); }
+    public From3<A, B, C> groupByRollup(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a, b, c)))); }
 
     public From3<A, B, C> having(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c))); }
 
-    public From3<A, B, C> orderBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c))); }
+    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public From3<A, B, C> orderBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a, b, c)))); }
 
     /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public From3<A, B, C> with(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Clause> clause) { return with(clause.apply(a, b, c)); }
@@ -61,8 +59,11 @@ public final class From3<A, B, C> extends AbstractFrom<From3<A, B, C>> {
     /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
 
-    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F3<Ref<A>, Ref<B>, Ref<C>, List<? extends Expr<?>>> columns) { return Query.named(spec, shape, columns.apply(a, b, c)); }
+    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a, b, c))); }
 
     /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Expr<T>> value) { return Query.value(spec, value.apply(a, b, c)); }

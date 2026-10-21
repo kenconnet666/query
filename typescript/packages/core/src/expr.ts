@@ -1,6 +1,6 @@
 import { FunctionDef } from "./dialect.js";
 import { COLUMN_TYPES, SUBQUERY } from "./internal.js";
-import type { Query } from "./query.js";
+import type { From, Query } from "./query.js";
 import { typeOf, type CastType, type SqlType } from "./types.js";
 import type { Renderable, SqlWriter } from "./writer.js";
 
@@ -297,7 +297,8 @@ function inQuery(e: Expr<unknown>, query: Query<unknown>, negate: boolean): Cond
   });
 }
 
-export function exists(subquery: Query<unknown>): Cond {
+/** EXISTS over a query, or over a scope without a SELECT list: `exists(from(Vbkd).where((v) => ...))`. */
+export function exists(subquery: Query<unknown> | From<readonly unknown[]>): Cond {
   return condition((w) => {
     w.sql("EXISTS (");
     subquery[SUBQUERY](w);
@@ -305,7 +306,7 @@ export function exists(subquery: Query<unknown>): Cond {
   });
 }
 
-export function notExists(subquery: Query<unknown>): Cond {
+export function notExists(subquery: Query<unknown> | From<readonly unknown[]>): Cond {
   return condition((w) => {
     w.sql("NOT EXISTS (");
     subquery[SUBQUERY](w);

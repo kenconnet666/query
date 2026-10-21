@@ -4,7 +4,7 @@ import org.dpdns.zerodep.query.Aggregate;
 import org.dpdns.zerodep.query.Cond;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Order;
+import org.dpdns.zerodep.query.OrderItem;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
@@ -84,12 +84,12 @@ public final class Postgres extends Sql {
     }
 
     /** STRING_AGG(value, separator ORDER BY ...). */
-    public static Expr<String> stringAgg(Expr<String> value, String separator, Order... order) {
-        List<Renderable> orders = new ArrayList<>(List.of(order));
+    public static Expr<String> stringAgg(Expr<String> value, String separator, OrderItem... order) {
+        List<Renderable> sort = new ArrayList<>(orders(order));
         Expr<String> sep = lit(separator);
         return expr(value, w -> {
             w.sql("STRING_AGG(").render(value).sql(", ").render(sep);
-            if (!orders.isEmpty()) w.sql(" ORDER BY ").join(orders, ", ");
+            if (!sort.isEmpty()) w.sql(" ORDER BY ").join(sort, ", ");
             w.sql(")");
         });
     }

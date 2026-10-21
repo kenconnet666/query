@@ -129,7 +129,7 @@ WHERE MCHBH.LFGJA = ?`,
   it("自连接和关联子查询的别名在整条语句内唯一", () => {
     const r = from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))
-      .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material)).selectOne()))
+      .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material))))
       .selectValue((a) => a.material)
       .toSql(DIALECT);
     assert.equal(
@@ -303,7 +303,7 @@ FROM QUERY_IT.MARA MARA`,
   it("SQL 片段里的普通值成为参数", () => {
     const r = from(Mara)
       .where((m) => sql(text)`SUBSTRING(${m.material}, ${1}, ${2})`.eq("M1"))
-      .selectOne()
+      .selectValue((m) => m.material)
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE SUBSTRING(MARA.MATNR, ?, ?) = ?"), r.sql);
     assert.deepEqual(r.parameters, [1, 2, "M1"]);

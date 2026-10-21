@@ -85,7 +85,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "self-join": plain(() =>
     from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))
-      .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material)).selectOne()))
+      .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material))))
       .selectValue((a) => a.material),
   ),
   paging: plain(() =>
@@ -242,7 +242,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       .selectValue((m) => m.material);
     const open = from(Lips).select((l) => ({ delivery: l.delivery, material: l.material }));
     return from(open.asTable())
-      .where((o) => all(o.material.in(parts), notExists(from(Vbkd).where((v) => v.salesOrder.eq(o.delivery)).selectOne())))
+      .where((o) => all(o.material.in(parts), notExists(from(Vbkd).where((v) => v.salesOrder.eq(o.delivery)))))
       .select((o) => ({
         delivery: o.delivery,
         text: scalar(

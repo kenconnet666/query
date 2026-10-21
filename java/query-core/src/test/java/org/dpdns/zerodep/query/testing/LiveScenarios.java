@@ -248,8 +248,8 @@ public abstract class LiveScenarios {
             }
         };
         Database counted = database(counting, null);
-        Query<String> deliveries = from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).selectValue(l -> l.col(Lips::getDelivery));
-        Query<String> failsOnD3 = from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).select((r, l) -> {
+        Query<String> deliveries = from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).selectValue(l -> l.col(Lips::getDelivery));
+        Query<String> failsOnD3 = from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).select((r, l) -> {
             String d = r.get(l, Lips::getDelivery);
             if ("D3".equals(d)) throw new IllegalStateException("mapping failed");
             return d;
@@ -279,7 +279,7 @@ public abstract class LiveScenarios {
 
     @Test
     void first取第一行或在没有行时为空() {
-        assertEquals(Optional.of("D1"), db.first(from(Lips.class).orderBy(l -> orders(l.col(Lips::getDelivery).asc())).selectValue(l -> l.col(Lips::getDelivery))));
+        assertEquals(Optional.of("D1"), db.first(from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).selectValue(l -> l.col(Lips::getDelivery))));
         assertEquals(Optional.empty(), db.first(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("none")).selectValue(l -> l.col(Lips::getDelivery))));
     }
 
@@ -289,7 +289,7 @@ public abstract class LiveScenarios {
         try {
             for (String zone : List.of("Europe/Berlin", "Pacific/Apia", "Asia/Shanghai")) {
                 TimeZone.setDefault(TimeZone.getTimeZone(zone));
-                List<Event> events = db.list(from(Event.class).orderBy(e -> List.of(e.col(Event::getId).asc())).selectAs(Event.class));
+                List<Event> events = db.list(from(Event.class).orderBy(e -> e.col(Event::getId)).selectAs(Event.class));
                 assertEquals(LocalDate.of(2024, 3, 31), events.get(0).getOnDay(), zone);
                 assertEquals(LocalDateTime.of(2024, 3, 31, 2, 30), events.get(0).getAtTime(), zone);
                 assertEquals(LocalDate.of(2011, 12, 30), events.get(1).getOnDay(), zone);
@@ -318,11 +318,11 @@ public abstract class LiveScenarios {
     void 常量行与带常量的分组在实库上可执行() {
         Cte<Size> sizes = cte("sizes", values(Size.class, List.of(new Size("small", 1), new Size("medium", 2), new Size("large", 3))));
         Cte<SizeTotal> totals = cte("totals", from(Lips.class)
-            .groupBy(l -> keys(size(l)))
+            .groupBy(l -> size(l))
             .selectAs(SizeTotal.class, l -> keys(size(l).as(SizeTotal::bucket), sum(l.col(Lips::getQuantity)).as(SizeTotal::total))));
         List<String> rows = db.list(from(sizes)
             .leftJoin(totals, (s, t) -> t.col(SizeTotal::bucket).eq(s, Size::name))
-            .orderBy((s, t) -> orders(s.col(Size::ord).asc()))
+            .orderBy((s, t) -> s.col(Size::ord))
             .select((r, s, t) -> r.get(s, Size::name) + "=" + r.get(t.col(SizeTotal::total).coalesce(BigDecimal.ZERO)).stripTrailingZeros().toPlainString()));
         assertEquals(List.of("small=3", "medium=8", "large=7"), rows);
     }
@@ -341,7 +341,7 @@ public abstract class LiveScenarios {
                 r.get(plus(List.of(l.col(Lips::getQuantity), l.col(Lips::getQuantity)))).stripTrailingZeros().toPlainString())));
         assertEquals(List.of("D|1|E|1|E-|-3|6"), pieces);
         List<String> prefixes = db.list(from(Lips.class)
-            .groupBy(l -> keys(substring(l.col(Lips::getDelivery), 1, 1)))
+            .groupBy(l -> substring(l.col(Lips::getDelivery), 1, 1))
             .select((r, l) -> r.get(substring(l.col(Lips::getDelivery), 1, 1)) + "=" + r.get(count())));
         assertEquals(List.of("D=5"), prefixes);
     }
@@ -349,8 +349,8 @@ public abstract class LiveScenarios {
     @Test
     void 列转换按转换后的值读取且可与原值并存() {
         List<String> rows = db.list(from(MaraView.class)
-            .groupBy(m -> keys(m.col(MaraView::getPartNumber)))
-            .orderBy(m -> orders(m.col(MaraView::getPartNumber).asc()))
+            .groupBy(m -> m.col(MaraView::getPartNumber))
+            .orderBy(m -> m.col(MaraView::getPartNumber))
             .select((r, m) -> r.get(m, MaraView::getPartNumber) + ":" + r.get(countDistinct(m.col(MaraView::getMaker)))
                 + ":" + r.get(countDistinct(m.col(MaraView::getStoredMaker)))));
         assertEquals(List.of("P1:1:2", "P2:1:1", "P3:1:1"), rows);
@@ -370,7 +370,7 @@ public abstract class LiveScenarios {
     void 扁平结果按键分组为父项与子项() {
         List<List<Object>> rows = db.list(from(Mara.class)
             .leftJoin(Lips.class, (m, l) -> l.col(Lips::getMaterial).eq(m, Mara::getMaterial))
-            .orderBy((m, l) -> orders(m.col(Mara::getMaterial).asc(), l.col(Lips::getDelivery).asc()))
+            .orderBy((m, l) -> orders(m.col(Mara::getMaterial), l.col(Lips::getDelivery)))
             .select((r, m, l) -> Arrays.asList(r.get(m, Mara::getMaterial), r.get(l, Lips::getDelivery))));
         List<String> groups = Nest.into(rows, row -> row.get(0), row -> (String) row.get(1), (first, deliveries) -> first.get(0) + "=" + deliveries);
         assertEquals(List.of("M1=[D1, D2, D5]", "M2=[D3, D4]", "M3=[]", "M4=[]"), groups);
@@ -419,7 +419,7 @@ public abstract class LiveScenarios {
         List<Text> rows = new ArrayList<>();
         for (int i = 0; i < HOSTILE.size(); i++) rows.add(new Text(HOSTILE.get(i), i));
         Cte<Text> texts = cte("texts", values(Text.class, rows));
-        assertEquals(HOSTILE, db.list(from(texts).orderBy(t -> orders(t.col(Text::ord).asc())).selectValue(t -> t.col(Text::value))),
+        assertEquals(HOSTILE, db.list(from(texts).orderBy(t -> t.col(Text::ord)).selectValue(t -> t.col(Text::value))),
             "values(...) writes every row as literals");
         for (String text : HOSTILE) {
             assertEquals(text, db.one(from(Lips.class).limit(1).selectValue(l -> val(text))), "a SELECT-list constant is written as a literal");

@@ -55,6 +55,36 @@ class RenderTest {
     }
 
     @Test
+    void 单个分组键排序键和命名列不需要包装且裸表达式按升序排序() {
+        Rendered wrapped = from(Mara.class)
+            .groupBy(m -> keys(m.col(Mara::getMaterial)))
+            .orderBy(m -> orders(m.col(Mara::getMaterial).asc()))
+            .selectAs(MaterialScope.class, m -> keys(upper(m.col(Mara::getPartNumber)).as(MaterialScope::partNumber)))
+            .toSql(DIALECT);
+        Rendered bare = from(Mara.class)
+            .groupBy(m -> m.col(Mara::getMaterial))
+            .orderBy(m -> m.col(Mara::getMaterial))
+            .selectAs(MaterialScope.class, m -> upper(m.col(Mara::getPartNumber)).as(MaterialScope::partNumber))
+            .toSql(DIALECT);
+        assertEquals(wrapped.sql(), bare.sql());
+        String mixed = from(Lips.class).orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getDelivery).desc()))
+            .selectValue(l -> rowNumber().over(w -> w.orderBy(l.col(Lips::getDelivery)))).toSql(DIALECT).sql();
+        assertTrue(mixed.contains("ROW_NUMBER() OVER (ORDER BY LIPS.VBELN ASC)") && mixed.endsWith("ORDER BY LIPS.MATNR ASC, LIPS.VBELN DESC"), mixed);
+    }
+
+    @Test
+    void EXISTS直接接收作用域且大小比较也能引用另一张表的列() {
+        String sql = from(Lips.class)
+            .join(Mara.class, (l, m) -> m.col(Mara::getMaterial).eq(l, Lips::getMaterial).and(m.col(Mara::getMaterial).ge(l, Lips::getMaterial)))
+            .where((l, m) -> all(notExists(from(Mara.class).where(x -> x.col(Mara::getMaterial).lt(m, Mara::getMaterial))),
+                l.col(Lips::getMaterial).gt(m, Mara::getMaterial).or(l.col(Lips::getMaterial).le(m, Mara::getMaterial))))
+            .selectValue((l, m) -> l.col(Lips::getDelivery)).toSql(DIALECT).sql();
+        assertTrue(sql.contains("MARA.MATNR >= LIPS.MATNR"), sql);
+        assertTrue(sql.contains("NOT EXISTS (SELECT 1\nFROM QUERY_IT.MARA MARA2\nWHERE MARA2.MATNR < MARA.MATNR)"), sql);
+        assertTrue(sql.contains("((LIPS.MATNR > MARA.MATNR) OR (LIPS.MATNR <= MARA.MATNR))"), sql);
+    }
+
+    @Test
     void 非有限的浮点数没有字面量形式() {
         Rendered r = from(Lips.class).selectValue(l -> val(Double.NaN)).toSql(DIALECT);
         assertTrue(r.sql().startsWith("SELECT ? AS \"value\""), "SELECT-list constants stay parameters when no literal exists: " + r.sql());
@@ -108,7 +138,7 @@ class RenderTest {
     void 自连接和关联子查询的别名在整条语句内唯一() {
         String sql = from(Mara.class)
             .join(Mara.class, (a, b) -> b.col(Mara::getPartNumber).eq(a, Mara::getPartNumber))
-            .where((a, b) -> exists(from(Mara.class).where(c -> c.col(Mara::getMaterial).eq(b, Mara::getMaterial)).selectOne()))
+            .where((a, b) -> exists(from(Mara.class).where(c -> c.col(Mara::getMaterial).eq(b, Mara::getMaterial))))
             .selectValue((a, b) -> a.col(Mara::getMaterial))
             .toSql(DIALECT).sql();
         assertEquals("""
@@ -167,7 +197,7 @@ class RenderTest {
 
     @Test
     void 分页的LIMIT和OFFSET() {
-        String sql = from(Mara.class).orderBy(m -> orders(m.col(Mara::getMaterial).asc().nullsLast()))
+        String sql = from(Mara.class).orderBy(m -> m.col(Mara::getMaterial).asc().nullsLast())
             .selectValue(m -> m.col(Mara::getMaterial)).limit(10).offset(20).toSql(DIALECT).sql();
         assertTrue(sql.endsWith("ORDER BY MARA.MATNR ASC NULLS LAST\nLIMIT 10 OFFSET 20"), sql);
     }
@@ -182,7 +212,7 @@ class RenderTest {
 
     @Test
     void 计数语句去掉不影响结果的排序() {
-        Query<String> q = from(Mara.class).orderBy(m -> orders(m.col(Mara::getMaterial).asc())).selectValue(m -> m.col(Mara::getMaterial));
+        Query<String> q = from(Mara.class).orderBy(m -> m.col(Mara::getMaterial)).selectValue(m -> m.col(Mara::getMaterial));
         assertEquals("SELECT COUNT(*) FROM (SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA) COUNTED",
             QueryRenderer.count(new SqlWriter(DIALECT), q).sql());
     }
@@ -246,9 +276,9 @@ class RenderTest {
     @Test
     void ROLLUP必须一次列出全部分组键() {
         assertThrows(IllegalStateException.class, () -> from(Lips.class)
-            .groupBy(l -> keys(l.col(Lips::getMaterial))).groupByRollup(l -> keys(l.col(Lips::getUnit))));
+            .groupBy(l -> l.col(Lips::getMaterial)).groupByRollup(l -> l.col(Lips::getUnit)));
         assertThrows(IllegalStateException.class, () -> from(Lips.class)
-            .groupByRollup(l -> keys(l.col(Lips::getMaterial))).groupBy(l -> keys(l.col(Lips::getUnit))));
+            .groupByRollup(l -> l.col(Lips::getMaterial)).groupBy(l -> l.col(Lips::getUnit)));
     }
 
     @Test

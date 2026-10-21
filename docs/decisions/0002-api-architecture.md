@@ -143,7 +143,6 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
   - 扁平的对象投影可以直接作为 CTE 或派生表，引用它的 `Ref` 类型由行类型推出。
 - 其余投影：
   - `selectValue`：单列；
-  - `selectOne`：用于 `EXISTS`；
   - `selectAs(VO)`：按同名字段和 `@mapFrom` 自动取列。
 - 在 JS 端计算用 `query.map(fn)`。`mapTo(VO)` 在编译期检查行类型是否覆盖 VO 的字段。
 - 按位置读列，不依赖数据库返回的标签大小写。

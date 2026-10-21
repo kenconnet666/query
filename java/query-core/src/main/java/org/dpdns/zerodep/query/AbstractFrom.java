@@ -22,8 +22,8 @@ public abstract class AbstractFrom<S extends AbstractFrom<S>> {
     /** Adds a dialect clause, e.g. {@code Hana.hint("NO_CS_JOIN")}. */
     public final S with(Clause clause) { return rebuild(spec.clause(clause)); }
 
-    /** SELECT 1, for EXISTS subqueries. */
-    public final Query<Integer> selectOne() { return Query.value(spec, Sql.lit(1)); }
+    /** SELECT 1 over this scope, for {@code exists(from(...).where(...))}. */
+    final Query<Integer> selectOne() { return Query.value(spec, Sql.lit(1)); }
 
     static <E> Ref<E> ref(Class<E> entity) { return new Ref<>(new TableSource<>(entity)); }
 

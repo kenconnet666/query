@@ -52,9 +52,9 @@ public final class Scenarios {
                 .and(mk.col(Makt::getLanguage).eq("1")))
             .where((ms, l, mk) -> all(
                 l.col(Lips::getCreatedOn).between(start, end),
-                exists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(l, Lips::getSalesOrder)).selectOne())))
-            .groupBy((ms, l, mk) -> keys(ms.col(MaterialScope::partNumber)))
-            .orderBy((ms, l, mk) -> orders(ms.col(MaterialScope::partNumber).asc()))
+                exists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(l, Lips::getSalesOrder)))))
+            .groupBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
+            .orderBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
             .select((r, ms, l, mk) -> new Delivery(
                 r.get(ms, MaterialScope::partNumber),
                 r.get(max(mk.col(Makt::getText).coalesce(ms.col(MaterialScope::partNumber))).as("name")),
@@ -86,7 +86,7 @@ public final class Scenarios {
                 .orderBy(l.col(Lips::getCreatedOn).desc(), l.col(Lips::getDelivery).desc())).as(RankedDelivery::rank))));
         return from(ranked)
             .where(x -> x.col(RankedDelivery::rank).eq(1L))
-            .orderBy(x -> orders(x.col(RankedDelivery::material).asc()))
+            .orderBy(x -> x.col(RankedDelivery::material))
             .selectValue(x -> x.col(RankedDelivery::delivery));
     }
 
@@ -94,7 +94,7 @@ public final class Scenarios {
     public static Query<LineVO> lines() {
         return from(Lips.class)
             .leftJoin(Makt.class, (l, mk) -> mk.col(Makt::getMaterial).eq(l, Lips::getMaterial).and(mk.col(Makt::getLanguage).eq("1")))
-            .orderBy((l, mk) -> orders(l.col(Lips::getDelivery).asc()))
+            .orderBy((l, mk) -> l.col(Lips::getDelivery))
             .selectAs(LineVO.class);
     }
 
@@ -102,8 +102,8 @@ public final class Scenarios {
     public static Query<PartTotal> partTotals() {
         return from(Lips.class)
             .join(Mara.class, (l, ma) -> ma.col(Mara::getMaterial).eq(l, Lips::getMaterial))
-            .groupBy((l, ma) -> keys(ma.col(Mara::getPartNumber)))
-            .orderBy((l, ma) -> orders(ma.col(Mara::getPartNumber).asc()))
+            .groupBy((l, ma) -> ma.col(Mara::getPartNumber))
+            .orderBy((l, ma) -> ma.col(Mara::getPartNumber))
             .select((r, l, ma) -> {
                 BigDecimal quantity = r.get(sum(l.col(Lips::getQuantity)));
                 String part = r.get(ma, Mara::getPartNumber);

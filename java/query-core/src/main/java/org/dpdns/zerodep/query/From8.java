@@ -3,8 +3,6 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-import java.util.List;
-
 /** A scope of 8 tables; each is a typed lambda parameter. */
 public final class From8<A, B, C, D, E, F, G, H> extends AbstractFrom<From8<A, B, C, D, E, F, G, H>> {
     private final Ref<A> a;
@@ -32,16 +30,16 @@ public final class From8<A, B, C, D, E, F, G, H> extends AbstractFrom<From8<A, B
 
     public From8<A, B, C, D, E, F, G, H> where(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Cond> cond) { return rebuild(spec.where(cond.apply(a, b, c, d, e, f, g, h))); }
 
-    public From8<A, B, C, D, E, F, G, H> whereIf(boolean test, Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Cond> cond) { return test ? where(cond) : this; }
-
-    public From8<A, B, C, D, E, F, G, H> groupBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e, f, g, h))); }
+    /** One key, or several with keys(...). */
+    public From8<A, B, C, D, E, F, G, H> groupBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a, b, c, d, e, f, g, h)))); }
 
     /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From8<A, B, C, D, E, F, G, H> groupByRollup(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e, f, g, h))); }
+    public From8<A, B, C, D, E, F, G, H> groupByRollup(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a, b, c, d, e, f, g, h)))); }
 
     public From8<A, B, C, D, E, F, G, H> having(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e, f, g, h))); }
 
-    public From8<A, B, C, D, E, F, G, H> orderBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e, f, g, h))); }
+    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public From8<A, B, C, D, E, F, G, H> orderBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a, b, c, d, e, f, g, h)))); }
 
     /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public From8<A, B, C, D, E, F, G, H> with(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Clause> clause) { return with(clause.apply(a, b, c, d, e, f, g, h)); }
@@ -52,8 +50,11 @@ public final class From8<A, B, C, D, E, F, G, H> extends AbstractFrom<From8<A, B
     /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
 
-    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<? extends Expr<?>>> columns) { return Query.named(spec, shape, columns.apply(a, b, c, d, e, f, g, h)); }
+    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a, b, c, d, e, f, g, h))); }
 
     /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Expr<T>> value) { return Query.value(spec, value.apply(a, b, c, d, e, f, g, h)); }

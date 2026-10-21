@@ -52,8 +52,8 @@ class HanaLiveTest extends LiveScenarios {
     void 带排序的STRING_AGG与提示子句() {
         List<String> rows = db.list(from(Lips.class)
             .with(hint("NO_CS_JOIN"))
-            .groupBy(l -> keys(l.col(Lips::getMaterial)))
-            .orderBy(l -> orders(l.col(Lips::getMaterial).asc()))
+            .groupBy(l -> l.col(Lips::getMaterial))
+            .orderBy(l -> l.col(Lips::getMaterial))
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
@@ -61,12 +61,12 @@ class HanaLiveTest extends LiveScenarios {
     @Test
     void 分组集合与CUBE() {
         List<String> sets = db.list(from(Lips.class)
-            .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial)), keys())))
-            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc()))
+            .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial)), keys()))
+            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)), l.col(Lips::getMaterial)))
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(sum(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString()));
         assertEquals(List.of("M1=6", "M2=12", "null=18"), sets);
         List<Long> cells = db.list(from(Lips.class)
-            .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+            .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
             .selectValue(l -> count()));
         assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
     }
@@ -74,7 +74,7 @@ class HanaLiveTest extends LiveScenarios {
     @Test
     void GREATEST与LEAST遇到NULL时返回NULL() {
         List<String> rows = db.list(from(Lips.class)
-            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .orderBy(l -> l.col(Lips::getDelivery))
             .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
                 + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
         assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
@@ -85,7 +85,7 @@ class HanaLiveTest extends LiveScenarios {
     @Test
     void TO_INTEGER把文本转成整数() {
         assertEquals(List.of(1, 2, 3, 4, 5), db.list(from(Lips.class)
-            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .orderBy(l -> l.col(Lips::getDelivery))
             .selectValue(l -> toInteger(substring(l.col(Lips::getDelivery), 2)))));
     }
 }

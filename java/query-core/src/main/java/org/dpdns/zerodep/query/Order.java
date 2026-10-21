@@ -3,8 +3,8 @@ package org.dpdns.zerodep.query;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 
-/** One ORDER BY item. */
-public final class Order implements Renderable {
+/** One ORDER BY item with its direction, from {@code asc()} or {@code desc()}. */
+public final class Order implements Renderable, OrderItem {
     private final Expr<?> expr;
     private final boolean descending;
     private final Boolean nullsFirst;

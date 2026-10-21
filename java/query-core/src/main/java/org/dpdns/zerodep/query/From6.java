@@ -3,8 +3,6 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-import java.util.List;
-
 /** A scope of 6 tables; each is a typed lambda parameter. */
 public final class From6<A, B, C, D, E, F> extends AbstractFrom<From6<A, B, C, D, E, F>> {
     private final Ref<A> a;
@@ -47,16 +45,16 @@ public final class From6<A, B, C, D, E, F> extends AbstractFrom<From6<A, B, C, D
 
     public From6<A, B, C, D, E, F> where(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Cond> cond) { return rebuild(spec.where(cond.apply(a, b, c, d, e, f))); }
 
-    public From6<A, B, C, D, E, F> whereIf(boolean test, Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Cond> cond) { return test ? where(cond) : this; }
-
-    public From6<A, B, C, D, E, F> groupBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e, f))); }
+    /** One key, or several with keys(...). */
+    public From6<A, B, C, D, E, F> groupBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a, b, c, d, e, f)))); }
 
     /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From6<A, B, C, D, E, F> groupByRollup(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e, f))); }
+    public From6<A, B, C, D, E, F> groupByRollup(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a, b, c, d, e, f)))); }
 
     public From6<A, B, C, D, E, F> having(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e, f))); }
 
-    public From6<A, B, C, D, E, F> orderBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e, f))); }
+    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public From6<A, B, C, D, E, F> orderBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a, b, c, d, e, f)))); }
 
     /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public From6<A, B, C, D, E, F> with(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Clause> clause) { return with(clause.apply(a, b, c, d, e, f)); }
@@ -67,8 +65,11 @@ public final class From6<A, B, C, D, E, F> extends AbstractFrom<From6<A, B, C, D
     /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
 
-    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<? extends Expr<?>>> columns) { return Query.named(spec, shape, columns.apply(a, b, c, d, e, f)); }
+    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a, b, c, d, e, f))); }
 
     /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Expr<T>> value) { return Query.value(spec, value.apply(a, b, c, d, e, f)); }

@@ -22,7 +22,7 @@ import java.util.Objects;
  *
  * <p>Extend this class to add your own expression node; implement {@link #render}.
  */
-public abstract class Expr<T> implements Renderable {
+public abstract non-sealed class Expr<T> implements Renderable, Keys, OrderItem {
     private final SqlType<T> type;
 
     protected Expr(SqlType<T> type) {
@@ -52,12 +52,19 @@ public abstract class Expr<T> implements Renderable {
 
     public final Cond gt(T value) { return Nodes.compare(this, ">", param(value)); }
     public final Cond gt(Expr<T> other) { return Nodes.compare(this, ">", other); }
+    public final <E> Cond gt(Ref<E> ref, Getter<? super E, T> getter) { return gt(ref.col(getter)); }
+
     public final Cond ge(T value) { return Nodes.compare(this, ">=", param(value)); }
     public final Cond ge(Expr<T> other) { return Nodes.compare(this, ">=", other); }
+    public final <E> Cond ge(Ref<E> ref, Getter<? super E, T> getter) { return ge(ref.col(getter)); }
+
     public final Cond lt(T value) { return Nodes.compare(this, "<", param(value)); }
     public final Cond lt(Expr<T> other) { return Nodes.compare(this, "<", other); }
+    public final <E> Cond lt(Ref<E> ref, Getter<? super E, T> getter) { return lt(ref.col(getter)); }
+
     public final Cond le(T value) { return Nodes.compare(this, "<=", param(value)); }
     public final Cond le(Expr<T> other) { return Nodes.compare(this, "<=", other); }
+    public final <E> Cond le(Ref<E> ref, Getter<? super E, T> getter) { return le(ref.col(getter)); }
 
     public final Cond between(T low, T high) { return Nodes.between(this, param(low), param(high)); }
     public final Cond between(Expr<T> low, Expr<T> high) { return Nodes.between(this, low, high); }

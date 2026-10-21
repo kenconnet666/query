@@ -32,7 +32,7 @@ class MysqlRenderTest {
 
     @Test
     void NULLS_LAST改写为先按是否为空排序() {
-        String sql = from(Lips.class).orderBy(l -> orders(l.col(Lips::getCreatedOn).desc().nullsLast()))
+        String sql = from(Lips.class).orderBy(l -> l.col(Lips::getCreatedOn).desc().nullsLast())
             .selectValue(l -> l.col(Lips::getDelivery)).toSql(MysqlDialect.INSTANCE).sql();
         assertTrue(sql.endsWith("ORDER BY `lips`.`ERDAT` IS NULL ASC, `lips`.`ERDAT` DESC"), sql);
     }

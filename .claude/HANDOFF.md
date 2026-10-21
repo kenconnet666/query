@@ -2,7 +2,7 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6 和 [0004 生产就绪](../docs/decisions/0004-production-readiness.md)都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
+[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6、[0004 生产就绪](../docs/decisions/0004-production-readiness.md)和 [0005 API 简化审查](../docs/decisions/0005-api-simplification.md)都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
 
 ## 当前状态
 
@@ -10,7 +10,9 @@
 
 - 第一到第三期在 [PR #1](https://github.com/kenconnet666/query/pull/1) 合并进了 `master`。
 - M1 到 M6 在 `feat/v1` 上，已通过 [PR #2](https://github.com/kenconnet666/query/pull/2) 合并进 `master`。
-- 生产就绪在 `feat/production` 上，通过 PR #3 合并进 `master`。用户已授权自行合并，不必再问。合并后新的工作从 `master` 开分支。
+- 生产就绪已通过 [PR #3](https://github.com/kenconnet666/query/pull/3) 合并进 `master`。
+- API 简化在 `feat/api-simplify` 上，通过 PR #4 合并进 `master`。
+- 用户已授权在 CI 全绿后自行合并 PR，不必再问。新的工作从 `master` 开分支。
 
 ### 1.0 完成了什么
 
@@ -50,10 +52,18 @@
 - **影子试点**：在使用方同款技术栈上验证通过（Spring Boot 2.7.11、Druid、dynamic-datasource、ngdbc 2.29.7）。
 - **顺带修复**：Java 分页遇到 NULL 行时抛 NPE；TS 约 7 万个参数时渲染栈溢出。
 
+### API 简化完成了什么（0005）
+
+- **Java 去掉包装**：只有一个分组键、排序键或命名列时直接写表达式，裸表达式按升序；靠 sealed 标记接口 `Keys`、`OrderItem` 实现。
+- **EXISTS**：`exists` / `notExists` 直接接收作用域，两端删除 `selectOne()`。
+- **删除 `whereIf`**：两端都删，它与 `onlyIf` 重复。
+- **比较简写**：Java 的 `gt`/`ge`/`lt`/`le` 也支持 `(表, getter)` 简写。
+- **文档**：用法说明开头加了速查表，讲清 `val` 与 `lit` 的区别；示例全部换成新写法。金样例不变。
+
 ### 测试（本机三库全部通过）
 
 - **Java**：`-P release -Dgpg.skip verify` 通过。
-  - 各模块的测试数：core 86，HANA 67，PostgreSQL 71，MySQL 64，Spring 5；
+  - 各模块的测试数：core 88，HANA 67，PostgreSQL 71，MySQL 64，Spring 5；
   - 金样例 88 个文件，覆盖 38 个场景。
 - **TS**：单元、编译期与金样例 169 个，实库 91 个。
 

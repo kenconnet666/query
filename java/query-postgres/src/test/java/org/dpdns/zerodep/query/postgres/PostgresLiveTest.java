@@ -62,7 +62,7 @@ class PostgresLiveTest extends LiveScenarios {
     void DISTINCT_ON取每个物料最新的交货() {
         List<String> rows = db.list(from(Lips.class)
             .with(l -> distinctOn(l.col(Lips::getMaterial)))
-            .orderBy(l -> orders(l.col(Lips::getMaterial).asc(), l.col(Lips::getCreatedOn).desc()))
+            .orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getCreatedOn).desc()))
             .selectValue(l -> l.col(Lips::getDelivery)));
         assertEquals(List.of("D5", "D3"), rows);
     }
@@ -80,8 +80,8 @@ class PostgresLiveTest extends LiveScenarios {
     @Test
     void 带排序的STRING_AGG() {
         List<String> rows = db.list(from(Lips.class)
-            .groupBy(l -> keys(l.col(Lips::getMaterial)))
-            .orderBy(l -> orders(l.col(Lips::getMaterial).asc()))
+            .groupBy(l -> l.col(Lips::getMaterial))
+            .orderBy(l -> l.col(Lips::getMaterial))
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
@@ -89,12 +89,12 @@ class PostgresLiveTest extends LiveScenarios {
     @Test
     void 分组集合与CUBE() {
         List<String> sets = db.list(from(Lips.class)
-            .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial)), keys())))
-            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc()))
+            .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial)), keys()))
+            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)), l.col(Lips::getMaterial)))
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(sum(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString()));
         assertEquals(List.of("M1=6", "M2=12", "null=18"), sets);
         List<Long> cells = db.list(from(Lips.class)
-            .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+            .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
             .selectValue(l -> count()));
         assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
     }
@@ -161,7 +161,7 @@ class PostgresLiveTest extends LiveScenarios {
     @Test
     void GREATEST与LEAST跳过NULL() {
         List<String> rows = db.list(from(Lips.class)
-            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .orderBy(l -> l.col(Lips::getDelivery))
             .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
                 + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
         assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);

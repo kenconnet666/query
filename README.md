@@ -6,7 +6,7 @@
 
 - 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[从手写 SQL 迁移](docs/migration.md)
 - 版本：[变更记录](CHANGELOG.md)、[手动发布步骤](docs/release.md)
-- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)
+- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)
 - 场景覆盖计划：[场景对照](docs/scenarios.md)
 
 ## 快速上手
@@ -38,8 +38,8 @@ PostgresDatabase db = Postgres.database(dataSource);              // 每个数�
 
 List<MaterialTotal> rows = db.list(from(Lips.class)
     .where(l -> l.col(Lips::getCreatedOn).ge(start))
-    .groupBy(l -> keys(l.col(Lips::getMaterial)))
-    .orderBy(l -> orders(l.col(Lips::getMaterial).asc()))
+    .groupBy(l -> l.col(Lips::getMaterial))
+    .orderBy(l -> l.col(Lips::getMaterial))
     .select((r, l) -> new MaterialTotal(r.get(l, Lips::getMaterial), r.get(sum(l.col(Lips::getQuantity))))));
 ```
 
@@ -62,7 +62,7 @@ const rows = await db.list(
   from(Lips)
     .where((l) => l.createdOn.ge("2026-01-01"))
     .groupBy((l) => l.material)
-    .orderBy((l) => l.material.asc())
+    .orderBy((l) => l.material)
     .select((l) => ({ material: l.material, quantity: sum(l.quantity) })),
 );   // { material: string; quantity: string | null }[]
 ```

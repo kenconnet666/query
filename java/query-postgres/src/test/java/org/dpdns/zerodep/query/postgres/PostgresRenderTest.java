@@ -26,7 +26,7 @@ class PostgresRenderTest {
         String sql = from(Lips.class)
             .with(l -> distinctOn(l.col(Lips::getMaterial)))
             .distinct()
-            .orderBy(l -> orders(l.col(Lips::getMaterial).asc(), l.col(Lips::getCreatedOn).desc()))
+            .orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getCreatedOn).desc()))
             .selectValue(l -> l.col(Lips::getDelivery))
             .toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT DISTINCT ON (lips.\"MATNR\") lips.\"VBELN\" AS delivery"), sql);

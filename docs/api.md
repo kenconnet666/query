@@ -4,6 +4,25 @@
 
 TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)。两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
+## 速查
+
+表里的 `a`、`b` 代表列表达式，例如 `l.col(Lips::getMaterial)`；`l`、`m` 是作用域 lambda 的参数，每张表一个。
+
+| SQL | 写法 |
+| --- | --- |
+| `FROM LIPS l JOIN MARA m ON m.MATNR = l.MATNR` | `from(Lips.class).join(Mara.class, (l, m) -> m.col(Mara::getMaterial).eq(l, Lips::getMaterial))` |
+| `WHERE a = ? AND b BETWEEN ? AND ?` | `.where(l -> all(a.eq(x), b.between(low, high)))` |
+| 参数为空时不加这个条件 | `a.eqIfPresent(x)`；更复杂的用 `ifPresent(x, v -> ...)` 或 `onlyIf(flag, () -> ...)` |
+| `EXISTS (SELECT 1 FROM VBKD v WHERE ...)` | `exists(from(Vbkd.class).where(v -> ...))` |
+| `GROUP BY a`、`GROUP BY a, b` | `.groupBy(l -> a)`、`.groupBy(l -> keys(a, b))` |
+| `ORDER BY a`、`ORDER BY a, b DESC` | `.orderBy(l -> a)`、`.orderBy(l -> orders(a, b.desc()))` |
+| `SELECT` 列构造结果对象 | `.select((r, l) -> new Row(r.get(l, Lips::getMaterial), r.get(sum(b))))` |
+| `SELECT` 同名列到 DTO | `.selectAs(Dto.class)`；外加计算列：`.selectAs(Dto.class, l -> sum(b).as(Dto::getTotal))` |
+| `WITH x AS (...)` | `Cte<X> x = cte("x", query)`，然后 `from(x)` |
+| `UNION ALL` | `q1.unionAll(q2)` |
+| `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))` |
+| 执行 | `db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
+
 ## 1. 依赖与数据库实例
 
 选定方言，引入对应的方言包。方言包会传递依赖核心包，JDBC 驱动由使用方自己提供。
@@ -134,9 +153,9 @@ Query<Delivery> q = from(Lips.class)
     .where((l, ma, mk) -> all(
         l.col(Lips::getCreatedOn).between(start, end),
         ma.col(Mara::getManufacturer).eqIfPresent(maker),               // maker 为 null 时省略
-        exists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(l, Lips::getSalesOrder)).selectOne())))
-    .groupBy((l, ma, mk) -> keys(ma.col(Mara::getPartNumber)))
-    .orderBy((l, ma, mk) -> orders(ma.col(Mara::getPartNumber).asc()))
+        exists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(l, Lips::getSalesOrder)))))
+    .groupBy((l, ma, mk) -> ma.col(Mara::getPartNumber))
+    .orderBy((l, ma, mk) -> ma.col(Mara::getPartNumber))
     .select((r, l, ma, mk) -> new Delivery(
         r.get(ma, Mara::getPartNumber),
         r.get(max(mk.col(Makt::getText).coalesce(ma.col(Mara::getPartNumber)))),
@@ -151,15 +170,17 @@ List<Delivery> rows = db.list(q);
 | --- | --- |
 | `join` / `leftJoin(Entity.class 或 Source, (…) -> cond)` | 连接条件里可以用到作用域内所有的表 |
 | `crossJoin(...)` | 笛卡尔积 |
-| `where`、`whereIf(test, …)`、`having` | 条件；`Cond.EMPTY` 会被自动丢弃 |
-| `groupBy(… -> keys(...))`、`orderBy(… -> orders(...))` | 分组与排序 |
-| `groupByRollup(… -> keys(...))` | 分组并加上各级小计和总计；一次列出全部分组键，不能与 `groupBy` 同用 |
+| `where`、`having` | 条件；值为空而省略的条件（`Cond.EMPTY`）会被自动丢弃 |
+| `groupBy(… -> 键)` | 一个键直接写表达式；多个键写 `keys(a, b)` |
+| `orderBy(… -> 排序)` | 一个表达式按升序排，`.desc()` 降序，`.nullsLast()` 等指定 NULL 的位置；多项写 `orders(a, b.desc())` |
+| `groupByRollup(… -> 键)` | 分组并加上各级小计和总计；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `distinct()`、`limit(n)`、`offset(n)` | — |
 | `unfiltered()` | 本查询不加全局过滤器 |
 | `with(clause)` / `with(… -> clause)` | 方言子句，例如 `Hana.hint(...)` |
 
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
-- 关联子查询直接捕获外层 lambda 的参数。
+- 关联子查询直接捕获外层 lambda 的参数。`exists` / `notExists` 直接接收作用域，不用写 SELECT 列表。
+- 比较另一张表的列可以简写：`a.eq(l, Lips::getMaterial)` 等同于 `a.eq(l.col(Lips::getMaterial))`，`ne`、`gt`、`ge`、`lt`、`le`、`coalesce` 同样可以。
 - 函数式投影每行都会重放 lambda，读 10 万行时比 `selectAs` 慢约一半（0003 的 M5 粗测）；大结果集优先用 `selectAs` 或 `mapTo`。
 - 一个类里引用的不同 getter 超过约 500 个时，javac 生成的 `$deserializeLambda$` 可能超出 64KB 方法上限，编译报 "code too large"；把查询分到多个类即可。
 
@@ -168,7 +189,7 @@ List<Delivery> rows = db.list(q);
 ```java
 from(Lips.class)
     .groupByRollup(l -> keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
-    .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
+    .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)), l.col(Lips::getMaterial), grouping(l.col(Lips::getUnit))))
     .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total"))));
 ```
 
@@ -182,8 +203,8 @@ from(Lips.class)
 | --- | --- | --- |
 | `select((r, a, b) -> new X(...))` | `Query<X>` | 默认写法。lambda 里用 `r.get(expr)` 或 `r.get(ref, Getter)` 读值，构造任意对象：record、Builder、嵌套 DTO，也可以做 Java 计算 |
 | `selectAs(VO.class)` | `Query<VO>` | 按同名属性从作用域里的表自动取列；改了名的属性用 `@MapFrom` 指定来源 |
-| `selectAs(Shape.class, (a, b) -> keys(...))` | `Query<Shape>` | 显式列，每列用 `.as(Shape::getX)` 命名，或直接沿用属性名；没有列出的属性按 `selectAs(VO.class)` 的规则取同名列，相当于 `SELECT p.*, 额外列` |
-| `selectValue(a -> expr)` / `selectOne()` | `Query<T>` | 单列查询；也可以作为标量子查询或 `IN` 子查询 |
+| `selectAs(Shape.class, (a, b) -> 列)` | `Query<Shape>` | 显式列：一列直接写，多列写 `keys(...)`；每列用 `.as(Shape::getX)` 命名，或直接沿用属性名。没有列出的属性按 `selectAs(VO.class)` 的规则取同名列，相当于 `SELECT p.*, 额外列` |
+| `selectValue(a -> expr)` | `Query<T>` | 单列查询；也可以作为标量子查询或 `IN` 子查询 |
 
 函数式投影会先运行一次 lambda 记录读取顺序，然后每行重放一次。不要在 lambda 里根据某个列的值决定是否读取另一列，这种情况会被检测到并报错：重放时按表达式的结构核对，读到的列、函数或常量不同都算。
 
@@ -204,7 +225,7 @@ q.map(d -> d.partNumber());          // 在映射结果上再套一层 Java 函�
 ```java
 List<Line> lines = db.list(from(Head.class)
     .leftJoin(Item.class, (h, i) -> i.col(Item::getOrderNo).eq(h, Head::getOrderNo))
-    .orderBy((h, i) -> orders(h.col(Head::getOrderNo).asc(), i.col(Item::getPosition).asc()))
+    .orderBy((h, i) -> orders(h.col(Head::getOrderNo), i.col(Item::getPosition)))
     .selectAs(Line.class));
 List<Order> orders = Nest.into(lines, Line::orderNo, Line::position, (first, positions) -> new Order(first.orderNo(), positions));
 ```
@@ -243,7 +264,7 @@ Cte<Bucket> buckets = cte("buckets", values(Bucket.class, List.of(new Bucket("�
 ```java
 interface PeriodStock { String getClient(); String getMaterial(); String getYear(); String getPeriod(); }
 
-static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, Fn.F1<Ref<E>, Expr<BigDecimal>> quantity, String year) {
+static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, Function<Ref<E>, Expr<BigDecimal>> quantity, String year) {
     return from(table).where(h -> h.col(PeriodStock::getYear).eq(year))
         .select((r, h) -> new StockRow(r.get(h, PeriodStock::getMaterial), r.get(h, PeriodStock::getYear),
             r.get(h, PeriodStock::getPeriod), r.get(quantity.apply(h))));
@@ -256,7 +277,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 **两种常见写法**：
 
 - **一组列求和**，例如十六个期间列：先把 getter 放进一个常量列表，再 `plus(PERIODS.stream().map(p -> f.col(p).coalesce(BigDecimal.ZERO)).toList())`。按期间展开成行，则是对同一个列表逐个生成 `select`，再用 `unionAll` 合并。
-- **按条件追加的过滤**：需要连接另一张表才能判断时，写成可选的 EXISTS，不要按条件拼接 JOIN：`ifPresent(supplier, code -> exists(from(sup).where(s -> ...).selectOne()))`。这样作用域里的表不变，类型也不变。
+- **按条件追加的过滤**：需要连接另一张表才能判断时，写成可选的 EXISTS，不要按条件拼接 JOIN：`ifPresent(supplier, code -> exists(from(sup).where(s -> ...)))`。这样作用域里的表不变，类型也不变。
 
 ## 6. 表达式与函数
 
@@ -273,7 +294,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 | 类别 | 函数 |
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`likeIfPresent` |
-| 值 | `val(x)`（参数）、`lit(x)`（字面量，只用于固定代码值）、`nullOf(Type.class)` |
+| 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
 | 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
@@ -296,7 +317,7 @@ stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZER
 
 `greatest`、`least` 的常量参数写成 `val(x)`。三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。
 
-`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy(l -> keys(groupingSets(keys(a, b), keys(a), keys())))`，空的 `keys()` 是总计。
+`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy(l -> groupingSets(keys(a, b), keys(a), keys()))`，空的 `keys()` 是总计。
 
 **常量与参数**：
 
