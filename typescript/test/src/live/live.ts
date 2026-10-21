@@ -23,7 +23,7 @@ import {
   type Ref,
 } from "@query/core";
 import { ClientEntity, Event, LineVO, Lips, MaraView } from "../erp.js";
-import { rollup } from "../spec-cases.js";
+import { rollup, unionGrouping } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
 /**
@@ -373,6 +373,10 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
         ["M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"],
       );
+    });
+
+    it("右侧的 UNION 保持原有分组", async () => {
+      assert.deepEqual((await live().db.list(unionGrouping())).sort(), ["M1", "M1", "M2"]);
     });
 
     extra?.(live);

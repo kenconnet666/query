@@ -227,6 +227,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       .select((m) => ({ partNumber: m.partNumber, makers: countDistinct(m.maker) })),
   ),
   rollup: plain(() => rollup()),
+  "union-grouping": plain(() => unionGrouping()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -251,6 +252,15 @@ export function rollup() {
     .groupByRollup((l) => [l.material, l.unit])
     .orderBy((l) => [grouping(l.material), l.material, grouping(l.unit)])
     .select((l) => ({ material: l.material, unit: l.unit, total: sum(l.quantity), level: grouping(l.material) }));
+}
+
+/** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
+export function unionGrouping() {
+  const materialOf = (delivery: string) =>
+    from(Lips)
+      .where((l) => l.delivery.eq(delivery))
+      .selectValue((l) => l.material);
+  return materialOf("D1").unionAll(materialOf("D3").union(materialOf("D2")));
 }
 
 const groupingCases = (sets: typeof hanaGroupingSets, cubeOf: typeof hanaCube, prefix: string): Record<string, SpecCase> => ({

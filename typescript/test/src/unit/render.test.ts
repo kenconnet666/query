@@ -118,6 +118,14 @@ WHERE MCHBH.LFGJA = ?`,
     assert.ok(a.unionAll(b).toSql(DIALECT).sql.includes("SELECT MARA2.MTART, MARA2.MFRNR"));
   });
 
+  it("只有混用 UNION 与 UNION ALL 的右侧组合才加括号", () => {
+    const arm = () => from(Mara).selectValue((m) => m.material);
+    const skeleton = (q: ReturnType<typeof arm>) => q.toSql(DIALECT).sql.replace(/SELECT[^\n]*\nFROM[^\n)]*/g, "S");
+    assert.equal(skeleton(arm().union(arm().unionAll(arm().union(arm())))), "S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))");
+    assert.equal(skeleton(arm().unionAll(arm().unionAll(arm()))), "S\nUNION ALL\nS\nUNION ALL\nS");
+    assert.equal(skeleton(arm().union(arm()).unionAll(arm())), "S\nUNION\nS\nUNION ALL\nS");
+  });
+
   it("自连接和关联子查询的别名在整条语句内唯一", () => {
     const r = from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))

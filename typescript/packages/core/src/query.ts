@@ -123,6 +123,11 @@ interface Arm {
 interface State {
   readonly arms: readonly Arm[];
   readonly operators: readonly string[];
+  /**
+   * Arm ranges kept in parentheses. UNION and UNION ALL bind left to right, so only a right-hand
+   * side that mixes them needs parentheses of its own.
+   */
+  readonly groups: readonly (readonly [first: number, last: number])[];
   readonly labels: readonly string[];
   /** Labels are the keys of an object projection; such arms combine by name. */
   readonly keyed: boolean;
@@ -186,7 +191,10 @@ export class Query<R> {
       if (a.labels.some((l) => !position.has(l))) throw new Error(`UNION arms select different columns: ${a.labels} and ${b.labels}`);
       arms = b.arms.map((arm) => ({ spec: arm.spec, items: a.labels.map((l) => arm.items[position.get(l)!]!) }));
     }
-    return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], ttl: a.ttl });
+    const shift = a.arms.length;
+    const groups = [...a.groups, ...b.groups.map(([first, last]) => [first + shift, last + shift] as const)];
+    if (b.operators.some((op) => op !== operator)) groups.push([shift, shift + b.arms.length - 1]);
+    return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl });
   }
 
   /** Same SQL, with a function applied to every row. */
@@ -323,7 +331,9 @@ export function limitAtMost<R>(q: Query<R>, n: number): Query<R> {
 function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean): void {
   s.arms.forEach((arm, i) => {
     if (i > 0) w.sql(`\n${s.operators[i - 1]}\n`);
+    w.sql("(".repeat(s.groups.filter(([first]) => first === i).length));
     renderArm(w, arm, i === 0 && labeled ? s.labels : undefined, ordered);
+    w.sql(")".repeat(s.groups.filter(([, last]) => last === i).length));
   });
   if (s.arms.length > 1) w.dialect.limit(w, s.limit, s.offset);
 }
@@ -505,6 +515,7 @@ export class From<T extends readonly unknown[]> {
     return makeQuery({
       arms: [{ spec: this.#spec, items }],
       operators: [],
+      groups: [],
       labels: paths.map((p) => p.join(".")),
       keyed: true,
       flat: paths.every((p) => p.length === 1),
@@ -536,6 +547,7 @@ export class From<T extends readonly unknown[]> {
     return makeQuery({
       arms: [{ spec: this.#spec, items }],
       operators: [],
+      groups: [],
       labels: fields,
       keyed: true,
       flat: true,
@@ -576,6 +588,7 @@ export class From<T extends readonly unknown[]> {
     return makeQuery({
       arms: [{ spec: this.#spec, items: [item] }],
       operators: [],
+      groups: [],
       labels: [label],
       keyed: false,
       flat: false,
@@ -647,6 +660,7 @@ export function values<R extends Record<string, ConstantValue>>(rows: readonly R
   return makeQuery({
     arms,
     operators: arms.slice(1).map(() => "UNION ALL"),
+    groups: [],
     labels: keys,
     keyed: true,
     flat: true,

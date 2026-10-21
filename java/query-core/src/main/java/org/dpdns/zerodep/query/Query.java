@@ -28,6 +28,37 @@ import java.util.function.Supplier;
 public final class Query<R> {
     record Arm(SelectSpec spec, List<Expr<?>> items) { }
 
+    /**
+     * How the arms combine: the operator before every arm but the first, and the arm ranges kept in
+     * parentheses. UNION and UNION ALL bind left to right, so only a right-hand side that mixes them
+     * needs parentheses of its own.
+     */
+    record Combination(List<String> operators, List<Group> groups) {
+        static final Combination NONE = new Combination(List.of(), List.of());
+
+        record Group(int first, int last) { }
+
+        Combination {
+            operators = List.copyOf(operators);
+            groups = List.copyOf(groups);
+        }
+
+        Combination then(String operator, Combination right) {
+            int shift = operators.size() + 1;
+            List<String> ops = new ArrayList<>(operators);
+            ops.add(operator);
+            ops.addAll(right.operators);
+            List<Group> all = new ArrayList<>(groups);
+            for (Group g : right.groups) all.add(new Group(g.first + shift, g.last + shift));
+            if (right.operators.stream().anyMatch(op -> !op.equals(operator))) all.add(new Group(shift, shift + right.operators.size()));
+            return new Combination(ops, all);
+        }
+
+        int opens(int arm) { return (int) groups.stream().filter(g -> g.first == arm).count(); }
+
+        int closes(int arm) { return (int) groups.stream().filter(g -> g.last == arm).count(); }
+    }
+
     @FunctionalInterface
     interface RowMapper<R> {
         R map(Object[] values);
@@ -36,7 +67,7 @@ public final class Query<R> {
     private record Memo(Object key, Rendered rendered) { }
 
     private final List<Arm> arms;
-    private final List<String> operators;
+    private final Combination combination;
     private final List<String> labels;
     private final RowMapper<R> mapper;
     private final Class<R> shape;
@@ -45,10 +76,10 @@ public final class Query<R> {
     private final Duration ttl;
     private volatile Memo memo;
 
-    private Query(List<Arm> arms, List<String> operators, List<String> labels, RowMapper<R> mapper, Class<R> shape,
+    private Query(List<Arm> arms, Combination combination, List<String> labels, RowMapper<R> mapper, Class<R> shape,
                   Integer limit, Integer offset, Duration ttl) {
         this.arms = List.copyOf(arms);
-        this.operators = List.copyOf(operators);
+        this.combination = combination;
         this.labels = List.copyOf(labels);
         this.mapper = mapper;
         this.shape = shape;
@@ -70,7 +101,7 @@ public final class Query<R> {
             row.finish();
             return result;
         };
-        return new Query<>(List.of(new Arm(spec, fixed)), List.of(), labelsOf(fixed), mapper, null, null, null, null);
+        return new Query<>(List.of(new Arm(spec, fixed)), Combination.NONE, labelsOf(fixed), mapper, null, null, null, null);
     }
 
     /** Every property of the shape is taken from the same-named property of exactly one source, or from its @MapFrom. */
@@ -99,13 +130,13 @@ public final class Query<R> {
         for (PropertyMeta p : meta.properties()) if (!seen.contains(p.name())) missing.add(p.name());
         if (!missing.isEmpty()) throw new IllegalArgumentException(shape.getSimpleName() + " properties without a column: " + missing);
         MappingPlan<V> plan = MappingPlan.of(shape, labels);
-        return new Query<>(List.of(new Arm(spec, List.copyOf(items))), List.of(), labels, plan::map, shape, null, null, null);
+        return new Query<>(List.of(new Arm(spec, List.copyOf(items))), Combination.NONE, labels, plan::map, shape, null, null, null);
     }
 
     @SuppressWarnings("unchecked")
     static <T> Query<T> value(SelectSpec spec, Expr<T> item) {
         String label = item.label() == null ? "value" : item.label();
-        return new Query<>(List.of(new Arm(spec, List.of(item))), List.of(), List.of(label), values -> (T) values[0], null, null, null, null);
+        return new Query<>(List.of(new Arm(spec, List.of(item))), Combination.NONE, List.of(label), values -> (T) values[0], null, null, null, null);
     }
 
     /** One SELECT of literals per row, combined with UNION ALL. */
@@ -195,10 +226,7 @@ public final class Query<R> {
         }
         List<Arm> allArms = new ArrayList<>(arms);
         allArms.addAll(other.arms);
-        List<String> ops = new ArrayList<>(operators);
-        ops.add(operator);
-        ops.addAll(other.operators);
-        return new Query<>(allArms, ops, labels, mapper, shape, null, null, ttl);
+        return new Query<>(allArms, combination.then(operator, other.combination), labels, mapper, shape, null, null, ttl);
     }
 
     // ---------- result shaping ----------
@@ -206,32 +234,32 @@ public final class Query<R> {
     /** Same SQL, mapped by column label into another class (record, bean, builder or scalar). */
     public <V> Query<V> mapTo(Class<V> type) {
         MappingPlan<V> plan = MappingPlan.of(type, labels);
-        return new Query<>(arms, operators, labels, plan::map, null, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, plan::map, null, limit, offset, ttl);
     }
 
     /** Same SQL, with a Java function applied to every mapped row. */
     public <V> Query<V> map(Function<? super R, ? extends V> function) {
         Objects.requireNonNull(function, "function");
         RowMapper<R> inner = mapper;
-        return new Query<>(arms, operators, labels, values -> function.apply(inner.map(values)), null, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, values -> function.apply(inner.map(values)), null, limit, offset, ttl);
     }
 
     /** Results are kept in the database instance's cache for ttl, keyed by SQL and parameters. */
     public Query<R> cached(Duration ttl) {
         if (ttl == null || ttl.isNegative() || ttl.isZero()) throw new IllegalArgumentException("ttl must be positive");
-        return new Query<>(arms, operators, labels, mapper, shape, limit, offset, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, limit, offset, ttl);
     }
 
     public Query<R> limit(int rows) {
         if (arms.size() == 1) return withSpec(arms.get(0).spec().limit(rows));
         if (rows < 0) throw new IllegalArgumentException("limit must not be negative");
-        return new Query<>(arms, operators, labels, mapper, shape, rows, offset, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, rows, offset, ttl);
     }
 
     public Query<R> offset(int rows) {
         if (arms.size() == 1) return withSpec(arms.get(0).spec().offset(rows));
         if (rows < 0) throw new IllegalArgumentException("offset must not be negative");
-        return new Query<>(arms, operators, labels, mapper, shape, limit, rows, ttl);
+        return new Query<>(arms, combination, labels, mapper, shape, limit, rows, ttl);
     }
 
     /** Lowers the limit to at most {@code rows}, keeping a smaller limit the query already has. */
@@ -241,7 +269,7 @@ public final class Query<R> {
     }
 
     private Query<R> withSpec(SelectSpec spec) {
-        return new Query<>(List.of(new Arm(spec, arms.get(0).items())), operators, labels, mapper, shape, limit, offset, ttl);
+        return new Query<>(List.of(new Arm(spec, arms.get(0).items())), combination, labels, mapper, shape, limit, offset, ttl);
     }
 
     /** As a derived table: {@code from(query.asTable())}. Needs a named projection. */
@@ -263,7 +291,7 @@ public final class Query<R> {
 
     List<Arm> arms() { return arms; }
 
-    List<String> operators() { return operators; }
+    Combination combination() { return combination; }
 
     Integer limitValue() { return limit; }
 

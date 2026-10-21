@@ -114,6 +114,7 @@ public final class SpecCases {
             .groupBy(m -> keys(m.col(MaraView::getPartNumber)))
             .select((r, m) -> Arrays.asList(r.get(m, MaraView::getPartNumber), r.get(countDistinct(m.col(MaraView::getMaker)).as("makers"))))));
         cases.put("rollup", SpecCase.plain(SpecCases::rollup));
+        cases.put("union-grouping", SpecCase.plain(SpecCases::unionGrouping));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         return cases;
     }
@@ -194,6 +195,15 @@ public final class SpecCases {
             .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
             .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total")),
                 r.get(grouping(l.col(Lips::getMaterial)).as("level"))));
+    }
+
+    /** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
+    public static Query<String> unionGrouping() {
+        return materialOf("D1").unionAll(materialOf("D3").union(materialOf("D2")));
+    }
+
+    private static Query<String> materialOf(String delivery) {
+        return from(Lips.class).where(l -> l.col(Lips::getDelivery).eq(delivery)).selectValue(l -> l.col(Lips::getMaterial));
     }
 
     private static Query<List<Object>> subqueries() {

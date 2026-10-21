@@ -298,6 +298,11 @@ public abstract class LiveScenarios {
         assertEquals(List.of("M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"), rows);
     }
 
+    @Test
+    void 右侧的UNION保持原有分组() {
+        assertEquals(List.of("M1", "M1", "M2"), db.list(SpecCases.unionGrouping()).stream().sorted().toList());
+    }
+
     protected static void assertDelivery(Delivery d, String part, String name, String quantity) {
         assertEquals(part, d.partNumber());
         assertEquals(name, d.name());

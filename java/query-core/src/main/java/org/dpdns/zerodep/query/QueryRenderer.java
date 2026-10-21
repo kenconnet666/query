@@ -33,9 +33,12 @@ final class QueryRenderer {
     /** @param ordered false drops ORDER BY from arms that have no LIMIT or OFFSET */
     private static void query(SqlWriter w, Query<?> q, boolean ordered, boolean labeled) {
         List<Query.Arm> arms = q.arms();
+        Query.Combination c = q.combination();
         for (int i = 0; i < arms.size(); i++) {
-            if (i > 0) w.sql("\n").sql(q.operators().get(i - 1)).sql("\n");
+            if (i > 0) w.sql("\n").sql(c.operators().get(i - 1)).sql("\n");
+            w.sql("(".repeat(c.opens(i)));
             arm(w, arms.get(i), i == 0 && labeled ? q.labels() : null, ordered);
+            w.sql(")".repeat(c.closes(i)));
         }
         if (arms.size() > 1) w.dialect().limit(w, q.limitValue(), q.offsetValue());
     }

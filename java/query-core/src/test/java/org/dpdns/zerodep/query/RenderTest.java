@@ -216,6 +216,15 @@ class RenderTest {
     }
 
     @Test
+    void 只有混用UNION与UNION_ALL的右侧组合才加括号() {
+        java.util.function.Supplier<Query<String>> arm = () -> from(Mara.class).selectValue(m -> m.col(Mara::getMaterial));
+        java.util.function.Function<Query<String>, String> skeleton = q -> q.toSql(DIALECT).sql().replaceAll("SELECT[^\n]*\nFROM[^\n)]*", "S");
+        assertEquals("S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))", skeleton.apply(arm.get().union(arm.get().unionAll(arm.get().union(arm.get())))));
+        assertEquals("S\nUNION ALL\nS\nUNION ALL\nS", skeleton.apply(arm.get().unionAll(arm.get().unionAll(arm.get()))));
+        assertEquals("S\nUNION\nS\nUNION ALL\nS", skeleton.apply(arm.get().union(arm.get()).unionAll(arm.get())));
+    }
+
+    @Test
     void ROLLUP必须一次列出全部分组键() {
         assertThrows(IllegalStateException.class, () -> from(Lips.class)
             .groupBy(l -> keys(l.col(Lips::getMaterial))).groupByRollup(l -> keys(l.col(Lips::getUnit))));
