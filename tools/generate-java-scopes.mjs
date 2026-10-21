@@ -69,28 +69,30 @@ function from(n) {
 
   const lam = (ret) => `Fn.F${n}<${scope}, ${ret}>`;
   m.push(`    public ${self} where(${lam("Cond")} cond) { return rebuild(spec.where(cond.apply(${call}))); }`);
-  m.push(`    public ${self} whereIf(boolean test, ${lam("Cond")} cond) { return test ? where(cond) : this; }`);
-  m.push(`    public ${self} groupBy(${lam("List<? extends Expr<?>>")} keys) { return rebuild(spec.groupBy(keys.apply(${call}))); }`);
+  m.push(`    /** One key, or several with keys(...). */
+    public ${self} groupBy(${lam("? extends Keys")} keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(${call})))); }`);
   m.push(`    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public ${self} groupByRollup(${lam("List<? extends Expr<?>>")} keys) { return rebuild(spec.groupByRollup(keys.apply(${call}))); }`);
+    public ${self} groupByRollup(${lam("? extends Keys")} keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(${call})))); }`);
   m.push(`    public ${self} having(${lam("Cond")} cond) { return rebuild(spec.having(cond.apply(${call}))); }`);
-  m.push(`    public ${self} orderBy(${lam("List<Order>")} orders) { return rebuild(spec.orderBy(orders.apply(${call}))); }`);
+  m.push(`    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public ${self} orderBy(${lam("? extends OrderItem")} order) { return rebuild(spec.orderBy(OrderList.of(order.apply(${call})))); }`);
   m.push(`    /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public ${self} with(${lam("Clause")} clause) { return with(clause.apply(${call})); }`);
   m.push(`    /** Functional projection: build any result object from values read through the row. */
     public <R> Query<R> select(Fn.F${n + 1}<Row, ${scope}, R> projection) { return Query.functional(spec, row -> projection.apply(row, ${call})); }`);
   m.push(`    /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }`);
-  m.push(`    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, ${lam("List<? extends Expr<?>>")} columns) { return Query.named(spec, shape, columns.apply(${call})); }`);
+  m.push(`    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, ${lam("? extends Keys")} columns) { return Query.named(spec, shape, KeyList.of(columns.apply(${call}))); }`);
   m.push(`    /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(${lam("Expr<T>")} value) { return Query.value(spec, value.apply(${call})); }`);
 
   return `${header}package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
-
-import java.util.List;
 
 /** A scope of ${n} table${n > 1 ? "s" : ""}; each is a typed lambda parameter. */
 public final class ${self} extends AbstractFrom<${self}> {

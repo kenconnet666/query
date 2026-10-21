@@ -21,7 +21,7 @@ export function deliveries(start: string, end: string, maker: string | null) {
   return from(scope)
     .join(Lips, (ms, l) => l.client.eq(ms.client).and(l.material.eq(ms.material)))
     .leftJoin(Makt, (ms, l, mk) => mk.material.eq(ms.material).and(mk.language.eq("1")))
-    .where((ms, l) => all(l.createdOn.between(start, end), exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)).selectOne())))
+    .where((ms, l) => all(l.createdOn.between(start, end), exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)))))
     .groupBy((ms) => ms.partNumber)
     .orderBy((ms) => ms.partNumber.asc())
     .select((ms, l, mk) => ({

@@ -3,8 +3,6 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-import java.util.List;
-
 /** A scope of 2 tables; each is a typed lambda parameter. */
 public final class From2<A, B> extends AbstractFrom<From2<A, B>> {
     private final Ref<A> a;
@@ -39,16 +37,16 @@ public final class From2<A, B> extends AbstractFrom<From2<A, B>> {
 
     public From2<A, B> where(Fn.F2<Ref<A>, Ref<B>, Cond> cond) { return rebuild(spec.where(cond.apply(a, b))); }
 
-    public From2<A, B> whereIf(boolean test, Fn.F2<Ref<A>, Ref<B>, Cond> cond) { return test ? where(cond) : this; }
-
-    public From2<A, B> groupBy(Fn.F2<Ref<A>, Ref<B>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b))); }
+    /** One key, or several with keys(...). */
+    public From2<A, B> groupBy(Fn.F2<Ref<A>, Ref<B>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a, b)))); }
 
     /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From2<A, B> groupByRollup(Fn.F2<Ref<A>, Ref<B>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b))); }
+    public From2<A, B> groupByRollup(Fn.F2<Ref<A>, Ref<B>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a, b)))); }
 
     public From2<A, B> having(Fn.F2<Ref<A>, Ref<B>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b))); }
 
-    public From2<A, B> orderBy(Fn.F2<Ref<A>, Ref<B>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b))); }
+    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public From2<A, B> orderBy(Fn.F2<Ref<A>, Ref<B>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a, b)))); }
 
     /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public From2<A, B> with(Fn.F2<Ref<A>, Ref<B>, Clause> clause) { return with(clause.apply(a, b)); }
@@ -59,8 +57,11 @@ public final class From2<A, B> extends AbstractFrom<From2<A, B>> {
     /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
 
-    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F2<Ref<A>, Ref<B>, List<? extends Expr<?>>> columns) { return Query.named(spec, shape, columns.apply(a, b)); }
+    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, Fn.F2<Ref<A>, Ref<B>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a, b))); }
 
     /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(Fn.F2<Ref<A>, Ref<B>, Expr<T>> value) { return Query.value(spec, value.apply(a, b)); }

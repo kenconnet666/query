@@ -93,21 +93,21 @@ class ProjectionTest {
 
     @Test
     void 命名投影未列出的属性按同名列补齐并按形状的属性顺序输出() {
-        Query<MaterialScope> q = from(Mara.class).selectAs(MaterialScope.class, ma -> keys(upper(ma.col(Mara::getPartNumber)).as(MaterialScope::partNumber)));
+        Query<MaterialScope> q = from(Mara.class).selectAs(MaterialScope.class, ma -> upper(ma.col(Mara::getPartNumber)).as(MaterialScope::partNumber));
         assertEquals(List.of("client", "material", "partNumber"), q.labels());
         assertTrue(q.toSql(new TestDialect()).sql().startsWith("SELECT MARA.MANDT AS \"client\", MARA.MATNR AS \"material\", UPPER(MARA.MFRPN) AS \"partNumber\""));
         var missing = assertThrows(IllegalArgumentException.class, () -> from(Lips.class)
-            .selectAs(MaterialScope.class, l -> keys(l.col(Lips::getMaterial).as(MaterialScope::material))));
+            .selectAs(MaterialScope.class, l -> l.col(Lips::getMaterial).as(MaterialScope::material)));
         assertTrue(missing.getMessage().contains("MaterialScope.partNumber has no same-named property"), missing.getMessage());
         var unknown = assertThrows(IllegalArgumentException.class, () -> from(Mara.class)
-            .selectAs(MaterialScope.class, ma -> keys(ma.col(Mara::getManufacturer))));
+            .selectAs(MaterialScope.class, ma -> ma.col(Mara::getManufacturer)));
         assertTrue(unknown.getMessage().contains("has no property 'manufacturer'"), unknown.getMessage());
     }
 
     @Test
     void 同一个查询可以映射成不同的DTO() {
         Query<Delivery> q = from(Lips.class)
-            .groupBy(l -> keys(l.col(Lips::getMaterial)))
+            .groupBy(l -> l.col(Lips::getMaterial))
             .select((r, l) -> new Delivery(
                 r.get(l.col(Lips::getMaterial).as("partNumber")),
                 r.get(max(l.col(Lips::getUnit)).as("name")),

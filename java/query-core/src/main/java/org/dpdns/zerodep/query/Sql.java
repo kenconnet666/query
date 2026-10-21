@@ -86,7 +86,12 @@ public class Sql {
 
     public static Cond exists(Query<?> subquery) { return Nodes.exists(subquery, false); }
 
+    /** EXISTS over a scope, without a SELECT list: {@code exists(from(Vbkd.class).where(v -> ...))}. */
+    public static Cond exists(AbstractFrom<?> scope) { return exists(scope.selectOne()); }
+
     public static Cond notExists(Query<?> subquery) { return Nodes.exists(subquery, true); }
+
+    public static Cond notExists(AbstractFrom<?> scope) { return notExists(scope.selectOne()); }
 
     public static Cond like(Expr<String> e, String pattern) { return Nodes.compare(e, "LIKE", e.param(pattern)); }
 
@@ -296,9 +301,11 @@ public class Sql {
 
     public static Expr<LocalDateTime> currentTimestamp() { return new Nodes.Raw<>(SqlType.of(LocalDateTime.class), "CURRENT_TIMESTAMP"); }
 
-    // ---------- helpers for lambdas that return lists ----------
+    // ---------- several keys or orders from one lambda ----------
 
-    public static List<Expr<?>> keys(Expr<?>... exprs) { return List.of(exprs); }
+    /** Several GROUP BY keys or selectAs columns; a single one needs no wrapper. */
+    public static KeyList keys(Expr<?>... exprs) { return new KeyList(List.of(exprs)); }
 
-    public static List<Order> orders(Order... orders) { return List.of(orders); }
+    /** Several ORDER BY items; a bare expression sorts ascending. */
+    public static OrderList orders(OrderItem... items) { return new OrderList(OrderList.of(items)); }
 }

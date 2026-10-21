@@ -32,10 +32,10 @@ class HanaSpecTest extends RenderSpec {
                     r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4")),
                     r.get(toInteger(substring(l.col(Lips::getDelivery), 2)).as("number"))))),
             "hana-grouping-sets", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys())))
+                .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys()))
                 .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
             "hana-cube", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+                .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
                 .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
             "hana-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
@@ -52,7 +52,7 @@ class HanaSpecTest extends RenderSpec {
                     r.get(toNvarchar(l.col(Lips::getQuantity)).as("text")),
                     r.get(toNvarchar(lit(day), "YYYYMMDD").as("day"))))),
             "hana-string-agg", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> keys(l.col(Lips::getMaterial)))
+                .groupBy(l -> l.col(Lips::getMaterial))
                 .select((r, l) -> Arrays.asList(
                     r.get(l, Lips::getMaterial),
                     r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc(), l.col(Lips::getUnit).desc())

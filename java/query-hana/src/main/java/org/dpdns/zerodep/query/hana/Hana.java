@@ -3,7 +3,7 @@ package org.dpdns.zerodep.query.hana;
 import org.dpdns.zerodep.query.Cond;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Order;
+import org.dpdns.zerodep.query.OrderItem;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
@@ -103,11 +103,11 @@ public final class Hana extends Sql {
     public static Expr<Integer> toInteger(Expr<?> value) { return call(TO_INTEGER, Integer.class, value); }
 
     /** STRING_AGG(value, separator ORDER BY ...). */
-    public static Expr<String> stringAgg(Expr<String> value, String separator, Order... order) {
+    public static Expr<String> stringAgg(Expr<String> value, String separator, OrderItem... order) {
         List<Renderable> args = new ArrayList<>();
         args.add(value);
         args.add(lit(separator));
-        args.addAll(List.of(order));
+        args.addAll(orders(order));
         return new StringAgg(value.type(), args);
     }
 

@@ -2,7 +2,7 @@ package org.dpdns.zerodep.query.mysql;
 
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Order;
+import org.dpdns.zerodep.query.OrderItem;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
@@ -57,11 +57,11 @@ public final class Mysql extends Sql {
     public static Expr<String> dateFormat(Expr<?> value, String format) { return call(DATE_FORMAT, String.class, value, lit(format)); }
 
     /** GROUP_CONCAT(value ORDER BY ... SEPARATOR separator). */
-    public static Expr<String> groupConcat(Expr<String> value, String separator, Order... order) {
+    public static Expr<String> groupConcat(Expr<String> value, String separator, OrderItem... order) {
         List<Renderable> args = new ArrayList<>();
         args.add(value);
         args.add(lit(separator));
-        args.addAll(List.of(order));
+        args.addAll(orders(order));
         return new Expr<>(value.type()) {
             @Override public void render(SqlWriter w) { GROUP_CONCAT.render(w, args); }
         };

@@ -3,8 +3,6 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-import java.util.List;
-
 /** A scope of 1 table; each is a typed lambda parameter. */
 public final class From1<A> extends AbstractFrom<From1<A>> {
     private final Ref<A> a;
@@ -39,16 +37,16 @@ public final class From1<A> extends AbstractFrom<From1<A>> {
 
     public From1<A> where(Fn.F1<Ref<A>, Cond> cond) { return rebuild(spec.where(cond.apply(a))); }
 
-    public From1<A> whereIf(boolean test, Fn.F1<Ref<A>, Cond> cond) { return test ? where(cond) : this; }
-
-    public From1<A> groupBy(Fn.F1<Ref<A>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a))); }
+    /** One key, or several with keys(...). */
+    public From1<A> groupBy(Fn.F1<Ref<A>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a)))); }
 
     /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From1<A> groupByRollup(Fn.F1<Ref<A>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a))); }
+    public From1<A> groupByRollup(Fn.F1<Ref<A>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a)))); }
 
     public From1<A> having(Fn.F1<Ref<A>, Cond> cond) { return rebuild(spec.having(cond.apply(a))); }
 
-    public From1<A> orderBy(Fn.F1<Ref<A>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a))); }
+    /** One expression (ascending), asc()/desc(), or several with orders(...). */
+    public From1<A> orderBy(Fn.F1<Ref<A>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a)))); }
 
     /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
     public From1<A> with(Fn.F1<Ref<A>, Clause> clause) { return with(clause.apply(a)); }
@@ -59,8 +57,11 @@ public final class From1<A> extends AbstractFrom<From1<A>> {
     /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
     public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
 
-    /** Named projection with explicit columns, each labeled with .as(Shape::getX) or by its property name. */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F1<Ref<A>, List<? extends Expr<?>>> columns) { return Query.named(spec, shape, columns.apply(a)); }
+    /**
+     * Named projection with explicit columns, one or several with keys(...), each labeled with
+     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     */
+    public <V> Query<V> selectAs(Class<V> shape, Fn.F1<Ref<A>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a))); }
 
     /** One column: a scalar or IN subquery, or a list of single values. */
     public <T> Query<T> selectValue(Fn.F1<Ref<A>, Expr<T>> value) { return Query.value(spec, value.apply(a)); }

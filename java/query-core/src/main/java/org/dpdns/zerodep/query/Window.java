@@ -21,7 +21,8 @@ public final class Window implements Renderable {
 
     public Window partitionBy(Expr<?>... keys) { return new Window(List.of(keys), order, frame); }
 
-    public Window orderBy(Order... orders) { return new Window(partition, List.of(orders), frame); }
+    /** A bare expression sorts ascending. */
+    public Window orderBy(OrderItem... items) { return new Window(partition, OrderList.of(items), frame); }
 
     /** ROWS BETWEEN start AND end; RANGE frames differ between databases and live in dialect packages. */
     public Window rows(Bound start, Bound end) { return new Window(partition, order, "ROWS BETWEEN " + start.sql + " AND " + end.sql); }

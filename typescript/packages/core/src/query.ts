@@ -460,11 +460,6 @@ export class From<T extends readonly unknown[]> {
     return this.#with({ where: [...this.#spec.where, nonNull(cond(...this.#refs))] });
   }
 
-  /** The condition only when test holds. */
-  whereIf(test: boolean, cond: (...refs: T) => Cond): From<T> {
-    return test ? this.where(cond) : this;
-  }
-
   groupBy(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
     if (this.#spec.rollup) throw new Error("groupByRollup already lists every grouping key");
     return this.#with({ groupBy: [...this.#spec.groupBy, ...list(keys(...this.#refs))] });
@@ -545,9 +540,9 @@ export class From<T extends readonly unknown[]> {
     return this.#single(item as Expr<unknown>, item.label ?? "value");
   }
 
-  /** SELECT 1, for EXISTS subqueries. */
-  selectOne(): Query<number> {
-    return this.#single(new Literal(integer, 1) as Expr<unknown>, "value");
+  /** SELECT 1 over this scope, as `exists(from(...).where(...))` renders it. */
+  [SUBQUERY](w: SqlWriter): void {
+    this.#single(new Literal(integer, 1) as Expr<unknown>, "value")[SUBQUERY](w);
   }
 
   /**

@@ -45,7 +45,7 @@ public final class SpecCases {
         cases.put("latest-deliveries", SpecCase.plain(Scenarios::latestDeliveries));
         cases.put("self-join", SpecCase.plain(() -> from(Mara.class)
             .join(Mara.class, (a, b) -> b.col(Mara::getPartNumber).eq(a, Mara::getPartNumber))
-            .where((a, b) -> exists(from(Mara.class).where(c -> c.col(Mara::getMaterial).eq(b, Mara::getMaterial)).selectOne()))
+            .where((a, b) -> exists(from(Mara.class).where(c -> c.col(Mara::getMaterial).eq(b, Mara::getMaterial))))
             .selectValue((a, b) -> a.col(Mara::getMaterial))));
         cases.put("paging", SpecCase.plain(() -> from(Mara.class)
             .orderBy(m -> orders(m.col(Mara::getMaterial).asc().nullsLast(), m.col(Mara::getPartNumber).desc().nullsFirst()))
@@ -53,7 +53,7 @@ public final class SpecCases {
             .limit(10)
             .offset(20)));
         cases.put("offset-only", SpecCase.plain(() -> from(Mara.class)
-            .orderBy(m -> orders(m.col(Mara::getMaterial).asc()))
+            .orderBy(m -> m.col(Mara::getMaterial))
             .selectValue(m -> m.col(Mara::getMaterial))
             .offset(5)));
         cases.put("conditions", SpecCase.plain(SpecCases::conditions));
@@ -71,7 +71,7 @@ public final class SpecCases {
             r.get(lit(true).as("flag"))))));
         cases.put("functions", SpecCase.plain(SpecCases::functions));
         cases.put("aggregates", SpecCase.plain(() -> from(Lips.class)
-            .groupBy(l -> keys(l.col(Lips::getMaterial)))
+            .groupBy(l -> l.col(Lips::getMaterial))
             .having(l -> count().gt(1L))
             .select((r, l) -> Arrays.asList(
                 r.get(l, Lips::getMaterial),
@@ -86,7 +86,7 @@ public final class SpecCases {
             Cte<Category> categories = cte("category_def", values(Category.class,
                 List.of(new Category("1", "自制件", 1), new Category("2", "供应商件", 2))));
             return from(categories)
-                .orderBy(c -> orders(c.col(Category::sortNo).asc()))
+                .orderBy(c -> c.col(Category::sortNo))
                 .select((r, c) -> Arrays.asList(r.get(c, Category::zfl), r.get(c, Category::name)));
         }));
         cases.put("text-functions", SpecCase.plain(() -> from(Lips.class).select((r, l) -> {
@@ -104,7 +104,7 @@ public final class SpecCases {
             .where(l -> l.col(Lips::getUnit).eq("EA"))
             .groupBy(l -> keys(bucket(l), substring(l.col(Lips::getDelivery), 1, 1)))
             .having(l -> count().gt(1L))
-            .orderBy(l -> orders(bucket(l).asc()))
+            .orderBy(l -> bucket(l))
             .select((r, l) -> Arrays.asList(
                 r.get(bucket(l).as("bucket")),
                 r.get(substring(l.col(Lips::getDelivery), 1, 1).as("prefix")),
@@ -112,7 +112,7 @@ public final class SpecCases {
                 r.get(sum(caseWhen(l.col(Lips::getUnit).eq("EA"), l.col(Lips::getQuantity)).otherwise(BigDecimal.ZERO)).as("total"))))));
         cases.put("column-transforms", SpecCase.plain(() -> from(MaraView.class)
             .where(m -> all(m.col(MaraView::getMaker).isNotNull(), m.col(MaraView::getStoredMaker).ne("")))
-            .groupBy(m -> keys(m.col(MaraView::getPartNumber)))
+            .groupBy(m -> m.col(MaraView::getPartNumber))
             .select((r, m) -> Arrays.asList(r.get(m, MaraView::getPartNumber), r.get(countDistinct(m.col(MaraView::getMaker)).as("makers"))))));
         cases.put("rollup", SpecCase.plain(SpecCases::rollup));
         cases.put("union-grouping", SpecCase.plain(SpecCases::unionGrouping));
@@ -182,14 +182,14 @@ public final class SpecCases {
             Expr<BigDecimal> quantity = l.col(Lips::getQuantity);
             return Arrays.asList(
                 r.get(delivery),
-                r.get(rowNumber().over(w -> w.partitionBy(material).orderBy(delivery.asc())).as("position")),
+                r.get(rowNumber().over(w -> w.partitionBy(material).orderBy(delivery)).as("position")),
                 r.get(rank().over(w -> w.orderBy(quantity.desc())).as("ranking")),
                 r.get(denseRank().over(w -> w.orderBy(quantity.desc())).as("dense")),
-                r.get(lag(delivery, 1).over(w -> w.orderBy(delivery.asc())).as("previous")),
-                r.get(lead(delivery, 2).over(w -> w.orderBy(delivery.asc())).as("next")),
-                r.get(sum(quantity).over(w -> w.partitionBy(material).orderBy(delivery.asc())
+                r.get(lag(delivery, 1).over(w -> w.orderBy(delivery)).as("previous")),
+                r.get(lead(delivery, 2).over(w -> w.orderBy(delivery)).as("next")),
+                r.get(sum(quantity).over(w -> w.partitionBy(material).orderBy(delivery)
                     .rows(Bound.unboundedPreceding(), Bound.currentRow())).as("running")),
-                r.get(avg(quantity).over(w -> w.orderBy(delivery.asc()).rows(Bound.preceding(2), Bound.following(1))).as("moving")));
+                r.get(avg(quantity).over(w -> w.orderBy(delivery).rows(Bound.preceding(2), Bound.following(1))).as("moving")));
         });
     }
 
@@ -197,7 +197,7 @@ public final class SpecCases {
     public static Query<List<Object>> rollup() {
         return from(Lips.class)
             .groupByRollup(l -> keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
-            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
+            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)), l.col(Lips::getMaterial), grouping(l.col(Lips::getUnit))))
             .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total")),
                 r.get(grouping(l.col(Lips::getMaterial)).as("level"))));
     }
@@ -209,7 +209,7 @@ public final class SpecCases {
     public static Query<List<Object>> textPositions() {
         Cte<Code> codes = cte("codes", values(Code.class, List.of(new Code("21,32"), new Code("05"))));
         return from(codes)
-            .orderBy(c -> orders(c.col(Code::text).asc()))
+            .orderBy(c -> c.col(Code::text))
             .select((r, c) -> {
                 Expr<String> text = c.col(Code::text);
                 Expr<Integer> comma = locate(text, ",");
@@ -222,7 +222,7 @@ public final class SpecCases {
     /** A code table written inline, and the first present of several values. */
     public static Query<List<Object>> simpleCase() {
         return from(Mara.class)
-            .orderBy(m -> orders(m.col(Mara::getMaterial).asc()))
+            .orderBy(m -> m.col(Mara::getMaterial))
             .select((r, m) -> Arrays.asList(r.get(m, Mara::getMaterial),
                 r.get(caseOf(m.col(Mara::getMaterialType)).when("ZMAT", "material").otherwise("other").as("kind")),
                 r.get(m.col(Mara::getManufacturer).nullif("").coalesce(m.col(Mara::getPartNumber).nullif(""), val("none")).as("maker"))));
@@ -230,7 +230,7 @@ public final class SpecCases {
 
     public static Query<List<Object>> floorCeil() {
         return from(Lips.class)
-            .orderBy(l -> orders(l.col(Lips::getDelivery).asc()))
+            .orderBy(l -> l.col(Lips::getDelivery))
             .select((r, l) -> {
                 Expr<BigDecimal> half = divide(l.col(Lips::getQuantity), lit(new BigDecimal("2")));
                 return Arrays.asList(r.get(l, Lips::getDelivery), r.get(floor(half).as("down")), r.get(ceil(half).as("up")));
@@ -241,7 +241,7 @@ public final class SpecCases {
     public static Query<String> reservedAlias() {
         return from(Order.class)
             .where(o -> o.col(Order::material).eq("M1"))
-            .orderBy(o -> orders(o.col(Order::delivery).asc()))
+            .orderBy(o -> o.col(Order::delivery))
             .selectValue(o -> o.col(Order::delivery));
     }
 
@@ -259,7 +259,7 @@ public final class SpecCases {
         Query<OpenLine> open = from(Lips.class).selectAs(OpenLine.class, l -> keys(l.col(Lips::getDelivery), l.col(Lips::getMaterial)));
         return from(open.asTable())
             .where(o -> all(o.col(OpenLine::material).in(parts),
-                notExists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(o, OpenLine::delivery)).selectOne())))
+                notExists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(o, OpenLine::delivery)))))
             .select((r, o) -> Arrays.asList(
                 r.get(o, OpenLine::delivery),
                 r.get(scalar(from(Makt.class).where(mk -> mk.col(Makt::getMaterial).eq(o, OpenLine::material))

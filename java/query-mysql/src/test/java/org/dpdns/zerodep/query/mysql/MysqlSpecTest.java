@@ -30,7 +30,7 @@ class MysqlSpecTest extends RenderSpec {
                     r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4"))))),
             "mysql-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(maxExecutionTime(2000))
-                .groupBy(l -> keys(l.col(Lips::getMaterial)))
+                .groupBy(l -> l.col(Lips::getMaterial))
                 .select((r, l) -> Arrays.asList(
                     r.get(l, Lips::getMaterial),
                     r.get(dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(LocalDate.of(2026, 1, 1))).as("days")),
