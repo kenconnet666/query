@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   unit:
-    name: Java 单元与渲染测试
+    name: Java 单元、渲染与金样例测试
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -35,13 +35,13 @@ jobs:
           retention-days: 7
 
   live:
-    name: Java 实库 / ${{ matrix.database }}
+    name: 实库 / ${{ matrix.database }}
     strategy:
       fail-fast: false
       matrix:
         database: [postgres, mysql]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: query-ci-${{ matrix.database }}-${{ github.run_id }}-${{ github.run_attempt }}
       COMPOSE_FILE: infra/compose.yaml
@@ -55,11 +55,39 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: typescript/package.json
+          cache: true
+          cache_dependency_path: typescript/pnpm-lock.yaml
       - name: 生成临时数据库密码
         run: |
           password=$(openssl rand -hex 24)
           echo "::add-mask::$password"
           echo "QUERY_DB_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: 设置实库连接
+        run: |
+          case "$TEST_DATABASE" in
+            postgres)
+              {
+                echo "QUERY_PG_URL=jdbc:postgresql://127.0.0.1:55432/query"
+                echo "QUERY_PG_USER=query"
+                echo "QUERY_PG_PASSWORD=$QUERY_DB_PASSWORD"
+                echo "JAVA_MODULE=java/query-postgres"
+                echo "JAVA_TEST=PostgresLiveTest"
+              } >> "$GITHUB_ENV" ;;
+            mysql)
+              {
+                echo "QUERY_MYSQL_URL=jdbc:mysql://127.0.0.1:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"
+                echo "QUERY_MYSQL_USER=root"
+                echo "QUERY_MYSQL_PASSWORD=$QUERY_DB_PASSWORD"
+                echo "JAVA_MODULE=java/query-mysql"
+                echo "JAVA_TEST=MysqlLiveTest"
+              } >> "$GITHUB_ENV" ;;
+          esac
       - name: 启动数据库并核对内存限制
         run: |
           docker compose up --detach --wait --wait-timeout 120
@@ -67,18 +95,15 @@ jobs:
           container=$(docker compose ps -q "$TEST_DATABASE")
           docker inspect "$container" | jq -e --argjson expected "$expected" \
             '.[0].HostConfig | .Memory == $expected and .MemorySwap == $expected'
-      - name: 运行实库场景
+      - name: 运行 Java 实库场景
+        run: ./mvnw --batch-mode verify -pl "$JAVA_MODULE" -am "-Dtest=$JAVA_TEST" -Dsurefire.failIfNoSpecifiedTests=false
+      - name: 运行 TypeScript 实库场景
+        if: success() || failure()
+        working-directory: typescript
         run: |
-          case "$TEST_DATABASE" in
-            postgres)
-              export QUERY_PG_URL=jdbc:postgresql://127.0.0.1:55432/query QUERY_PG_USER=query QUERY_PG_PASSWORD="$QUERY_DB_PASSWORD"
-              module=java/query-postgres test=PostgresLiveTest ;;
-            mysql)
-              export QUERY_MYSQL_URL='jdbc:mysql://127.0.0.1:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true' \
-                QUERY_MYSQL_USER=root QUERY_MYSQL_PASSWORD="$QUERY_DB_PASSWORD"
-              module=java/query-mysql test=MysqlLiveTest ;;
-          esac
-          ./mvnw --batch-mode verify -pl "$module" -am "-Dtest=$test" -Dsurefire.failIfNoSpecifiedTests=false
+          pnpm install --frozen-lockfile
+          pnpm build
+          node --test "test/dist/live/$TEST_DATABASE.live.test.js"
       - name: 失败时收集数据库日志
         if: failure()
         run: |
@@ -98,13 +123,15 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
   hana:
-    name: Java 实库 / hana
+    name: 实库 / hana
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       COMPOSE_PROJECT_NAME: query-ci-hana-${{ github.run_id }}-${{ github.run_attempt }}
       COMPOSE_FILE: infra/hana.compose.yaml
       QUERY_REQUIRE_LIVE: '1'
+      QUERY_HANA_URL: jdbc:sap://127.0.0.1:39041
+      QUERY_HANA_USER: SYSTEM
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
@@ -112,6 +139,14 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: typescript/package.json
+          cache: true
+          cache_dependency_path: typescript/pnpm-lock.yaml
       - name: 准备运行 HANA 的主机
         run: |
           available_kib=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
@@ -128,11 +163,15 @@ jobs:
           docker inspect "$container" | jq -e --argjson expected "$expected" \
             '.[0].HostConfig | .Memory == $expected and .MemorySwap == $expected'
           docker exec "$container" /bin/bash /query/configure.sh
-      - name: 运行实库场景
-        env:
-          QUERY_HANA_URL: jdbc:sap://127.0.0.1:39041
-          QUERY_HANA_USER: SYSTEM
-        run: QUERY_HANA_PASSWORD="$QUERY_HANA_PASSWORD" ./mvnw --batch-mode verify -pl java/query-hana -am -Dtest=HanaLiveTest -Dsurefire.failIfNoSpecifiedTests=false
+      - name: 运行 Java 实库场景
+        run: ./mvnw --batch-mode verify -pl java/query-hana -am -Dtest=HanaLiveTest -Dsurefire.failIfNoSpecifiedTests=false
+      - name: 运行 TypeScript 实库场景
+        if: success() || failure()
+        working-directory: typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node --test test/dist/live/hana.live.test.js
       - name: 失败时收集 HANA 日志
         if: failure()
         run: |
@@ -152,7 +191,7 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
   typescript:
-    name: TypeScript 类型检查
+    name: TypeScript 编译、类型与单元测试
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -165,8 +204,8 @@ jobs:
           package_json_file: typescript/package.json
           cache: true
           cache_dependency_path: typescript/pnpm-lock.yaml
-      - name: 安装依赖并检查类型
+      - name: 编译并运行单元、编译期类型与金样例测试
         working-directory: typescript
         run: |
           pnpm install --frozen-lockfile
-          pnpm typecheck
+          pnpm test
