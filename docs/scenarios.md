@@ -16,7 +16,7 @@
 | 递归 CTE / 树 | `asTreeCTE` | HANA 2.0 不支持递归 CTE，改用层级函数；PostgreSQL 由方言包提供 | 3 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
 | 常量行（码表 CTE） | 原生 SQL 片段 | `values(Shape.class, rows)`：每行一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY` | 1 |
-| 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy((a, b) -> keys(...))`、`having(...)` | 1 |
+| 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy((a, b) -> a.col(...))`，多个键用 `keys(...)`；`having(...)` | 1 |
 | ROLLUP / CUBE / GROUPING SETS | 增强包提供 | 核心包 `groupByRollup(...)` 与 `grouping(e)`，MySQL 渲染为 `WITH ROLLUP`；MySQL 不支持的 `cube`、`groupingSets` 由 HANA、PostgreSQL 方言包提供 | 1 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包，`RANGE` 由方言包提供 | 1 |
 | `QUALIFY` / 分区取第一行 | `partitionBy` | HANA 不支持 `QUALIFY`；用 CTE 加 `rowNumber` 再过滤 | 1 |
@@ -40,7 +40,7 @@
 
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
-| 按开关加条件 | `where(boolean, ...)` | `whereIf(test, ...)`、`onlyIf(test, () -> cond)` | 1 |
+| 按开关加条件 | `where(boolean, ...)` | `onlyIf(test, () -> cond)` 写在 `where` 里 | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 显式写 `eqIfPresent`、`inIfPresent`、`ifPresent(v, x -> cond)`，不做全局隐式忽略 | 1 |
 | 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | 不做：每个条件一行 `eqIfPresent` 等，保留类型检查（见 0003） | — |
 | 动态排序 | `orderByObject` | `orderBy((a, b) -> ...)` 接收任意 `List<Order>`，可以由运行时数据生成 | 1 |

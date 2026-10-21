@@ -22,7 +22,7 @@
 | --- | --- |
 | `WITH x AS (...)` | `cte("x", query)`；被引用多次也只在 `WITH` 里出现一次 |
 | `FROM (SELECT ...) t` | `from(query.asTable())` |
-| `SELECT p.*, 额外列` | `selectAs(Shape.class, p -> keys(额外列))`，没有列出的属性按同名列补齐 |
+| `SELECT p.*, 额外列` | `selectAs(Shape.class, p -> 额外列)`（多列用 `keys(...)`），没有列出的属性按同名列补齐 |
 | `CASE col WHEN 'A' THEN ... END` | `caseOf(col).when("A", ...).otherwise(...)` |
 | `CASE WHEN cond THEN ... END` | `caseWhen(cond, ...).when(...).otherwise(...)` |
 | `COALESCE(a, b, c)` | `a.coalesce(b, c)` |
@@ -44,7 +44,7 @@ record Row(String material, BigDecimal quantity) { }
 
 Cte<Row> rows = cte("rows", openOrders.unionAll(backorders));   // 两段都是 selectAs(Row.class, ...)
 Query<Row> sorted = from(rows)
-    .orderBy(r -> orders(r.col(Row::material).asc()))
+    .orderBy(r -> r.col(Row::material))
     .selectAs(Row.class);
 ```
 
@@ -59,7 +59,7 @@ Getter<Stock, BigDecimal> column = switch (kind) {
     default -> throw new IllegalArgumentException("Unknown stock kind: " + kind);
 };
 from(Stock.class)
-    .groupBy(s -> keys(s.col(Stock::getMaterial)))
+    .groupBy(s -> s.col(Stock::getMaterial))
     .select((r, s) -> new Total(r.get(s, Stock::getMaterial), r.get(sum(s.col(column)))));
 ```
 
@@ -78,7 +78,7 @@ public abstract class StockBase {
 
 static <E extends StockBase> Query<Total> totals(Class<E> table) {
     return from(table)
-        .groupBy(s -> keys(s.col(StockBase::getMaterial)))
+        .groupBy(s -> s.col(StockBase::getMaterial))
         .select((r, s) -> new Total(r.get(s, StockBase::getMaterial), r.get(sum(s.col(StockBase::getUnrestricted)))));
 }
 
@@ -95,8 +95,7 @@ totals(Mard.class).unionAll(totals(Mardh.class));
 from(Lips.class).where(l -> all(
     l.col(Lips::getCreatedOn).between(start, end),
     ifPresent(vendor, v -> exists(from(Ekko.class)
-        .where(e -> all(e.col(Ekko::getOrder).eq(l, Lips::getPurchaseOrder), e.col(Ekko::getVendor).eq(v)))
-        .selectOne()))));
+        .where(e -> all(e.col(Ekko::getOrder).eq(l, Lips::getPurchaseOrder), e.col(Ekko::getVendor).eq(v)))))));
 ```
 
 ### `(:p = 'ALL' OR col = :p)` 与多分支的 `:mode`

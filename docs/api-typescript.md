@@ -8,6 +8,25 @@
 - 实库测试：`typescript/test/src/live/`；
 - 金样例的查询清单：`typescript/test/src/spec-cases.ts`。
 
+## 速查
+
+表里的 `l`、`m` 是作用域回调的参数，每张表一个；`l.material` 这样的字段就是列表达式。
+
+| SQL | 写法 |
+| --- | --- |
+| `FROM LIPS l JOIN MARA m ON m.MATNR = l.MATNR` | `from(Lips).join(Mara, (l, m) => m.material.eq(l.material))` |
+| `WHERE a = ? AND b BETWEEN ? AND ?` | `.where((l) => all(l.material.eq(x), l.createdOn.between(low, high)))` |
+| 参数为空时不加这个条件 | `l.material.eqIfPresent(x)`；更复杂的用 `ifPresent(x, (v) => ...)` 或 `onlyIf(flag, () => ...)` |
+| `EXISTS (SELECT 1 FROM VBKD v WHERE ...)` | `exists(from(Vbkd).where((v) => ...))` |
+| `GROUP BY a`、`GROUP BY a, b` | `.groupBy((l) => l.material)`、`.groupBy((l) => [l.material, l.unit])` |
+| `ORDER BY a`、`ORDER BY a, b DESC` | `.orderBy((l) => l.material)`、`.orderBy((l) => [l.material, l.delivery.desc()])` |
+| `SELECT` 列 | `.select((l) => ({ material: l.material, total: sum(l.quantity) }))` |
+| `SELECT` 同名列到类 | `.selectAs(Dto)` |
+| `WITH x AS (...)` | `const x = cte("x", query)`，然后 `from(x)` |
+| `UNION ALL` | `q1.unionAll(q2)` |
+| `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.delivery.desc()))` |
+| 执行 | `await db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
+
 ## 1. 依赖与数据库实例
 
 选定一个方言包。方言包会重新导出核心包，所以一个 import 就能拿到全部函数。驱动由使用方安装，方言包只引用驱动的类型。
@@ -113,9 +132,9 @@ const q = from(Lips)
   .where((l, ma) => all(
     l.createdOn.between(start, end),                         // 参数经过转换器
     ma.manufacturer.eqIfPresent(maker),                      // maker 为 null/undefined 时省略
-    exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)).selectOne())))
+    exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)))))
   .groupBy((l, ma) => ma.partNumber)
-  .orderBy((l, ma) => ma.partNumber.asc())
+  .orderBy((l, ma) => ma.partNumber)
   .select((l, ma, mk) => ({
     partNumber: ma.partNumber,
     name: max(mk.text.coalesce(ma.partNumber)),               // mk 是 LEFT JOIN 的表：mk.text 可能为 null
@@ -131,7 +150,7 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 | --- | --- |
 | `join` / `leftJoin(实体类或 Source, (…) => cond)` | 连接条件里可以用到作用域内所有的表；`leftJoin` 之后该参数的列都可能为 null |
 | `crossJoin(...)` | 笛卡尔积 |
-| `where`、`whereIf(test, …)`、`having` | 条件；`Cond.EMPTY` 会被自动丢弃 |
+| `where`、`having` | 条件；值为空而省略的条件（`Cond.EMPTY`）会被自动丢弃 |
 | `groupBy(… => expr 或 [expr, ...])` | 分组 |
 | `groupByRollup(… => [expr, ...])` | 分组并加上各级小计和总计：HANA、PostgreSQL 渲染 `ROLLUP(a, b)`，MySQL 渲染 `a, b WITH ROLLUP`；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `orderBy(… => item 或 [item, ...])` | 排序项可以是 `expr`（升序）、`expr.desc()`、`.nullsLast()` 等 |
@@ -141,7 +160,7 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 
 - 表数不设上限。
 - 自连接时，第二个同名实体就是下一个参数，别名在整条语句里自动唯一。
-- 关联子查询直接捕获外层回调的参数。
+- 关联子查询直接捕获外层回调的参数。`exists` / `notExists` 直接接收作用域，不用写 SELECT 列表。
 - 泛型片段的回调要写成 `(...[l]) => ...`，这是 TS 的限制。
 
 ## 4. 投影
@@ -151,7 +170,6 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 | `select((a, b) => ({ ... }))` | 对象 | 默认写法。键就是列标签；嵌套对象得到嵌套结果；`{ ...a }` 选出 a 的全部列 |
 | `selectAs(VO)` | VO 实例 | 按同名字段从作用域里的表自动取列，改名的字段用 `@mapFrom` |
 | `selectValue((a) => expr)` | 单值 | 值列表、标量子查询、`IN` 子查询 |
-| `selectOne()` | `1` | `EXISTS` 子查询 |
 
 同一个查询可以变换结果，不影响 SQL：
 
@@ -213,7 +231,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 **两种常见写法**：
 
 - **一组列求和**，例如十六个期间列：键写成联合类型的数组，`plus(PERIODS.map((p) => f[p].coalesce("0")))`。按期间展开成行，则是对同一个数组逐个生成 `select`，再用 `unionAll` 合并。
-- **按条件追加的过滤**：需要连接另一张表才能判断时，写成可选的 EXISTS，不要按条件拼接 JOIN：`ifPresent(supplier, (code) => exists(from(sup).where((s) => ...).selectOne()))`。这样作用域里的表不变，类型也不变。
+- **按条件追加的过滤**：需要连接另一张表才能判断时，写成可选的 EXISTS，不要按条件拼接 JOIN：`ifPresent(supplier, (code) => exists(from(sup).where((s) => ...)))`。这样作用域里的表不变，类型也不变。
 
 ## 6. 表达式与函数
 
