@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.type.TypeRegistry;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,6 +38,12 @@ public abstract class Dialect {
     public void limit(SqlWriter w, Integer limit, Integer offset) {
         if (limit != null) w.sql("\nLIMIT ").sql(Integer.toString(limit));
         if (offset != null && offset > 0) w.sql(limit == null ? "\nOFFSET " : " OFFSET ").sql(Integer.toString(offset));
+    }
+
+    /** The GROUP BY list; with rollup, subtotals for every prefix of the keys and a grand total. */
+    public void groupBy(SqlWriter w, List<? extends Renderable> keys, boolean rollup) {
+        if (rollup) w.sql("ROLLUP(").join(keys, ", ").sql(")");
+        else w.join(keys, ", ");
     }
 
     /** One ORDER BY item; {@code nullsFirst} is null when the query does not specify NULL placement. */

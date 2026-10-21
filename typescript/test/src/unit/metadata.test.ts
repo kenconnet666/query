@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, entityMeta, from, ignore, integer, NamingStrategy, shapeFields, table } from "@query/core";
-import { ClientEntity, LineVO, Lips } from "../erp.js";
+import { blankAsNull, column, entityMeta, from, ignore, integer, NamingStrategy, readAs, shapeFields, table, trimmed } from "@query/core";
+import { ClientEntity, LineVO, Lips, MaraView } from "../erp.js";
 import { TestDatabase } from "../support.js";
 
 @table("ORDERS")
@@ -59,6 +59,20 @@ describe("元数据", () => {
       }
       return Hidden;
     }, /public instance fields/);
+  });
+
+  it("读取模板每个字段只能有一个且必须包含列占位符", () => {
+    const read = (name: string) => entityMeta(MaraView).properties.find((p) => p.name === name)?.read;
+    assert.equal(read("partNumber"), "TRIM({0})");
+    assert.equal(read("maker"), "NULLIF({0}, '')");
+    assert.equal(read("storedMaker"), undefined);
+    assert.throws(() => {
+      class TwoReads {
+        @column("X") @trimmed @blankAsNull x!: string;
+      }
+      return TwoReads;
+    }, /x declares two read templates/);
+    assert.throws(() => readAs("TRIM(X)"), /needs \{0\}/);
   });
 
   it("接收行的 DTO 需要无参构造器", () => {

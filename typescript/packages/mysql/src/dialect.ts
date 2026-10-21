@@ -39,6 +39,12 @@ export class MysqlDialect extends Dialect {
     if (hasOffset) w.sql(` OFFSET ${offset}`);
   }
 
+  /** MySQL writes ROLLUP as a suffix over the whole GROUP BY list. */
+  override groupBy(w: SqlWriter, keys: readonly Renderable[], rollup: boolean): void {
+    w.join(keys, ", ");
+    if (rollup) w.sql(" WITH ROLLUP");
+  }
+
   /** No NULLS FIRST/LAST in MySQL: sort on "is null" first, which places NULLs the same way. */
   override orderItem(w: SqlWriter, expr: Renderable, descending: boolean, nullsFirst: boolean | undefined): void {
     if (nullsFirst !== undefined) w.render(expr).sql(nullsFirst ? " IS NULL DESC, " : " IS NULL ASC, ");

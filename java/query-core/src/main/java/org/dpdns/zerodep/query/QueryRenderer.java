@@ -105,7 +105,10 @@ final class QueryRenderer {
         Cond whereAll = Nodes.all(where);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
         w.inlining(grouped);
-        if (!s.groupBy.isEmpty()) w.sql("\nGROUP BY ").join(s.groupBy, ", ");
+        if (!s.groupBy.isEmpty()) {
+            w.sql("\nGROUP BY ");
+            w.dialect().groupBy(w, s.groupBy, s.rollup);
+        }
         Cond having = Nodes.all(s.having);
         if (!having.isEmpty()) w.sql("\nHAVING ").render(having);
         boolean limited = s.limit != null || s.offset != null;

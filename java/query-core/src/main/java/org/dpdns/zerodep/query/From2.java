@@ -43,6 +43,9 @@ public final class From2<A, B> extends AbstractFrom<From2<A, B>> {
 
     public From2<A, B> groupBy(Fn.F2<Ref<A>, Ref<B>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From2<A, B> groupByRollup(Fn.F2<Ref<A>, Ref<B>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b))); }
+
     public From2<A, B> having(Fn.F2<Ref<A>, Ref<B>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b))); }
 
     public From2<A, B> orderBy(Fn.F2<Ref<A>, Ref<B>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b))); }

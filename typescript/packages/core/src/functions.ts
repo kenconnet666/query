@@ -209,6 +209,11 @@ export function max<T>(e: Expr<T>): Aggregate<T | null> {
   return new Aggregate(e.type, "MAX", false, [e as Expr<unknown>]);
 }
 
+/** 1 on the subtotal rows of `groupByRollup` where the key is rolled up, 0 elsewhere. */
+export function grouping(key: Expr<unknown>): Expr<number> {
+  return functionCall(integer, "GROUPING", [key]);
+}
+
 // ---------- window functions ----------
 
 export function rowNumber(): WindowFunction<number> {

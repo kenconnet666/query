@@ -7,6 +7,8 @@ import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.CastType;
 
+import java.util.List;
+
 /**
  * MySQL 8 with its default SQL mode. Identifiers are always quoted with backticks (window function
  * names such as RANK are reserved words), {@code ||} is not concatenation, and backslashes in string
@@ -35,6 +37,12 @@ public class MysqlDialect extends Dialect {
         if (limit == null && !hasOffset) return;
         w.sql("\nLIMIT ").sql(limit == null ? "18446744073709551615" : Integer.toString(limit));
         if (hasOffset) w.sql(" OFFSET ").sql(Integer.toString(offset));
+    }
+
+    /** MySQL writes ROLLUP as a suffix over the whole GROUP BY list. */
+    @Override public void groupBy(SqlWriter w, List<? extends Renderable> keys, boolean rollup) {
+        w.join(keys, ", ");
+        if (rollup) w.sql(" WITH ROLLUP");
     }
 
     /** No NULLS FIRST/LAST in MySQL: sort on "is null" first, which places NULLs the same way. */

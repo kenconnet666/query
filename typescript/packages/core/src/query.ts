@@ -41,6 +41,8 @@ interface SelectSpec {
   readonly joins: readonly Join[];
   readonly where: readonly Cond[];
   readonly groupBy: readonly Expr<unknown>[];
+  /** GROUP BY ROLLUP over all keys: subtotals per prefix of the keys and a grand total. */
+  readonly rollup: boolean;
   readonly having: readonly Cond[];
   readonly orderBy: readonly Order[];
   readonly distinct: boolean;
@@ -371,7 +373,10 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   const whereAll = all(...where, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
   w.inline(grouped);
-  if (s.groupBy.length > 0) w.sql("\nGROUP BY ").join(s.groupBy, ", ");
+  if (s.groupBy.length > 0) {
+    w.sql("\nGROUP BY ");
+    w.dialect.groupBy(w, s.groupBy, s.rollup);
+  }
   const having = all(...s.having);
   if (!having.isEmpty) w.sql("\nHAVING ").render(having);
   const limited = s.limit !== undefined || s.offset !== undefined;
@@ -439,7 +444,16 @@ export class From<T extends readonly unknown[]> {
   }
 
   groupBy(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
+    if (this.#spec.rollup) throw new Error("groupByRollup already lists every grouping key");
     return this.#with({ groupBy: [...this.#spec.groupBy, ...list(keys(...this.#refs))] });
+  }
+
+  /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+  groupByRollup(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
+    if (this.#spec.groupBy.length > 0) throw new Error("groupByRollup must list every grouping key; it cannot follow groupBy");
+    const all = list(keys(...this.#refs));
+    if (all.length === 0) throw new Error("groupByRollup needs at least one key");
+    return this.#with({ groupBy: all, rollup: true });
   }
 
   having(cond: (...refs: T) => Cond): From<T> {
@@ -582,6 +596,7 @@ function emptySpec(): SelectSpec {
     joins: [],
     where: [],
     groupBy: [],
+    rollup: false,
     having: [],
     orderBy: [],
     distinct: false,

@@ -1,9 +1,13 @@
 package org.dpdns.zerodep.query.meta;
 
+import org.dpdns.zerodep.query.annotation.BlankAsNull;
 import org.dpdns.zerodep.query.annotation.Column;
+import org.dpdns.zerodep.query.annotation.ReadAs;
+import org.dpdns.zerodep.query.annotation.Trimmed;
 import org.dpdns.zerodep.query.testing.Erp;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.Mardh;
 import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Erp.PeriodStock;
@@ -101,5 +105,24 @@ class MetadataTest {
 
     static final class WrongConverter {
         @Column(value = "ERDAT", converter = Erp.SapDateConverter.class) private String createdOn;
+    }
+
+    static class TwoReads {
+        @Column("X") @Trimmed @BlankAsNull private String x;
+    }
+
+    static class NoPlaceholder {
+        @Column("X") @ReadAs("TRIM(X)") private String x;
+    }
+
+    @Test
+    void 读取模板来自字段或组合注解且必须唯一并包含列占位符() {
+        assertEquals("TRIM({0})", Metadata.entity(MaraView.class).property("partNumber").read());
+        assertEquals("NULLIF({0}, '')", Metadata.entity(MaraView.class).property("maker").read());
+        assertEquals(null, Metadata.entity(MaraView.class).property("storedMaker").read());
+        var two = assertThrows(IllegalArgumentException.class, () -> Metadata.entity(TwoReads.class));
+        assertTrue(two.getMessage().contains("two read templates"), two.getMessage());
+        var none = assertThrows(IllegalArgumentException.class, () -> Metadata.entity(NoPlaceholder.class));
+        assertTrue(none.getMessage().contains("needs {0}"), none.getMessage());
     }
 }

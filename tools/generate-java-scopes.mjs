@@ -71,6 +71,8 @@ function from(n) {
   m.push(`    public ${self} where(${lam("Cond")} cond) { return rebuild(spec.where(cond.apply(${call}))); }`);
   m.push(`    public ${self} whereIf(boolean test, ${lam("Cond")} cond) { return test ? where(cond) : this; }`);
   m.push(`    public ${self} groupBy(${lam("List<? extends Expr<?>>")} keys) { return rebuild(spec.groupBy(keys.apply(${call}))); }`);
+  m.push(`    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public ${self} groupByRollup(${lam("List<? extends Expr<?>>")} keys) { return rebuild(spec.groupByRollup(keys.apply(${call}))); }`);
   m.push(`    public ${self} having(${lam("Cond")} cond) { return rebuild(spec.having(cond.apply(${call}))); }`);
   m.push(`    public ${self} orderBy(${lam("List<Order>")} orders) { return rebuild(spec.orderBy(orders.apply(${call}))); }`);
   m.push(`    /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */

@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.MapFrom;
+import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.type.Converter;
 import org.dpdns.zerodep.query.type.SqlType;
@@ -170,7 +171,26 @@ public final class Metadata {
         }
         SqlType<?> type = converter == null ? SqlType.of(f.getType()) : SqlType.converted(f.getType(), converter);
         String name = column == null || column.value().isEmpty() ? null : column.value();
-        return new PropertyMeta(owner, f.getName(), name, type, f, f.getAnnotation(MapFrom.class));
+        return new PropertyMeta(owner, f.getName(), name, type, f, f.getAnnotation(MapFrom.class), readTemplate(owner, f));
+    }
+
+    /** The {@link ReadAs} template on the field itself or on one composed annotation. */
+    private static String readTemplate(Class<?> owner, Field f) {
+        String found = null;
+        List<ReadAs> declared = new ArrayList<>();
+        if (f.getAnnotation(ReadAs.class) != null) declared.add(f.getAnnotation(ReadAs.class));
+        for (Annotation a : f.getAnnotations()) {
+            ReadAs composed = a.annotationType().getAnnotation(ReadAs.class);
+            if (composed != null) declared.add(composed);
+        }
+        for (ReadAs r : declared) {
+            if (found != null) throw new IllegalArgumentException(owner.getSimpleName() + "." + f.getName() + " declares two read templates");
+            if (!r.value().contains("{0}")) {
+                throw new IllegalArgumentException(owner.getSimpleName() + "." + f.getName() + ": a read template needs {0} for the column");
+            }
+            found = r.value();
+        }
+        return found;
     }
 
     private static String decapitalize(String s) {

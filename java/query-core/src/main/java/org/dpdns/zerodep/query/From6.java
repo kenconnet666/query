@@ -51,6 +51,9 @@ public final class From6<A, B, C, D, E, F> extends AbstractFrom<From6<A, B, C, D
 
     public From6<A, B, C, D, E, F> groupBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e, f))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From6<A, B, C, D, E, F> groupByRollup(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e, f))); }
+
     public From6<A, B, C, D, E, F> having(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e, f))); }
 
     public From6<A, B, C, D, E, F> orderBy(Fn.F6<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e, f))); }

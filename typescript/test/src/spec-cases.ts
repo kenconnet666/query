@@ -17,6 +17,7 @@ import {
   divide,
   exists,
   from,
+  grouping,
   lag,
   lead,
   left,
@@ -51,10 +52,10 @@ import {
   type Query,
   type Ref,
 } from "@query/core";
-import { addDays, addMonths, addYears, daysBetween, hint, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toNvarchar, toVarchar } from "@query/hana";
+import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, groupingSets as hanaGroupingSets, hint, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toNvarchar, toVarchar } from "@query/hana";
 import { dateDiff, dateFormat, groupConcat, maxExecutionTime } from "@query/mysql";
-import { distinctOn, filterWhere, ilike, pg, stringAgg as pgStringAgg } from "@query/postgres";
-import { Lips, Makt, Mara, Vbkd } from "./erp.js";
+import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, pg, stringAgg as pgStringAgg } from "@query/postgres";
+import { Lips, Makt, Mara, MaraView, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 
 /**
@@ -219,6 +220,13 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
         total: sum(caseWhen(l.unit.eq("EA"), l.quantity).otherwise("0")),
       }));
   }),
+  "column-transforms": plain(() =>
+    from(MaraView)
+      .where((m) => all(m.maker.isNotNull(), m.storedMaker.ne("")))
+      .groupBy((m) => m.partNumber)
+      .select((m) => ({ partNumber: m.partNumber, makers: countDistinct(m.maker) })),
+  ),
+  rollup: plain(() => rollup()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -237,8 +245,30 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   }),
 };
 
+/** Totals per material and unit, subtotals per material, and the grand total. */
+export function rollup() {
+  return from(Lips)
+    .groupByRollup((l) => [l.material, l.unit])
+    .orderBy((l) => [grouping(l.material), l.material, grouping(l.unit)])
+    .select((l) => ({ material: l.material, unit: l.unit, total: sum(l.quantity), level: grouping(l.material) }));
+}
+
+const groupingCases = (sets: typeof hanaGroupingSets, cubeOf: typeof hanaCube, prefix: string): Record<string, SpecCase> => ({
+  [`${prefix}-grouping-sets`]: plain(() =>
+    from(Lips)
+      .groupBy((l) => sets([l.material, l.unit], [l.material], []))
+      .select((l) => ({ material: l.material, unit: l.unit, lines: count() })),
+  ),
+  [`${prefix}-cube`]: plain(() =>
+    from(Lips)
+      .groupBy((l) => cubeOf(l.material, l.unit))
+      .select((l) => ({ material: l.material, unit: l.unit, lines: count() })),
+  ),
+});
+
 export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readonly<Record<string, SpecCase>>>> = {
   hana: {
+    ...groupingCases(hanaGroupingSets, hanaCube, "hana"),
     "hana-functions": plain(() =>
       from(Lips)
         .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
@@ -263,6 +293,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     ),
   },
   postgres: {
+    ...groupingCases(pgGroupingSets, pgCube, "postgres"),
     "postgres-functions": plain(() =>
       from(Lips)
         .with((l) => distinctOn(l.material))

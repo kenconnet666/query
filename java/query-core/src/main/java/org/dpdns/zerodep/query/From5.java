@@ -49,6 +49,9 @@ public final class From5<A, B, C, D, E> extends AbstractFrom<From5<A, B, C, D, E
 
     public From5<A, B, C, D, E> groupBy(Fn.F5<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From5<A, B, C, D, E> groupByRollup(Fn.F5<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e))); }
+
     public From5<A, B, C, D, E> having(Fn.F5<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e))); }
 
     public From5<A, B, C, D, E> orderBy(Fn.F5<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e))); }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
-import { count, distinctOn, filterWhere, from, ilike, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
+import { count, cube, distinctOn, filterWhere, from, grouping, groupingSets, ilike, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@query/postgres";
 import { Lips } from "../erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -56,6 +56,26 @@ liveScenarios(
           .map((r) => `${r.material}=${r.deliveries}`),
       );
       assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);
+    });
+
+    it("分组集合与 CUBE", async () => {
+      const { db } = live();
+      const sets = await db.list(
+        from(Lips)
+          .groupBy((l) => groupingSets([l.material], []))
+          .orderBy((l) => [grouping(l.material), l.material])
+          .select((l) => ({ material: l.material, total: sum(l.quantity) })),
+      );
+      assert.deepEqual(
+        sets.map((r) => `${r.material}=${Number(r.total)}`),
+        ["M1=6", "M2=12", "null=18"],
+      );
+      const cells = await db.list(
+        from(Lips)
+          .groupBy((l) => cube(l.material, l.unit))
+          .selectValue(() => count()),
+      );
+      assert.equal(cells.length, 6, "material x unit, material, unit and the grand total");
     });
   },
 );

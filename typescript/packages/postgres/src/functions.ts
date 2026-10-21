@@ -1,4 +1,4 @@
-import { condition, Expr, expression, lit, param, text, toOrder, type Aggregate, type Clause, type Cond, type OrderItem, type SqlWriter } from "@query/core";
+import { call, condition, Expr, expression, FunctionDef, lit, param, text, toOrder, untyped, type Aggregate, type Clause, type Cond, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
 import { PostgresDialect } from "./dialect.js";
 
 /** PostgreSQL-only functions and clauses; they refuse to render on another dialect. */
@@ -73,4 +73,18 @@ export function stringAgg(value: Expr<string | null>, separator: string, ...orde
     if (orders.length > 0) w.sql(" ORDER BY ").join(orders, ", ");
     w.sql(")");
   });
+}
+
+const CUBE = FunctionDef.only(PostgresDialect, "CUBE");
+const GROUPING_SETS = FunctionDef.only(PostgresDialect, "GROUPING SETS", (w, args) => void w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
+
+/** CUBE(keys) as a GROUP BY key: subtotals for every combination of the keys. */
+export function cube(...keys: Expr<unknown>[]): Expr<unknown> {
+  return call(CUBE, untyped as SqlType<{}>, ...keys);
+}
+
+/** GROUPING SETS ((a, b), (a), ()) as a GROUP BY key: exactly the listed groupings; an empty list is the grand total. */
+export function groupingSets(...sets: (readonly Expr<unknown>[])[]): Expr<unknown> {
+  const args = sets.map((set) => ({ render: (w: SqlWriter) => void w.sql("(").join(set, ", ").sql(")") }));
+  return expression(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
 }

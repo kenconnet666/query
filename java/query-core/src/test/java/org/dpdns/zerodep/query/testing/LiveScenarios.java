@@ -13,6 +13,7 @@ import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Erp.StockRow;
 import org.junit.jupiter.api.BeforeAll;
@@ -33,6 +34,7 @@ import java.util.stream.Stream;
 
 import static org.dpdns.zerodep.query.Sql.caseWhen;
 import static org.dpdns.zerodep.query.Sql.count;
+import static org.dpdns.zerodep.query.Sql.countDistinct;
 import static org.dpdns.zerodep.query.Sql.cte;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.keys;
@@ -89,6 +91,7 @@ public abstract class LiveScenarios {
             insert("MARA", "'100', 'M2', 'P2', 'MK2', 'ZMAT'"),
             insert("MARA", "'100', 'M3', 'P3', 'MK1', 'ZOTH'"),
             insert("MARA", "'200', 'M1', 'X1', 'MK1', 'ZMAT'"),
+            insert("MARA", "'100', 'M4', 'P1', '', 'ZOTH'"),
             insert("MAKT", "'100', 'M1', '1', 'Pump'"),
             insert("MAKT", "'100', 'M2', '2', 'Valve'"),
             insert("MAKT", "'200', 'M1', '1', 'Other'"),
@@ -273,6 +276,26 @@ public abstract class LiveScenarios {
             .groupBy(l -> keys(substring(l.col(Lips::getDelivery), 1, 1)))
             .select((r, l) -> r.get(substring(l.col(Lips::getDelivery), 1, 1)) + "=" + r.get(count())));
         assertEquals(List.of("D=5"), prefixes);
+    }
+
+    @Test
+    void 列转换按转换后的值读取且可与原值并存() {
+        List<String> rows = db.list(from(MaraView.class)
+            .groupBy(m -> keys(m.col(MaraView::getPartNumber)))
+            .orderBy(m -> orders(m.col(MaraView::getPartNumber).asc()))
+            .select((r, m) -> r.get(m, MaraView::getPartNumber) + ":" + r.get(countDistinct(m.col(MaraView::getMaker)))
+                + ":" + r.get(countDistinct(m.col(MaraView::getStoredMaker)))));
+        assertEquals(List.of("P1:1:2", "P2:1:1", "P3:1:1"), rows);
+        assertEquals(List.of("M4"), db.list(from(MaraView.class).where(m -> m.col(MaraView::getMaker).isNull())
+            .selectValue(m -> m.col(MaraView::getMaterial))));
+    }
+
+    @Test
+    void ROLLUP给出小计与总计() {
+        List<String> rows = db.list(SpecCases.rollup()).stream()
+            .map(r -> r.get(0) + "/" + r.get(1) + "/" + ((BigDecimal) r.get(2)).stripTrailingZeros().toPlainString() + "/" + r.get(3))
+            .toList();
+        assertEquals(List.of("M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"), rows);
     }
 
     protected static void assertDelivery(Delivery d, String part, String name, String quantity) {

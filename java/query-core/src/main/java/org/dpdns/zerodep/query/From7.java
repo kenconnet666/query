@@ -53,6 +53,9 @@ public final class From7<A, B, C, D, E, F, G> extends AbstractFrom<From7<A, B, C
 
     public From7<A, B, C, D, E, F, G> groupBy(Fn.F7<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e, f, g))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From7<A, B, C, D, E, F, G> groupByRollup(Fn.F7<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e, f, g))); }
+
     public From7<A, B, C, D, E, F, G> having(Fn.F7<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e, f, g))); }
 
     public From7<A, B, C, D, E, F, G> orderBy(Fn.F7<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e, f, g))); }

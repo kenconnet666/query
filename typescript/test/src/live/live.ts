@@ -3,6 +3,7 @@ import { after, before, describe, it } from "node:test";
 import {
   caseWhen,
   count,
+  countDistinct,
   cte,
   filter,
   from,
@@ -21,7 +22,8 @@ import {
   type QueryEvent,
   type Ref,
 } from "@query/core";
-import { ClientEntity, Event, LineVO, Lips } from "../erp.js";
+import { ClientEntity, Event, LineVO, Lips, MaraView } from "../erp.js";
+import { rollup } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
 
 /**
@@ -103,6 +105,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         insert("MARA", "'100', 'M2', 'P2', 'MK2', 'ZMAT'"),
         insert("MARA", "'100', 'M3', 'P3', 'MK1', 'ZOTH'"),
         insert("MARA", "'200', 'M1', 'X1', 'MK1', 'ZMAT'"),
+        insert("MARA", "'100', 'M4', 'P1', '', 'ZOTH'"),
         insert("MAKT", "'100', 'M1', '1', 'Pump'"),
         insert("MAKT", "'100', 'M2', '2', 'Valve'"),
         insert("MAKT", "'200', 'M1', '1', 'Other'"),
@@ -342,6 +345,34 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
           .select((l) => ({ prefix: substring(l.delivery, 1, 1), n: count() })),
       );
       assert.deepEqual(prefixes, [{ prefix: "D", n: 5 }]);
+    });
+
+    it("列转换按转换后的值读取且可与原值并存", async () => {
+      const { db } = live();
+      const rows = await db.list(
+        from(MaraView)
+          .groupBy((m) => m.partNumber)
+          .orderBy((m) => m.partNumber)
+          .select((m) => ({ part: m.partNumber, makers: countDistinct(m.maker), stored: countDistinct(m.storedMaker) })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.part}:${r.makers}:${r.stored}`),
+        ["P1:1:2", "P2:1:1", "P3:1:1"],
+      );
+      const blank = await db.list(
+        from(MaraView)
+          .where((m) => m.maker.isNull())
+          .selectValue((m) => m.material),
+      );
+      assert.deepEqual(blank, ["M4"]);
+    });
+
+    it("ROLLUP 给出小计与总计", async () => {
+      const rows = await live().db.list(rollup());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
+        ["M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"],
+      );
     });
 
     extra?.(live);

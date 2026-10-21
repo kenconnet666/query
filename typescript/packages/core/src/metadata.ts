@@ -30,6 +30,7 @@ interface FieldMeta {
   readonly type?: SqlType<unknown>;
   readonly mapFrom?: { readonly entity: Ctor<unknown>; readonly property: string };
   readonly ignore?: true;
+  readonly read?: string;
 }
 
 /** One column property of an entity. */
@@ -38,6 +39,8 @@ export interface PropertyMeta {
   readonly type: SqlType<unknown>;
   /** The explicit column name; otherwise the database's naming strategy derives it. */
   readonly column: string | undefined;
+  /** The `readAs` template the column is read through, `{0}` standing for the qualified column. */
+  readonly read: string | undefined;
 }
 
 /** The fields of a class, as its decorators and its instances describe them. */
@@ -70,6 +73,7 @@ function record(context: ClassFieldDecoratorContext, field: Omit<FieldMeta, "nam
   const own = Object.hasOwn(meta, FIELDS) ? (meta[FIELDS] as FieldMeta[]) : (meta[FIELDS] = [...((meta[FIELDS] as FieldMeta[] | undefined) ?? [])]) as FieldMeta[];
   const name = String(context.name);
   const index = own.findIndex((f) => f.name === name);
+  if (field.read !== undefined && index >= 0 && own[index]!.read !== undefined) throw new Error(`${name} declares two read templates`);
   const merged: FieldMeta = { ...(index >= 0 ? own[index] : undefined), ...field, name };
   if (index >= 0) own[index] = merged;
   else own.push(merged);
@@ -103,6 +107,23 @@ export function mapFrom<E, K extends keyof E & string>(entity: Ctor<E>, property
     record(context, { mapFrom: { entity: entity as Ctor<unknown>, property } });
 }
 
+/**
+ * How a column is read in every statement: an SQL template where `{0}` stands for the qualified
+ * column, like Hibernate's `@ColumnTransformer(read = ...)`. The column then reads transformed in
+ * SELECT, WHERE, JOIN, GROUP BY and ORDER BY alike; declare a second field on the same column to work
+ * with the stored value. Combine it with `@column`.
+ */
+export function readAs(template: string) {
+  if (!template.includes("{0}")) throw new TypeError("A read template needs {0} for the column");
+  return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { read: template });
+}
+
+/** The column reads an empty string as NULL, as SAP tables store "no value": `NULLIF(column, '')`. */
+export const blankAsNull = readAs("NULLIF({0}, '')");
+
+/** The column reads without surrounding spaces: `TRIM(column)`. */
+export const trimmed = readAs("TRIM({0})");
+
 /** A DTO field that no query fills. */
 export function ignore(_value: undefined, context: ClassFieldDecoratorContext): void {
   record(context, { ignore: true });
@@ -127,7 +148,7 @@ function describe(type: Ctor<unknown>): EntityMeta {
   const table = own ? (meta[TABLE] as { name: string; schema: string | undefined }) : undefined;
   const properties: PropertyMeta[] = fields
     .filter((f) => f.type !== undefined && !f.ignore)
-    .map((f) => Object.freeze({ name: f.name, type: f.type!, column: f.column }));
+    .map((f) => Object.freeze({ name: f.name, type: f.type!, column: f.column, read: f.read }));
   const byName = new Map(properties.map((p) => [p.name, p]));
   const fieldsByName = new Map(fields.map((f) => [f.name, f]));
   return Object.freeze({

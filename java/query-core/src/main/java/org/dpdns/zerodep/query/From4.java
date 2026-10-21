@@ -47,6 +47,9 @@ public final class From4<A, B, C, D> extends AbstractFrom<From4<A, B, C, D>> {
 
     public From4<A, B, C, D> groupBy(Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From4<A, B, C, D> groupByRollup(Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d))); }
+
     public From4<A, B, C, D> having(Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d))); }
 
     public From4<A, B, C, D> orderBy(Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d))); }

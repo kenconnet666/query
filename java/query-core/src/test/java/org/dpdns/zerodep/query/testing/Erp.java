@@ -5,11 +5,13 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 import lombok.experimental.FieldNameConstants;
+import org.dpdns.zerodep.query.annotation.BlankAsNull;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.MapFrom;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.annotation.Trimmed;
 import org.dpdns.zerodep.query.type.Converter;
 
 import java.lang.annotation.ElementType;
@@ -58,6 +60,16 @@ public final class Erp {
         @Column("MFRPN") private String partNumber;
         @Column("MFRNR") private String manufacturer;
         @Column("MTART") private String materialType;
+    }
+
+    /** MARA read the way SAP data is used: trimmed part numbers, blank makers as NULL, and the stored maker. */
+    @Data @EqualsAndHashCode(callSuper = true)
+    @Table(schema = SCHEMA, value = "MARA")
+    public static class MaraView extends ClientEntity {
+        @Column("MATNR") private String material;
+        @Column("MFRPN") @Trimmed private String partNumber;
+        @Column("MFRNR") @BlankAsNull private String maker;
+        @Column("MFRNR") private String storedMaker;
     }
 
     @Data @EqualsAndHashCode(callSuper = true) @FieldNameConstants

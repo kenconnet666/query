@@ -1,4 +1,4 @@
-import { call, condition, date, expression, FunctionDef, integer, lit, param, text, toOrder, type Clause, type Cond, type Expr, type KeepNull, type OrderItem } from "@query/core";
+import { call, condition, date, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type Expr, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA-only functions and clauses; they refuse to render on another dialect. */
@@ -73,4 +73,18 @@ export function hint(...hints: string[]): Clause {
   if (hints.length === 0) throw new TypeError("hint() needs at least one hint");
   const sql = `WITH HINT(${hints.join(", ")})`;
   return { position: "end", dialect: HanaDialect, render: (w) => void w.sql(sql) };
+}
+
+const CUBE = FunctionDef.only(HanaDialect, "CUBE");
+const GROUPING_SETS = FunctionDef.only(HanaDialect, "GROUPING SETS", (w, args) => void w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
+
+/** CUBE(keys) as a GROUP BY key: subtotals for every combination of the keys. */
+export function cube(...keys: Expr<unknown>[]): Expr<unknown> {
+  return call(CUBE, untyped as SqlType<{}>, ...keys);
+}
+
+/** GROUPING SETS ((a, b), (a), ()) as a GROUP BY key: exactly the listed groupings; an empty list is the grand total. */
+export function groupingSets(...sets: (readonly Expr<unknown>[])[]): Expr<unknown> {
+  const args = sets.map((set) => ({ render: (w: SqlWriter) => void w.sql("(").join(set, ", ").sql(")") }));
+  return expression(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
 }

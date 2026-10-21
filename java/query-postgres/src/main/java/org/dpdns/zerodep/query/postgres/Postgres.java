@@ -8,9 +8,11 @@ import org.dpdns.zerodep.query.Order;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.type.SqlType;
 
 import javax.sql.DataSource;
 import java.util.ArrayList;
@@ -22,6 +24,10 @@ import java.util.function.Consumer;
  * <pre>{@code import static org.dpdns.zerodep.query.postgres.Postgres.*;}</pre>
  */
 public final class Postgres extends Sql {
+    private static final FunctionDef CUBE = FunctionDef.only(PostgresDialect.class, "CUBE");
+    private static final FunctionDef GROUPING_SETS = FunctionDef.only(PostgresDialect.class, "GROUPING SETS",
+        (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
+
     private Postgres() { }
 
     // ---------- database ----------
@@ -34,6 +40,21 @@ public final class Postgres extends Sql {
 
     public static PostgresDatabase database(ConnectionProvider connections, Consumer<Database.Config> configure) {
         return new PostgresDatabase(connections, configure);
+    }
+
+    // ---------- grouping keys ----------
+
+    /** CUBE(keys) as a GROUP BY key: subtotals for every combination of the keys. */
+    public static Expr<Object> cube(Expr<?>... keys) { return call(CUBE, Object.class, keys); }
+
+    /** GROUPING SETS ((a, b), (a), ()) as a GROUP BY key: exactly the listed groupings; an empty list is the grand total. */
+    @SafeVarargs
+    public static Expr<Object> groupingSets(List<? extends Expr<?>>... sets) {
+        List<Renderable> args = new ArrayList<>();
+        for (List<? extends Expr<?>> set : sets) args.add(w -> w.sql("(").join(set, ", ").sql(")"));
+        return new Expr<>(SqlType.of(Object.class)) {
+            @Override public void render(SqlWriter w) { GROUPING_SETS.render(w, args); }
+        };
     }
 
     // ---------- clauses ----------

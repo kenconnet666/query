@@ -11,6 +11,7 @@ import {
   filter,
   from,
   FunctionDef,
+  grouping,
   ifPresent,
   onlyIf,
   scalar,
@@ -184,6 +185,16 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
       .offset(20)
       .toSql(DIALECT).sql;
     assert.ok(s.endsWith("ORDER BY MARA.MATNR ASC NULLS LAST\nLIMIT 10 OFFSET 20"), s);
+  });
+
+  it("ROLLUP 一次列出全部分组键，不能与普通分组混用", () => {
+    const q = from(Mara)
+      .groupByRollup((m) => [m.material, m.manufacturer])
+      .select((m) => ({ material: m.material, level: grouping(m.material) }));
+    assert.ok(q.toSql(DIALECT).sql.endsWith("GROUP BY ROLLUP(MARA.MATNR, MARA.MFRNR)"));
+    assert.throws(() => from(Mara).groupByRollup((m) => m.material).groupBy((m) => m.manufacturer), /already lists every grouping key/);
+    assert.throws(() => from(Mara).groupBy((m) => m.material).groupByRollup((m) => m.manufacturer), /cannot follow groupBy/);
+    assert.throws(() => from(Mara).groupByRollup(() => []), /at least one key/);
   });
 
   it("方言专属子句在别的方言上拒绝渲染", () => {

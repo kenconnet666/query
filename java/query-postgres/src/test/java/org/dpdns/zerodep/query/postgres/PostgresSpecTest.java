@@ -22,6 +22,12 @@ class PostgresSpecTest extends RenderSpec {
 
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of(
+            "postgres-grouping-sets", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys())))
+                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+            "postgres-cube", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
             "postgres-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(l -> distinctOn(l.col(Lips::getMaterial)))
                 .where(l -> all(

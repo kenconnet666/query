@@ -8,6 +8,7 @@ import org.dpdns.zerodep.query.Window.Bound;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Makt;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
+import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.Vbkd;
 import org.dpdns.zerodep.query.testing.RenderSpec.SpecCase;
 import org.dpdns.zerodep.query.type.CastType;
@@ -108,6 +109,11 @@ public final class SpecCases {
                 r.get(substring(l.col(Lips::getDelivery), 1, 1).as("prefix")),
                 r.get(count().as("lines")),
                 r.get(sum(caseWhen(l.col(Lips::getUnit).eq("EA"), l.col(Lips::getQuantity)).otherwise(BigDecimal.ZERO)).as("total"))))));
+        cases.put("column-transforms", SpecCase.plain(() -> from(MaraView.class)
+            .where(m -> all(m.col(MaraView::getMaker).isNotNull(), m.col(MaraView::getStoredMaker).ne("")))
+            .groupBy(m -> keys(m.col(MaraView::getPartNumber)))
+            .select((r, m) -> Arrays.asList(r.get(m, MaraView::getPartNumber), r.get(countDistinct(m.col(MaraView::getMaker)).as("makers"))))));
+        cases.put("rollup", SpecCase.plain(SpecCases::rollup));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         return cases;
     }
@@ -179,6 +185,15 @@ public final class SpecCases {
                     .rows(Bound.unboundedPreceding(), Bound.currentRow())).as("running")),
                 r.get(avg(quantity).over(w -> w.orderBy(delivery.asc()).rows(Bound.preceding(2), Bound.following(1))).as("moving")));
         });
+    }
+
+    /** Totals per material and unit, subtotals per material, and the grand total. */
+    public static Query<List<Object>> rollup() {
+        return from(Lips.class)
+            .groupByRollup(l -> keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
+            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc(), grouping(l.col(Lips::getUnit)).asc()))
+            .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(sum(l.col(Lips::getQuantity)).as("total")),
+                r.get(grouping(l.col(Lips::getMaterial)).as("level"))));
     }
 
     private static Query<List<Object>> subqueries() {

@@ -36,6 +36,9 @@ public final class From8<A, B, C, D, E, F, G, H> extends AbstractFrom<From8<A, B
 
     public From8<A, B, C, D, E, F, G, H> groupBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupBy(keys.apply(a, b, c, d, e, f, g, h))); }
 
+    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
+    public From8<A, B, C, D, E, F, G, H> groupByRollup(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<? extends Expr<?>>> keys) { return rebuild(spec.groupByRollup(keys.apply(a, b, c, d, e, f, g, h))); }
+
     public From8<A, B, C, D, E, F, G, H> having(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c, d, e, f, g, h))); }
 
     public From8<A, B, C, D, E, F, G, H> orderBy(Fn.F8<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Ref<E>, Ref<F>, Ref<G>, Ref<H>, List<Order>> orders) { return rebuild(spec.orderBy(orders.apply(a, b, c, d, e, f, g, h))); }

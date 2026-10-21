@@ -1,10 +1,13 @@
 package org.dpdns.zerodep.query;
 
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.meta.Getter;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+
+import java.util.List;
 
 /**
  * One occurrence of a source in a query, handed to lambdas as a typed parameter. The getter must
@@ -27,9 +30,13 @@ public final class Ref<E> {
 
     String alias(SqlWriter w) { return w.aliasFor(this, source.preferredAlias()); }
 
+    /** The qualified column, through the property's {@code @ReadAs} template when it has one. */
     void renderColumn(SqlWriter w, PropertyMeta property) {
         Object naming = w.attribute(NamingStrategy.class);
-        w.alias(alias(w)).sql(".").identifier(source.column(property, naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming));
+        String column = source.column(property, naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming);
+        Renderable qualified = c -> c.alias(alias(c)).sql(".").identifier(column);
+        if (property.read() == null) qualified.render(w);
+        else Nodes.renderTemplate(w, property.read(), List.of(qualified));
     }
 
     void renderSource(SqlWriter w) {

@@ -200,6 +200,9 @@ public class Sql {
 
     public static <T> Aggregate<T> max(Expr<T> e) { return new Aggregate<>(e.type(), "MAX", false, List.of(e)); }
 
+    /** 1 on the subtotal rows of {@code groupByRollup} where the key is rolled up, 0 elsewhere. */
+    public static Expr<Integer> grouping(Expr<?> key) { return Nodes.call(SqlType.of(Integer.class), "GROUPING", List.of(key)); }
+
     // ---------- window functions ----------
 
     public static WindowFunction<Long> rowNumber() { return new WindowFunction<>(SqlType.of(Long.class), "ROW_NUMBER", List.of()); }

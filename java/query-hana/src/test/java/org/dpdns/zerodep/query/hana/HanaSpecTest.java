@@ -25,6 +25,12 @@ class HanaSpecTest extends RenderSpec {
         LocalDate first = LocalDate.of(2026, 1, 1);
         LocalDate day = LocalDate.of(2026, 1, 31);
         return Map.of(
+            "hana-grouping-sets", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys())))
+                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+            "hana-cube", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
             "hana-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
                 .select((r, l) -> Arrays.asList(

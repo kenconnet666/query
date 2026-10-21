@@ -53,4 +53,17 @@ class PostgresLiveTest extends LiveScenarios {
             .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
+
+    @Test
+    void 分组集合与CUBE() {
+        List<String> sets = db.list(from(Lips.class)
+            .groupBy(l -> keys(groupingSets(keys(l.col(Lips::getMaterial)), keys())))
+            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)).asc(), l.col(Lips::getMaterial).asc()))
+            .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(sum(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString()));
+        assertEquals(List.of("M1=6", "M2=12", "null=18"), sets);
+        List<Long> cells = db.list(from(Lips.class)
+            .groupBy(l -> keys(cube(l.col(Lips::getMaterial), l.col(Lips::getUnit))))
+            .selectValue(l -> count()));
+        assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
+    }
 }

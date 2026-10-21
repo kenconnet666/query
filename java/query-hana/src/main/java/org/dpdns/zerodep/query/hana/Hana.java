@@ -34,6 +34,9 @@ public final class Hana extends Sql {
     private static final FunctionDef TO_DATE = FunctionDef.only(HanaDialect.class, "TO_DATE");
     private static final FunctionDef TO_NVARCHAR = FunctionDef.only(HanaDialect.class, "TO_NVARCHAR");
     private static final FunctionDef LENGTH = FunctionDef.only(HanaDialect.class, "LENGTH");
+    private static final FunctionDef CUBE = FunctionDef.only(HanaDialect.class, "CUBE");
+    private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
+        (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
     private static final FunctionDef STRING_AGG = FunctionDef.only(HanaDialect.class, "STRING_AGG", (w, args) -> {
         w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
         if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
@@ -100,6 +103,21 @@ public final class Hana extends Sql {
         args.add(lit(separator));
         args.addAll(List.of(order));
         return new StringAgg(value.type(), args);
+    }
+
+    // ---------- grouping keys ----------
+
+    /** CUBE(keys) as a GROUP BY key: subtotals for every combination of the keys. */
+    public static Expr<Object> cube(Expr<?>... keys) { return call(CUBE, Object.class, keys); }
+
+    /** GROUPING SETS ((a, b), (a), ()) as a GROUP BY key: exactly the listed groupings; an empty list is the grand total. */
+    @SafeVarargs
+    public static Expr<Object> groupingSets(List<? extends Expr<?>>... sets) {
+        List<Renderable> args = new ArrayList<>();
+        for (List<? extends Expr<?>> set : sets) args.add(w -> w.sql("(").join(set, ", ").sql(")"));
+        return new Expr<>(SqlType.of(Object.class)) {
+            @Override public void render(SqlWriter w) { GROUPING_SETS.render(w, args); }
+        };
     }
 
     // ---------- clauses ----------

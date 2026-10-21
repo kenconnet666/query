@@ -45,8 +45,18 @@ export class RefOwner implements ColumnOwner {
     return w.aliasFor(this, this.source.preferredAlias);
   }
 
+  /** The qualified column, through the property's `readAs` template when it has one. */
   renderColumn(w: SqlWriter, column: SourceColumn): void {
-    w.alias(this.alias(w)).sql(".").identifier(this.source.columnName(column, w));
+    const qualified = () => w.alias(this.alias(w)).sql(".").identifier(this.source.columnName(column, w));
+    const read = (column as Partial<PropertyMeta>).read;
+    if (read === undefined) {
+      qualified();
+      return;
+    }
+    read.split("{0}").forEach((part, i) => {
+      if (i > 0) qualified();
+      w.sql(part);
+    });
   }
 
   renderSource(w: SqlWriter): void {

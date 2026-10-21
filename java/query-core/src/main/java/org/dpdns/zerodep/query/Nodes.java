@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.type.CastType;
@@ -284,7 +285,7 @@ final class Nodes {
     }
 
     /** {0}, {1}, ... in the template are replaced by the rendered arguments. */
-    static void renderTemplate(SqlWriter w, String template, List<? extends Expr<?>> args) {
+    static void renderTemplate(SqlWriter w, String template, List<? extends Renderable> args) {
         int i = 0;
         while (i < template.length()) {
             int open = template.indexOf('{', i);

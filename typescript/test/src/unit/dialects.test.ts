@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { cast, CastType, date, from, lit, sum } from "@query/core";
-import { addDays, daysBetween, HanaDatabase, hint } from "@query/hana";
+import { addDays, cube, daysBetween, groupingSets, HanaDatabase, hint } from "@query/hana";
 import { groupConcat, maxExecutionTime, MysqlDatabase } from "@query/mysql";
-import { distinctOn, filterWhere, ilike, PostgresDatabase } from "@query/postgres";
+import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, PostgresDatabase } from "@query/postgres";
 import { Lips } from "../erp.js";
 import { deliveries } from "../scenarios.js";
 import { TestDialect } from "../support.js";
@@ -59,9 +59,23 @@ describe("方言", () => {
       from(Lips)
         .with((l) => distinctOn(l.material))
         .selectValue((l) => l.delivery),
+      from(Lips)
+        .groupBy((l) => cube(l.material))
+        .selectValue(() => sum(lit(1))),
+      from(Lips)
+        .groupBy((l) => groupingSets([l.material], []))
+        .selectValue(() => sum(lit(1))),
+      from(Lips)
+        .groupBy((l) => pgCube(l.material))
+        .selectValue(() => sum(lit(1))),
+      from(Lips)
+        .groupBy((l) => pgGroupingSets([l.material], []))
+        .selectValue(() => sum(lit(1))),
     ];
     for (const q of cases) assert.throws(() => q.toSql(other), /HanaDialect|MysqlDialect|PostgreSQL|PostgresDialect/);
     assert.throws(() => postgres.render(cases[0]!), /DAYS_BETWEEN is a HanaDialect function; this database uses PostgreSQL/);
+    assert.throws(() => mysql.render(cases[7]!), /CUBE is a HanaDialect function/);
+    assert.throws(() => mysql.render(cases[10]!), /GROUPING SETS is a PostgresDialect function/);
   });
 
   it("HANA 的非 ASCII 字面量带 N 前缀，类型转换用 NVARCHAR", () => {

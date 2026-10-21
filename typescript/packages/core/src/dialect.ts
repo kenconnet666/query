@@ -109,6 +109,12 @@ export abstract class Dialect {
     if (offset !== undefined && offset > 0) w.sql(`${limit === undefined ? "\nOFFSET " : " OFFSET "}${offset}`);
   }
 
+  /** The GROUP BY list; with rollup, subtotals for every prefix of the keys and a grand total. */
+  groupBy(w: SqlWriter, keys: readonly Renderable[], rollup: boolean): void {
+    if (rollup) w.sql("ROLLUP(").join(keys, ", ").sql(")");
+    else w.join(keys, ", ");
+  }
+
   /** One ORDER BY item; `nullsFirst` is undefined when the query does not specify NULL placement. */
   orderItem(w: SqlWriter, expr: Renderable, descending: boolean, nullsFirst: boolean | undefined): void {
     w.render(expr).sql(descending ? " DESC" : " ASC");

@@ -216,6 +216,14 @@ class RenderTest {
     }
 
     @Test
+    void ROLLUP必须一次列出全部分组键() {
+        assertThrows(IllegalStateException.class, () -> from(Lips.class)
+            .groupBy(l -> keys(l.col(Lips::getMaterial))).groupByRollup(l -> keys(l.col(Lips::getUnit))));
+        assertThrows(IllegalStateException.class, () -> from(Lips.class)
+            .groupByRollup(l -> keys(l.col(Lips::getMaterial))).groupBy(l -> keys(l.col(Lips::getUnit))));
+    }
+
+    @Test
     void SELECT列表里的标量子查询仍然绑定WHERE参数() {
         Rendered r = from(Mara.class).select((row, m) -> java.util.Arrays.asList(
             row.get(scalar(from(Lips.class).where(l -> l.col(Lips::getMaterial).eq("M1")).selectValue(l -> count())).as("n")),

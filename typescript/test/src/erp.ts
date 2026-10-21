@@ -1,4 +1,4 @@
-import { column, converted, date, decimal, ignore, integer, mapFrom, table, text, timestamp } from "@query/core";
+import { blankAsNull, column, converted, date, decimal, ignore, integer, mapFrom, table, text, timestamp, trimmed } from "@query/core";
 
 /** SAP-style entities shared by the unit tests and the live scenarios of every dialect, as in the Java tests. */
 export const SCHEMA = "QUERY_IT";
@@ -24,6 +24,15 @@ export class Mara extends ClientEntity {
   @column("MFRPN") partNumber!: string;
   @column("MFRNR") manufacturer!: string;
   @column("MTART") materialType!: string;
+}
+
+/** MARA read the way SAP data is used: trimmed part numbers, blank makers as NULL, and the stored maker. */
+@table("MARA", { schema: SCHEMA })
+export class MaraView extends ClientEntity {
+  @column("MATNR") material!: string;
+  @column("MFRPN") @trimmed partNumber!: string;
+  @column("MFRNR") @blankAsNull maker!: string | null;
+  @column("MFRNR") storedMaker!: string;
 }
 
 @table("LIPS", { schema: SCHEMA })
