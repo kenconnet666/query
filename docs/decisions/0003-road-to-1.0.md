@@ -43,6 +43,35 @@
 - **HANA 计算视图与表函数、JSON、递归与层级查询、加密列**：没有使用证据，延后。
 - **MySQL 的流式读取默认缓冲**：需要逐行读取时配置 `fetchSize(Integer.MIN_VALUE)`，不自动切换（理由见 0002 第 8 条）。
 
+- **文档站**：不做，之后另行安排；1.0 只提供仓库里的 Markdown（README、快速上手、迁移指南、API 说明）。
+
 ## 验证证据
 
-各里程碑完成后在这里补充。
+### M1 表达力审计（2026-10-21）
+
+- **范围**：使用方直接查 HANA 的 26 个文件里的 121 段 SQL 文本，约 4900 行。其中 1 段是 DuckDB 查询、几段是写 MySQL 快照的语句，不在范围内。
+- **方法**：先用脚本统计各种构造和函数出现在多少段里，再逐段阅读。脚本和摘录只放本机，不进仓库。
+- **已能表达的构造**（括号内为出现的段数）：CTE（52）、LEFT JOIN（59）、CASE（82，其中简单 CASE 10）、GROUP BY（68）、DISTINCT（41）、COUNT(DISTINCT)（24）、UNION ALL（29）、EXISTS（19）、派生表（19）、窗口函数（11）、`FROM DUMMY` 码表（9）、CROSS JOIN（9）、LIMIT/OFFSET（7）、HAVING（4）、`IN` 子查询（6）、标量子查询，以及 `COUNT(*) OVER ()` 取分页总数。
+- **函数**：COALESCE、TRIM、NULLIF、MAX、SUM、SUBSTR/SUBSTRING、COUNT、REPLACE、LEFT、ROUND、TO_DATE、DAYS_BETWEEN、TO_VARCHAR 等都已支持。
+
+**缺口**（M2 补齐）：
+
+1. 起止位置是表达式的 SUBSTRING，配合 LOCATE 拆分逗号分隔的值。
+2. LOCATE：三库语义一致（从 1 开始，找不到为 0），放核心包，由方言渲染。
+3. GREATEST、LEAST：三库对 NULL 的处理不同，放方言包。
+4. HANA 的 TO_INT、TO_INTEGER。CAST 能得到同样的结果，仍在 HANA 包里提供 `toInteger`。
+5. Java 的命名投影必须逐列写全，`SELECT p.*, 额外列` 这种写法（6 段）很啰嗦。改为：没有列出的属性，按同名列自动补齐。
+6. 简单 CASE（10 段，最长 13 个分支）：新增 `caseOf(expr).when(值, 结果)`。
+7. 多参数 COALESCE（最多 6 个参数）：`coalesce` 接受多个后备值，渲染成一个 COALESCE。
+8. FLOOR、CEIL：使用方没有用到，但三库语义一致、成本低，一并放进核心包。
+
+**不需要新 API 的写法**，写进迁移指南：
+
+- UNION 之后的 ORDER BY（3 段）：把合并结果包成 CTE 再排序。
+- `%s` 拼出的动态列名：在 Java 里选择 getter。
+- `FROM %s` 拼出的动态表：同形状的实体子类加泛型模板。
+- 按条件拼接的 JOIN：改成可选的 EXISTS。
+- `(:p = 'ALL' OR col = :p)` 和多分支的 `:mode` 条件：`eqIfPresent`、`onlyIf` 或 Java 的 `switch`。
+- `{{X}}` 拼出的 CTE：返回 CTE 的函数。
+- 由运行时的值组成的常量行：`values(...)`。
+- 整数相除：先 CAST 成小数（`divide` 只接受小数，避免各库整数除法的差异）。
