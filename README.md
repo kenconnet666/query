@@ -2,7 +2,11 @@
 
 面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
 
-当前处于第一期实现阶段。方向见 [0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)，API 与架构见 [0002](docs/decisions/0002-api-architecture.md)，场景覆盖计划见[场景对照](docs/scenarios.md)。
+当前进度：Java 第一期已实现，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；TypeScript 在第二期。
+
+- 用法：[API 使用说明](docs/api.md)
+- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)
+- 场景覆盖计划：[场景对照](docs/scenarios.md)
 
 ## 基线
 
@@ -11,7 +15,17 @@
 | Java | 17 及以上，`maven.compiler.release=17`；实体用注解声明，支持 Lombok |
 | TypeScript | 以 7 为基准，使用标准装饰器 |
 | 代码生成 | 不使用注解处理器（APT），也不在使用方生成代码 |
-| 首批方言 | SAP HANA、PostgreSQL；随后是 MySQL |
+| 方言 | SAP HANA、PostgreSQL、MySQL 同步推进；DuckDB 延后 |
+
+## 模块
+
+| 模块 | 内容 |
+| --- | --- |
+| `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存；运行时无第三方依赖 |
+| `java/query-hana`、`java/query-postgres`、`java/query-mysql` | 各方言的门面、数据库实例、专属函数与子句 |
+| `typescript/` | TypeScript 实现（第二期） |
+| `infra/` | CI 用的数据库容器定义 |
+| `tools/` | 生成 `From1..From8` 的脚本，以及 LSP 验证脚本 |
 
 ## 开发环境
 
@@ -21,6 +35,14 @@
 $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 .\mvnw.cmd --batch-mode verify
 ```
+
+实库场景需要以下环境变量，缺少时会跳过：
+
+- `QUERY_HANA_URL`、`QUERY_HANA_USER`、`QUERY_HANA_PASSWORD`
+- `QUERY_PG_URL`、`QUERY_PG_USER`、`QUERY_PG_PASSWORD`
+- `QUERY_MYSQL_URL`、`QUERY_MYSQL_USER`、`QUERY_MYSQL_PASSWORD`
+
+GitHub Actions 会并行运行单元测试、三个数据库的实库场景，以及 TypeScript 类型检查。
 
 TypeScript 部分在 `typescript/` 目录，开发编译器固定为 TypeScript 7.0.2：
 

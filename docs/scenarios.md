@@ -2,7 +2,7 @@
 
 本表以 EasyQuery 3.2.17 的公开 API 和测试覆盖的场景为清单，列出本库在每个场景上的做法和计划分期。EasyQuery 增强包的报表类场景按需并入，不逐项复刻。设计依据见 [0002](decisions/0002-api-architecture.md)。
 
-"期"的含义：1 为本次 Java 实现，2 为 TypeScript 对齐，3 为后续扩展，"—"为不做。
+"期"的含义：1 为第一期 Java（已实现，HANA、PostgreSQL、MySQL 三个方言同步），2 为 TypeScript 对齐，3 为后续扩展，"—"为不做。
 
 ## 查询结构
 
@@ -55,7 +55,7 @@
 | SQL 级列转换（如加解密函数） | `ColumnValueSQLConverter` | 列读取和参数渲染都可以挂 SQL 包装，例如 `TRIM(col)` | 3 |
 | 加密列 | `@Encryption` | 由 SQL 级列转换实现 | 3 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
-| 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法 + `FunctionDef` 按方言注册渲染，与内置函数写法相同 | 1 |
+| 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
 | 自定义方言 | 继承上游的内部类 | 继承开放的 `Dialect` 类，覆盖其中的钩子 | 1 |
 
 ## 执行与基础设施

@@ -41,104 +41,37 @@
 ## 决定
 
 1. 新开仓库，不依赖 EasyQuery，也不沿用其扩展机制。
-2. Java 最低 17，TypeScript 最低 6.0。TS 开发使用 7.x 的原生编译器，CI 同时用 6.0 和 7.x 检查类型。
+2. Java 最低 17；TypeScript 的基准见 0002（以 7 为准）。
 3. 不使用注解处理器（APT）。
 4. 定位为分析查询构建器，不是完整 ORM：
    - 首批要支持的能力：
      - 查询结构：JOIN、CTE、子查询、`EXISTS`/`IN`、`UNION`、分组和 `HAVING`、窗口函数；
      - 表达式：`CASE`、`COALESCE`、`NULLIF`，以及常用的字符串和日期函数；
      - 条件与参数：可选条件、参数绑定、`IN` 列表分批；
-     - 结果映射到 Java record；
+     - 结果映射到 record 和各种 DTO；
      - 带结果类型的原生 SQL 片段，作为兜底。
    - 暂不做：实体跟踪、导航和级联、DDL 和迁移；写入以后再评估。
 5. 内置功能和扩展要写法一致：
-   - 函数是带泛型约束的静态方法，用户自定义的函数和内置函数写法相同；
+   - 用户自定义的函数和内置函数写法相同；
    - 方言是开放对象，函数渲染按"函数 + 方言"注册，不使用写死的方言枚举分支；
    - 扩展采用组合，不依赖继承基类、再覆写受保护方法。
-6. 执行层只依赖连接提供者接口，不依赖 Spring。另提供一个 Spring 适配模块，通过 `DataSourceUtils` 取连接，从而和 MyBatis-Plus 等框架加入同一个 `@Transactional` 事务；它只依赖 spring-jdbc，Spring Boot 2.7、3、4 都能使用。
+6. 执行层只依赖连接提供者接口，不依赖 Spring。
+   - 另提供一个 Spring 适配模块，通过 `DataSourceUtils` 取连接，从而和 MyBatis-Plus 等框架加入同一个 `@Transactional` 事务。
+   - 它只依赖 spring-jdbc，Spring Boot 2.7、3、4 都能使用。
 
-## 设计方向（待原型验证）
-
-### Java
-
-- 表声明是普通类，只写查询用到的列。
-- record 作为行类型，同时用于最终结果和 CTE 的中间行。
-- 构造器引用用来做带类型的投影，方法引用用来从 CTE 中取列。
-- 业务口径就是普通的 Java 方法，返回条件、表达式或 CTE。
-
-```java
-public final class Lips extends Table<Lips> {
-    public final Col<String> client = col("MANDT", text(3));
-    public final Col<String> material = col("MATNR", text(40));
-    public final Col<BigDecimal> quantity = col("LFIMG", decimal(13, 3));
-    public Lips(String alias) { super("LIPS", alias, Lips::new); }
-}
-
-record Material(String client, String material, String partNumber) {}
-record Delivery(String partNumber, BigDecimal quantity) {}
-
-Cte<Material> scope = cte("material_scope",
-    select(Material::new, ma.client, ma.material, ma.partNumber).distinct()
-        .from(ma)
-        .where(activeMaterial(ma))
-        .whereIf(model != null, () -> ma.model.eq(model)));
-
-Query<Delivery> deliveries = select(Delivery::new, scope.get(Material::partNumber), sum(l.quantity))
-    .from(scope)
-    .join(l, l.client.eq(scope.get(Material::client)), l.material.eq(scope.get(Material::material)))
-    .where(l.createdOn.between(start, end))
-    .groupBy(scope.get(Material::partNumber));
-```
-
-编译期会检查三件事：
-- `Delivery::new` 的参数类型与投影表达式逐个对应；
-- `scope.get(Material::partNumber)` 得到 `Expr<String>`；
-- `sum` 只接受数值表达式。
-
-需要原型验证的问题：
-
-- **方法引用怎么解析成列名**：`scope.get(Material::partNumber)` 要靠 `SerializedLambda` 才能还原出列名。这是 MyBatis-Plus `LambdaQueryWrapper` 使用的技术，但它依赖反射，在 GraalVM 下需要额外配置。备选方案是为每个 CTE 写一个显式的形状类。
-- **投影的参数个数**：构造器引用投影需要按参数个数提供重载，重载由仓库内的脚本一次性生成，不对使用方生成代码。
-- **NULL 的承接**：record 组件要用包装类型才能承接 SQL NULL；遇到基本类型组件时如何处理需要定义清楚。
-- **渲染方式**：Java 17 的 switch 模式匹配仍是预览特性，渲染器使用 sealed 节点加 visitor 或 `instanceof` 判断。
-
-### TypeScript
-
-- 前身的 TS ORM 采用无生成器 schema、不可变查询和带类型的 codec，可以作为起点。
-- 需要重构的是方言模型：
-  - 改为开放的方言对象，方言能力进入类型参数，例如不支持 `RETURNING` 的方言调用 `returning()` 会编译失败；
-  - 第三方方言和函数通过模块扩充（module augmentation）注册。
-
-### 仓库结构（暂定）
-
-Java 和 TypeScript 各自独立构建，另有一份共享的规格：
-
-```text
-java/         Maven 多模块：core、各方言、spring 适配
-typescript/   pnpm 包
-spec/         方言能力矩阵与金样例：同一查询在各方言下的预期 SQL、参数与实库结果，两端测试共同读取
-```
-
-当前根目录仍是单模块 Maven 工程，等到第一批实际代码时再调整为上述结构。
+API 与架构的具体决定见 [0002](0002-api-architecture.md)。
 
 ## 代价与风险
 
 - 这实际上是一个新产品，工作量明显大于继续在前身仓库上修补。范围必须守住"查询"，不能逐步滑向完整 ORM。
-- Java 没有映射类型和条件类型，按方言能力区分可用 API 只能通过方言专属的入口类型或静态函数来做，做不到 TS 那样完全在编译期检查。
-- 不用 APT，表声明需要手写。SAP 宽表在单个查询里通常只用 5 到 15 列，只声明用到的列反而更清晰。
+- Java 没有映射类型和条件类型，按方言区分可用 API 只能靠方言门面加渲染时检查，做不到 TS 那样完全在编译期检查。
+- 不用 APT，实体需要手写。SAP 宽表在单个查询里通常只用 5 到 15 列，只声明用到的列反而更清晰。
 
 ## 待定事项
 
-1. 是否允许一个独立的生成工具（CLI 或 Maven 插件，不是 APT）从 HANA 目录生成表声明源码，生成后提交到仓库？
-2. TypeScript 是与 Java 同步推进，还是 Java 先行？
-3. 前身仓库是否冻结在当前状态？
-4. 方言顺序：HANA、DuckDB 首发，PostgreSQL、MySQL 其次，是否确认？
+已在 0002 中决定的：方言顺序（HANA、PostgreSQL、MySQL 同步推进，DuckDB 延后）、TypeScript 的推进方式（Java 第一期先行，TS 第二期对齐）。
 
-## 下一步
+仍未决定：
 
-用实际使用方的三类查询写 Java API 原型：
-- CTE + `EXISTS` + 动态条件；
-- 口径复用 + 可选过滤；
-- 窗口函数或 `QUALIFY`。
-
-原型用来验证四点：泛型投影、CTE 取列、口径复用，以及 HANA 和 DuckDB 的渲染。验证通过后，再确定公共 API 和模块划分。
+1. 是否允许一个独立的生成工具（CLI 或 Maven 插件，不是 APT）从 HANA 目录生成实体源码，生成后提交到仓库？
+2. 前身仓库是否冻结在当前状态？

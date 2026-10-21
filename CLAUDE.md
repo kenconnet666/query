@@ -11,9 +11,12 @@
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），也不在使用方生成代码。
 - **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，工程在 `typescript/`。
-- **首批方言**：SAP HANA 和 PostgreSQL，然后是 MySQL；DuckDB 延后。
-- **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含各库语义一致的能力，方言专属能力只出现在对应的方言包里。
-- **API 尚在第一期**：方向以 0002 为准。不写使用手册；文档只记录决定、取舍和验证证据。
+- **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
+- **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
+- **文档**：
+  - API 方向以 0002 为准；
+  - 用法写在 [docs/api.md](docs/api.md)，API 变化时同步更新；
+  - 其余文档只记录决定、取舍和验证证据，过时的内容直接删改，不堆叠。
 
 ## 必须参考的本地仓库
 
@@ -65,7 +68,36 @@ corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固�
 corepack pnpm typecheck
 ```
 
-目前还没有 CI。加 CI 时参考前身仓库的 workflow：`setup-java` 用 Temurin，并在 Actions 里起数据库服务和 HANA 容器。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql`。
+- **生成代码**：`From1..From8` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
+- **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
+  - Java 单元与渲染测试；
+  - PostgreSQL、MySQL、HANA 三个实库 job，容器定义在 `infra/`；
+  - TypeScript 类型检查。
+- **本地只跑与改动相关的测试**：
+  - 用 `-pl <模块>`，必要时加 `-Dtest=...` 和 `-Dsurefire.failIfNoSpecifiedTests=false`；
+  - PowerShell 里带点的 `-D` 参数要加引号。
+- **提交前排查 CI 风险**：
+  - 文件的可执行位（`mvnw`、`infra/hana/*.sh` 要求 100755）；
+  - 行尾；
+  - 新模块是否已加进 workflow；
+  - 实库变量名是否与 workflow 一致。
+- **实库测试的变量**：
+  - 共享场景在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；
+  - 读取 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`，缺少时跳过；
+  - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
+  - 本机从容器里取密码，不打印也不落盘：
+
+    ```powershell
+    $env:QUERY_PG_URL = 'jdbc:postgresql://localhost:55432/eqp'; $env:QUERY_PG_USER = 'eqp'
+    $env:QUERY_PG_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-postgres-1 printenv POSTGRES_PASSWORD).Trim()
+    $env:QUERY_MYSQL_URL = 'jdbc:mysql://localhost:53306/eqp?sslMode=DISABLED&allowPublicKeyRetrieval=true'; $env:QUERY_MYSQL_USER = 'root'
+    $env:QUERY_MYSQL_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-mysql-1 printenv MYSQL_ROOT_PASSWORD).Trim()
+    $env:QUERY_HANA_URL = 'jdbc:sap://localhost:39041'; $env:QUERY_HANA_USER = 'SYSTEM'
+    $env:QUERY_HANA_PASSWORD = (wsl -d Debian --exec docker exec eqp-hana-hana-1 printenv EQP_HANA_PASSWORD).Trim()
+    ```
+
+  - 测试会在各库的 `QUERY_IT` schema 里重建测试表。
 
 ## 开发数据库（WSL Debian 上的 Docker）
 
@@ -91,8 +123,15 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
   - `global_allocation_limit` 设为 80% 时，查询编译阶段会内存不足，所以保持默认值。
   - IDEA 连接 HANA 必须用 ngdbc 2.30.11。
 - **内存限制**：只在 Compose 文件里写一处，`mem_limit` 和 `memswap_limit` 相同，脚本通过 `docker compose config` 读回并核对。不要用调大限制来掩盖失败。
-- **迁移到本仓库**：等本仓库需要实库测试时，再把基础设施有计划地迁过来，保持相同的限制和规则；不要同时跑两套占用相同端口的实例。
-- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的 SQL 工具查询。
+- **本仓库的 `infra/`**：CI 用的容器定义，沿用相同的内存限制和规则，端口默认值与前身相同。本机开发仍使用前身仓库启动的实例，不要同时跑两套占用相同端口的实例。
+- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的数据库工具查询。2026-10-21 的实测结论如下：
+  - **连接 ID**：
+    - PostgreSQL `7d39150c-eb7e-44db-b0e5-2aa784f1714f`（databaseName `eqp`，schema `public`）；
+    - HANA HXE `30a1b705-a891-4d16-a137-d57e09706aab`（databaseName 留空，schema `SYSTEM`）；
+    - MySQL `6c21da65-0c0a-47ca-b636-6644156e9150`。
+  - **可用的工具**：`test_database_connection`（能看到版本和大小写规则）、`list_database_schemas`、`list_schema_objects`、`get_database_object_description`、`preview_table_data`。
+  - **`execute_sql_query`**：能执行 SELECT、DDL 和 DML，一次调用中的多条语句也能执行，返回最后一条的结果。
+  - **限制**：语句出错时只返回 "Unknown error"，看不到错误码，需要错误详情时改用 JDBC（例如写一个测试）。
 
 ## IDE 与 Claude 工具
 
@@ -118,5 +157,6 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
 - **仓库**：GitHub `kenconnet666/query`，公开，默认分支 `master`。
 - **提交与推送**：完成的工作直接提交并推送，不必询问：先建分支，再推这个分支。force-push、改写历史、推 `master`、合并 PR 都需要用户明确要求。
 - **公开仓库的限制**：仓库是公开的，绝不写入凭据，也不写入实际使用方的信息（公司、项目名、内部路径、业务常量）。使用方的说明只保存在本机 Claude 项目记忆中，文档里统称"内部 ERP 分析大屏"。
-- **提交格式**：commit message 用英文，结尾加 `Co-Authored-By` trailer；文档用中文。
+- **提交格式**：commit message 用中文，结尾加 `Co-Authored-By` trailer；文档用中文。
+- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为；代码标识符、注释和日志仍用英文。
 - **行尾**：由 `.gitattributes` 统一为 LF，`*.cmd` 为 CRLF。
