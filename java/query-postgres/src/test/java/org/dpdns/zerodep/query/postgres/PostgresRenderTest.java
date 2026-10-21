@@ -1,0 +1,50 @@
+package org.dpdns.zerodep.query.postgres;
+
+import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.TestDialect;
+import org.dpdns.zerodep.query.type.CastType;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.dpdns.zerodep.query.postgres.Postgres.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("PostgreSQL 渲染")
+class PostgresRenderTest {
+
+    @Test
+    void 别名折叠为小写且大写表名加引号() {
+        String sql = from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)).toSql(PostgresDialect.INSTANCE).sql();
+        assertEquals("SELECT lips.\"VBELN\" AS delivery\nFROM \"QUERY_IT\".\"LIPS\" lips", sql);
+    }
+
+    @Test
+    void DISTINCT_ON替代DISTINCT并放在SELECT之后() {
+        String sql = from(Lips.class)
+            .with(l -> distinctOn(l.col(Lips::getMaterial)))
+            .distinct()
+            .orderBy(l -> orders(l.col(Lips::getMaterial).asc(), l.col(Lips::getCreatedOn).desc()))
+            .selectValue(l -> l.col(Lips::getDelivery))
+            .toSql(PostgresDialect.INSTANCE).sql();
+        assertTrue(sql.startsWith("SELECT DISTINCT ON (lips.\"MATNR\") lips.\"VBELN\" AS delivery"), sql);
+    }
+
+    @Test
+    void 聚合FILTER与类型转换用NUMERIC() {
+        String sql = from(Lips.class)
+            .selectValue(l -> filter(sum(cast(l.col(Lips::getQuantity), CastType.decimal(15, 3))), l.col(Lips::getMaterial).eq("M1")))
+            .toSql(PostgresDialect.INSTANCE).sql();
+        assertTrue(sql.startsWith("SELECT SUM(CAST(lips.\"LFIMG\" AS NUMERIC(15,3))) FILTER (WHERE lips.\"MATNR\" = ?)"), sql);
+    }
+
+    @Test
+    void PostgreSQL专属操作不能在别的方言上渲染() {
+        Query<String> q = from(Lips.class).where(l -> ilike(l.col(Lips::getUnit), "ea")).selectValue(l -> l.col(Lips::getDelivery));
+        assertThrows(UnsupportedOperationException.class, () -> q.toSql(new TestDialect()));
+        Query<String> d = from(Lips.class).with(l -> distinctOn(l.col(Lips::getMaterial))).selectValue(l -> l.col(Lips::getDelivery));
+        assertThrows(UnsupportedOperationException.class, () -> d.toSql(new TestDialect()));
+    }
+}
