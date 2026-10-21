@@ -76,6 +76,19 @@
 - 慢语句分别用查询自己的超时和实例默认超时，都在约 1 秒内被取消，之后同一实例照常查询；带超时的流式读取能读完全部行。
 - Spring：用 H2 验证事务超时覆盖实例默认值，以及事务时间已用完时抛出 `TransactionTimedOutException`。
 
+**HANA 的 fetch size**：读 10 万行 5 列。驱动默认值（`getFetchSize()` 为 0，由驱动按数据包大小决定）约 55 ms，设成 10000 约 50 ms，设成 1000 反而约 90 ms。所以 HANA 不另设默认 fetch size。
+
+**使用方技术栈上的影子试点**：在临时目录搭了一个最小的 Spring Boot 应用，版本与使用方相同：Spring Boot 2.7.11、Java 17、druid-spring-boot-starter 1.2.8、dynamic-datasource-spring-boot-starter 3.5.2、ngdbc 2.29.7，连本机 HANA，以下检查全部通过：
+
+- 带 CTE、EXISTS、LEFT JOIN 和分组的查询结果正确；
+- 用线程上下文切到第二个数据源后，查询走的是它的 Druid 连接池，之后能切回；
+- `TransactionTemplate` 设 1 秒超时，慢语句约 1 秒后被取消，并标为超时；
+- 查询自己的超时经过 Druid 的语句包装后仍然生效；
+- 事务里的流式读取、分页都正常；
+- 结束后两个 Druid 连接池的活动连接都是 0。
+
+使用方仓库没有改动。
+
 **顺带修复的问题**：
 
 - **Java 分页**：`Page` 用 `List.copyOf` 复制结果，单列查询有 NULL 值时 `db.page` 抛 NPE。
