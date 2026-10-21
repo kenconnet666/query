@@ -9,6 +9,7 @@ import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Scenarios;
+import org.dpdns.zerodep.query.type.CastType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +45,22 @@ class ProjectionTest {
             ? r.get(l, Lips::getDelivery) : r.get(l, Lips::getMaterial));
         var e = assertThrows(IllegalStateException.class, () -> q.mapRow(new Object[] {"EA", "D1"}));
         assertTrue(e.getMessage().contains("unconditionally"), e.getMessage());
+    }
+
+    @Test
+    void 按行值在两个函数表达式之间选择也会被拒绝() {
+        Query<String> q = from(Lips.class).select((r, l) -> r.get(l, Lips::getUnit).isEmpty()
+            ? r.get(l.col(Lips::getDelivery).coalesce("-")) : r.get(l.col(Lips::getMaterial).coalesce("-")));
+        var e = assertThrows(IllegalStateException.class, () -> q.mapRow(new Object[] {"EA", "D1"}));
+        assertTrue(e.getMessage().contains("unconditionally"), e.getMessage());
+    }
+
+    @Test
+    void 每行读取相同的组合表达式时正常重放() {
+        Query<String> q = from(Lips.class).select((r, l) -> r.get(l.col(Lips::getDelivery).coalesce("-")) + "/"
+            + r.get(sum(l.col(Lips::getQuantity)).cast(CastType.decimal(15, 3))) + "/"
+            + r.get(caseWhen(l.col(Lips::getUnit).eq("EA"), "each").otherwise("other")));
+        assertEquals("D1/3.000/each", q.mapRow(new Object[] {"D1", new BigDecimal("3.000"), "each"}));
     }
 
     @Test

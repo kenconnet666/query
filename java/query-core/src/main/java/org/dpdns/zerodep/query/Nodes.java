@@ -7,7 +7,9 @@ import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /** Built-in expression and condition nodes. Package-private: users build them through the public API. */
@@ -30,6 +32,8 @@ final class Nodes {
             if (w.inlining() && w.dialect().hasLiteral(stored)) w.literal(stored);
             else w.bind(value, type());
         }
+
+        @Override Object shape() { return Arrays.asList(Param.class, valueShape(value)); }
     }
 
     static final class Literal<T> extends Expr<T> {
@@ -42,6 +46,8 @@ final class Nodes {
 
         /** The stored value, so a converter applies to literals as it does to parameters. */
         @Override public void render(SqlWriter w) { w.literal(type().toDatabase(value)); }
+
+        @Override Object shape() { return Arrays.asList(Literal.class, valueShape(value)); }
     }
 
     static final class Column<T> extends Expr<T> {
@@ -58,6 +64,8 @@ final class Nodes {
         @Override public void render(SqlWriter w) { ref.renderColumn(w, property); }
 
         @Override public String label() { return property.name(); }
+
+        @Override Object shape() { return List.of(ref, property.name()); }
     }
 
     static final class Labeled<T> extends Expr<T> {
@@ -74,6 +82,8 @@ final class Nodes {
         @Override public void render(SqlWriter w) { inner.render(w); }
 
         @Override public String label() { return label; }
+
+        @Override Object shape() { return inner.shape(); }
     }
 
     static final class Call<T> extends Expr<T> {
@@ -92,6 +102,8 @@ final class Nodes {
             if (function != null) function.render(w, args);
             else FunctionDef.call(w, name, args);
         }
+
+        @Override Object shape() { return List.of(name, shapes(args)); }
     }
 
     static final class Template<T> extends Expr<T> {
@@ -105,6 +117,8 @@ final class Nodes {
         }
 
         @Override public void render(SqlWriter w) { renderTemplate(w, template, args); }
+
+        @Override Object shape() { return List.of(template, shapes(args)); }
     }
 
     static final class Arithmetic<T> extends Expr<T> {
@@ -118,6 +132,8 @@ final class Nodes {
         }
 
         @Override public void render(SqlWriter w) { w.sql("(").join(operands, " " + operator + " ").sql(")"); }
+
+        @Override Object shape() { return List.of(operator, shapes(operands)); }
     }
 
     /** Unary minus; the operand in parentheses, so a negative literal never turns into a comment. */
@@ -130,6 +146,8 @@ final class Nodes {
         }
 
         @Override public void render(SqlWriter w) { w.sql("-(").render(operand).sql(")"); }
+
+        @Override Object shape() { return List.of(Negated.class, operand.shape()); }
     }
 
     static final class Cast<T> extends Expr<T> {
@@ -145,6 +163,8 @@ final class Nodes {
         @Override public void render(SqlWriter w) {
             w.sql("CAST(").render(inner).sql(" AS ").sql(w.dialect().castType(target)).sql(")");
         }
+
+        @Override Object shape() { return List.of(Cast.class, inner.shape(), target.kind(), target.length(), target.scale()); }
     }
 
     static final class Scalar<T> extends Expr<T> {
@@ -179,12 +199,10 @@ final class Nodes {
         return new Call<>(type, function, function.name(), args);
     }
 
-    /** Identity used to check that a projection reads the same columns on every replay. */
-    static Object shapeKey(Expr<?> e) {
-        if (e instanceof Labeled<?> l) return shapeKey(l.inner);
-        if (e instanceof Column<?> c) return List.of(c.ref, c.property.name());
-        return e.getClass();
-    }
+    static List<Object> shapes(List<? extends Expr<?>> exprs) { return exprs.stream().map(Expr::shape).toList(); }
+
+    /** Arrays compare by content, so a constant written inline matches on every replay. */
+    private static Object valueShape(Object value) { return value instanceof byte[] bytes ? ByteBuffer.wrap(bytes) : value; }
 
     // ---------- conditions ----------
 

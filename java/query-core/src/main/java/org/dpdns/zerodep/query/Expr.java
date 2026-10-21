@@ -33,6 +33,12 @@ public abstract class Expr<T> implements Renderable {
     /** The column label used when this expression is projected; a column's property name, or null. */
     public String label() { return null; }
 
+    /**
+     * What a functional projection's replay must match, so that a read branching on row values is caught
+     * (see {@link Row}). Built-in nodes compare their parts; any other expression compares its class.
+     */
+    Object shape() { return getClass(); }
+
     // ---------- comparison ----------
 
     public final Cond eq(T value) { return Nodes.compare(this, "=", param(value)); }

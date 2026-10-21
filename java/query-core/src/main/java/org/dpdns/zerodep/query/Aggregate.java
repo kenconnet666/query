@@ -29,6 +29,8 @@ public final class Aggregate<T> extends Expr<T> {
         w.sql(")");
     }
 
+    @Override Object shape() { return List.of(name, distinct, Nodes.shapes(args)); }
+
     static final class Over<T> extends Expr<T> {
         private final Expr<T> function;
         private final Window window;
@@ -40,5 +42,7 @@ public final class Aggregate<T> extends Expr<T> {
         }
 
         @Override public void render(SqlWriter w) { w.render(function).sql(" OVER (").render(window).sql(")"); }
+
+        @Override Object shape() { return List.of(Over.class, function.shape()); }
     }
 }

@@ -30,7 +30,7 @@ public final class Row {
             recorded.add(expr);
             return expr.type().placeholder();
         }
-        if (cursor >= recorded.size() || !Nodes.shapeKey(recorded.get(cursor)).equals(Nodes.shapeKey(expr))) {
+        if (cursor >= recorded.size() || !recorded.get(cursor).shape().equals(expr.shape())) {
             throw divergence();
         }
         return (T) values[cursor++];
