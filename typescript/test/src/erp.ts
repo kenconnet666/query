@@ -1,4 +1,4 @@
-import { blankAsNull, column, converted, date, decimal, ignore, integer, mapFrom, table, text, timestamp, trimmed } from "@query/core";
+import { blankAsNull, column, converted, date, decimal, ignore, integer, mapFrom, table, text, timestamp, trimmed } from "@zerodep-dev/query-core";
 
 /** SAP-style entities shared by the unit tests and the live scenarios of every dialect, as in the Java tests. */
 export const SCHEMA = "QUERY_IT";

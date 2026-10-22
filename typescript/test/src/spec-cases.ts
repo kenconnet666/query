@@ -55,10 +55,10 @@ import {
   values,
   type Query,
   type Ref,
-} from "@query/core";
-import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toInteger, toNvarchar, toVarchar } from "@query/hana";
-import { dateDiff, dateFormat, greatest as mysqlGreatest, groupConcat, least as mysqlLeast, maxExecutionTime } from "@query/mysql";
-import { cube as pgCube, distinctOn, filterWhere, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg, stringAgg as pgStringAgg } from "@query/postgres";
+} from "@zerodep-dev/query-core";
+import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
+import { dateDiff, dateFormat, greatest as mysqlGreatest, groupConcat, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, filterWhere, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg, stringAgg as pgStringAgg } from "@zerodep-dev/query-postgres";
 import { Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bigint, boolean, bytes, date, decimal, double, integer, text, timestamp, typeOf } from "@query/core";
+import { bigint, boolean, bytes, date, decimal, double, integer, text, timestamp, typeOf } from "@zerodep-dev/query-core";
 import { sapDate } from "../erp.js";
 
 describe("值类型", () => {

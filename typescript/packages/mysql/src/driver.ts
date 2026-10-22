@@ -1,7 +1,7 @@
 import type { Connection, Pool, PoolConnection } from "mysql2/promise";
 import type { Connection as CoreConnection, FieldPacket, TypeCast } from "mysql2";
 import { Buffer } from "node:buffer";
-import type { Driver, DriverResult, ExecuteOptions } from "@query/core";
+import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
 
 // DECIMAL as exact text, BIGINT as text, dates and times as text: nothing goes through Date or
 // the session time zone. decimalNumbers is a pool option, so DECIMAL is read here explicitly.

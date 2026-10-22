@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.dpdns.zerodep.query</groupId>
+        <groupId>org.dpdns.zerodep</groupId>
         <artifactId>query-parent</artifactId>
         <version>1.0.0</version>
         <relativePath>../../pom.xml</relativePath>
@@ -21,7 +21,7 @@
 
     <dependencies>
         <dependency>
-            <groupId>org.dpdns.zerodep.query</groupId>
+            <groupId>org.dpdns.zerodep</groupId>
             <artifactId>query-core</artifactId>
         </dependency>
         <!-- The application brings its own Spring; any line from 5.3 (Boot 2.7) to 7.0 (Boot 4) works. -->
@@ -31,7 +31,7 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.dpdns.zerodep.query</groupId>
+            <groupId>org.dpdns.zerodep</groupId>
             <artifactId>query-core</artifactId>
             <type>test-jar</type>
             <scope>test</scope>

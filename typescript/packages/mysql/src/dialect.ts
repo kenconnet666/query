@@ -1,4 +1,4 @@
-import { CONCAT, Dialect, FunctionDef, LOCATE, type CastType, type Renderable, type SqlWriter } from "@query/core";
+import { CONCAT, Dialect, FunctionDef, LOCATE, type CastType, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
 
 /**
  * MySQL 8 with its default SQL mode. Identifiers are always quoted with backticks (window function

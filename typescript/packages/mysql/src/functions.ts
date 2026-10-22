@@ -1,4 +1,4 @@
-import { call, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, type Clause, type KeepNull, type OrderItem } from "@query/core";
+import { call, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, type Clause, type KeepNull, type OrderItem } from "@zerodep-dev/query-core";
 import { MysqlDialect } from "./dialect.js";
 
 /** MySQL-only functions and clauses; they refuse to render on another dialect. */

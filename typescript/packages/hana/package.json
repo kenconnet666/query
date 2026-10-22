@@ -1,18 +1,36 @@
 {
-  "name": "@query/hana",
+  "name": "@zerodep-dev/query-hana",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "description": "SAP HANA dialect: functions, clauses and an @sap/hana-client driver",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenconnet666/query.git",
+    "directory": "typescript/packages/hana"
+  },
+  "homepage": "https://github.com/kenconnet666/query#readme",
+  "bugs": {
+    "url": "https://github.com/kenconnet666/query/issues"
+  },
+  "keywords": [
+    "sql",
+    "query-builder",
+    "analytics",
+    "hana"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
-    "@query/core": "workspace:*"
+    "@zerodep-dev/query-core": "workspace:*"
   },
   "peerDependencies": {
     "@sap/hana-client": "^2.30.27"
@@ -25,5 +43,11 @@
   "devDependencies": {
     "@sap/hana-client": "2.30.27",
     "@types/node": "24.19.2"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

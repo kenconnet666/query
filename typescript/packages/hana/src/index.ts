@@ -1,10 +1,10 @@
 import type { Connection, ConnectionPool } from "@sap/hana-client";
-import { Database, type DatabaseOptions, type Driver } from "@query/core";
+import { Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 import { hanaDriver } from "./driver.js";
 
 /** One import gives the whole vocabulary: core functions plus HANA's own. */
-export * from "@query/core";
+export * from "@zerodep-dev/query-core";
 export { HanaDialect } from "./dialect.js";
 export { hanaDriver } from "./driver.js";
 export { addDays, addMonths, addYears, cube, daysBetween, greatest, groupingSets, hint, least, length, likeRegexpr, stringAgg, toDate, toInteger, toNvarchar, toVarchar } from "./functions.js";

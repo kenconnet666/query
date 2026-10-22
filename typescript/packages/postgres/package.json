@@ -1,18 +1,36 @@
 {
-  "name": "@query/postgres",
+  "name": "@zerodep-dev/query-postgres",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "description": "PostgreSQL dialect: functions, clauses and a pg driver",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenconnet666/query.git",
+    "directory": "typescript/packages/postgres"
+  },
+  "homepage": "https://github.com/kenconnet666/query#readme",
+  "bugs": {
+    "url": "https://github.com/kenconnet666/query/issues"
+  },
+  "keywords": [
+    "sql",
+    "query-builder",
+    "analytics",
+    "postgresql"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
-    "@query/core": "workspace:*"
+    "@zerodep-dev/query-core": "workspace:*"
   },
   "peerDependencies": {
     "@types/pg": "^8.23.1",
@@ -30,5 +48,11 @@
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "pg": "8.23.1"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

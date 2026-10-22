@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@query/core";
-import { MysqlDatabase } from "@query/mysql";
-import { PostgresDatabase } from "@query/postgres";
+import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@zerodep-dev/query-core";
+import { MysqlDatabase } from "@zerodep-dev/query-mysql";
+import { PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { DeliveryVO, Lips } from "../erp.js";
 import { FakeDriver, rows, TestDatabase } from "../support.js";
 

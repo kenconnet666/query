@@ -1,10 +1,10 @@
 import type { Connection, Pool, PoolConnection } from "mysql2/promise";
-import { Database, type DatabaseOptions, type Driver } from "@query/core";
+import { Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { MysqlDialect } from "./dialect.js";
 import { mysqlDriver } from "./driver.js";
 
 /** One import gives the whole vocabulary: core functions plus MySQL's own. */
-export * from "@query/core";
+export * from "@zerodep-dev/query-core";
 export { MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
 export { dateDiff, dateFormat, greatest, groupConcat, least, maxExecutionTime } from "./functions.js";

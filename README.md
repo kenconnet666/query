@@ -15,7 +15,7 @@
 
 ```xml
 <dependency>
-    <groupId>org.dpdns.zerodep.query</groupId>
+    <groupId>org.dpdns.zerodep</groupId>
     <artifactId>query-postgres</artifactId>   <!-- 或 query-hana、query-mysql；Spring 项目再加 query-spring -->
     <version>1.0.0</version>
 </dependency>
@@ -43,11 +43,11 @@ List<MaterialTotal> rows = db.list(from(Lips.class)
     .select((r, l) -> new MaterialTotal(r.get(l, Lips::getMaterial), r.get(sum(l.col(Lips::getQuantity))))));
 ```
 
-**TypeScript**（包暂不发布到 npm，在工作区内引用）：
+**TypeScript**：按方言安装 `@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql` 或 `@zerodep-dev/query-hana`，核心包会随之安装，数据库驱动（`pg`、`mysql2`、`@sap/hana-client`）由项目自己提供：
 
 ```ts
 import pg from "pg";
-import { column, database, date, decimal, from, sum, table } from "@query/postgres";
+import { column, database, date, decimal, from, sum, table } from "@zerodep-dev/query-postgres";
 
 @table("lips", { schema: "erp" })
 class Lips {
@@ -85,8 +85,8 @@ const rows = await db.list(
 | `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存；运行时无第三方依赖 |
 | `java/query-hana`、`java/query-postgres`、`java/query-mysql` | 各方言的门面、数据库实例、专属函数与子句 |
 | `java/query-spring` | Spring 适配：通过 `DataSourceUtils` 取连接，查询加入外层的 `@Transactional` 事务；Spring 5.3 到 7.0 都可用 |
-| `typescript/packages/core` | `@query/core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存；运行时无第三方依赖 |
-| `typescript/packages/hana`、`postgres`、`mysql` | `@query/hana`、`@query/postgres`、`@query/mysql`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`） |
+| `typescript/packages/core` | `@zerodep-dev/query-core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存；运行时无第三方依赖 |
+| `typescript/packages/hana`、`postgres`、`mysql` | `@zerodep-dev/query-hana`、`@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`） |
 | `typescript/test` | TS 的单元、编译期、金样例与实库测试 |
 | `spec/render/` | Java 与 TS 共用的渲染金样例 |
 | `infra/` | CI 用的数据库容器定义 |

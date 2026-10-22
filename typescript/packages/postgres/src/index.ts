@@ -1,10 +1,10 @@
 import type { Client, Pool, PoolClient } from "pg";
-import { Database, type DatabaseOptions, type Driver } from "@query/core";
+import { Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { PostgresDialect } from "./dialect.js";
 import { pgDriver } from "./driver.js";
 
 /** One import gives the whole vocabulary: core functions plus PostgreSQL's own. */
-export * from "@query/core";
+export * from "@zerodep-dev/query-core";
 export { PostgresDialect } from "./dialect.js";
 export { pgDriver } from "./driver.js";
 export { cube, distinctOn, filterWhere, greatest, groupingSets, ilike, least, pg, PgOps, stringAgg } from "./functions.js";

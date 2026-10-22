@@ -1,4 +1,4 @@
-import { Dialect, FunctionDef, LOCATE, type CastType } from "@query/core";
+import { Dialect, FunctionDef, LOCATE, type CastType } from "@zerodep-dev/query-core";
 
 /** PostgreSQL. Unquoted identifiers fold to lower case; parameters are numbered. */
 export class PostgresDialect extends Dialect {

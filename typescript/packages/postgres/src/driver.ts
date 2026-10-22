@@ -1,6 +1,6 @@
 import type { Client, CustomTypesConfig, Pool, PoolClient, QueryArrayResult } from "pg";
 import { Buffer } from "node:buffer";
-import type { Driver, DriverResult, ExecuteOptions } from "@query/core";
+import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
 
 // Booleans and small numbers parse as usual; NUMERIC, BIGINT, dates and timestamps stay text, so
 // nothing goes through Date or the process time zone. Everything else stays text as well.

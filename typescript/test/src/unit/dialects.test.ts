@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { cast, CastType, date, from, lit, sum } from "@query/core";
-import { addDays, cube, daysBetween, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@query/hana";
-import { greatest as mysqlGreatest, groupConcat, maxExecutionTime, MysqlDatabase } from "@query/mysql";
-import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@query/postgres";
+import { cast, CastType, date, from, lit, sum } from "@zerodep-dev/query-core";
+import { addDays, cube, daysBetween, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@zerodep-dev/query-hana";
+import { greatest as mysqlGreatest, groupConcat, maxExecutionTime, MysqlDatabase } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { Lips } from "../erp.js";
 import { deliveries } from "../scenarios.js";
 import { TestDialect } from "../support.js";

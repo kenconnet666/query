@@ -1,4 +1,4 @@
-import { call, condition, date, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
+import { call, condition, date, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA-only functions and clauses; they refuse to render on another dialect. */

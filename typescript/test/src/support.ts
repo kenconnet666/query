@@ -1,4 +1,4 @@
-import { Database, Dialect, type DatabaseOptions, type Driver, type DriverResult, type ExecuteOptions } from "@query/core";
+import { Database, Dialect, type DatabaseOptions, type Driver, type DriverResult, type ExecuteOptions } from "@zerodep-dev/query-core";
 
 /** A neutral dialect for rendering tests: upper-case bare identifiers and a configurable IN limit. */
 export class TestDialect extends Dialect {

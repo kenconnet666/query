@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, decimal, from, integer, lit, mapFrom, max, rowNumber, sum, val, type Expr, type Query } from "@query/core";
+import { column, decimal, from, integer, lit, mapFrom, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
 import { DeliveryVO, Event, Lips, Makt, Mara } from "../erp.js";
 import { stockArm } from "../scenarios.js";
 
