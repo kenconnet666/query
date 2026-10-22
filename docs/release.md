@@ -15,16 +15,16 @@
 ## 一次性准备
 
 1. **Central Portal 账号**：在 <https://central.sonatype.com> 注册或用 GitHub 登录。
-2. **命名空间**：groupId 是 `org.dpdns.zerodep`，要在 Portal 的 Namespaces 页面验证它。Portal 会给出一个验证码，把它加到域名 `zerodep.dpdns.org` 的 DNS TXT 记录里，再点 Verify。
-   - 如果这个域名无法通过验证，可以改用 GitHub 命名空间 `io.github.kenconnet666`：用 GitHub 登录 Portal 时会自动验证。这样要把根 POM 和各模块的 groupId、`dependencyManagement` 里的 groupId、`automatic.module.name` 和文档里的坐标一起改掉。包名可以不改。
-3. **GPG 密钥**：Windows 上安装 Gpg4win，然后生成密钥并上传到公钥服务器，Central 会从那里取公钥验证签名：
+2. **命名空间**：groupId 是 `org.dpdns.zerodep`，已在 Portal 的 Namespaces 页面验证通过：Portal 给出验证码，加到 `zerodep.dpdns.org` 根域名的 TXT 记录里，几分钟后自动变成 Verified。这条 TXT 记录保留，不要删。
+3. **GPG 密钥**：本机用 Git for Windows 自带的 gpg 2.4，不另装 Gpg4win。生成密钥后，公钥要传到 **`keys.openpgp.org` 并验证邮箱**，同时传一份到 `keyserver.ubuntu.com`。Ubuntu 的节点同步不一致，只传它会让 Central 间歇性报 `Could not find a public key`；openpgp 稳定，但邮箱未验证前不公开用户名。
 
    ```powershell
-   gpg --full-generate-key
+   gpg --quick-generate-key "<名字> <邮箱>" rsa4096 sign 3y   # 口令在 pinentry 窗口里输入
    gpg --list-secret-keys --keyid-format long
-   gpg --keyserver keyserver.ubuntu.com --send-keys <KEY_ID>
+   gpg --armor --export <指纹>   # 提交到 https://keys.openpgp.org 并点邮件里的验证链接，再提交到 keyserver.ubuntu.com/pks/add
    ```
 
+   `gpg --send-keys` 在 Git 自带的 gpg 上会报 `No data`，改用 HTTP 接口提交。在 `~/.gnupg/gpg-agent.conf` 里写 `pinentry-program C:/Program Files/Git/usr/bin/pinentry-w32.exe`，否则从 PowerShell 启动的 gpg-agent 找不到 pinentry（`No pinentry`）。私钥的吊销证书在 `~\.gnupg\openpgp-revocs.d\`，备份到仓库之外。
 4. **上传令牌**：在 Portal 的 View Account → Generate User Token 生成令牌，在 `~/.m2/settings.xml` 里通过环境变量引用，不写明文：
 
    ```xml
@@ -57,11 +57,10 @@
    ```powershell
    $env:CENTRAL_TOKEN_USERNAME = '<令牌用户名>'
    $env:CENTRAL_TOKEN_PASSWORD = '<令牌密码>'
-   $env:MAVEN_GPG_PASSPHRASE = '<GPG 密码>'      # 不设置时由 gpg-agent 弹窗询问
-   .\mvnw.cmd --batch-mode -P release deploy
+   .\mvnw.cmd --batch-mode -P release "-Dgpg.executable=C:\Program Files\Git\usr\bin\gpg.exe" deploy
    ```
 
-   插件把所有模块打成一个包上传，并等到 Portal 校验完成（`waitUntil=validated`）。校验失败时命令会报错，原因在 Portal 的 Deployments 页面里。
+   PowerShell 的 PATH 里没有 `gpg`，所以要显式指定；GPG 口令由 pinentry 窗口询问。插件把所有模块打成一个包上传，并等到 Portal 校验完成（`waitUntil=validated`）。校验失败时命令会报错，原因在 Portal 的 Deployments 页面里；只是公钥没取到时，重试几次即可，失败的 deployment 不影响发布，可以在 Portal 里 Drop。
 
 5. **确认发布**：在 <https://central.sonatype.com/publishing/deployments> 检查文件清单，点 Publish；发现问题就点 Drop，修好后重新上传。发布后通常 30 分钟内能在 <https://repo1.maven.org/maven2/org/dpdns/zerodep/> 看到。已发布的版本不能删除或覆盖。
 6. **打标签**：
