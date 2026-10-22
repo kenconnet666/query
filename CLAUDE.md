@@ -10,7 +10,7 @@
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），也不在使用方生成代码。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@query/*`）和私有测试包 `test`。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@zerodep-dev/query-*`）和私有测试包 `test`。
 - **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
 - **文档**：

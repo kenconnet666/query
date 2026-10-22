@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import hana from "@sap/hana-client";
-import { addDays, addMonths, count, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@query/hana";
+import { addDays, addMonths, count, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
 import { Lips } from "../erp.js";
 import { liveScenarios } from "./live.js";
 

@@ -1,4 +1,4 @@
-import { all, caseWhen, cte, exists, from, max, rowNumber, sum, trim, type Cond, type Expr, type Ref, type Table } from "@query/core";
+import { all, caseWhen, cte, exists, from, max, rowNumber, sum, trim, type Cond, type Expr, type Ref, type Table } from "@zerodep-dev/query-core";
 import { LineVO, Lips, Makt, Mara, Mardh, Mchbh, Vbkd, type PeriodStock } from "./erp.js";
 
 /** Queries written the way users write them; rendered by the unit tests and executed by the live tests. */

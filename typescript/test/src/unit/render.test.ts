@@ -22,7 +22,7 @@ import {
   type Cond,
   type From,
   type Ref,
-} from "@query/core";
+} from "@zerodep-dev/query-core";
 import { ClientEntity, Lips, Mara } from "../erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "../scenarios.js";
 import { TestDatabase, TestDialect } from "../support.js";

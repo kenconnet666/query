@@ -1,4 +1,4 @@
-import { call, condition, Expr, expression, FunctionDef, lit, param, text, toOrder, untyped, type Aggregate, type Clause, type Cond, type OrderItem, type SqlType, type SqlWriter } from "@query/core";
+import { call, condition, Expr, expression, FunctionDef, lit, param, text, toOrder, untyped, type Aggregate, type Clause, type Cond, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { PostgresDialect } from "./dialect.js";
 
 /** PostgreSQL-only functions and clauses; they refuse to render on another dialect. */

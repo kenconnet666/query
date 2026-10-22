@@ -15,7 +15,7 @@
 ## 一次性准备
 
 1. **Central Portal 账号**：在 <https://central.sonatype.com> 注册或用 GitHub 登录。
-2. **命名空间**：groupId 是 `org.dpdns.zerodep.query`，要在 Portal 的 Namespaces 页面验证 `org.dpdns.zerodep`。Portal 会给出一个验证码，把它加到域名 `zerodep.dpdns.org` 的 DNS TXT 记录里，再点 Verify。
+2. **命名空间**：groupId 是 `org.dpdns.zerodep`，要在 Portal 的 Namespaces 页面验证它。Portal 会给出一个验证码，把它加到域名 `zerodep.dpdns.org` 的 DNS TXT 记录里，再点 Verify。
    - 如果这个域名无法通过验证，可以改用 GitHub 命名空间 `io.github.kenconnet666`：用 GitHub 登录 Portal 时会自动验证。这样要把根 POM 和各模块的 groupId、`dependencyManagement` 里的 groupId、`automatic.module.name` 和文档里的坐标一起改掉。包名可以不改。
 3. **GPG 密钥**：Windows 上安装 Gpg4win，然后生成密钥并上传到公钥服务器，Central 会从那里取公钥验证签名：
 
@@ -80,6 +80,16 @@
 
    再在 `CHANGELOG.md` 顶部加一节"未发布"。
 
-## TypeScript
+## TypeScript（npm）
 
-`typescript/packages/*` 的版本号与 Java 保持一致，但目前都是私有包，不发布到 npm。要发布时再单独决定包名（`@query` 这个 scope 需要先在 npm 上注册）和构建产物。
+四个包 `@zerodep-dev/query-core|postgres|mysql|hana` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
+
+```powershell
+cd typescript
+$env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
+corepack pnpm install --frozen-lockfile
+corepack pnpm test
+corepack pnpm -r --filter "@zerodep-dev/*" publish --access public --no-git-checks
+```
+
+`pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。

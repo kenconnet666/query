@@ -16,7 +16,7 @@ importers:
 
   packages/hana:
     dependencies:
-      '@query/core':
+      '@zerodep-dev/query-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -29,7 +29,7 @@ importers:
 
   packages/mysql:
     dependencies:
-      '@query/core':
+      '@zerodep-dev/query-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -42,7 +42,7 @@ importers:
 
   packages/postgres:
     dependencies:
-      '@query/core':
+      '@zerodep-dev/query-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -58,16 +58,16 @@ importers:
 
   test:
     dependencies:
-      '@query/core':
+      '@zerodep-dev/query-core':
         specifier: workspace:*
         version: link:../packages/core
-      '@query/hana':
+      '@zerodep-dev/query-hana':
         specifier: workspace:*
         version: link:../packages/hana
-      '@query/mysql':
+      '@zerodep-dev/query-mysql':
         specifier: workspace:*
         version: link:../packages/mysql
-      '@query/postgres':
+      '@zerodep-dev/query-postgres':
         specifier: workspace:*
         version: link:../packages/postgres
     devDependencies:

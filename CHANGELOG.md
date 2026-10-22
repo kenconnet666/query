@@ -4,7 +4,7 @@
 
 ## [1.0.0] - 未发布
 
-第一个正式版本。Java 发布到 Maven 中央仓库（坐标 `org.dpdns.zerodep.query:query-*`），TypeScript 包暂不发布到 npm。
+第一个正式版本。Java 发布到 Maven 中央仓库（坐标 `org.dpdns.zerodep:query-*`，Java 包名仍是 `org.dpdns.zerodep.query`），TypeScript 发布到 npm（`@zerodep-dev/query-core`、`-postgres`、`-mysql`、`-hana`）。
 
 ### 查询
 

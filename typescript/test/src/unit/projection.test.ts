@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, cte, date, from, max, nest, rowNumber, sum, values, type Query } from "@query/core";
+import { count, cte, date, from, max, nest, rowNumber, sum, values, type Query } from "@zerodep-dev/query-core";
 import { DeliveryVO, LineVO, Lips, Mara } from "../erp.js";
 import { deliveries, lines, partTotals } from "../scenarios.js";
 import { FakeDriver, rows, TestDatabase } from "../support.js";

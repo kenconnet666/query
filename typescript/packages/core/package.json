@@ -1,15 +1,40 @@
 {
-  "name": "@query/core",
+  "name": "@zerodep-dev/query-core",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "description": "Entities, expressions, scoped queries, rendering and execution shared by every dialect",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenconnet666/query.git",
+    "directory": "typescript/packages/core"
+  },
+  "homepage": "https://github.com/kenconnet666/query#readme",
+  "bugs": {
+    "url": "https://github.com/kenconnet666/query/issues"
+  },
+  "keywords": [
+    "sql",
+    "query-builder",
+    "analytics"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
-  "sideEffects": ["./dist/metadata.js"]
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": [
+    "./dist/metadata.js"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

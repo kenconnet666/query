@@ -100,8 +100,8 @@ javac 会把多个泛型实参推断成它们的公共父类型，所以 `coales
 
 **包与构建**
 
-- `@query/core` 加 `@query/hana`、`@query/postgres`、`@query/mysql`，放在 `typescript/` 下的 pnpm 工作区里，用 `tsc -b` 项目引用构建。
-- 方言包 `export * from "@query/core"`，所以一个 import 就能拿到核心与方言的全部函数，相当于 Java 的门面静态导入。
+- `@zerodep-dev/query-core` 加 `@zerodep-dev/query-hana`、`@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`，放在 `typescript/` 下的 pnpm 工作区里，用 `tsc -b` 项目引用构建。
+- 方言包 `export * from "@zerodep-dev/query-core"`，所以一个 import 就能拿到核心与方言的全部函数，相当于 Java 的门面静态导入。
 - 测试放在私有包 `typescript/test`，相当于 Java 的共享 test-jar。
 
 **实体**

@@ -1,6 +1,6 @@
 import type { Connection, ConnectionPool, HanaParameterType, ResultSet, Statement } from "@sap/hana-client";
 import { Buffer } from "node:buffer";
-import type { Driver, DriverResult, ExecuteOptions } from "@query/core";
+import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
 
 /**
  * Adapts an `@sap/hana-client` pool or connection. A pool lends one connection per statement and

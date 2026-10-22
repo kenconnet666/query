@@ -24,7 +24,7 @@ import {
   type Driver,
   type QueryEvent,
   type Ref,
-} from "@query/core";
+} from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../erp.js";
 import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";

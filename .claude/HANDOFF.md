@@ -73,7 +73,7 @@
   - 先在 Central Portal 验证命名空间 `org.dpdns.zerodep`（给 `zerodep.dpdns.org` 加 DNS TXT 记录）。
   - 验证不了时改用 `io.github.kenconnet666`，需要同步改 groupId。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
-- **TS 包是否发布到 npm**：目前是私有包，`@query` 这个 scope 要先在 npm 注册。
+- **TS 包发布到 npm**：包名 `@zerodep-dev/query-*`，组织 `zerodep-dev` 已建；发布步骤见 [docs/release.md](../docs/release.md)。
 - **文档站**：用户说之后会用前端组件库另行安排，1.0 只提供仓库里的 Markdown。
 
 ## 下一步（建议）

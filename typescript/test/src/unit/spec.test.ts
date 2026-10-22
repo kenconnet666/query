@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { filter, type Database, type DatabaseOptions, type Driver } from "@query/core";
-import { HanaDatabase } from "@query/hana";
-import { MysqlDatabase } from "@query/mysql";
-import { PostgresDatabase } from "@query/postgres";
+import { filter, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
+import { HanaDatabase } from "@zerodep-dev/query-hana";
+import { MysqlDatabase } from "@zerodep-dev/query-mysql";
+import { PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { ClientEntity } from "../erp.js";
 import { dialectCases, sharedCases } from "../spec-cases.js";
 

@@ -33,7 +33,7 @@
 
 ```ts
 import pg from "pg";
-import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@query/postgres"; // 或 @query/hana、@query/mysql
+import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@zerodep-dev/query-postgres"; // 或 @zerodep-dev/query-hana、@zerodep-dev/query-mysql
 
 const db = database(new pg.Pool({ /* ... */ }), {
   filters: [filter(ClientEntity, (r) => r.client.eq("100"))],   // 全局过滤器
@@ -46,9 +46,9 @@ const db = database(new pg.Pool({ /* ... */ }), {
 
 | 方言 | 包 | `database(...)` 接收 | 实例 |
 | --- | --- | --- | --- |
-| SAP HANA | `@query/hana` | `@sap/hana-client` 的连接池或连接 | `HanaDatabase` |
-| PostgreSQL | `@query/postgres` | `pg` 的 `Pool`、`PoolClient` 或 `Client` | `PostgresDatabase` |
-| MySQL 8 | `@query/mysql` | `mysql2/promise` 的连接池或连接 | `MysqlDatabase` |
+| SAP HANA | `@zerodep-dev/query-hana` | `@sap/hana-client` 的连接池或连接 | `HanaDatabase` |
+| PostgreSQL | `@zerodep-dev/query-postgres` | `pg` 的 `Pool`、`PoolClient` 或 `Client` | `PostgresDatabase` |
+| MySQL 8 | `@zerodep-dev/query-mysql` | `mysql2/promise` 的连接池或连接 | `MysqlDatabase` |
 
 - 传入单个连接时（例如事务中的连接），库直接使用这个连接，不会关闭它。
 - 也可以实现 `Driver` 接口，然后 `new HanaDatabase(driver, options)`。
@@ -58,7 +58,7 @@ const db = database(new pg.Pool({ /* ... */ }), {
 实体是带标准装饰器的普通类，只声明查询用到的列。列的类型由 `@column` 的第二个参数给出，默认为 `text`。装饰器会检查字段的声明类型：类型对不上就编译失败，字段可以带 `| null`。
 
 ```ts
-import { blankAsNull, column, converted, decimal, mapFrom, ignore, table, text, trimmed } from "@query/hana";
+import { blankAsNull, column, converted, decimal, mapFrom, ignore, table, text, trimmed } from "@zerodep-dev/query-hana";
 
 export const sapDate = converted<string, string>(text, {     // 'yyyyMMdd' 文本 <-> 'YYYY-MM-DD'
   toDatabase: (day) => day.replaceAll("-", ""),
@@ -260,7 +260,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 
 **方言专属能力**只在对应的包里提供，放到别的方言上渲染时会明确报错：
 
-| `@query/hana` | `@query/postgres` | `@query/mysql` |
+| `@zerodep-dev/query-hana` | `@zerodep-dev/query-postgres` | `@zerodep-dev/query-mysql` |
 | --- | --- | --- |
 | `daysBetween`、`addDays`、`addMonths`、`addYears` | `distinctOn(...)` 子句 | `dateDiff`、`dateFormat` |
 | `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | `groupConcat(e, sep, ...order)` |

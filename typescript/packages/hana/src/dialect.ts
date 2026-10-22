@@ -1,4 +1,4 @@
-import { Dialect, type CastType, type SqlWriter } from "@query/core";
+import { Dialect, type CastType, type SqlWriter } from "@zerodep-dev/query-core";
 
 /** SAP HANA 2.0. Unquoted identifiers fold to upper case. */
 export class HanaDialect extends Dialect {

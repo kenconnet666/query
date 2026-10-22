@@ -61,7 +61,7 @@ type Bag = Record<symbol, unknown>;
 
 function bag(context: { metadata: DecoratorMetadataObject | undefined; name: string | symbol | undefined }): Bag {
   if (!context.metadata) {
-    throw new Error(`No decorator metadata for ${String(context.name)}; import @query/core (or a dialect package) before declaring entities`);
+    throw new Error(`No decorator metadata for ${String(context.name)}; import @zerodep-dev/query-core (or a dialect package) before declaring entities`);
   }
   return context.metadata as Bag;
 }
