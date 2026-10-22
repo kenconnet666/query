@@ -70,10 +70,10 @@
 ## 待用户决定或执行
 
 - **发布到中央仓库**：按 [docs/release.md](../docs/release.md) 手动执行。
-  - 先在 Central Portal 验证命名空间 `org.dpdns.zerodep`（给 `zerodep.dpdns.org` 加 DNS TXT 记录）。
-  - 验证不了时改用 `io.github.kenconnet666`，需要同步改 groupId。
+  - 命名空间 `org.dpdns.zerodep` 已在 Central Portal 验证通过（`zerodep.dpdns.org` 的根域名有一条 TXT 记录，保留不要删）。
+  - 还缺：本机 GPG 密钥（上传到公钥服务器）和 Portal 发布令牌（`CENTRAL_TOKEN_USERNAME`、`CENTRAL_TOKEN_PASSWORD`）。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
-- **TS 包发布到 npm**：包名 `@zerodep-dev/query-*`，组织 `zerodep-dev` 已建；发布步骤见 [docs/release.md](../docs/release.md)。
+- **TS 包**：`@zerodep-dev/query-core|postgres|mysql|hana` 1.0.0 已发布到 npm（组织 `zerodep-dev`）。之后发版的步骤见 [docs/release.md](../docs/release.md)；npm 对 Bypass 2FA 的令牌限制直接发包，被拒时改用 `npm stage publish` 再用 2FA 批准。
 - **文档站**：用户说之后会用前端组件库另行安排，1.0 只提供仓库里的 Markdown。
 
 ## 下一步（建议）
