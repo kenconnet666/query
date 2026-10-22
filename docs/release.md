@@ -63,7 +63,7 @@
 
    插件把所有模块打成一个包上传，并等到 Portal 校验完成（`waitUntil=validated`）。校验失败时命令会报错，原因在 Portal 的 Deployments 页面里。
 
-5. **确认发布**：在 <https://central.sonatype.com/publishing/deployments> 检查文件清单，点 Publish；发现问题就点 Drop，修好后重新上传。发布后通常 30 分钟内能在 <https://repo1.maven.org/maven2/org/dpdns/zerodep/query/> 看到。已发布的版本不能删除或覆盖。
+5. **确认发布**：在 <https://central.sonatype.com/publishing/deployments> 检查文件清单，点 Publish；发现问题就点 Drop，修好后重新上传。发布后通常 30 分钟内能在 <https://repo1.maven.org/maven2/org/dpdns/zerodep/> 看到。已发布的版本不能删除或覆盖。
 6. **打标签**：
 
    ```powershell
