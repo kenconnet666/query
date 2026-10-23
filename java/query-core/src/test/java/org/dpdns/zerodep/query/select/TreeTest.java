@@ -80,6 +80,24 @@ class TreeTest {
     }
 
     @Test
+    void 每个父行限定子行数时批量查询按父键分区取前几行() {
+        Query<MaterialLines> q = from(Mara.class).select(m -> row(MaterialLines::new, m.material(),
+            m.deliveries().orderBy(l -> l.createdOn().desc()).limit(2).list(l -> row(Line::new, l.delivery(), l.quantity()))));
+        ChildRunner children = new ChildRunner(r -> List.of());
+        q.mapRows(List.<Object[]>of(new Object[] {"M1", "M1", "100"}), children);
+        assertEquals("""
+            SELECT Q."delivery" AS "delivery", Q."quantity" AS "quantity", Q."material" AS "material", Q."client" AS "client"
+            FROM (
+            SELECT LIPS.VBELN AS "delivery", LIPS.LFIMG AS "quantity", LIPS.MATNR AS "material", LIPS.MANDT AS "client", ROW_NUMBER() OVER (PARTITION BY LIPS.MATNR, LIPS.MANDT ORDER BY LIPS.ERDAT DESC) AS "_q5", LIPS.ERDAT AS "_o6"
+            FROM QUERY_IT.LIPS LIPS
+            WHERE LIPS.MATNR = ? AND LIPS.MANDT = ?
+            ) Q
+            WHERE Q."_q5" <= ?
+            ORDER BY Q."_o6" DESC""", children.statements.get(0).sql());
+        assertThrows(IllegalStateException.class, () -> from(Mara.class).select(m -> m.deliveries().limit(2).count()));
+    }
+
+    @Test
     void 单列键用IN且重复的键只查一次() {
         record Order(String delivery, List<String> orders) { }
         Query<Order> q = from(Lips.class).select(l -> row(Order::new, l.delivery(), l.salesData().list(v -> v.salesOrder())));

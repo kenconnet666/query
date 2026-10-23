@@ -197,7 +197,7 @@ ORDER BY MARA.MFRPN ASC
 | `stringAgg(l -> l.delivery(), ",")` | 相关标量子查询拼接文本，顺序取 `orderBy(...)`：`m.deliveries().orderBy(l -> l.delivery()).stringAgg(...)` |
 | `where(l -> cond)` | 先筛选目标行，可接上面任一运算：`m.deliveries().where(l -> l.unit().eq("KG")).none()` |
 | `first(l -> l.createdOn().desc())` | 每组按顺序取第一行，返回那一行的表接口，可继续取列 |
-| `orderBy(l -> l.delivery())`、`list(projection)` | 子行列表，见第 6 节 |
+| `orderBy(l -> l.delivery())`、`limit(n)`、`list(projection)` | 子行列表，见第 6 节；`limit(n)` 每个父行只取按顺序的前 n 行（批量查询里用 ROW_NUMBER 按父键分区） |
 
 ```java
 from(Mara.class)

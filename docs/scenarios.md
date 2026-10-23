@@ -34,7 +34,7 @@
 | 映射到 DTO | `select(VO.class, ...)`、`selectAutoInclude` | `selectAs(VO.class)` 按同名属性取列，嵌套 VO 与 `List<X>` 属性按同名关系映射；改名或计算列用 `cols(...)` 加 `.as("x")` 再 `.into(VO.class)` | 2.0 |
 | 元组 / 匿名结果 | `Draft2..`、`selectColumn` | `row(X::new, a, b, ...)` 按位置构造任意类型，可以嵌套；`cols(...)` 得到 Map 行 | 2.0 |
 | 嵌套 DTO（一对一） | `selectAutoInclude` 加导航属性 | 嵌套的 `row(...)`，或 `selectAs` 一个嵌套 VO 属性（取同名多对一关系） | 2.0 |
-| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | `many.list(...)` 或 `selectAs` 的 `List<X>` 属性：父查询只多取连接键，子行用一条按键批量的 `IN` 查询加载，可以逐层嵌套 | 2.0 |
+| 一对多组装（`include`、`includes`） | 导航属性加批量加载 | `many.list(...)` 或 `selectAs` 的 `List<X>` 属性：父查询只多取连接键，子行用一条按键批量的 `IN` 查询加载，可以逐层嵌套；`many.orderBy(...).limit(n)` 每个父行只取前 n 行 | 2.0 |
 | 单列 / 标量结果 | `selectColumn`、`count`、`sum` | `select(l -> 表达式)` 加 `db.one(...)`、`db.count(q)` | 1 |
 | Lombok `@Data`、链式 setter、`@Builder`、record | 部分支持 | 均支持：映射计划用 `MethodHandle` 调用 | 1 |
 

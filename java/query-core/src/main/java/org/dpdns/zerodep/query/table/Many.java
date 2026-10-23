@@ -24,10 +24,12 @@ import java.util.function.Function;
  * 只能通过集合运算使用：
  * <ul>
  *   <li>{@link #any()}、{@link #none()}：渲染为 EXISTS / NOT EXISTS；</li>
- *   <li>{@link #count()}、{@link #sum}、{@link #max}、{@link #min}、{@link #avg}：渲染为相关标量子查询；</li>
- *   <li>{@link #first}：每组按顺序取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来，返回那一行的表接口。</li>
+ *   <li>{@link #count()}、{@link #countDistinct}、{@link #sum}、{@link #max}、{@link #min}、{@link #avg}、{@link #stringAgg}：渲染为相关标量子查询；</li>
+ *   <li>{@link #first}：每组按顺序取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来，返回那一行的表接口；</li>
+ *   <li>{@link #list}：每个父行一个子行列表，用一条按键批量的查询加载。</li>
  * </ul>
- * {@link #where} 先筛选目标行，例如 {@code h.items().where(i -> i.blocked().eq(true)).count()}。
+ * {@link #where} 先筛选目标行，例如 {@code h.items().where(i -> i.blocked().eq(true)).count()}；
+ * {@link #orderBy} 决定 list 与 stringAgg 的顺序，{@link #limit} 限定 list 每个父行的子行数。
  *
  * @param <R> 目标表接口
  */
@@ -47,24 +49,29 @@ public final class Many<R extends Entity> {
     /** {@link #list} 的子行顺序，没有时为 null。 */
     private final Function<R, ? extends OrderItem> order;
 
+    /** {@link #list} 给每个父行最多取的子行数，没有时为 null。 */
+    private final Integer limit;
+
     /** 由表接口的 {@code many(...)} 创建。 */
     Many(Ref<?> owner, Class<R> target, Function<R, Cond> on, Function<R, Cond> filter) {
-        this(owner, target, on, filter, null);
+        this(owner, target, on, filter, null, null);
     }
 
-    /** 全部字段的构造，where 与 orderBy 由它派生新的 Many。 */
-    private Many(Ref<?> owner, Class<R> target, Function<R, Cond> on, Function<R, Cond> filter, Function<R, ? extends OrderItem> order) {
+    /** 全部字段的构造，where、orderBy 与 limit 由它派生新的 Many。 */
+    private Many(Ref<?> owner, Class<R> target, Function<R, Cond> on, Function<R, Cond> filter, Function<R, ? extends OrderItem> order,
+                 Integer limit) {
         this.owner = owner;
         this.target = target;
         this.on = on;
         this.filter = filter;
         this.order = order;
+        this.limit = limit;
     }
 
     /** 只看满足 condition 的目标行，返回新的 Many。 */
     public Many<R> where(Function<R, Cond> condition) {
         Function<R, Cond> before = filter;
-        return new Many<>(owner, target, on, before == null ? condition : r -> Sql.all(before.apply(r), condition.apply(r)), order);
+        return new Many<>(owner, target, on, before == null ? condition : r -> Sql.all(before.apply(r), condition.apply(r)), order, limit);
     }
 
     /** 至少有一行：{@code EXISTS (...)}。 */
@@ -131,7 +138,17 @@ public final class Many<R extends Entity> {
      * 对 any、count 等集合运算没有影响。
      */
     public Many<R> orderBy(Function<R, ? extends OrderItem> order) {
-        return new Many<>(owner, target, on, filter, order);
+        return new Many<>(owner, target, on, filter, order, limit);
+    }
+
+    /**
+     * {@link #list} 给每个父行最多取 rows 个子行，按 {@link #orderBy} 的顺序取前面的，例如每个物料最近的 3 张交货单：
+     * {@code m.deliveries().orderBy(l -> l.createdOn().desc()).limit(3).list(...)}。批量查询用 ROW_NUMBER 按父键分区过滤。
+     */
+    public Many<R> limit(int rows) {
+        if (rows < 1) throw new IllegalArgumentException("limit needs at least one row");
+        if (order == null) throw new IllegalStateException("limit(...) keeps the first rows by orderBy(...); call orderBy first");
+        return new Many<>(owner, target, on, filter, order, rows);
     }
 
     /**
@@ -144,6 +161,11 @@ public final class Many<R extends Entity> {
         Split<R> split = split("list()");
         SelectSpec spec = SelectSpec.from(split.inner()).where(Sql.all(split.filters()));
         if (order != null) spec = spec.orderBy(OrderList.of(order.apply(split.row())));
+        if (limit != null) {
+            Expr<?>[] partition = split.keys().toArray(Expr<?>[]::new);
+            OrderItem sort = order.apply(split.row());
+            spec = spec.qualify(Sql.rowNumber().over(w -> w.partitionBy(partition).orderBy(sort)).le((long) limit));
+        }
         return new Children<>(spec, projection.apply(split.row()), split.keys(), split.outer());
     }
 

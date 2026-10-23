@@ -506,6 +506,18 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       );
     });
 
+    it("子数组可以限定每个父行取最新的几行", async () => {
+      const rows = await live().db.list(
+        from(Mara)
+          .orderBy((m) => m.material)
+          .select((m) => ({ material: m.material, deliveries: m.deliveries.orderBy((l) => l.createdOn.desc()).limit(2).list((l) => l.delivery) })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.deliveries.join(",")}`),
+        ["M1:D5,D2", "M2:D3,D4", "M3:", "M4:"],
+      );
+    });
+
     it("条件对象在实库上筛选且通配符按普通字符匹配", async () => {
       const { db } = live();
       const find = (values: Partial<DeliverySearch>) => db.list(filterObject(Object.assign(new DeliverySearch(), values)));

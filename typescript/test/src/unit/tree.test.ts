@@ -46,6 +46,24 @@ ORDER BY LIPS.VBELN ASC`,
     assert.deepEqual(driver.statements[1]!.parameters, ["M1", "100", "M2", "100", "M3", "100"]);
   });
 
+  it("每个父行限定子行数时，批量查询按父键分区取前几行", async () => {
+    const q = from(Mara).select((m) => ({ material: m.material, lines: m.deliveries.orderBy((l) => l.createdOn.desc()).limit(2).list((l) => l.delivery) }));
+    const driver = new FakeDriver((sql) => (sql.includes("FROM QUERY_IT.LIPS") ? rows(["value", "key0", "key1"]) : rows(["material", "lines", "lines.2"], ["M1", "M1", "100"])));
+    await new TestDatabase({}, driver).list(q);
+    assert.equal(
+      driver.statements[1]!.sql,
+      `SELECT Q."value" AS "value", Q."key0" AS "key0", Q."key1" AS "key1"
+FROM (
+SELECT LIPS.VBELN AS "value", LIPS.MATNR AS "key0", LIPS.MANDT AS "key1", ROW_NUMBER() OVER (PARTITION BY LIPS.MATNR, LIPS.MANDT ORDER BY LIPS.ERDAT DESC) AS "_q4", LIPS.ERDAT AS "_o5"
+FROM QUERY_IT.LIPS LIPS
+WHERE LIPS.MATNR = ? AND LIPS.MANDT = ?
+) Q
+WHERE Q."_q4" <= ?
+ORDER BY Q."_o5" DESC`,
+    );
+    assert.throws(() => from(Mara).select((m) => ({ n: m.deliveries.limit(2).count() })), /call orderBy first/);
+  });
+
   it("单列键用 IN 且重复的键只查一次，键为 null 的父行得到空数组", async () => {
     const q = from(Lips).select((l) => ({ delivery: l.delivery, orders: l.salesData.list((v) => v.salesOrder) }));
     const driver = new FakeDriver((sql) =>

@@ -24,30 +24,43 @@ type Ordering<T> = (target: Ref<T>) => OrderItem | readonly OrderItem[];
  * 一对多关系：目标表里满足连接条件的那些行，来自 `@many` 字段。它不连接进主查询（那会让主查询的行重复），
  * 只能通过集合运算使用：`any`、`none` 渲染为 EXISTS；`count`、`sum`、`max`、`min`、`avg` 渲染为相关标量子查询；
  * `first(order)` 每组取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来；`list(...)` 给每个父行一个子行数组。
- * `where` 先筛选目标行，`orderBy` 决定 `list` 的子行顺序。
+ * `where` 先筛选目标行，`orderBy` 决定 `list` 与 `stringAgg` 的顺序，`limit` 限定 `list` 每个父行的子行数。
  */
 export class Many<T> {
   readonly #owner: RefOwner;
   readonly #target: () => Table<T>;
   readonly #condition: (target: Ref<T>) => Cond;
   readonly #order: Ordering<T> | undefined;
+  /** {@link list} 给每个父行最多取的子行数。 */
+  readonly #limit: number | undefined;
 
-  constructor(owner: RefOwner, target: () => Table<T>, condition: (target: Ref<T>) => Cond, order?: Ordering<T>) {
+  constructor(owner: RefOwner, target: () => Table<T>, condition: (target: Ref<T>) => Cond, order?: Ordering<T>, limit?: number) {
     this.#owner = owner;
     this.#target = target;
     this.#condition = condition;
     this.#order = order;
+    this.#limit = limit;
   }
 
   /** 只看满足 condition 的目标行，返回新的 Many。 */
   where(condition: (target: Ref<T>) => Cond): Many<T> {
     const before = this.#condition;
-    return new Many(this.#owner, this.#target, (t) => all(before(t), condition(t)), this.#order);
+    return new Many(this.#owner, this.#target, (t) => all(before(t), condition(t)), this.#order, this.#limit);
   }
 
   /** 子行按 order 排序，用于 {@link list}：`h.items.orderBy((i) => i.position).list(...)`。对 any、count 等没有影响。 */
   orderBy(order: Ordering<T>): Many<T> {
-    return new Many(this.#owner, this.#target, this.#condition, order);
+    return new Many(this.#owner, this.#target, this.#condition, order, this.#limit);
+  }
+
+  /**
+   * {@link list} 给每个父行最多取 rows 个子行，按 {@link orderBy} 的顺序取前面的，例如每个物料最近的 3 张交货单：
+   * `m.deliveries.orderBy((l) => l.createdOn.desc()).limit(3).list(...)`。批量查询用 ROW_NUMBER 按父键分区过滤。
+   */
+  limit(rows: number): Many<T> {
+    if (!Number.isInteger(rows) || rows < 1) throw new RangeError("limit needs a whole number of rows, at least 1");
+    if (this.#order === undefined) throw new Error("limit(...) keeps the first rows by orderBy(...); call orderBy first");
+    return new Many(this.#owner, this.#target, this.#condition, this.#order, rows);
   }
 
   /** 至少有一行（满足 condition）：`EXISTS (...)`。 */
@@ -142,12 +155,16 @@ export class Many<T> {
       return all();
     });
     const order = this.#order;
+    const limit = this.#limit;
     return new Children(outer, (batch) => {
       let scope = from(this.#target()).where((t) => {
         const { keys, filters } = this.#split(t, "list()");
         return all(...filters, match(keys, batch));
       });
       if (order !== undefined) scope = scope.orderBy((t) => orderItems(order(t)));
+      if (order !== undefined && limit !== undefined) {
+        scope = scope.qualify((t) => rowNumber().over((w) => w.partitionBy(...this.#split(t, "list()").keys).orderBy(...orderItems(order(t)))).le(limit));
+      }
       return scope.select((t) => {
         const row: Record<string, Expr<unknown> | Projection> = { value: projection(t) };
         this.#split(t, "list()").keys.forEach((k, i) => (row[`key${i}`] = k));

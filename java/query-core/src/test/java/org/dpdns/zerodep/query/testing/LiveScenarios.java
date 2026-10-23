@@ -435,6 +435,14 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 子列表可以限定每个父行取最新的几行() {
+        assertEquals(List.of("M1:[D5, D2]", "M2:[D3, D4]", "M3:[]", "M4:[]"),
+            db.list(from(Mara.class).orderBy(m -> m.material()).select(m -> row(MaterialDeliveries::new, m.material(),
+                    m.deliveries().orderBy(l -> l.createdOn().desc()).limit(2).list(l -> l.delivery()))))
+                .stream().map(r -> r.material() + ":" + r.deliveries()).toList());
+    }
+
+    @Test
     void 条件对象在实库上筛选且通配符按普通字符匹配() {
         assertEquals(List.of("D1", "D2", "D3", "D5"),
             db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(null, LocalDate.of(2026, 1, 1), null, "P", null))));

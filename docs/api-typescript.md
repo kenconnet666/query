@@ -221,7 +221,8 @@ ORDER BY MARA.MFRPN ASC
 | `stringAgg(f, sep)` | `Expr<string | null>` | 相关标量子查询拼接文本，顺序取 `orderBy(...)` |
 | `sum(f)`、`max(f)`、`min(f)`、`avg(f)` | 可空的值 | 相关标量子查询；没有行时为 null |
 | `where(cond)` | `Many` | 先筛选目标行，再用上面的操作 |
-| `orderBy(f)` | `Many` | 决定 `list` 的子行顺序 |
+| `orderBy(f)` | `Many` | 决定 `list`、`stringAgg` 的顺序 |
+| `limit(n)` | `Many` | `list` 每个父行只取按顺序的前 n 行（批量查询里用 ROW_NUMBER 按父键分区），须先 `orderBy` |
 | `first(order)` | 目标表的引用（列可为 null） | 每组按 `order` 取第一行 |
 | `list(projection)` | 子行数组 | 批量查询，见下 |
 
