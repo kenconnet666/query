@@ -130,6 +130,22 @@ class WriteTest {
     }
 
     @Test
+    void 插入或更新由方言写出且键必须是插入的列() {
+        assertThrows(UnsupportedOperationException.class, () -> Writes.upsertDoc(new Writes.DocRow("D1", "a", 1)).toSql(DIALECT),
+            "a dialect without an insert-or-update statement refuses");
+        record TitleOnly(String title) { }
+        assertThrows(IllegalArgumentException.class,
+            () -> insertInto(Writes.Doc.class).values(new TitleOnly("a")).onConflict().doNothing().toSql(DIALECT));
+    }
+
+    @Test
+    void 加锁读写在语句末尾() {
+        assertTrue(org.dpdns.zerodep.query.testing.Workflow.claimable().toSql(DIALECT).sql().endsWith("LIMIT 1\nFOR UPDATE SKIP LOCKED"),
+            org.dpdns.zerodep.query.testing.Workflow.claimable().toSql(DIALECT).sql());
+        assertTrue(from(Note.class).with(forUpdate()).select(n -> n.id()).toSql(DIALECT).sql().endsWith("\nFOR UPDATE"));
+    }
+
+    @Test
     void 空跑执行写语句时按批通知监听器且不检查期望的行数() {
         Database db = TestDatabase.dryRun(null);
         List<QueryListener.Event> events = db.capture(() -> {

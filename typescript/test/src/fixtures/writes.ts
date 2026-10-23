@@ -42,6 +42,22 @@ export function deleteDoc(row: InsertRow<Doc>) {
   return deleteFrom(Doc).byId(row);
 }
 
+/** 插入文档，主键已有时只更新标题。 */
+export function upsertDoc(row: InsertRow<Doc>) {
+  return insertInto(Doc)
+    .values(row)
+    .onConflict()
+    .update((d) => d.title);
+}
+
+/** 插入文档，主键已有时保留原来的行。 */
+export function insertDocIfAbsent(row: InsertRow<Doc>) {
+  return insertInto(Doc)
+    .values(row)
+    .onConflict((d) => d.id)
+    .doNothing();
+}
+
 /** 插入两行，第二行的标题为 NULL。 */
 export function insertNotes() {
   return insertInto(Note).values({ id: "N1", tenant: "T1", title: "first", qty: 1, status: "open" }, { id: "N2", tenant: "T1", title: null, qty: 2, status: "open" });

@@ -5,7 +5,8 @@ import { lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
 import { conditionsFor, renderNamed, type Query, type SourceFilter } from "../query/query.js";
-import { createRef, ownerOf, tableSource, type Ref } from "../query/source.js";
+import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
+import type { Clause, Lock, Upsert } from "../sql/dialect.js";
 
 /** 表实体里的列字段：去掉 `@one`、`@many` 关系字段。 */
 type Columns<T> = { [K in keyof T as T[K] extends Many<any> | One<any> ? never : K]: T[K] };
@@ -59,15 +60,51 @@ export class Insert<T> extends Write {
   readonly #rows: readonly object[];
   readonly #columns: readonly PropertyMeta[];
   readonly #source: Query<unknown> | undefined;
+  /** 插入或更新：冲突的键和冲突时更新的列（undefined 是插入的列里除了键以外的全部，空数组是什么也不做）。 */
+  readonly #conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined } | undefined;
 
   /** 由 {@link insertInto} 和各修改方法调用。 */
-  constructor(table: Table<T>, rows: readonly object[], columns: readonly PropertyMeta[], source: Query<unknown> | undefined) {
+  constructor(
+    table: Table<T>,
+    rows: readonly object[],
+    columns: readonly PropertyMeta[],
+    source: Query<unknown> | undefined,
+    conflict?: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined },
+  ) {
     super();
     tableSource(table);   // 校验它是带 @table 的表
     this.#table = table;
     this.#rows = rows;
     this.#columns = columns;
     this.#source = source;
+    this.#conflict = conflict;
+  }
+
+  /**
+   * 插入或更新：插入的行与已有的行在 keys 上冲突时改为更新，例如 `insertInto(Doc).values(row).onConflict((d) => d.code).update()`。
+   * HANA 写成 MERGE，PostgreSQL 写成 `ON CONFLICT (键)`（键要有主键或唯一约束），MySQL 写成 `ON DUPLICATE KEY UPDATE`
+   * （由表的主键和唯一索引判断冲突）。不写 keys 时按 `@id` 的列。键必须是插入的列。
+   */
+  onConflict(keys?: (t: Ref<T>) => Expr<unknown> | readonly Expr<unknown>[]): Conflict<T> {
+    if (keys !== undefined) return new Conflict(this, this.#names(keys(createRef(tableSource(this.#table))), "onConflict(...)"));
+    const ids = entityMeta(this.#table).writes.ids;
+    if (ids.length === 0) throw new Error(`${this.#table.name} has no @id; write onConflict((t) => [...])`);
+    return new Conflict(this, ids);
+  }
+
+  /** 带上插入或更新设置的副本；由 {@link Conflict} 调用。 */
+  withConflict(keys: readonly string[], updates: ((t: Ref<T>) => Expr<unknown> | readonly Expr<unknown>[]) | readonly string[] | undefined): Insert<T> {
+    if (this.#source !== undefined) throw new Error("onConflict(...) needs values(...), not from(query)");
+    const names = typeof updates === "function" ? this.#names(updates(createRef(tableSource(this.#table))), "update(...)") : updates;
+    return new Insert(this.#table, this.#rows, this.#columns, undefined, { keys, updates: names });
+  }
+
+  /** 表达式都是这张表的列，返回它们的字段名；what 用于报错。 */
+  #names(exprs: Expr<unknown> | readonly Expr<unknown>[], what: string): string[] {
+    return (Array.isArray(exprs) ? exprs : [exprs]).map((e) => {
+      if (!(e instanceof Column) || !(e.owner instanceof RefOwner) || e.owner.source.entity !== this.#table) throw new Error(`${what} takes columns of ${this.#table.name}`);
+      return e.column.name;
+    });
   }
 
   /** 追加要插入的行。 */
@@ -82,12 +119,13 @@ export class Insert<T> extends Write {
       const own = this.#columnsOf(row).map((c) => c.name).join(",");
       if (own !== names) throw new Error(`insertInto(...) rows must have the same fields; got ${names} and ${own}`);
     }
-    return new Insert(this.#table, all, columns, undefined);
+    return new Insert(this.#table, all, columns, undefined, this.#conflict);
   }
 
   /** INSERT ... SELECT：查询的每一列按名字对应表的同名列，例如 `select((s) => ({ delivery: s.delivery }))`。 */
   from(query: Query<unknown>): Insert<T> {
     if (this.#rows.length > 0) throw new Error("insertInto(...) already has values(...)");
+    if (this.#conflict !== undefined) throw new Error("onConflict(...) needs values(...), not from(query)");
     for (const label of query.labels) this.#column(label, "the query's column");
     return new Insert(this.#table, [], [], query);
   }
@@ -117,6 +155,10 @@ export class Insert<T> extends Write {
     }
     return this.#rows.map((row) => {
       const w = writer();
+      if (this.#conflict !== undefined) {
+        w.dialect.upsert(w, this.#upsert(w, row, this.#conflict));
+        return w.statement();
+      }
       this.#head(w, this.#columns);
       w.sql(" VALUES (");
       this.#columns.forEach((c, i) => {
@@ -126,6 +168,23 @@ export class Insert<T> extends Write {
       w.sql(")");
       return w.statement();
     });
+  }
+
+  /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列。 */
+  #upsert(w: SqlWriter, row: object, conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined }): Upsert {
+    const names = this.#columns.map((c) => c.name);
+    for (const k of conflict.keys) if (!names.includes(k)) throw new Error(`onConflict(...) key '${k}' must be one of the inserted columns ${names.join(", ")}`);
+    const updates = conflict.updates ?? names.filter((n) => !conflict.keys.includes(n));
+    const meta = entityMeta(this.#table);
+    const name = (field: string) => columnName(meta.property(field)!, w.naming);
+    return {
+      table: { render: (x: SqlWriter) => tableName(x, meta) },
+      columns: this.#columns.map((c) => columnName(c, w.naming)),
+      values: this.#columns.map((c) => bindValue(c.type, (row as Record<string, unknown>)[c.name] ?? null)),
+      keys: conflict.keys.map(name),
+      updates: updates.map(name),
+      assignments: [],
+    };
   }
 
   /** 写出 `INSERT INTO 表 (列, ...)`。 */
@@ -155,6 +214,32 @@ export class Insert<T> extends Write {
     if (column === undefined) throw new Error(`${what} '${name}' has no column in ${this.#table.name}; known: ${meta.properties.map((p) => p.name).join(", ")}`);
     return column;
   }
+}
+
+/** {@link Insert.onConflict} 之后选择冲突时做什么。 */
+export class Conflict<T> {
+  constructor(
+    readonly insert: Insert<T>,
+    readonly keys: readonly string[],
+  ) {}
+
+  /** 冲突时把插入的列（键以外的全部）更新为插入的值；给出 columns 时只更新这些列，例如 `update((d) => [d.title])`。 */
+  update(columns?: (t: Ref<T>) => Expr<unknown> | readonly Expr<unknown>[]): Insert<T> {
+    return this.insert.withConflict(this.keys, columns);
+  }
+
+  /** 冲突时什么也不做，保留已有的行。 */
+  doNothing(): Insert<T> {
+    return this.insert.withConflict(this.keys, []);
+  }
+}
+
+/**
+ * 加锁读：`from(Task).where(...).with(forUpdate()).select(...)` 写成 `... FOR UPDATE`，读到的行在事务结束前别人改不了；
+ * 要在 `db.transaction(...)` 里执行。lock 指定遇到被锁住的行时不等待（"nowait"）或跳过（"skipLocked"，多个工作进程各自领取任务时用）。
+ */
+export function forUpdate(lock: Lock = "wait"): Clause {
+  return { position: "end", render: (w) => void w.dialect.lock(w, lock) };
 }
 
 /** UPDATE 与 DELETE 共用的部分：目标表的一次出现、WHERE 条件、skipEmpty、全局过滤器的开关，以及执行前的检查。不可变；不对外导出。 */

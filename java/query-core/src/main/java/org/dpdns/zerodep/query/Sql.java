@@ -1,6 +1,9 @@
 package org.dpdns.zerodep.query;
 
+import org.dpdns.zerodep.query.dialect.Clause;
+import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Aggregate;
@@ -123,6 +126,24 @@ public class Sql extends Rows {
 
     /** 从 table 删除：{@code deleteFrom(Lips.class).where(...)}，见 {@link Delete}。 */
     public static <T extends Entity> Delete<T> deleteFrom(Class<T> table) { return Delete.of(table); }
+
+    /**
+     * 加锁读：{@code from(Task.class).where(...).with(forUpdate()).select(...)} 写成 {@code ... FOR UPDATE}，读到的行在事务结束前
+     * 别人改不了；要在事务里执行（{@code db.transaction(...)} 或 Spring 的 {@code @Transactional}）。
+     */
+    public static Clause forUpdate() { return forUpdate(Lock.WAIT); }
+
+    /** 同上，lock 指定遇到被锁住的行时不等待（NOWAIT）或跳过（SKIP_LOCKED，多个工作进程各自领取任务时用）。 */
+    public static Clause forUpdate(Lock lock) {
+        Objects.requireNonNull(lock, "lock");
+        return new Clause() {
+            @Override public Position position() { return Position.END; }
+
+            @Override public Class<? extends Dialect> dialect() { return null; }
+
+            @Override public void render(SqlWriter w) { w.dialect().lock(w, lock); }
+        };
+    }
 
     // ---------- 投影 ----------
 

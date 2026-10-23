@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.dialect.Upsert;
 import org.dpdns.zerodep.query.type.CastType;
 
 import java.util.List;
@@ -34,6 +35,32 @@ public class MysqlDialect extends Dialect {
             if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
             w.sql(" SEPARATOR ").render(args.get(1)).sql(")");
         });
+    }
+
+    /**
+     * {@code INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE 列 = new.列}（8.0.19 起的行别名写法）；
+     * 冲突了什么也不做时把第一个键设为它自己，而不用会把别的错误也降为警告的 INSERT IGNORE。冲突由表的主键和唯一索引决定。
+     */
+    @Override public void upsert(SqlWriter w, Upsert u) {
+        w.sql("INSERT INTO ").render(u.table()).sql(" ");
+        columnList(w, u.columns());
+        w.sql(" VALUES (").join(u.values(), ", ").sql(")");
+        if (u.doNothing()) {
+            w.sql("\nON DUPLICATE KEY UPDATE ").identifier(u.keys().get(0)).sql(" = ").identifier(u.keys().get(0));
+            return;
+        }
+        w.sql(" AS ").identifier("new").sql("\nON DUPLICATE KEY UPDATE ");
+        boolean first = true;
+        for (String c : u.updates()) {
+            if (!first) w.sql(", ");
+            first = false;
+            w.identifier(c).sql(" = ").identifier("new").sql(".").identifier(c);
+        }
+        for (var a : u.assignments().entrySet()) {
+            if (!first) w.sql(", ");
+            first = false;
+            w.identifier(a.getKey()).sql(" = ").render(a.getValue());
+        }
     }
 
     /** 写出 {@code DATE_ADD(date, INTERVAL n UNIT)}。 */

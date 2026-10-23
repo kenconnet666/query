@@ -72,6 +72,42 @@ export interface Clause extends Renderable {
   readonly dialect?: DialectClass;
 }
 
+/** 加锁读遇到别的事务锁住的行时：等待、不等待立即报错（NOWAIT）、跳过（SKIP LOCKED，HANA 写作 IGNORE LOCKED）。 */
+export type Lock = "wait" | "nowait" | "skipLocked";
+
+/**
+ * 插入或更新一行（`insertInto(...).values(row).onConflict(...)`）交给方言写出的内容；各方言的写法差别很大：
+ * HANA 用 MERGE，PostgreSQL 用 ON CONFLICT，MySQL 用 ON DUPLICATE KEY UPDATE。列名都未加引号。
+ */
+export interface Upsert {
+  /** 写出 `schema.表名`。 */
+  readonly table: Renderable;
+  /** 插入的列名，与 values 一一对应。 */
+  readonly columns: readonly string[];
+  readonly values: readonly Renderable[];
+  /** 判断冲突的列名，都在 columns 里；MySQL 不用它，由表的主键和唯一索引决定。 */
+  readonly keys: readonly string[];
+  /** 冲突时更新为插入值的列名；与 assignments 都为空时冲突了什么也不做。 */
+  readonly updates: readonly string[];
+  /** 冲突时另外更新的列及其值（例如审计填充的修改时间）。 */
+  readonly assignments: readonly (readonly [string, Renderable])[];
+}
+
+/** 冲突时是否什么也不做。 */
+export function doNothing(u: Upsert): boolean {
+  return u.updates.length === 0 && u.assignments.length === 0;
+}
+
+/** 写出列名清单 `("A", "B")`。 */
+export function columnList(w: SqlWriter, columns: readonly string[]): void {
+  w.sql("(");
+  columns.forEach((c, i) => {
+    if (i > 0) w.sql(", ");
+    w.identifier(c);
+  });
+  w.sql(")");
+}
+
 /** 方言可以写成字面量的类型；其他类型即使写入器内联取值也仍作为参数。 */
 const LITERAL_KINDS = new Set(["text", "integer", "bigint", "double", "decimal", "boolean", "date", "timestamp"]);
 
@@ -140,6 +176,16 @@ export abstract class Dialect {
   }
 
   /** 写出分页子句 LIMIT / OFFSET；没有 limit 时 OFFSET 单独成行。 */
+  /** 写出加锁读的子句：`FOR UPDATE`，加上 `NOWAIT` 或 `SKIP LOCKED`。 */
+  lock(w: SqlWriter, lock: Lock): void {
+    w.sql(lock === "nowait" ? "FOR UPDATE NOWAIT" : lock === "skipLocked" ? "FOR UPDATE SKIP LOCKED" : "FOR UPDATE");
+  }
+
+  /** 写出插入或更新一行的语句；各方言的写法不同，没有实现的方言报错。 */
+  upsert(_w: SqlWriter, _upsert: Upsert): void {
+    throw new Error(`${this.name} has no insert-or-update statement; implement upsert in its dialect`);
+  }
+
   limit(w: SqlWriter, limit: number | undefined, offset: number | undefined): void {
     if (limit !== undefined) w.sql(`\nLIMIT ${limit}`);
     if (offset !== undefined && offset > 0) w.sql(`${limit === undefined ? "\nOFFSET " : " OFFSET "}${offset}`);

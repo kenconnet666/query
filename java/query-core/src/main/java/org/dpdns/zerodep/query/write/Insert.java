@@ -1,7 +1,12 @@
 package org.dpdns.zerodep.query.write;
 
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.dialect.Upsert;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.KeyList;
+import org.dpdns.zerodep.query.expr.Keys;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
@@ -9,6 +14,7 @@ import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
+import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.type.SqlType;
@@ -17,6 +23,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -45,18 +53,96 @@ public final class Insert<T extends Entity> implements Write {
     /** INSERT ... SELECT 的查询；用 {@link #values} 时为 null。 */
     private final Query<?> source;
 
+    /** 插入或更新：冲突的键和冲突时更新的列；只是插入时为 null。 */
+    private final OnConflict conflict;
+
+    /**
+     * 插入或更新的设置。
+     *
+     * @param keys    判断冲突的列的属性名
+     * @param updates 冲突时更新为插入值的列的属性名；null 表示插入的列里除了键以外的全部，空表示什么也不做
+     */
+    private record OnConflict(List<String> keys, List<String> updates) { }
+
     /** 由 {@link #into} 和各修改方法调用。 */
-    private Insert(EntityMeta<T> table, List<Object> rows, List<RowColumns.Column> columns, Query<?> source) {
+    private Insert(EntityMeta<T> table, List<Object> rows, List<RowColumns.Column> columns, Query<?> source, OnConflict conflict) {
         this.table = table;
         this.rows = rows;
         this.columns = columns;
         this.source = source;
+        this.conflict = conflict;
     }
 
     /** 插入 table；通常写作 {@code Sql.insertInto(Lips.class)}。 */
     public static <T extends Entity> Insert<T> into(Class<T> table) {
         Ref.table(table);   // 校验它是带 @Table 的表接口
-        return new Insert<>(Metadata.entity(table), List.of(), List.of(), null);
+        return new Insert<>(Metadata.entity(table), List.of(), List.of(), null, null);
+    }
+
+    /**
+     * 插入或更新：插入的行与已有的行在 keys 上冲突时改为更新，例如
+     * {@code insertInto(Doc.class).values(row).onConflict(d -> d.code()).update()}。HANA 写成 MERGE，PostgreSQL 写成
+     * {@code ON CONFLICT (键)}（键要有主键或唯一约束），MySQL 写成 {@code ON DUPLICATE KEY UPDATE}（由表的主键和唯一索引判断冲突）。
+     * 键必须是插入的列。
+     */
+    public Conflict<T> onConflict(Function<T, ? extends Keys> keys) {
+        T row = Ref.table(table.type()).param();
+        return new Conflict<>(this, names(KeyList.of(keys.apply(row)), "onConflict(...)"));
+    }
+
+    /** 同上，按 {@code @Id} 的列判断冲突。 */
+    public Conflict<T> onConflict() {
+        if (table.writes().ids().isEmpty()) throw new IllegalArgumentException(table.type().getSimpleName() + " has no @Id; write onConflict(t -> keys(...))");
+        return new Conflict<>(this, table.writes().ids());
+    }
+
+    /**
+     * {@link #onConflict} 之后选择冲突时做什么。
+     *
+     * @param <T> 被插入的表接口
+     */
+    public static final class Conflict<T extends Entity> {
+        /** 要改成插入或更新的语句。 */
+        private final Insert<T> insert;
+
+        /** 判断冲突的列的属性名。 */
+        private final List<String> keys;
+
+        /** 由 {@link Insert#onConflict} 创建。 */
+        private Conflict(Insert<T> insert, List<String> keys) {
+            this.insert = insert;
+            this.keys = List.copyOf(keys);
+        }
+
+        /** 冲突时把插入的列（键以外的全部）更新为插入的值。 */
+        public Insert<T> update() { return insert.withConflict(new OnConflict(keys, null)); }
+
+        /** 冲突时只更新这些列为插入的值，例如 {@code update(d -> keys(d.title(), d.status()))}。 */
+        public Insert<T> update(Function<T, ? extends Keys> columns) {
+            T row = Ref.table(insert.table.type()).param();
+            return insert.withConflict(new OnConflict(keys, insert.names(KeyList.of(columns.apply(row)), "update(...)")));
+        }
+
+        /** 冲突时什么也不做，保留已有的行。 */
+        public Insert<T> doNothing() { return insert.withConflict(new OnConflict(keys, List.of())); }
+    }
+
+    /** 带上插入或更新设置的副本。 */
+    private Insert<T> withConflict(OnConflict c) {
+        if (source != null) throw new IllegalStateException("onConflict(...) needs values(...), not from(query)");
+        return new Insert<>(table, rows, columns, source, c);
+    }
+
+    /** 表达式都是这张表的列，返回它们的属性名；what 用于报错。 */
+    private List<String> names(List<Expr<?>> exprs, String what) {
+        List<String> out = new ArrayList<>();
+        for (Expr<?> e : exprs) {
+            if (!(e instanceof Col<?> c) || c.ref().entity() != table.type()) {
+                throw new IllegalArgumentException(what + " takes columns of " + table.type().getSimpleName() + ", e.g. t -> keys(t.code())");
+            }
+            out.add(c.property().name());
+        }
+        return out;
     }
 
     /** 追加要插入的行。 */
@@ -72,14 +158,15 @@ public final class Insert<T extends Entity> implements Write {
         List<RowColumns.Column> written = columns.isEmpty()
             ? RowColumns.of(table, type).stream().filter(c -> !c.name().equals(table.writes().generated())).toList() : columns;
         if (written.isEmpty()) throw new IllegalArgumentException(type.getSimpleName() + " has no property to insert into " + table.type().getSimpleName());
-        return new Insert<>(table, List.copyOf(all), written, null);
+        return new Insert<>(table, List.copyOf(all), written, null, conflict);
     }
 
     /** INSERT ... SELECT：查询的每一列按列名对应表的同名列，例如 {@code cols(s.delivery(), s.material())}。 */
     public Insert<T> from(Query<?> query) {
         if (!rows.isEmpty()) throw new IllegalStateException("insertInto(...) already has values(...)");
+        if (conflict != null) throw new IllegalStateException("onConflict(...) needs values(...), not from(query)");
         for (String label : query.labels()) RowColumns.column(table, label, "the query's column");
-        return new Insert<>(table, List.of(), List.of(), query);
+        return new Insert<>(table, List.of(), List.of(), query, null);
     }
 
     /** 插入不检查影响的行数。 */
@@ -107,6 +194,11 @@ public final class Insert<T extends Entity> implements Write {
         List<PropertyMeta> written = columns.stream().map(RowColumns.Column::column).toList();
         for (Object row : rows) {
             SqlWriter w = writers.get();
+            if (conflict != null) {
+                w.dialect().upsert(w, upsert(w, written, row));
+                out.add(w.statement());
+                continue;
+            }
             head(w, written);
             w.sql(" VALUES (");
             for (int i = 0; i < columns.size(); i++) {
@@ -119,15 +211,42 @@ public final class Insert<T extends Entity> implements Write {
         return out;
     }
 
+    /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列。 */
+    private Upsert upsert(SqlWriter w, List<PropertyMeta> written, Object row) {
+        NamingStrategy naming = naming(w);
+        List<String> names = written.stream().map(PropertyMeta::name).toList();
+        for (String k : conflict.keys()) {
+            if (!names.contains(k)) throw new IllegalArgumentException("onConflict(...) key '" + k + "' must be one of the inserted columns " + names);
+        }
+        List<String> updates = conflict.updates() != null ? conflict.updates() : names.stream().filter(n -> !conflict.keys().contains(n)).toList();
+        List<Renderable> values = new ArrayList<>();
+        for (RowColumns.Column c : columns) values.add(value(c, row));
+        return new Upsert(this::tableName, written.stream().map(p -> p.columnName(naming)).toList(), values,
+            conflict.keys().stream().map(k -> table.property(k).columnName(naming)).toList(),
+            updates.stream().map(u -> table.property(u).columnName(naming)).toList(), Map.of());
+    }
+
+    /** 写出 {@code schema.表名}。 */
+    private void tableName(SqlWriter w) {
+        if (table.schema() != null) w.identifier(table.schema()).sql(".");
+        w.identifier(table.table());
+    }
+
+    /** 写入器上的命名策略。 */
+    private static NamingStrategy naming(SqlWriter w) {
+        Object naming = w.attribute(NamingStrategy.class);
+        return naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming;
+    }
+
     /** 写出 {@code INSERT INTO 表 (列, ...)}。 */
     private void head(SqlWriter w, List<PropertyMeta> written) {
         w.sql("INSERT INTO ");
-        if (table.schema() != null) w.identifier(table.schema()).sql(".");
-        w.identifier(table.table()).sql(" (");
-        Object naming = w.attribute(NamingStrategy.class);
+        tableName(w);
+        w.sql(" (");
+        NamingStrategy naming = naming(w);
         for (int i = 0; i < written.size(); i++) {
             if (i > 0) w.sql(", ");
-            w.identifier(written.get(i).columnName(naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming));
+            w.identifier(written.get(i).columnName(naming));
         }
         w.sql(")");
     }

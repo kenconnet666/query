@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, CONCAT, DAYS_BETWEEN, Dialect, FunctionDef, LOCATE, SECONDS_BETWEEN, STRING_AGG, type CastType, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, SECONDS_BETWEEN, STRING_AGG, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /**
  * 默认 SQL 模式下的 MySQL 8。标识符一律用反引号引用（RANK 等窗口函数名是保留字），
@@ -27,6 +27,26 @@ export class MysqlDialect extends Dialect {
       w.sql("GROUP_CONCAT(").render(args[0]!);
       if (args.length > 2) w.sql(" ORDER BY ").join(args.slice(2), ", ");
       w.sql(" SEPARATOR ").render(args[1]!).sql(")");
+    });
+  }
+
+  /**
+   * `INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE 列 = new.列`（8.0.19 起的行别名写法）；冲突了什么也不做时
+   * 把第一个键设为它自己，而不用会把别的错误也降为警告的 INSERT IGNORE。冲突由表的主键和唯一索引决定。
+   */
+  override upsert(w: SqlWriter, u: Upsert): void {
+    w.sql("INSERT INTO ").render(u.table).sql(" ");
+    columnList(w, u.columns);
+    w.sql(" VALUES (").join(u.values, ", ").sql(")");
+    if (doNothing(u)) {
+      w.sql("\nON DUPLICATE KEY UPDATE ").identifier(u.keys[0]!).sql(" = ").identifier(u.keys[0]!);
+      return;
+    }
+    w.sql(" AS ").identifier("new").sql("\nON DUPLICATE KEY UPDATE ");
+    const sets = [...u.updates.map((c) => (x: SqlWriter) => x.identifier(c).sql(" = ").identifier("new").sql(".").identifier(c)), ...u.assignments.map(([c, v]) => (x: SqlWriter) => x.identifier(c).sql(" = ").render(v))];
+    sets.forEach((set, i) => {
+      if (i > 0) w.sql(", ");
+      set(w);
     });
   }
 

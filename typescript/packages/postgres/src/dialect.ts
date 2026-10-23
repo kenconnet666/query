@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, DAY, DAYS_BETWEEN, Dialect, FunctionDef, LOCATE, MONTH, SECONDS_BETWEEN, YEAR, type CastType, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, columnList, DAY, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH, SECONDS_BETWEEN, YEAR, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /** PostgreSQL。未加引号的标识符折叠为小写；参数带编号（$1、$2……）。 */
 export class PostgresDialect extends Dialect {
@@ -23,6 +23,24 @@ export class PostgresDialect extends Dialect {
     this.register(ADD_YEARS, (w, args) => addInterval(w, args, "year"));
     this.register(DAYS_BETWEEN, (w, args) => void w.sql("(").render(args[1]!).sql(" - ").render(args[0]!).sql(")"));
     this.register(SECONDS_BETWEEN, (w, args) => void w.sql("CAST(TRUNC(EXTRACT(EPOCH FROM (").render(args[1]!).sql(" - ").render(args[0]!).sql("))) AS BIGINT)"));
+  }
+
+  /** `INSERT ... ON CONFLICT (键) DO UPDATE SET 列 = EXCLUDED.列` 或 `DO NOTHING`。 */
+  override upsert(w: SqlWriter, u: Upsert): void {
+    w.sql("INSERT INTO ").render(u.table).sql(" ");
+    columnList(w, u.columns);
+    w.sql(" VALUES (").join(u.values, ", ").sql(")\nON CONFLICT ");
+    columnList(w, u.keys);
+    if (doNothing(u)) {
+      w.sql(" DO NOTHING");
+      return;
+    }
+    w.sql(" DO UPDATE SET ");
+    const sets = [...u.updates.map((c) => (x: SqlWriter) => x.identifier(c).sql(" = EXCLUDED.").identifier(c)), ...u.assignments.map(([c, v]) => (x: SqlWriter) => x.identifier(c).sql(" = ").render(v))];
+    sets.forEach((set, i) => {
+      if (i > 0) w.sql(", ");
+      set(w);
+    });
   }
 
   /** 插入后用 RETURNING 取回生成的值。 */

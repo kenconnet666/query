@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.dialect.Upsert;
 import org.dpdns.zerodep.query.type.CastType;
 
 import java.sql.Connection;
@@ -59,6 +60,30 @@ public class PostgresDialect extends Dialect {
     /** 按列名请求生成键：驱动在语句后加上 {@code RETURNING "列"}。 */
     @Override public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {
         return connection.prepareStatement(sql, new String[] {column});
+    }
+
+    /** {@code INSERT ... ON CONFLICT (键) DO UPDATE SET 列 = EXCLUDED.列} 或 {@code DO NOTHING}。 */
+    @Override public void upsert(SqlWriter w, Upsert u) {
+        w.sql("INSERT INTO ").render(u.table()).sql(" ");
+        columnList(w, u.columns());
+        w.sql(" VALUES (").join(u.values(), ", ").sql(")\nON CONFLICT ");
+        columnList(w, u.keys());
+        if (u.doNothing()) {
+            w.sql(" DO NOTHING");
+            return;
+        }
+        w.sql(" DO UPDATE SET ");
+        boolean first = true;
+        for (String c : u.updates()) {
+            if (!first) w.sql(", ");
+            first = false;
+            w.identifier(c).sql(" = EXCLUDED.").identifier(c);
+        }
+        for (var a : u.assignments().entrySet()) {
+            if (!first) w.sql(", ");
+            first = false;
+            w.identifier(a.getKey()).sql(" = ").render(a.getValue());
+        }
     }
 
     /** 方言名，用于异常信息和监听事件。 */

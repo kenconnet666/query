@@ -47,7 +47,17 @@ export {
 export { identifier, SqlCond, SqlExpr, type SqlVariant, type VariantTag } from "./sql/template.js";
 export { SqlTable, sqlTable } from "./query/sql-table.js";
 export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./sql/writer.js";
-export { Dialect, FunctionDef, type Clause, type DialectClass, type FunctionRenderer } from "./sql/dialect.js";
+export {
+  Dialect,
+  FunctionDef,
+  type Clause,
+  type DialectClass,
+  type FunctionRenderer,
+  columnList,
+  doNothing,
+  type Lock,
+  type Upsert,
+} from "./sql/dialect.js";
 export {
   Aggregate,
   all,
@@ -173,4 +183,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
-export { Delete, deleteFrom, Insert, insertInto, update, Update, Write, type Assignments, type InsertRow } from "./write/write.js";
+export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, update, Update, Write, type Assignments, type InsertRow } from "./write/write.js";

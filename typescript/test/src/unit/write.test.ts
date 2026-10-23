@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deleteFrom, dryRunDriver, filter, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
-import { FakeDriver, TestDatabase } from "../fixtures/support.js";
-import { closeOpenNote, copyNote, deleteClosed, deleteDoc, Doc, insertNotes, Note, renameDoc, Seq, Tenanted } from "../fixtures/writes.js";
+import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
+import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
+import { claimable } from "../fixtures/workflow.js";
+import { closeOpenNote, copyNote, deleteClosed, deleteDoc, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, upsertDoc } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
@@ -89,6 +90,22 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
     const dry = new TestDatabase({}, dryRunDriver());
     assert.deepEqual(await dry.insertKeys(insertInto(Seq).values({ name: "a" })), [null]);
     await assert.rejects(dry.insertKeys(insertNotes()), /has no @generated column/);
+  });
+
+  it("插入或更新由方言写出，键必须是插入的列", () => {
+    assert.throws(() => db.render(upsertDoc({ id: "D1", title: "a", version: 1 })), /has no insert-or-update statement/);
+    assert.throws(() => db.render(insertInto(Doc).values({ title: "a" }).onConflict().doNothing()), /must be one of the inserted columns/);
+  });
+
+  it("加锁读写在语句末尾", () => {
+    assert.ok(claimable().toSql(new TestDialect()).sql.endsWith("LIMIT 1\nFOR UPDATE SKIP LOCKED"));
+    assert.ok(
+      from(Note)
+        .with(forUpdate())
+        .select((n) => n.id)
+        .toSql(new TestDialect())
+        .sql.endsWith("\nFOR UPDATE"),
+    );
   });
 
   it("执行时影响的行数与期望不符则报错，空跑不检查", async () => {

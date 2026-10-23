@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.Page;
@@ -49,6 +50,7 @@ import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.countDistinct;
 import static org.dpdns.zerodep.query.Sql.cte;
 import static org.dpdns.zerodep.query.Sql.deleteFrom;
+import static org.dpdns.zerodep.query.Sql.forUpdate;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
 import static org.dpdns.zerodep.query.Sql.left;
@@ -138,7 +140,7 @@ public abstract class LiveScenarios {
             insertRow("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
         workflow(sql);
         sql.add(table("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), q("QTY") + " INTEGER", c("STATUS", 10)));
-        sql.add(table("W_DOC", c("ID", 10), c("TITLE", 40), q("VERSION") + " INTEGER"));
+        sql.add(table("W_DOC", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("VERSION") + " INTEGER"));
         sql.add(table("W_SEQ", q("ID") + " " + identity(), c("NAME", 20)));
         live.execute(sql);
         db = database(live.connections(), c -> c.filter(Client.class, r -> r.client().eq("100")));
@@ -664,6 +666,24 @@ public abstract class LiveScenarios {
         assertEquals(keys.get(0) + 1, keys.get(1));
         assertEquals(List.of(keys.get(0) + ":a", keys.get(1) + ":b"), db.list(from(Writes.Seq.class).orderBy(s -> s.id())
             .select(s -> cols(s.id(), s.name()))).stream().map(r -> r.get("id") + ":" + r.get("name")).toList());
+    }
+
+    @Test
+    void 插入或更新在冲突时更新指定的列或保留原来的行() {
+        db.execute(deleteFrom(Writes.Doc.class).all());
+        db.execute(Writes.upsertDoc(new Writes.DocRow("D1", "a", 1)));
+        db.execute(Writes.upsertDoc(new Writes.DocRow("D1", "b", 9)));
+        db.execute(Writes.insertDocIfAbsent(new Writes.DocRow("D1", "c", 5)));
+        db.execute(Writes.insertDocIfAbsent(new Writes.DocRow("D2", "d", 1)));
+        assertEquals(List.of("D1:b:1", "D2:d:1"), db.list(from(Writes.Doc.class).orderBy(d -> d.id()).select(d -> cols(d.id(), d.title(), d.version())))
+            .stream().map(r -> r.get("id") + ":" + r.get("title") + ":" + r.get("version")).toList());
+    }
+
+    @Test
+    void 在事务里加锁领取最早的待认领任务() {
+        assertEquals(List.of("T1"), db.transaction(() -> db.list(Workflow.claimable())));
+        assertEquals(List.of("T1", "T3"), db.transaction(() -> db.list(from(Workflow.Task.class).where(t -> t.assignee().isNull())
+            .orderBy(t -> t.id()).with(forUpdate(Lock.NOWAIT)).select(t -> t.id()))));
     }
 
     @Test

@@ -3,6 +3,7 @@ import {
   any,
   column,
   count,
+  forUpdate,
   from,
   integer,
   many,
@@ -131,6 +132,16 @@ export function todo(user: string, groups: readonly string[], search: TodoSearch
     .where(search)
     .orderBy((t) => [t.createTime.desc(), t.id])
     .select((t) => ({ id: t.id, name: t.name, assignee: t.assignee, process: t.definition.defKey, businessKey: t.instance.businessKey }));
+}
+
+/** 领取一个没有办理人的任务：最早创建的一个，锁住它，被别的事务锁住的跳过（多个工作进程同时领取时不会拿到同一个）。 */
+export function claimable() {
+  return from(Task)
+    .where((t) => t.assignee.isNull())
+    .orderBy((t) => [t.createTime, t.id])
+    .limit(1)
+    .with(forUpdate("skipLocked"))
+    .select((t) => t.id);
 }
 
 /** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */

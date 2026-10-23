@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Where;
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Col;
@@ -195,6 +196,16 @@ public final class Workflow {
             .where(search)
             .orderBy(t -> orders(t.createTime().desc(), t.id()))
             .select(t -> cols(t.id(), t.name(), t.assignee(), t.definition().defKey().as("process"), t.instance().businessKey()));
+    }
+
+    /** 领取一个没有办理人的任务：最早创建的一个，锁住它，被别的事务锁住的跳过（多个工作进程同时领取时不会拿到同一个）。 */
+    public static Query<String> claimable() {
+        return from(Task.class)
+            .where(t -> t.assignee().isNull())
+            .orderBy(t -> orders(t.createTime(), t.id()))
+            .limit(1)
+            .with(forUpdate(Lock.SKIP_LOCKED))
+            .select(t -> t.id());
     }
 
     /** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */

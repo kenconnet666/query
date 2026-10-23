@@ -80,6 +80,12 @@ public final class Writes {
     /** 按主键和版本删除文档。 */
     public static Delete<Doc> deleteDoc(DocRow row) { return deleteFrom(Doc.class).byId(row); }
 
+    /** 插入文档，主键已有时只更新标题。 */
+    public static Insert<Doc> upsertDoc(DocRow row) { return insertInto(Doc.class).values(row).onConflict().update(d -> d.title()); }
+
+    /** 插入文档，主键已有时保留原来的行。 */
+    public static Insert<Doc> insertDocIfAbsent(DocRow row) { return insertInto(Doc.class).values(row).onConflict(d -> d.id()).doNothing(); }
+
     /** 插入便签的一行：属性按名字对应 {@link Note} 的列。 */
     public record NoteRow(String id, String tenant, String title, Integer qty, String status) { }
 

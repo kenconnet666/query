@@ -1,7 +1,9 @@
 package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.dialect.Upsert;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
@@ -53,6 +55,55 @@ public class HanaDialect extends Dialect {
 
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "SAP HANA"; }
+
+    /**
+     * {@code MERGE INTO 表 AS T USING (SELECT ? AS 列, ... FROM DUMMY) AS S ON (T.键 = S.键 ...)
+     * WHEN MATCHED THEN UPDATE SET T.列 = S.列 WHEN NOT MATCHED THEN INSERT (列) VALUES (S.列)}；
+     * 冲突了什么也不做时省略 WHEN MATCHED。值只在 USING 的 SELECT 里写一次。
+     */
+    @Override public void upsert(SqlWriter w, Upsert u) {
+        String target = w.aliasFor(new Object(), "target");
+        String source = w.aliasFor(new Object(), "source");
+        w.sql("MERGE INTO ").render(u.table()).sql(" AS ").alias(target).sql("\nUSING (SELECT ");
+        for (int i = 0; i < u.columns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.render(u.values().get(i)).sql(" AS ").identifier(u.columns().get(i));
+        }
+        w.sql(" FROM DUMMY) AS ").alias(source).sql(" ON (");
+        for (int i = 0; i < u.keys().size(); i++) {
+            if (i > 0) w.sql(" AND ");
+            w.alias(target).sql(".").identifier(u.keys().get(i)).sql(" = ").alias(source).sql(".").identifier(u.keys().get(i));
+        }
+        w.sql(")");
+        if (!u.doNothing()) {
+            w.sql("\nWHEN MATCHED THEN UPDATE SET ");
+            boolean first = true;
+            for (String c : u.updates()) {
+                if (!first) w.sql(", ");
+                first = false;
+                w.alias(target).sql(".").identifier(c).sql(" = ").alias(source).sql(".").identifier(c);
+            }
+            for (var a : u.assignments().entrySet()) {
+                if (!first) w.sql(", ");
+                first = false;
+                w.alias(target).sql(".").identifier(a.getKey()).sql(" = ").render(a.getValue());
+            }
+        }
+        w.sql("\nWHEN NOT MATCHED THEN INSERT ");
+        columnList(w, u.columns());
+        w.sql(" VALUES (");
+        for (int i = 0; i < u.columns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.alias(source).sql(".").identifier(u.columns().get(i));
+        }
+        w.sql(")");
+    }
+
+    /** HANA 跳过被锁住的行写作 {@code IGNORE LOCKED}。 */
+    @Override public void lock(SqlWriter w, Lock lock) {
+        if (lock == Lock.SKIP_LOCKED) w.sql("FOR UPDATE IGNORE LOCKED");
+        else super.lock(w, lock);
+    }
 
     /** ngdbc 不支持 JDBC 的生成键，所以按普通语句准备，插入后再查。 */
     @Override public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {

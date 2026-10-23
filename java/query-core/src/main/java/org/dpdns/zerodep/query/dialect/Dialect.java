@@ -182,6 +182,28 @@ public abstract class Dialect {
         return CursorCleanup.NONE;
     }
 
+    /** 写出加锁读的子句：{@code FOR UPDATE}，加上 {@code NOWAIT} 或 {@code SKIP LOCKED}。 */
+    public void lock(SqlWriter w, Lock lock) {
+        w.sql("FOR UPDATE");
+        if (lock == Lock.NOWAIT) w.sql(" NOWAIT");
+        else if (lock == Lock.SKIP_LOCKED) w.sql(" SKIP LOCKED");
+    }
+
+    /** 写出插入或更新一行的语句；各方言的写法不同，没有实现的方言报错。 */
+    public void upsert(SqlWriter w, Upsert upsert) {
+        throw new UnsupportedOperationException(name() + " has no insert-or-update statement; register one in its dialect");
+    }
+
+    /** 写出列名清单 {@code ("A", "B")}。 */
+    protected static void columnList(SqlWriter w, List<String> columns) {
+        w.sql("(");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.identifier(columns.get(i));
+        }
+        w.sql(")");
+    }
+
     /**
      * 为插入一行并取回生成值准备语句：默认请求 JDBC 的生成键（MySQL 取 AUTO_INCREMENT）。
      * column 是生成值的列名（未加引号）。
