@@ -43,13 +43,13 @@ class MysqlLiveTest extends LiveScenarios {
     @Test
     void MySQL日期函数与GROUP_CONCAT() {
         LocalDate day = LocalDate.of(2026, 1, 1);
-        int days = db.one(from(Lips.class).limit(1).selectValue(l -> dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(day))));
+        int days = db.one(from(Lips.class).limit(1).select(l -> dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(day))));
         assertEquals(31, days);
         List<String> rows = db.list(from(Lips.class)
             .with(maxExecutionTime(5000))
-            .groupBy(l -> l.col(Lips::getMaterial))
-            .orderBy(l -> l.col(Lips::getMaterial))
-            .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(groupConcat(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
+            .groupBy(l -> l.material())
+            .orderBy(l -> l.material())
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), groupConcat(l.delivery(), ",", l.delivery().asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
 
@@ -62,11 +62,11 @@ class MysqlLiveTest extends LiveScenarios {
     @Test
     void GREATEST与LEAST遇到NULL时返回NULL() {
         List<String> rows = db.list(from(Lips.class)
-            .orderBy(l -> l.col(Lips::getDelivery))
-            .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
-                + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
+            .orderBy(l -> l.delivery())
+            .select(l -> row((d, high, low) -> d + ":" + plain(high) + ":" + plain(low),
+                l.delivery(), greatest(l.quantity(), val(new BigDecimal("4"))), least(l.quantity(), val(new BigDecimal("4"))))));
         assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
-        assertNull(db.one(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("D1"))
-            .selectValue(l -> greatest(l.col(Lips::getQuantity), nullOf(BigDecimal.class)))));
+        assertNull(db.one(from(Lips.class).where(l -> l.delivery().eq("D1"))
+            .select(l -> greatest(l.quantity(), nullOf(BigDecimal.class)))));
     }
 }

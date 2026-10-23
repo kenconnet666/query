@@ -9,12 +9,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Meta-annotation for composed type annotations, so a mounted type reads as one word on the field:
+ * Meta-annotation for composed type annotations, so a mounted type reads as one word on the column:
  * <pre>{@code
- * @Retention(RUNTIME) @Target(FIELD) @ConvertWith(SapDateConverter.class)
+ * @Retention(RUNTIME) @Target(METHOD) @ConvertWith(SapDateConverter.class)
  * public @interface SapDate { }
  *
- * @Column("ERDAT") @SapDate private LocalDate createdOn;
+ * @Column("ERDAT") @SapDate Col<LocalDate> createdOn();
  * }</pre>
  */
 @Documented

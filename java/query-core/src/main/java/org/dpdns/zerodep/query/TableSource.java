@@ -6,15 +6,17 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 
-/** A table entity, described by {@code @Table}. */
+/** A table interface, described by {@code @Table}. */
 final class TableSource<E> implements Source<E> {
     private final EntityMeta<E> meta;
 
-    TableSource(Class<E> entity) {
-        this.meta = Metadata.entity(entity);
-        if (!meta.isTable()) {
-            throw new IllegalArgumentException(entity.getSimpleName() + " has no @Table; read it from a CTE or a derived query instead");
+    TableSource(Class<E> table) {
+        if (!table.isInterface()) {
+            throw new IllegalArgumentException(table.getSimpleName() + " is a class; a table is an interface extending Entity, "
+                + "and rows of a class are read from a CTE, a derived table or values(...)");
         }
+        this.meta = Metadata.entity(table);
+        if (!meta.isTable()) throw new IllegalArgumentException(table.getSimpleName() + " has no @Table");
     }
 
     @Override public Class<E> entity() { return meta.type(); }

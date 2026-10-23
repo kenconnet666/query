@@ -10,23 +10,38 @@ import org.dpdns.zerodep.query.meta.PropertyMeta;
 import java.util.List;
 
 /**
- * One occurrence of a source in a query, handed to lambdas as a typed parameter. The getter must
- * belong to E or to a type E extends or implements, so a column of a table outside the scope does
- * not compile. Aliases are assigned per statement when rendering.
+ * One occurrence of a source in a query. A table occurrence reaches lambdas as its table interface;
+ * a CTE, derived table or constant rows reach them as this Ref, read with {@code r.col(Row::total)}.
+ * Aliases are assigned per statement when rendering.
  */
 public final class Ref<E> {
     private final Source<E> source;
+    private final Object param;
 
-    Ref(Source<E> source) { this.source = source; }
+    private Ref(Source<E> source) {
+        this.source = source;
+        this.param = source.entity().isInterface() ? TableProxy.create(this) : this;
+    }
 
-    /** A column of this source; {@code ? super E} admits getters declared on base classes and interfaces. */
-    public <T> Expr<T> col(Getter<? super E, T> getter) {
-        return new Nodes.Column<>(this, Metadata.property(source.entity(), getter));
+    static <T extends Entity> Ref<T> table(Class<T> table) { return new Ref<>(new TableSource<>(table)); }
+
+    static <E> Ref<E> of(Source<E> source) { return new Ref<>(source); }
+
+    /** A column of a CTE, derived table or constant rows; {@code ? super E} admits getters of base classes and interfaces. */
+    public <T> Col<T> col(Getter<? super E, T> getter) {
+        if (source.entity().isInterface()) {
+            throw new IllegalArgumentException("Columns of " + source.entity().getSimpleName() + " are its methods, e.g. t.material()");
+        }
+        return new Col<>(this, Metadata.property(source.entity(), getter));
     }
 
     public Class<E> entity() { return source.entity(); }
 
     public Source<E> source() { return source; }
+
+    /** What lambdas receive: the table interface for a table, this Ref otherwise. */
+    @SuppressWarnings("unchecked")
+    <P> P param() { return (P) param; }
 
     String alias(SqlWriter w) { return w.aliasFor(this, source.preferredAlias()); }
 

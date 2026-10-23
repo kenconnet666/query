@@ -110,7 +110,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
   - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`，不入库），按需读进环境变量，不打印也不落盘：
 
     ```powershell
-    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL address; changes after a WSL restart
+    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL 的地址，WSL 重启后会变
     $mysql = (Get-Content infra/mysql/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
     $pg = (Get-Content infra/postgres/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
     $hana = (Get-Content infra/hana/.env | ConvertFrom-StringData).QUERY_HANA_PASSWORD
@@ -182,5 +182,6 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
 - **提交与推送**：完成的工作直接提交并推送，不必询问：先建分支，再推这个分支。force-push、改写历史、推 `master`、合并 PR 都需要用户明确要求。
 - **公开仓库的限制**：仓库是公开的，绝不写入凭据，也不写入实际使用方的信息（公司、项目名、内部路径、业务常量）。使用方的说明只保存在本机 Claude 项目记忆中，文档里统称"内部 ERP 分析大屏"。
 - **提交格式**：commit message 用中文，结尾加 `Co-Authored-By` trailer；文档用中文。
-- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为；代码标识符、注释和日志仍用英文。
+- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为。
+- **注释**：每个类型和方法都写中文注释（Java 用 Javadoc，TS 用 TSDoc），说明用途和用法；代码标识符、日志和异常信息仍用英文。
 - **行尾**：由 `.gitattributes` 统一为 LF，`*.cmd` 为 CRLF。

@@ -3,9 +3,7 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.Cond;
 import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Fn;
 import org.dpdns.zerodep.query.Query;
-import org.dpdns.zerodep.query.Ref;
 import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
@@ -24,90 +22,87 @@ import java.time.LocalDate;
 
 import static org.dpdns.zerodep.query.Sql.*;
 
-/** Queries written the way users write them; rendered by the unit tests and executed by the live tests. */
+/** 按使用方的写法写成的查询：单元测试渲染它们，实库测试执行它们。 */
 public final class Scenarios {
     private Scenarios() { }
 
-    // ---------- business definitions are plain methods ----------
+    // ---------- 业务口径就是普通方法 ----------
 
-    public static Cond activeMaterial(Ref<Mara> ma) { return ma.col(Mara::getMaterialType).eq("ZMAT"); }
+    /** 有效物料：物料类型为 ZMAT。 */
+    public static Cond activeMaterial(Mara ma) { return ma.materialType().eq("ZMAT"); }
 
+    /** 零件号去掉首尾空格后与原值不同时取去空格的值。 */
     public static Expr<String> normalizedPart(Expr<String> part) {
         return caseWhen(part.ne(trim(part)), trim(part)).otherwise(part);
     }
 
-    /** CTE, EXISTS, LEFT JOIN, optional filter and GROUP BY, read by a functional projection; labels match the TypeScript keys. */
+    /** CTE、EXISTS、LEFT JOIN、可选条件和分组，按位置投影；列名与 TypeScript 的键一致。 */
     public static Query<Delivery> deliveries(LocalDate start, LocalDate end, String maker) {
         Cte<MaterialScope> scope = cte("material_scope", from(Mara.class)
-            .where(ma -> all(activeMaterial(ma), ma.col(Mara::getManufacturer).eqIfPresent(maker)))
+            .skipEmpty()
+            .where(ma -> all(activeMaterial(ma), ma.manufacturer().eq(maker)))
             .distinct()
-            .selectAs(MaterialScope.class, ma -> keys(
-                ma.col(Mara::getClient),
-                ma.col(Mara::getMaterial),
-                normalizedPart(ma.col(Mara::getPartNumber)).as(MaterialScope::partNumber))));
+            .select(ma -> cols(ma.client(), ma.material(), normalizedPart(ma.partNumber()).as("partNumber")))
+            .into(MaterialScope.class));
         return from(scope)
-            .join(Lips.class, (ms, l) -> l.col(Lips::getClient).eq(ms, MaterialScope::client)
-                .and(l.col(Lips::getMaterial).eq(ms, MaterialScope::material)))
-            .leftJoin(Makt.class, (ms, l, mk) -> mk.col(Makt::getMaterial).eq(ms, MaterialScope::material)
-                .and(mk.col(Makt::getLanguage).eq("1")))
+            .join(Lips.class, (ms, l) -> l.client().eq(ms.col(MaterialScope::client)).and(l.material().eq(ms.col(MaterialScope::material))))
+            .leftJoin(Makt.class, (ms, l, mk) -> mk.material().eq(ms.col(MaterialScope::material)).and(mk.language().eq("1")))
             .where((ms, l, mk) -> all(
-                l.col(Lips::getCreatedOn).between(start, end),
-                exists(from(Vbkd.class).where(v -> v.col(Vbkd::getSalesOrder).eq(l, Lips::getSalesOrder)))))
+                l.createdOn().between(start, end),
+                exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())))))
             .groupBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
             .orderBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
-            .select((r, ms, l, mk) -> new Delivery(
-                r.get(ms, MaterialScope::partNumber),
-                r.get(max(mk.col(Makt::getText).coalesce(ms.col(MaterialScope::partNumber))).as("name")),
-                r.get(sum(l.col(Lips::getQuantity)).as("quantity"))));
+            .select((ms, l, mk) -> row(Delivery::new,
+                ms.col(MaterialScope::partNumber),
+                max(mk.text().coalesce(ms.col(MaterialScope::partNumber))).as("name"),
+                sum(l.quantity()).as("quantity")));
     }
 
-    /** One template for every table with the PeriodStock shape; the quantity column differs, so it is a lambda. */
-    public static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, Fn.F1<Ref<E>, Expr<BigDecimal>> quantity, String year) {
+    /** 一个模板套用到所有 PeriodStock 形状的表；数量列由各表自己声明。 */
+    public static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, String year) {
         return from(table)
-            .where(h -> h.col(PeriodStock::getYear).eq(year))
-            .select((r, h) -> new StockRow(
-                r.get(h, PeriodStock::getMaterial), r.get(h, PeriodStock::getYear), r.get(h, PeriodStock::getPeriod),
-                r.get(quantity.apply(h).as("quantity"))));
+            .where(h -> h.year().eq(year))
+            .select(h -> row(StockRow::new, h.material(), h.year(), h.period(), h.quantity().coalesce(BigDecimal.ZERO).as("quantity")));
     }
 
+    /** 两张库存表的 UNION ALL。 */
     public static Query<StockRow> stock(String year) {
-        return stockArm(Mardh.class, h -> h.col(Mardh::getUnrestricted).coalesce(BigDecimal.ZERO), year)
-            .unionAll(stockArm(Mchbh.class, h -> h.col(Mchbh::getBatchUnrestricted).coalesce(BigDecimal.ZERO), year));
+        return stockArm(Mardh.class, year).unionAll(stockArm(Mchbh.class, year));
     }
 
+    /** ROW_NUMBER 的结果行。 */
     public record RankedDelivery(String material, String delivery, Long rank) { }
 
-    /** The latest delivery per material: ROW_NUMBER in a CTE, then rank = 1. */
+    /** 每个物料最新的交货：CTE 里算 ROW_NUMBER，再取 rank = 1。 */
     public static Query<String> latestDeliveries() {
-        Cte<RankedDelivery> ranked = cte("ranked_delivery", from(Lips.class).selectAs(RankedDelivery.class, l -> keys(
-            l.col(Lips::getMaterial),
-            l.col(Lips::getDelivery),
-            rowNumber().over(w -> w.partitionBy(l.col(Lips::getMaterial))
-                .orderBy(l.col(Lips::getCreatedOn).desc(), l.col(Lips::getDelivery).desc())).as(RankedDelivery::rank))));
+        Cte<RankedDelivery> ranked = cte("ranked_delivery", from(Lips.class).select(l -> cols(
+            l.material(),
+            l.delivery(),
+            rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc(), l.delivery().desc())).as("rank")))
+            .into(RankedDelivery.class));
         return from(ranked)
             .where(x -> x.col(RankedDelivery::rank).eq(1L))
             .orderBy(x -> x.col(RankedDelivery::material))
-            .selectValue(x -> x.col(RankedDelivery::delivery));
+            .select(x -> x.col(RankedDelivery::delivery));
     }
 
-    /** Same-named properties picked automatically, a renamed one through @MapFrom. */
+    /** 按名映射：改名的列写 as。 */
     public static Query<LineVO> lines() {
         return from(Lips.class)
-            .leftJoin(Makt.class, (l, mk) -> mk.col(Makt::getMaterial).eq(l, Lips::getMaterial).and(mk.col(Makt::getLanguage).eq("1")))
-            .orderBy((l, mk) -> l.col(Lips::getDelivery))
-            .selectAs(LineVO.class);
+            .leftJoin(Makt.class, (l, mk) -> mk.material().eq(l.material()).and(mk.language().eq("1")))
+            .orderBy((l, mk) -> l.delivery())
+            .select((l, mk) -> cols(l.delivery(), l.material().as("materialNo"), l.createdOn(), mk.text()))
+            .into(LineVO.class);
     }
 
-    /** A nested result and a Java-side computation in one projection lambda. */
+    /** 嵌套结果与 Java 端计算：row 的第一个参数也可以是普通 lambda。 */
     public static Query<PartTotal> partTotals() {
         return from(Lips.class)
-            .join(Mara.class, (l, ma) -> ma.col(Mara::getMaterial).eq(l, Lips::getMaterial))
-            .groupBy((l, ma) -> ma.col(Mara::getPartNumber))
-            .orderBy((l, ma) -> ma.col(Mara::getPartNumber))
-            .select((r, l, ma) -> {
-                BigDecimal quantity = r.get(sum(l.col(Lips::getQuantity)));
-                String part = r.get(ma, Mara::getPartNumber);
-                return new PartTotal(part, new PartTotal.Amount(quantity, quantity == null ? 0 : quantity.doubleValue() / 10_000));
-            });
+            .join(Mara.class, (l, ma) -> ma.material().eq(l.material()))
+            .groupBy((l, ma) -> ma.partNumber())
+            .orderBy((l, ma) -> ma.partNumber())
+            .select((l, ma) -> row((quantity, part) -> new PartTotal(part,
+                    new PartTotal.Amount(quantity, quantity == null ? 0 : quantity.doubleValue() / 10_000)),
+                sum(l.quantity()), ma.partNumber()));
     }
 }

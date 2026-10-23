@@ -85,6 +85,7 @@ public final class Hana extends Sql {
 
     /** {@code e LIKE_REGEXPR pattern}, HANA's regular-expression predicate. */
     public static Cond likeRegexpr(Expr<String> e, String pattern) {
+        if (skipped(pattern)) return Cond.EMPTY;
         Expr<String> p = val(pattern, SqlType.of(String.class));
         return new Cond() {
             @Override public void render(SqlWriter w) {

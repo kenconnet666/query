@@ -4,7 +4,7 @@ import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
-import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
+import org.dpdns.zerodep.query.testing.Erp.Client;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -64,7 +64,7 @@ public abstract class RenderSpec {
 
     @TestFactory
     Stream<DynamicTest> 渲染结果与金样例一致() {
-        Database filtered = database(NO_CONNECTIONS, c -> c.filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100")));
+        Database filtered = database(NO_CONNECTIONS, c -> c.filter(Client.class, r -> r.client().eq("100")));
         Database plain = database(NO_CONNECTIONS, null);
         boolean write = System.getenv("QUERY_SPEC_WRITE") != null;
         return cases().entrySet().stream().map(e -> DynamicTest.dynamicTest(dialect() + " 渲染 " + e.getKey() + " 与金样例一致", () -> {

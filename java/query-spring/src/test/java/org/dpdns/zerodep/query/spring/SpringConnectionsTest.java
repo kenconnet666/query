@@ -99,7 +99,7 @@ class SpringConnectionsTest {
         dataSource.borrowed.set(0);
     }
 
-    private Query<String> deliveries() { return from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)); }
+    private Query<String> deliveries() { return from(Lips.class).select(l -> l.delivery()); }
 
     @Test
     void 事务中的查询看得到同一事务尚未提交的写入并随事务回滚() {

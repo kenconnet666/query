@@ -8,7 +8,6 @@ import org.junit.jupiter.api.DisplayName;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -25,16 +24,16 @@ class MysqlSpecTest extends RenderSpec {
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of(
             "mysql-extremes", SpecCase.plain(() -> from(Lips.class)
-                .select((r, l) -> Arrays.asList(
-                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
-                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4"))))),
+                .select(l -> cols(
+                    greatest(l.quantity(), val(new BigDecimal("4"))).as("atLeast4"),
+                    least(l.quantity(), val(new BigDecimal("4"))).as("atMost4")))),
             "mysql-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(maxExecutionTime(2000))
-                .groupBy(l -> l.col(Lips::getMaterial))
-                .select((r, l) -> Arrays.asList(
-                    r.get(l, Lips::getMaterial),
-                    r.get(dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(LocalDate.of(2026, 1, 1))).as("days")),
-                    r.get(dateFormat(lit(LocalDate.of(2026, 1, 31)), "%Y%m%d").as("formatted")),
-                    r.get(groupConcat(l.col(Lips::getDelivery), "|", l.col(Lips::getDelivery).asc()).as("deliveries"))))));
+                .groupBy(l -> l.material())
+                .select(l -> cols(
+                    l.material(),
+                    dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(LocalDate.of(2026, 1, 1))).as("days"),
+                    dateFormat(lit(LocalDate.of(2026, 1, 31)), "%Y%m%d").as("formatted"),
+                    groupConcat(l.delivery(), "|", l.delivery().asc()).as("deliveries")))));
     }
 }

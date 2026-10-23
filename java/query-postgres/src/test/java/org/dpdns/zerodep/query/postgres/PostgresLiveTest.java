@@ -54,48 +54,48 @@ class PostgresLiveTest extends LiveScenarios {
             @Override public void release(Connection connection) throws SQLException { connection.close(); }
         }, null);
         for (String text : List.of("back\\slash", "\\'; SELECT 1; --", "ends with \\")) {
-            assertEquals(text, legacy.one(from(Lips.class).limit(1).selectValue(l -> lit(text))));
+            assertEquals(text, legacy.one(from(Lips.class).limit(1).select(l -> lit(text))));
         }
     }
 
     @Test
     void DISTINCT_ON取每个物料最新的交货() {
         List<String> rows = db.list(from(Lips.class)
-            .with(l -> distinctOn(l.col(Lips::getMaterial)))
-            .orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getCreatedOn).desc()))
-            .selectValue(l -> l.col(Lips::getDelivery)));
+            .with(l -> distinctOn(l.material()))
+            .orderBy(l -> orders(l.material(), l.createdOn().desc()))
+            .select(l -> l.delivery()));
         assertEquals(List.of("D5", "D3"), rows);
     }
 
     @Test
     void 聚合FILTER与ILIKE以及IS_DISTINCT_FROM() {
-        BigDecimal m1 = db.one(from(Lips.class).selectValue(l -> filter(sum(l.col(Lips::getQuantity)), l.col(Lips::getMaterial).eq("M1"))));
+        BigDecimal m1 = db.one(from(Lips.class).select(l -> filter(sum(l.quantity()), l.material().eq("M1"))));
         assertEquals(0, new BigDecimal("6").compareTo(m1));
-        long ea = db.one(from(Lips.class).where(l -> ilike(l.col(Lips::getUnit), "ea")).selectValue(l -> count()));
+        long ea = db.one(from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> count()));
         assertEquals(5, ea);
-        long notM1 = db.one(from(Lips.class).where(l -> pg(l.col(Lips::getMaterial)).isDistinctFrom("M1")).selectValue(l -> count()));
+        long notM1 = db.one(from(Lips.class).where(l -> pg(l.material()).isDistinctFrom("M1")).select(l -> count()));
         assertEquals(2, notM1);
     }
 
     @Test
     void 带排序的STRING_AGG() {
         List<String> rows = db.list(from(Lips.class)
-            .groupBy(l -> l.col(Lips::getMaterial))
-            .orderBy(l -> l.col(Lips::getMaterial))
-            .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc()))));
+            .groupBy(l -> l.material())
+            .orderBy(l -> l.material())
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), stringAgg(l.delivery(), ",", l.delivery().asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
 
     @Test
     void 分组集合与CUBE() {
         List<String> sets = db.list(from(Lips.class)
-            .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial)), keys()))
-            .orderBy(l -> orders(grouping(l.col(Lips::getMaterial)), l.col(Lips::getMaterial)))
-            .select((r, l) -> r.get(l, Lips::getMaterial) + "=" + r.get(sum(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString()));
+            .groupBy(l -> groupingSets(keys(l.material()), keys()))
+            .orderBy(l -> orders(grouping(l.material()), l.material()))
+            .select(l -> row((m, total) -> m + "=" + total.stripTrailingZeros().toPlainString(), l.material(), sum(l.quantity()))));
         assertEquals(List.of("M1=6", "M2=12", "null=18"), sets);
         List<Long> cells = db.list(from(Lips.class)
-            .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
-            .selectValue(l -> count()));
+            .groupBy(l -> cube(l.material(), l.unit()))
+            .select(l -> count()));
         assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
     }
 
@@ -114,8 +114,8 @@ class PostgresLiveTest extends LiveScenarios {
         // The fresh table scans in insertion order, D1, D2, D3 holding 3, 2 and 5: the third row divides by zero, which a
         // buffered read would hit before returning any row. No ORDER BY, since a sort evaluates every row up front.
         Query<BigDecimal> q = from(Lips.class)
-            .where(l -> l.col(Lips::getClient).eq("100"))
-            .selectValue(l -> divide(lit(BigDecimal.ONE), minus(l.col(Lips::getQuantity), lit(new BigDecimal("5")))));
+            .where(l -> l.client().eq("100"))
+            .select(l -> divide(lit(BigDecimal.ONE), minus(l.quantity(), lit(new BigDecimal("5")))));
         try (Stream<BigDecimal> rows = Postgres.database(tracking, c -> c.fetchSize(1)).stream(q)) {
             Iterator<BigDecimal> it = rows.iterator();
             assertEquals(0, new BigDecimal("-0.5").compareTo(it.next()));
@@ -136,7 +136,7 @@ class PostgresLiveTest extends LiveScenarios {
 
                 @Override public void release(Connection connection) { }
             };
-            try (Stream<String> rows = Postgres.database(shared, null).stream(from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)))) {
+            try (Stream<String> rows = Postgres.database(shared, null).stream(from(Lips.class).select(l -> l.delivery()))) {
                 assertEquals(6, rows.count());
             }
             assertFalse(outer.getAutoCommit());
@@ -161,11 +161,11 @@ class PostgresLiveTest extends LiveScenarios {
     @Test
     void GREATEST与LEAST跳过NULL() {
         List<String> rows = db.list(from(Lips.class)
-            .orderBy(l -> l.col(Lips::getDelivery))
-            .select((r, l) -> r.get(l, Lips::getDelivery) + ":" + plain(r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4")))))
-                + ":" + plain(r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4")))))));
+            .orderBy(l -> l.delivery())
+            .select(l -> row((d, high, low) -> d + ":" + plain(high) + ":" + plain(low),
+                l.delivery(), greatest(l.quantity(), val(new BigDecimal("4"))), least(l.quantity(), val(new BigDecimal("4"))))));
         assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
-        assertEquals("3", plain(db.one(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("D1"))
-            .selectValue(l -> greatest(l.col(Lips::getQuantity), nullOf(BigDecimal.class))))));
+        assertEquals("3", plain(db.one(from(Lips.class).where(l -> l.delivery().eq("D1"))
+            .select(l -> greatest(l.quantity(), nullOf(BigDecimal.class))))));
     }
 }

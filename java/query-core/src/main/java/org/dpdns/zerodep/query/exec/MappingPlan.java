@@ -219,7 +219,8 @@ public final class MappingPlan<R> {
 
     private static String normalize(String name) { return name.replace("_", "").toLowerCase(Locale.ROOT); }
 
-    static boolean isScalar(Class<?> type) {
+    /** 能直接作为单列结果的类型：字符串、数字、布尔、枚举、java.time 与字节数组。 */
+    public static boolean isScalar(Class<?> type) {
         Class<?> t = SqlType.box(type);
         return t == String.class || Number.class.isAssignableFrom(t) || t == Boolean.class || t == Character.class
             || t.isEnum() || t.getName().startsWith("java.time.") || t == byte[].class;

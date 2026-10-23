@@ -9,6 +9,6 @@ import java.lang.annotation.Target;
 /** The column reads an empty string as NULL, as SAP tables store "no value": {@code NULLIF(column, '')}. */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.FIELD)
+@Target(ElementType.METHOD)
 @ReadAs("NULLIF({0}, '')")
 public @interface BlankAsNull { }

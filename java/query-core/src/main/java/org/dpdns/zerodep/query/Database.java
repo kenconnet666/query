@@ -149,12 +149,12 @@ public abstract class Database {
         Config() { }
 
         /**
-         * A condition added to every table whose entity is {@code type} or a subtype: to WHERE for the
-         * FROM table, to ON for joined tables. A query skips all filters with {@code .unfiltered()}.
+         * 全局过滤器：表接口是 type（或继承了 type）的每张表都加上这个条件，FROM 的表加到 WHERE，JOIN 的表加到 ON。
+         * 例如 {@code filter(Client.class, c -> c.client().eq("100"))}；单个查询用 {@code .unfiltered()} 关闭。
          */
         @SuppressWarnings("unchecked")
-        public <E> Config filter(Class<E> type, Function<Ref<E>, Cond> condition) {
-            filters.add(new SourceFilters.Filter(type, ref -> condition.apply((Ref<E>) ref)));
+        public <T> Config filter(Class<T> type, Function<? super T, Cond> condition) {
+            filters.add(new SourceFilters.Filter(type, table -> condition.apply((T) table)));
             return this;
         }
 

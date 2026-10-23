@@ -9,6 +9,6 @@ import java.lang.annotation.Target;
 /** The column reads without surrounding spaces: {@code TRIM(column)}. */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.FIELD)
+@Target(ElementType.METHOD)
 @ReadAs("TRIM({0})")
 public @interface Trimmed { }

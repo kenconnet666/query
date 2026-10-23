@@ -5,8 +5,9 @@ import org.dpdns.zerodep.query.dialect.Clause;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Everything of one SELECT except its projection. Immutable: each change returns a copy. */
+/** 一条 SELECT 除投影以外的全部内容。不可变：每次修改都返回副本。 */
 final class SelectSpec {
+    /** FROM 与各种 JOIN，sql 是渲染时写出的关键字。 */
     enum JoinKind {
         FROM("FROM"), INNER("JOIN"), LEFT("LEFT JOIN"), CROSS("CROSS JOIN");
 
@@ -15,23 +16,27 @@ final class SelectSpec {
         JoinKind(String sql) { this.sql = sql; }
     }
 
+    /** 一个来源出现在 FROM 或 JOIN 里，on 是连接条件（FROM 和 CROSS JOIN 为空条件）。 */
     record Join(JoinKind kind, Ref<?> ref, Cond on) { }
 
     final List<Join> joins;
     final List<Cond> where;
     final List<Expr<?>> groupBy;
-    /** GROUP BY ROLLUP over all keys: subtotals per prefix of the keys and a grand total. */
+    /** GROUP BY ROLLUP：按分组键的每个前缀出小计，最后出总计。 */
     final boolean rollup;
     final List<Cond> having;
     final List<Order> orderBy;
     final boolean distinct;
     final Integer limit;
     final Integer offset;
+    /** 是否套用数据库实例的全局过滤器。 */
     final boolean filtered;
+    /** 是否开启 skipEmpty：与空值比较的条件直接省略。 */
+    final boolean skipEmpty;
     final List<Clause> clauses;
 
     private SelectSpec(List<Join> joins, List<Cond> where, List<Expr<?>> groupBy, boolean rollup, List<Cond> having, List<Order> orderBy,
-                       boolean distinct, Integer limit, Integer offset, boolean filtered, List<Clause> clauses) {
+                       boolean distinct, Integer limit, Integer offset, boolean filtered, boolean skipEmpty, List<Clause> clauses) {
         this.joins = joins;
         this.where = where;
         this.groupBy = groupBy;
@@ -42,72 +47,95 @@ final class SelectSpec {
         this.limit = limit;
         this.offset = offset;
         this.filtered = filtered;
+        this.skipEmpty = skipEmpty;
         this.clauses = clauses;
     }
 
-    /** A SELECT without a table, such as one row of constants. */
+    /** 没有来源的 SELECT，例如一行常量。 */
     static SelectSpec none() {
-        return new SelectSpec(List.of(), List.of(), List.of(), false, List.of(), List.of(), false, null, null, true, List.of());
+        return new SelectSpec(List.of(), List.of(), List.of(), false, List.of(), List.of(), false, null, null, true, false, List.of());
     }
 
+    /** 以一个来源开始的 SELECT。 */
     static SelectSpec from(Ref<?> ref) {
         return new SelectSpec(List.of(new Join(JoinKind.FROM, ref, Cond.EMPTY)), List.of(), List.of(), false, List.of(), List.of(),
-            false, null, null, true, List.of());
+            false, null, null, true, false, List.of());
     }
 
+    /** 追加一个连接；除 CROSS JOIN 外必须有条件。 */
     SelectSpec join(JoinKind kind, Ref<?> ref, Cond on) {
         if (kind != JoinKind.CROSS && (on == null || on.isEmpty())) {
             throw new IllegalArgumentException(kind.sql + " needs a condition; use crossJoin for a cartesian product");
         }
         return new SelectSpec(plus(joins, new Join(kind, ref, on == null ? Cond.EMPTY : on)), where, groupBy, rollup, having, orderBy,
-            distinct, limit, offset, filtered, clauses);
+            distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 追加 WHERE 条件，多次调用之间是 AND。 */
     SelectSpec where(Cond c) {
-        return new SelectSpec(joins, plus(where, nonNull(c)), groupBy, rollup, having, orderBy, distinct, limit, offset, filtered, clauses);
+        return new SelectSpec(joins, plus(where, nonNull(c)), groupBy, rollup, having, orderBy, distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 追加分组键。 */
     SelectSpec groupBy(List<? extends Expr<?>> keys) {
         if (rollup) throw new IllegalStateException("groupByRollup already lists every grouping key");
         List<Expr<?>> all = new ArrayList<>(groupBy);
         all.addAll(keys);
-        return new SelectSpec(joins, where, List.copyOf(all), false, having, orderBy, distinct, limit, offset, filtered, clauses);
+        return new SelectSpec(joins, where, List.copyOf(all), false, having, orderBy, distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 一次列出全部分组键的 ROLLUP，不能与 groupBy 混用。 */
     SelectSpec groupByRollup(List<? extends Expr<?>> keys) {
         if (!groupBy.isEmpty()) throw new IllegalStateException("groupByRollup must list every grouping key; it cannot follow groupBy");
         if (keys.isEmpty()) throw new IllegalArgumentException("groupByRollup needs at least one key");
-        return new SelectSpec(joins, where, List.copyOf(keys), true, having, orderBy, distinct, limit, offset, filtered, clauses);
+        return new SelectSpec(joins, where, List.copyOf(keys), true, having, orderBy, distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 追加 HAVING 条件，多次调用之间是 AND。 */
     SelectSpec having(Cond c) {
-        return new SelectSpec(joins, where, groupBy, rollup, plus(having, nonNull(c)), orderBy, distinct, limit, offset, filtered, clauses);
+        return new SelectSpec(joins, where, groupBy, rollup, plus(having, nonNull(c)), orderBy, distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 追加排序项。 */
     SelectSpec orderBy(List<Order> orders) {
         List<Order> all = new ArrayList<>(orderBy);
         all.addAll(orders);
-        return new SelectSpec(joins, where, groupBy, rollup, having, List.copyOf(all), distinct, limit, offset, filtered, clauses);
+        return new SelectSpec(joins, where, groupBy, rollup, having, List.copyOf(all), distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
-    SelectSpec distinct() { return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, true, limit, offset, filtered, clauses); }
+    /** SELECT DISTINCT。 */
+    SelectSpec distinct() {
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, true, limit, offset, filtered, skipEmpty, clauses);
+    }
 
+    /** 最多返回的行数。 */
     SelectSpec limit(int rows) {
         if (rows < 0) throw new IllegalArgumentException("limit must not be negative");
-        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, rows, offset, filtered, clauses);
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, rows, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 跳过的行数。 */
     SelectSpec offset(int rows) {
         if (rows < 0) throw new IllegalArgumentException("offset must not be negative");
-        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, rows, filtered, clauses);
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, rows, filtered, skipEmpty, clauses);
     }
 
-    SelectSpec unfiltered() { return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, offset, false, clauses); }
+    /** 本条 SELECT 不套用全局过滤器。 */
+    SelectSpec unfiltered() {
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, offset, false, skipEmpty, clauses);
+    }
 
+    /** 之后的 WHERE、HAVING、ON 里，与空值比较的条件直接省略。 */
+    SelectSpec skipEmpty() {
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, offset, filtered, true, clauses);
+    }
+
+    /** 追加方言子句，例如 HANA 的提示。 */
     SelectSpec clause(Clause c) {
-        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, offset, filtered, plus(clauses, c));
+        return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, distinct, limit, offset, filtered, skipEmpty, plus(clauses, c));
     }
 
+    /** 是否已有 ORDER BY、LIMIT 或 OFFSET；UNION 的分支不允许有。 */
     boolean hasOrderOrLimit() { return !orderBy.isEmpty() || limit != null || offset != null; }
 
     private static Cond nonNull(Cond c) {

@@ -74,6 +74,7 @@ public final class Postgres extends Sql {
     public static <T> Ops<T> pg(Expr<T> expr) { return new Ops<>(expr); }
 
     public static Cond ilike(Expr<String> e, String pattern) {
+        if (skipped(pattern)) return Cond.EMPTY;
         Expr<String> p = val(pattern, e.type());
         return cond(w -> w.render(e).sql(" ILIKE ").render(p));
     }

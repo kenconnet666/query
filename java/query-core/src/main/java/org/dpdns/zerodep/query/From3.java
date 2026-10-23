@@ -3,68 +3,69 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 
-/** A scope of 3 tables; each is a typed lambda parameter. */
-public final class From3<A, B, C> extends AbstractFrom<From3<A, B, C>> {
-    private final Ref<A> a;
-    private final Ref<B> b;
-    private final Ref<C> c;
+/** 3 个来源的作用域：每个来源是 lambda 的一个参数，表是表接口本身，CTE 等来源是 Ref。 */
+public final class From3<T1, T2, T3> extends AbstractFrom<From3<T1, T2, T3>> {
+    private final T1 p1;
+    private final T2 p2;
+    private final T3 p3;
 
-    From3(SelectSpec spec, Ref<A> a, Ref<B> b, Ref<C> c) {
+    From3(SelectSpec spec, T1 p1, T2 p2, T3 p3) {
         super(spec);
-        this.a = a;
-        this.b = b;
-        this.c = c;
+        this.p1 = p1;
+        this.p2 = p2;
+        this.p3 = p3;
     }
 
-    @Override From3<A, B, C> rebuild(SelectSpec spec) { return new From3<>(spec, a, b, c); }
+    @Override From3<T1, T2, T3> rebuild(SelectSpec spec) { return new From3<>(spec, p1, p2, p3); }
 
-    /** INNER JOIN; the new table is the next lambda parameter. */
-    public <D> From4<A, B, C, D> join(Class<D> entity, Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> on) { return join(SelectSpec.JoinKind.INNER, ref(entity), on); }
+    /** INNER JOIN 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
+    public <N extends Entity> From4<T1, T2, T3, N> join(Class<N> table, Fn.F4<T1, T2, T3, N, Cond> on) { return next(SelectSpec.JoinKind.INNER, Ref.table(table), on); }
 
-    public <D> From4<A, B, C, D> join(Source<D> source, Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> on) { return join(SelectSpec.JoinKind.INNER, ref(source), on); }
+    /** INNER JOIN 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
+    public <E> From4<T1, T2, T3, Ref<E>> join(Source<E> source, Fn.F4<T1, T2, T3, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.INNER, Ref.of(source), on); }
 
-    /** LEFT JOIN; the new table is the next lambda parameter. */
-    public <D> From4<A, B, C, D> leftJoin(Class<D> entity, Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> on) { return join(SelectSpec.JoinKind.LEFT, ref(entity), on); }
+    /** LEFT JOIN 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
+    public <N extends Entity> From4<T1, T2, T3, N> leftJoin(Class<N> table, Fn.F4<T1, T2, T3, N, Cond> on) { return next(SelectSpec.JoinKind.LEFT, Ref.table(table), on); }
 
-    public <D> From4<A, B, C, D> leftJoin(Source<D> source, Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> on) { return join(SelectSpec.JoinKind.LEFT, ref(source), on); }
+    /** LEFT JOIN 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
+    public <E> From4<T1, T2, T3, Ref<E>> leftJoin(Source<E> source, Fn.F4<T1, T2, T3, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.LEFT, Ref.of(source), on); }
 
-    public <D> From4<A, B, C, D> crossJoin(Class<D> entity) { return join(SelectSpec.JoinKind.CROSS, ref(entity), null); }
+    /** CROSS JOIN 一张表（笛卡尔积）。 */
+    public <N extends Entity> From4<T1, T2, T3, N> crossJoin(Class<N> table) { return next(SelectSpec.JoinKind.CROSS, Ref.table(table), null); }
 
-    public <D> From4<A, B, C, D> crossJoin(Source<D> source) { return join(SelectSpec.JoinKind.CROSS, ref(source), null); }
+    /** CROSS JOIN 一个 CTE、派生表或常量行，例如码表。 */
+    public <E> From4<T1, T2, T3, Ref<E>> crossJoin(Source<E> source) { return next(SelectSpec.JoinKind.CROSS, Ref.of(source), null); }
 
-    private <D> From4<A, B, C, D> join(SelectSpec.JoinKind kind, Ref<D> d, Fn.F4<Ref<A>, Ref<B>, Ref<C>, Ref<D>, Cond> on) {
-        Cond condition = on == null ? null : on.apply(a, b, c, d);
-        return new From4<>(spec.join(kind, d, condition), a, b, c, d);
+    private <N> From4<T1, T2, T3, N> next(SelectSpec.JoinKind kind, Ref<?> ref, Fn.F4<T1, T2, T3, N, Cond> on) {
+        N param = ref.param();
+        Cond condition = on == null ? null : condition(() -> on.apply(p1, p2, p3, param));
+        return new From4<>(spec.join(kind, ref, condition), p1, p2, p3, param);
     }
 
-    public From3<A, B, C> where(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Cond> cond) { return rebuild(spec.where(cond.apply(a, b, c))); }
+    /** WHERE 条件；多次调用之间是 AND，值为空而省略的条件（Cond.EMPTY）会被丢弃。 */
+    public From3<T1, T2, T3> where(Fn.F3<T1, T2, T3, Cond> cond) { return rebuild(spec.where(condition(() -> cond.apply(p1, p2, p3)))); }
 
-    /** One key, or several with keys(...). */
-    public From3<A, B, C> groupBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(a, b, c)))); }
+    /** 分组：一个键直接写表达式，多个键写 keys(a, b)。 */
+    public From3<T1, T2, T3> groupBy(Fn.F3<T1, T2, T3, ? extends Keys> keys) { return rebuild(spec.groupBy(KeyList.of(keys.apply(p1, p2, p3)))); }
 
-    /** GROUP BY ROLLUP over all keys: subtotals for every prefix of the keys, then a grand total. */
-    public From3<A, B, C> groupByRollup(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(a, b, c)))); }
+    /** GROUP BY ROLLUP：一次列出全部分组键，按每个前缀出小计，最后出总计。 */
+    public From3<T1, T2, T3> groupByRollup(Fn.F3<T1, T2, T3, ? extends Keys> keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(p1, p2, p3)))); }
 
-    public From3<A, B, C> having(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Cond> cond) { return rebuild(spec.having(cond.apply(a, b, c))); }
+    /** HAVING 条件；多次调用之间是 AND。 */
+    public From3<T1, T2, T3> having(Fn.F3<T1, T2, T3, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2, p3)))); }
 
-    /** One expression (ascending), asc()/desc(), or several with orders(...). */
-    public From3<A, B, C> orderBy(Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(a, b, c)))); }
+    /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
+    public From3<T1, T2, T3> orderBy(Fn.F3<T1, T2, T3, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(p1, p2, p3)))); }
 
-    /** A dialect clause that needs the scope, e.g. {@code Postgres.distinctOn(...)}. */
-    public From3<A, B, C> with(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Clause> clause) { return with(clause.apply(a, b, c)); }
-
-    /** Functional projection: build any result object from values read through the row. */
-    public <R> Query<R> select(Fn.F4<Row, Ref<A>, Ref<B>, Ref<C>, R> projection) { return Query.functional(spec, row -> projection.apply(row, a, b, c)); }
-
-    /** Named projection: every property of the shape from the same-named property of one source, or its @MapFrom. */
-    public <V> Query<V> selectAs(Class<V> shape) { return Query.auto(spec, shape); }
+    /** 需要用到作用域的方言子句，例如 {@code Postgres.distinctOn(...)}。 */
+    public From3<T1, T2, T3> with(Fn.F3<T1, T2, T3, Clause> clause) { return with(clause.apply(p1, p2, p3)); }
 
     /**
-     * Named projection with explicit columns, one or several with keys(...), each labeled with
-     * .as(Shape::getX) or by its property name; properties not listed come from same-named columns.
+     * 投影。lambda 返回：一个表达式（单列查询）；{@code cols(...)}（按列名，结果是 Map，可再 {@code into(X.class)}）；
+     * 或 {@code row(X::new, ...)}（按位置调用构造器，可以嵌套）。
      */
-    public <V> Query<V> selectAs(Class<V> shape, Fn.F3<Ref<A>, Ref<B>, Ref<C>, ? extends Keys> columns) { return Query.named(spec, shape, KeyList.of(columns.apply(a, b, c))); }
+    public <R> Query<R> select(Fn.F3<T1, T2, T3, ? extends Selection<R>> selection) { return Query.select(spec, selection.apply(p1, p2, p3)); }
 
-    /** One column: a scalar or IN subquery, or a list of single values. */
-    public <T> Query<T> selectValue(Fn.F3<Ref<A>, Ref<B>, Ref<C>, Expr<T>> value) { return Query.value(spec, value.apply(a, b, c)); }
+    /** 按同名属性从作用域里的表自动取列，映射到 VO；属性名对应不上或对应多张表时报错。 */
+    public <V> Query<V> selectAs(Class<V> type) { return Query.auto(spec, type); }
 }

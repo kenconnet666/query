@@ -6,7 +6,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Marks a class as a table entity. A class without it can still be a CTE row, a derived row or a result DTO. */
+/** Marks a table interface, one that extends {@code Entity}. Results, CTE rows and constant rows are plain classes without it. */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)

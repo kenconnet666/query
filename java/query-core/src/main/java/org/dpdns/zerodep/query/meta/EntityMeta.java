@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Table and properties of a class, scanned once (see {@link Metadata#entity(Class)}). */
+/** Table and columns of a table interface, or the properties of a result or row class (see {@link Metadata#entity(Class)}). */
 public final class EntityMeta<E> {
     private final Class<E> type;
     private final String table;
@@ -23,14 +23,14 @@ public final class EntityMeta<E> {
 
     public Class<E> type() { return type; }
 
-    /** Table name, or null for a class without {@code @Table}. */
+    /** Table name, or null for a type without {@code @Table}. */
     public String table() { return table; }
 
     public String schema() { return schema; }
 
     public boolean isTable() { return table != null; }
 
-    /** Properties in declaration order, base class first. */
+    /** Class properties in declaration order, base class first; table columns by name. */
     public List<PropertyMeta> properties() { return properties; }
 
     public PropertyMeta property(String name) {

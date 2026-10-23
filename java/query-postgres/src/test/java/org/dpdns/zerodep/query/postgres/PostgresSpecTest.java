@@ -7,7 +7,6 @@ import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
 import java.math.BigDecimal;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -24,28 +23,28 @@ class PostgresSpecTest extends RenderSpec {
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of(
             "postgres-extremes", SpecCase.plain(() -> from(Lips.class)
-                .select((r, l) -> Arrays.asList(
-                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
-                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4"))))),
+                .select(l -> cols(
+                    greatest(l.quantity(), val(new BigDecimal("4"))).as("atLeast4"),
+                    least(l.quantity(), val(new BigDecimal("4"))).as("atMost4")))),
             "postgres-grouping-sets", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys()))
-                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+                .groupBy(l -> groupingSets(keys(l.material(), l.unit()), keys(l.material()), keys()))
+                .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
             "postgres-cube", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
-                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+                .groupBy(l -> cube(l.material(), l.unit()))
+                .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
             "postgres-functions", SpecCase.plain(() -> from(Lips.class)
-                .with(l -> distinctOn(l.col(Lips::getMaterial)))
+                .with(l -> distinctOn(l.material()))
                 .where(l -> all(
-                    ilike(l.col(Lips::getUnit), "e%"),
-                    pg(l.col(Lips::getMaterial)).isDistinctFrom("M9"),
-                    pg(l.col(Lips::getUnit)).isNotDistinctFrom(l.col(Lips::getUnit))))
-                .orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getDelivery).desc()))
-                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getDelivery)))),
+                    ilike(l.unit(), "e%"),
+                    pg(l.material()).isDistinctFrom("M9"),
+                    pg(l.unit()).isNotDistinctFrom(l.unit())))
+                .orderBy(l -> orders(l.material(), l.delivery().desc()))
+                .select(l -> cols(l.material(), l.delivery()))),
             "postgres-aggregates", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> l.col(Lips::getMaterial))
-                .select((r, l) -> Arrays.asList(
-                    r.get(l, Lips::getMaterial),
-                    r.get(filter(sum(l.col(Lips::getQuantity)), l.col(Lips::getUnit).eq("EA")).as("each")),
-                    r.get(stringAgg(l.col(Lips::getDelivery), ";", l.col(Lips::getDelivery).desc()).as("deliveries"))))));
+                .groupBy(l -> l.material())
+                .select(l -> cols(
+                    l.material(),
+                    filter(sum(l.quantity()), l.unit().eq("EA")).as("each"),
+                    stringAgg(l.delivery(), ";", l.delivery().desc()).as("deliveries")))));
     }
 }

@@ -3,17 +3,16 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.Cte;
 import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Nest;
 import org.dpdns.zerodep.query.Page;
 import org.dpdns.zerodep.query.Query;
-import org.dpdns.zerodep.query.Ref;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.exec.QueryListener;
-import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
+import org.dpdns.zerodep.query.testing.Erp.Client;
 import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.Event;
+import org.dpdns.zerodep.query.testing.Erp.EventRow;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -31,7 +30,6 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -41,16 +39,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.dpdns.zerodep.query.Sql.caseWhen;
+import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.countDistinct;
 import static org.dpdns.zerodep.query.Sql.cte;
 import static org.dpdns.zerodep.query.Sql.from;
-import static org.dpdns.zerodep.query.Sql.keys;
 import static org.dpdns.zerodep.query.Sql.left;
 import static org.dpdns.zerodep.query.Sql.negate;
-import static org.dpdns.zerodep.query.Sql.orders;
 import static org.dpdns.zerodep.query.Sql.plus;
 import static org.dpdns.zerodep.query.Sql.replace;
+import static org.dpdns.zerodep.query.Sql.row;
 import static org.dpdns.zerodep.query.Sql.right;
 import static org.dpdns.zerodep.query.Sql.substring;
 import static org.dpdns.zerodep.query.Sql.sum;
@@ -125,7 +123,7 @@ public abstract class LiveScenarios {
             insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
             insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
         live.execute(sql);
-        db = database(live.connections(), c -> c.filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100")));
+        db = database(live.connections(), c -> c.filter(Client.class, r -> r.client().eq("100")));
     }
 
     private String t(String table) { return q("QUERY_IT") + "." + q(table); }
@@ -148,8 +146,8 @@ public abstract class LiveScenarios {
 
     @Test
     void 全局过滤器只读当前客户端且可以关闭() {
-        long filtered = db.one(from(Lips.class).selectValue(l -> count()));
-        long all = db.one(from(Lips.class).unfiltered().selectValue(l -> count()));
+        long filtered = db.one(from(Lips.class).select(l -> count()));
+        long all = db.one(from(Lips.class).unfiltered().select(l -> count()));
         assertEquals(5, filtered);
         assertEquals(6, all);
     }
@@ -168,7 +166,7 @@ public abstract class LiveScenarios {
     }
 
     @Test
-    void 自动投影按同名属性和MapFrom映射并转换SAP日期() {
+    void 按名映射并转换SAP日期() {
         List<LineVO> rows = db.list(Scenarios.lines());
         assertEquals(List.of("D1", "D2", "D3", "D4", "D5"), rows.stream().map(LineVO::getDelivery).toList());
         LineVO first = rows.get(0);
@@ -181,8 +179,8 @@ public abstract class LiveScenarios {
     @Test
     void SAP日期参数按转换器绑定() {
         assertEquals(List.of("D1"), db.list(from(Lips.class)
-            .where(l -> l.col(Lips::getCreatedOn).eq(LocalDate.of(2026, 1, 15)))
-            .selectValue(l -> l.col(Lips::getDelivery))));
+            .where(l -> l.createdOn().eq(LocalDate.of(2026, 1, 15)))
+            .select(l -> l.delivery())));
     }
 
     @Test
@@ -221,7 +219,7 @@ public abstract class LiveScenarios {
     void 结果缓存命中时不再查询数据库() {
         List<QueryListener.Event> events = new ArrayList<>();
         Database cached = database(live.connections(), c -> c.cache(QueryCache.inMemory()).listener(events::add));
-        Query<Long> q = from(Lips.class).selectValue(l -> count()).cached(Duration.ofMinutes(1));
+        Query<Long> q = from(Lips.class).select(l -> count()).cached(Duration.ofMinutes(1));
         long first = cached.one(q);
         long second = cached.one(q);
         assertEquals(6, first);
@@ -248,12 +246,11 @@ public abstract class LiveScenarios {
             }
         };
         Database counted = database(counting, null);
-        Query<String> deliveries = from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).selectValue(l -> l.col(Lips::getDelivery));
-        Query<String> failsOnD3 = from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).select((r, l) -> {
-            String d = r.get(l, Lips::getDelivery);
+        Query<String> deliveries = from(Lips.class).orderBy(l -> l.delivery()).select(l -> l.delivery());
+        Query<String> failsOnD3 = from(Lips.class).orderBy(l -> l.delivery()).select(l -> row(d -> {
             if ("D3".equals(d)) throw new IllegalStateException("mapping failed");
             return d;
-        });
+        }, l.delivery()));
         assertThrows(QueryExecutionException.class, () -> counted.sql("SELECT * FROM NO_SUCH_TABLE").list(String.class));
         assertThrows(IllegalStateException.class, () -> counted.list(failsOnD3));
         try (Stream<String> rows = counted.stream(deliveries)) {
@@ -279,8 +276,8 @@ public abstract class LiveScenarios {
 
     @Test
     void first取第一行或在没有行时为空() {
-        assertEquals(Optional.of("D1"), db.first(from(Lips.class).orderBy(l -> l.col(Lips::getDelivery)).selectValue(l -> l.col(Lips::getDelivery))));
-        assertEquals(Optional.empty(), db.first(from(Lips.class).where(l -> l.col(Lips::getDelivery).eq("none")).selectValue(l -> l.col(Lips::getDelivery))));
+        assertEquals(Optional.of("D1"), db.first(from(Lips.class).orderBy(l -> l.delivery()).select(l -> l.delivery())));
+        assertEquals(Optional.empty(), db.first(from(Lips.class).where(l -> l.delivery().eq("none")).select(l -> l.delivery())));
     }
 
     @Test
@@ -289,16 +286,16 @@ public abstract class LiveScenarios {
         try {
             for (String zone : List.of("Europe/Berlin", "Pacific/Apia", "Asia/Shanghai")) {
                 TimeZone.setDefault(TimeZone.getTimeZone(zone));
-                List<Event> events = db.list(from(Event.class).orderBy(e -> e.col(Event::getId)).selectAs(Event.class));
-                assertEquals(LocalDate.of(2024, 3, 31), events.get(0).getOnDay(), zone);
-                assertEquals(LocalDateTime.of(2024, 3, 31, 2, 30), events.get(0).getAtTime(), zone);
-                assertEquals(LocalDate.of(2011, 12, 30), events.get(1).getOnDay(), zone);
+                List<EventRow> events = db.list(from(Event.class).orderBy(e -> e.id()).selectAs(EventRow.class));
+                assertEquals(LocalDate.of(2024, 3, 31), events.get(0).onDay(), zone);
+                assertEquals(LocalDateTime.of(2024, 3, 31, 2, 30), events.get(0).atTime(), zone);
+                assertEquals(LocalDate.of(2011, 12, 30), events.get(1).onDay(), zone);
                 assertEquals(List.of(2), db.list(from(Event.class)
-                    .where(e -> e.col(Event::getOnDay).eq(LocalDate.of(2011, 12, 30)))
-                    .selectValue(e -> e.col(Event::getId))), zone);
+                    .where(e -> e.onDay().eq(LocalDate.of(2011, 12, 30)))
+                    .select(e -> e.id())), zone);
                 assertEquals(List.of(1), db.list(from(Event.class)
-                    .where(e -> e.col(Event::getAtTime).eq(LocalDateTime.of(2024, 3, 31, 2, 30)))
-                    .selectValue(e -> e.col(Event::getId))), zone);
+                    .where(e -> e.atTime().eq(LocalDateTime.of(2024, 3, 31, 2, 30)))
+                    .select(e -> e.id())), zone);
             }
         } finally {
             TimeZone.setDefault(original);
@@ -309,8 +306,8 @@ public abstract class LiveScenarios {
 
     public record SizeTotal(String bucket, BigDecimal total) { }
 
-    private static Expr<String> size(Ref<Lips> l) {
-        Expr<BigDecimal> quantity = l.col(Lips::getQuantity);
+    private static Expr<String> size(Lips l) {
+        Expr<BigDecimal> quantity = l.quantity();
         return caseWhen(quantity.le(new BigDecimal("2")), "small").when(quantity.le(new BigDecimal("5")), "medium").otherwise("large");
     }
 
@@ -319,79 +316,71 @@ public abstract class LiveScenarios {
         Cte<Size> sizes = cte("sizes", values(Size.class, List.of(new Size("small", 1), new Size("medium", 2), new Size("large", 3))));
         Cte<SizeTotal> totals = cte("totals", from(Lips.class)
             .groupBy(l -> size(l))
-            .selectAs(SizeTotal.class, l -> keys(size(l).as(SizeTotal::bucket), sum(l.col(Lips::getQuantity)).as(SizeTotal::total))));
+            .select(l -> cols(size(l).as("bucket"), sum(l.quantity()).as("total")))
+            .into(SizeTotal.class));
         List<String> rows = db.list(from(sizes)
-            .leftJoin(totals, (s, t) -> t.col(SizeTotal::bucket).eq(s, Size::name))
+            .leftJoin(totals, (s, t) -> t.col(SizeTotal::bucket).eq(s.col(Size::name)))
             .orderBy((s, t) -> s.col(Size::ord))
-            .select((r, s, t) -> r.get(s, Size::name) + "=" + r.get(t.col(SizeTotal::total).coalesce(BigDecimal.ZERO)).stripTrailingZeros().toPlainString()));
+            .select((s, t) -> row((name, total) -> name + "=" + total.stripTrailingZeros().toPlainString(),
+                s.col(Size::name), t.col(SizeTotal::total).coalesce(BigDecimal.ZERO))));
         assertEquals(List.of("small=3", "medium=8", "large=7"), rows);
     }
 
     @Test
     void 文本函数取负与多项求和以及按子串分组() {
         List<String> pieces = db.list(from(Lips.class)
-            .where(l -> l.col(Lips::getDelivery).eq("D1"))
-            .select((r, l) -> String.join("|",
-                r.get(left(l.col(Lips::getDelivery), 1)),
-                r.get(substring(l.col(Lips::getMaterial), 2)),
-                r.get(substring(l.col(Lips::getUnit), 1, 1)),
-                r.get(right(l.col(Lips::getSalesOrder), 1)),
-                r.get(replace(l.col(Lips::getUnit), "A", "-")),
-                r.get(negate(l.col(Lips::getQuantity))).stripTrailingZeros().toPlainString(),
-                r.get(plus(List.of(l.col(Lips::getQuantity), l.col(Lips::getQuantity)))).stripTrailingZeros().toPlainString())));
+            .where(l -> l.delivery().eq("D1"))
+            .select(l -> row((a, b, c, d, e, negative, doubled) -> String.join("|", a, b, c, d, e,
+                    negative.stripTrailingZeros().toPlainString(), doubled.stripTrailingZeros().toPlainString()),
+                left(l.delivery(), 1),
+                substring(l.material(), 2),
+                substring(l.unit(), 1, 1),
+                right(l.salesOrder(), 1),
+                replace(l.unit(), "A", "-"),
+                negate(l.quantity()),
+                plus(List.of(l.quantity(), l.quantity())))));
         assertEquals(List.of("D|1|E|1|E-|-3|6"), pieces);
         List<String> prefixes = db.list(from(Lips.class)
-            .groupBy(l -> substring(l.col(Lips::getDelivery), 1, 1))
-            .select((r, l) -> r.get(substring(l.col(Lips::getDelivery), 1, 1)) + "=" + r.get(count())));
+            .groupBy(l -> substring(l.delivery(), 1, 1))
+            .select(l -> row((prefix, lines) -> prefix + "=" + lines, substring(l.delivery(), 1, 1), count())));
         assertEquals(List.of("D=5"), prefixes);
     }
 
     @Test
     void 列转换按转换后的值读取且可与原值并存() {
         List<String> rows = db.list(from(MaraView.class)
-            .groupBy(m -> m.col(MaraView::getPartNumber))
-            .orderBy(m -> m.col(MaraView::getPartNumber))
-            .select((r, m) -> r.get(m, MaraView::getPartNumber) + ":" + r.get(countDistinct(m.col(MaraView::getMaker)))
-                + ":" + r.get(countDistinct(m.col(MaraView::getStoredMaker)))));
+            .groupBy(m -> m.partNumber())
+            .orderBy(m -> m.partNumber())
+            .select(m -> row((part, makers, stored) -> part + ":" + makers + ":" + stored,
+                m.partNumber(), countDistinct(m.maker()), countDistinct(m.storedMaker()))));
         assertEquals(List.of("P1:1:2", "P2:1:1", "P3:1:1"), rows);
-        assertEquals(List.of("M4"), db.list(from(MaraView.class).where(m -> m.col(MaraView::getMaker).isNull())
-            .selectValue(m -> m.col(MaraView::getMaterial))));
+        assertEquals(List.of("M4"), db.list(from(MaraView.class).where(m -> m.maker().isNull()).select(m -> m.material())));
     }
 
     @Test
     void ROLLUP给出小计与总计() {
         List<String> rows = db.list(SpecCases.rollup()).stream()
-            .map(r -> r.get(0) + "/" + r.get(1) + "/" + ((BigDecimal) r.get(2)).stripTrailingZeros().toPlainString() + "/" + r.get(3))
+            .map(r -> r.get("material") + "/" + r.get("unit") + "/" + plain(r.get("total")) + "/" + r.get("level"))
             .toList();
         assertEquals(List.of("M1/EA/6/0", "M1/null/6/0", "M2/EA/12/0", "M2/null/12/0", "null/null/18/1"), rows);
     }
 
     @Test
-    void 扁平结果按键分组为父项与子项() {
-        List<List<Object>> rows = db.list(from(Mara.class)
-            .leftJoin(Lips.class, (m, l) -> l.col(Lips::getMaterial).eq(m, Mara::getMaterial))
-            .orderBy((m, l) -> orders(m.col(Mara::getMaterial), l.col(Lips::getDelivery)))
-            .select((r, m, l) -> Arrays.asList(r.get(m, Mara::getMaterial), r.get(l, Lips::getDelivery))));
-        List<String> groups = Nest.into(rows, row -> row.get(0), row -> (String) row.get(1), (first, deliveries) -> first.get(0) + "=" + deliveries);
-        assertEquals(List.of("M1=[D1, D2, D5]", "M2=[D3, D4]", "M3=[]", "M4=[]"), groups);
-    }
-
-    @Test
     void 按LOCATE找到的位置截取文本() {
-        List<String> rows = db.list(SpecCases.textPositions()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2) + ":" + r.get(3)).toList();
+        List<String> rows = db.list(SpecCases.textPositions()).stream().map(r -> r.get("text") + ":" + r.get("comma") + ":" + r.get("head") + ":" + r.get("tail")).toList();
         assertEquals(List.of("05:0:05:null", "21,32:3:21:32"), rows);
     }
 
     @Test
     void 简单CASE与多参数COALESCE() {
-        List<String> rows = db.list(SpecCases.simpleCase()).stream().map(r -> r.get(0) + ":" + r.get(1) + ":" + r.get(2)).toList();
+        List<String> rows = db.list(SpecCases.simpleCase()).stream().map(r -> r.get("material") + ":" + r.get("kind") + ":" + r.get("maker")).toList();
         assertEquals(List.of("M1:material:MK1", "M2:material:MK2", "M3:other:MK1", "M4:other:P1"), rows);
     }
 
     @Test
     void FLOOR与CEIL() {
         List<String> rows = db.list(SpecCases.floorCeil()).stream()
-            .map(r -> r.get(0) + ":" + plain(r.get(1)) + ":" + plain(r.get(2))).toList();
+            .map(r -> r.get("delivery") + ":" + plain(r.get("down")) + ":" + plain(r.get("up"))).toList();
         assertEquals(List.of("D1:1:2", "D2:1:1", "D3:2:3", "D4:3:4", "D5:0:1"), rows);
     }
 
@@ -419,11 +408,11 @@ public abstract class LiveScenarios {
         List<Text> rows = new ArrayList<>();
         for (int i = 0; i < HOSTILE.size(); i++) rows.add(new Text(HOSTILE.get(i), i));
         Cte<Text> texts = cte("texts", values(Text.class, rows));
-        assertEquals(HOSTILE, db.list(from(texts).orderBy(t -> t.col(Text::ord)).selectValue(t -> t.col(Text::value))),
+        assertEquals(HOSTILE, db.list(from(texts).orderBy(t -> t.col(Text::ord)).select(t -> t.col(Text::value))),
             "values(...) writes every row as literals");
         for (String text : HOSTILE) {
-            assertEquals(text, db.one(from(Lips.class).limit(1).selectValue(l -> val(text))), "a SELECT-list constant is written as a literal");
-            assertEquals(List.of(text), db.list(from(texts).where(t -> t.col(Text::value).eq(text)).selectValue(t -> t.col(Text::value))),
+            assertEquals(text, db.one(from(Lips.class).limit(1).select(l -> val(text))), "a SELECT-list constant is written as a literal");
+            assertEquals(List.of(text), db.list(from(texts).where(t -> t.col(Text::value).eq(text)).select(t -> t.col(Text::value))),
                 "a WHERE value is bound as a parameter");
         }
     }
@@ -438,8 +427,8 @@ public abstract class LiveScenarios {
         assertFalse(assertThrows(QueryExecutionException.class, () -> db.sql("SELECT * FROM " + t("NO_SUCH_TABLE")).list(String.class)).isTimeout());
         long elapsed = Duration.ofNanos(System.nanoTime() - start).toMillis();
         assertTrue(elapsed < 5000, "both statements were cancelled after about a second instead of running to the end: " + elapsed + " ms");
-        assertEquals(5, limited.count(from(Lips.class).where(l -> l.col(Lips::getClient).eq("100")).selectValue(l -> l.col(Lips::getDelivery))));
-        try (Stream<String> streamed = limited.stream(from(Lips.class).where(l -> l.col(Lips::getClient).eq("100")).selectValue(l -> l.col(Lips::getDelivery))
+        assertEquals(5, limited.count(from(Lips.class).where(l -> l.client().eq("100")).select(l -> l.delivery())));
+        try (Stream<String> streamed = limited.stream(from(Lips.class).where(l -> l.client().eq("100")).select(l -> l.delivery())
             .timeout(Duration.ofSeconds(5)))) {
             assertEquals(5, streamed.count(), "a stream applies its timeout and still reads every row");
         }

@@ -8,15 +8,18 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Maps a field to a column. Without it the database's naming strategy derives the column from the property name. */
+/**
+ * Maps a column method of a table interface to a column. Without it the database's naming strategy
+ * derives the column name from the method name.
+ */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})
+@Target(ElementType.METHOD)
 public @interface Column {
-    /** Column name, used exactly as written; empty means "derive from the property name". */
+    /** Column name, used exactly as written; empty means "derive from the method name". */
     String value() default "";
 
-    /** Converter between the field's Java type and the stored value; {@code Converter.class} means none. */
+    /** Converter between the column's Java type and the stored value; {@code Converter.class} means none. */
     @SuppressWarnings("rawtypes")
     Class<? extends Converter> converter() default Converter.class;
 }

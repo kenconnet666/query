@@ -29,8 +29,10 @@ public final class Aggregate<T> extends Expr<T> {
         w.sql(")");
     }
 
-    @Override Object shape() { return List.of(name, distinct, Nodes.shapes(args)); }
+    /** 只有一个参数的聚合沿用该列的列名：sum(l.quantity()) 在 cols(...) 里叫 quantity。 */
+    @Override String nameHint() { return args.size() == 1 ? args.get(0).nameHint() : null; }
 
+    /** 聚合或窗口函数加上 OVER (...) 后的表达式。 */
     static final class Over<T> extends Expr<T> {
         private final Expr<T> function;
         private final Window window;
@@ -43,6 +45,7 @@ public final class Aggregate<T> extends Expr<T> {
 
         @Override public void render(SqlWriter w) { w.render(function).sql(" OVER (").render(window).sql(")"); }
 
-        @Override Object shape() { return List.of(Over.class, function.shape()); }
+        /** 窗口化的聚合沿用聚合的列名。 */
+        @Override String nameHint() { return function.nameHint(); }
     }
 }

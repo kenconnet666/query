@@ -17,17 +17,17 @@ class PostgresRenderTest {
 
     @Test
     void 别名折叠为小写且大写表名加引号() {
-        String sql = from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)).toSql(PostgresDialect.INSTANCE).sql();
+        String sql = from(Lips.class).select(l -> l.delivery()).toSql(PostgresDialect.INSTANCE).sql();
         assertEquals("SELECT lips.\"VBELN\" AS delivery\nFROM \"QUERY_IT\".\"LIPS\" lips", sql);
     }
 
     @Test
     void DISTINCT_ON替代DISTINCT并放在SELECT之后() {
         String sql = from(Lips.class)
-            .with(l -> distinctOn(l.col(Lips::getMaterial)))
+            .with(l -> distinctOn(l.material()))
             .distinct()
-            .orderBy(l -> orders(l.col(Lips::getMaterial), l.col(Lips::getCreatedOn).desc()))
-            .selectValue(l -> l.col(Lips::getDelivery))
+            .orderBy(l -> orders(l.material(), l.createdOn().desc()))
+            .select(l -> l.delivery())
             .toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT DISTINCT ON (lips.\"MATNR\") lips.\"VBELN\" AS delivery"), sql);
     }
@@ -35,24 +35,24 @@ class PostgresRenderTest {
     @Test
     void 聚合FILTER与类型转换用NUMERIC() {
         String sql = from(Lips.class)
-            .selectValue(l -> filter(sum(cast(l.col(Lips::getQuantity), CastType.decimal(15, 3))), l.col(Lips::getMaterial).eq("M1")))
+            .select(l -> filter(sum(cast(l.quantity(), CastType.decimal(15, 3))), l.material().eq("M1")))
             .toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT SUM(CAST(lips.\"LFIMG\" AS NUMERIC(15,3))) FILTER (WHERE lips.\"MATNR\" = 'M1')"), sql);
     }
 
     @Test
     void 含反斜杠的字面量写成E字符串以免受standard_conforming_strings影响() {
-        String sql = from(Lips.class).selectValue(l -> lit("a\\'; --")).toSql(PostgresDialect.INSTANCE).sql();
+        String sql = from(Lips.class).select(l -> lit("a\\'; --")).toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT E'a\\\\''; --' AS value"), sql);
-        String plain = from(Lips.class).selectValue(l -> lit("O'Brien")).toSql(PostgresDialect.INSTANCE).sql();
+        String plain = from(Lips.class).select(l -> lit("O'Brien")).toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(plain.startsWith("SELECT 'O''Brien' AS value"), plain);
     }
 
     @Test
     void PostgreSQL专属操作不能在别的方言上渲染() {
-        Query<String> q = from(Lips.class).where(l -> ilike(l.col(Lips::getUnit), "ea")).selectValue(l -> l.col(Lips::getDelivery));
+        Query<String> q = from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> q.toSql(new TestDialect()));
-        Query<String> d = from(Lips.class).with(l -> distinctOn(l.col(Lips::getMaterial))).selectValue(l -> l.col(Lips::getDelivery));
+        Query<String> d = from(Lips.class).with(l -> distinctOn(l.material())).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> d.toSql(new TestDialect()));
     }
 }

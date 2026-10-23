@@ -5,7 +5,6 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /** CASE WHEN ... THEN ... builder; the first branch fixes T for all others. */
@@ -62,13 +61,6 @@ public final class Case<T> {
             }
             if (otherwise != null) w.sql(" ELSE ").render(otherwise);
             w.sql(" END");
-        }
-
-        /** Conditions are opaque renderers, so only their position counts. */
-        @Override Object shape() {
-            List<Object> keyShapes = keys.stream().map(k -> k instanceof Expr<?> e ? e.shape() : Cond.class).toList();
-            return Arrays.asList(CaseExpr.class, subject == null ? null : subject.shape(), keyShapes, Nodes.shapes(results),
-                otherwise == null ? null : otherwise.shape());
         }
     }
 }
