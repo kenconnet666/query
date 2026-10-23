@@ -2,20 +2,21 @@ import type { Client, CustomTypesConfig, Pool, PoolClient, QueryArrayResult } fr
 import { Buffer } from "node:buffer";
 import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
 
-// Booleans and small numbers parse as usual; NUMERIC, BIGINT, dates and timestamps stay text, so
-// nothing goes through Date or the process time zone. Everything else stays text as well.
+// 布尔值和较小的数字照常解析；NUMERIC、BIGINT、日期和时间戳保持为文本，
+// 所以不会经过 Date 或进程时区。其余类型也保持为文本。
 const NUMBERS = new Set([21, 23, 26, 700, 701]);
 const TYPES = {
   getTypeParser: (oid: number) => (value: string) => (oid === 16 ? value === "t" : NUMBERS.has(oid) ? Number(value) : value),
 } as unknown as CustomTypesConfig;
 
+/** 流式读取时每次从游标取回的行数。 */
 const BATCH = 500;
 
 /**
- * Adapts a `pg` pool, pooled client or client. Streaming uses a server-side cursor inside its own
- * transaction, so it needs a pool to borrow a client from; with a single client it reads all rows.
- * A timeout sets `statement_timeout` around the statement, so the server cancels it; a pool lends a
- * client for that, and a client that cannot reset the setting is discarded.
+ * 适配 `pg` 的连接池、池中的客户端或单个客户端。流式读取在自己的事务里使用服务端游标，
+ * 所以需要能借出客户端的连接池；只有单个客户端时会读完全部行。
+ * 超时通过在语句前后设置 `statement_timeout` 实现，由服务端取消；连接池会借出一个客户端来做这件事，
+ * 无法还原该设置的客户端会被丢弃。
  */
 export function pgDriver(source: Pool | PoolClient | Client): Driver {
   const run = async (client: Pool | PoolClient | Client, sql: string, parameters: readonly unknown[]): Promise<DriverResult> => {
@@ -27,8 +28,8 @@ export function pgDriver(source: Pool | PoolClient | Client): Driver {
       const ms = milliseconds(options);
       if (ms === undefined) return run(source, sql, parameters);
       if (!("totalCount" in source)) {
-        // The caller's client, perhaps inside its transaction: if the statement aborts that
-        // transaction, RESET fails too, and the rollback undoes the SET instead.
+        // 调用方自己的客户端，可能处在它的事务中：若语句使该事务中止，RESET 也会失败，
+        // 此时由回滚来撤销 SET。
         await source.query(`SET statement_timeout = ${ms}`);
         try {
           return await run(source, sql, parameters);
@@ -68,8 +69,7 @@ export function pgDriver(source: Pool | PoolClient | Client): Driver {
         await client.query("COMMIT");
         open = false;
       } finally {
-        // A failure, or a consumer that stops early, leaves the transaction open; a client that
-        // cannot even roll back is discarded instead of going back to the pool.
+        // 出错，或消费方提前停止，都会让事务保持打开；连回滚都做不到的客户端会被丢弃，而不是放回连接池。
         let broken = false;
         if (open) await client.query("ROLLBACK").catch(() => (broken = true));
         client.release(broken);
@@ -78,10 +78,12 @@ export function pgDriver(source: Pool | PoolClient | Client): Driver {
   };
 }
 
+/** 超时毫秒数向上取整成整数，供拼进 SET 语句；未设置超时时为 undefined。 */
 function milliseconds(options: ExecuteOptions | undefined): number | undefined {
   return options?.timeoutMs === undefined ? undefined : Math.ceil(options.timeoutMs);
 }
 
+/** 把绑定值转成 pg 接受的类型：bigint 转文本，字节转 Buffer。 */
 function parameter(value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);

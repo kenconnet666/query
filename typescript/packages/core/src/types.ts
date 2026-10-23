@@ -1,6 +1,6 @@
 /**
- * The logical kind of a value. Dialects render literals and CAST targets from it, and functions
- * such as SUM check it, because TypeScript cannot tell a decimal string from a text column.
+ * 值的逻辑种类。方言据此渲染字面量和 CAST 目标，SUM 等函数据此做检查，
+ * 因为 TypeScript 区分不出 decimal 字符串和文本列。
  */
 export type TypeKind =
   | "text"
@@ -15,42 +15,44 @@ export type TypeKind =
   | "unknown";
 
 /**
- * How values of TypeScript type T travel to and from the database. Drivers hand decimals, big
- * integers, dates and timestamps over as strings, so decoding never goes through `Date` or the
- * process time zone.
+ * TypeScript 类型 T 的值如何传入和读出数据库。驱动把 decimal、大整数、日期和时间戳都当作
+ * 字符串交接，所以解码从不经过 `Date` 或进程时区。
  */
 export interface SqlType<T> {
   readonly name: string;
   readonly kind: TypeKind;
-  /** The value bound as a parameter; never called with null. */
+  /** 作为参数绑定的值；不会以 null 调用。 */
   encode(value: T): unknown;
-  /** The value read from a driver; never called with null. */
+  /** 从驱动读到的值；不会以 null 调用。 */
   decode(raw: unknown): T;
 }
 
 /**
- * Converts between a field's type J and the stored type D, like a Java `Converter<J, D>`. Reading
- * may give null for a stored value that means "none", e.g. an empty SAP date; declare such a field
- * with `| null`.
+ * 在字段类型 J 与存储类型 D 之间转换，类似 Java 的 `Converter<J, D>`。
+ * 读取时，表示“无值”的存储值（例如 SAP 的空日期）可以得到 null；这样的字段要声明为 `| null`。
  */
 export interface Converter<J, D> {
   toDatabase(value: J): D;
   fromDatabase(value: D): J | null;
 }
 
+/** 创建不可变的 {@link SqlType}。 */
 function type<T>(name: string, kind: TypeKind, encode: (value: T) => unknown, decode: (raw: unknown) => T): SqlType<T> {
   return Object.freeze({ name, kind, encode, decode });
 }
 
+/** 报告无法把 `raw` 读成指定类型。 */
 function fail(type: string, raw: unknown): never {
   const shown = raw instanceof Uint8Array ? "bytes" : typeof raw === "string" ? JSON.stringify(raw) : String(raw);
   throw new TypeError(`Cannot read ${shown} (${typeof raw}) as ${type}`);
 }
 
+/** decimal、日期、时间戳文本的格式。 */
 const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
 
+/** 校验是真实存在的日历日期（含闰年），格式为 'YYYY-MM-DD'。 */
 function checkDate(value: string, type: string): string {
   const m = DATE.exec(value);
   if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD', got ${JSON.stringify(value)}`);
@@ -61,7 +63,7 @@ function checkDate(value: string, type: string): string {
   return value;
 }
 
-/** 'YYYY-MM-DD HH:MM:SS' plus the fraction without trailing zeros, whatever the driver sent. */
+/** 无论驱动返回什么形式，都规整成 'YYYY-MM-DD HH:MM:SS' 加去掉末尾零的小数部分。 */
 function normalizeTimestamp(value: string, type: string): string {
   const m = TIMESTAMP.exec(value.trim());
   if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD HH:MM:SS[.fraction]', got ${JSON.stringify(value)}`);
@@ -72,6 +74,7 @@ function normalizeTimestamp(value: string, type: string): string {
   return `${m[1]} ${m[2]}:${m[3]}:${m[4] ?? "00"}${fraction ? "." + fraction : ""}`;
 }
 
+/** 把驱动返回的 number、bigint 或数字字符串读成 number。 */
 function toNumber(raw: unknown, type: string): number {
   if (typeof raw === "number") return raw;
   if (typeof raw === "bigint") return Number(raw);
@@ -79,6 +82,7 @@ function toNumber(raw: unknown, type: string): number {
   return fail(type, raw);
 }
 
+/** 解析 PostgreSQL 的 `\x...` 十六进制字节串。 */
 function hexBytes(raw: string): Uint8Array {
   const hex = raw.slice(2);
   const out = new Uint8Array(hex.length / 2);
@@ -86,6 +90,7 @@ function hexBytes(raw: string): Uint8Array {
   return out;
 }
 
+/** 文本。 */
 export const text: SqlType<string> = type(
   "text",
   "text",
@@ -93,6 +98,7 @@ export const text: SqlType<string> = type(
   (raw) => (typeof raw === "string" ? raw : typeof raw === "number" || typeof raw === "bigint" ? String(raw) : fail("text", raw)),
 );
 
+/** 安全范围内的整数；超出时请改用 {@link bigint}。 */
 export const integer: SqlType<number> = type(
   "integer",
   "integer",
@@ -107,6 +113,7 @@ export const integer: SqlType<number> = type(
   },
 );
 
+/** 任意大小的整数，对应 JavaScript 的 bigint。 */
 export const bigint: SqlType<bigint> = type(
   "bigint",
   "bigint",
@@ -119,9 +126,10 @@ export const bigint: SqlType<bigint> = type(
   },
 );
 
+/** 双精度浮点数。 */
 export const double: SqlType<number> = type("double", "double", (v) => v, (raw) => toNumber(raw, "double"));
 
-/** Exact decimals as their decimal text, e.g. '3.000'; use `double` on the column for plain numbers. */
+/** 精确的 decimal，以十进制文本表示，例如 '3.000'；只要普通数字就在该列上用 `double`。 */
 export const decimal: SqlType<string> = type(
   "decimal",
   "decimal",
@@ -135,6 +143,7 @@ export const decimal: SqlType<string> = type(
   },
 );
 
+/** 布尔值；也接受 0 / 1 和 't' / 'f' 等文本。 */
 export const boolean: SqlType<boolean> = type(
   "boolean",
   "boolean",
@@ -151,7 +160,7 @@ export const boolean: SqlType<boolean> = type(
   },
 );
 
-/** A calendar date as 'YYYY-MM-DD'. */
+/** 日历日期，形如 'YYYY-MM-DD'。 */
 export const date: SqlType<string> = type(
   "date",
   "date",
@@ -159,7 +168,7 @@ export const date: SqlType<string> = type(
   (raw) => (typeof raw === "string" ? checkDate(raw.trim().slice(0, 10), "date") : fail("date", raw)),
 );
 
-/** A local date-time without time zone as 'YYYY-MM-DD HH:MM:SS[.fraction]'. */
+/** 不带时区的本地日期时间，形如 'YYYY-MM-DD HH:MM:SS[.fraction]'。 */
 export const timestamp: SqlType<string> = type(
   "timestamp",
   "timestamp",
@@ -167,6 +176,7 @@ export const timestamp: SqlType<string> = type(
   (raw) => (typeof raw === "string" ? normalizeTimestamp(raw, "timestamp") : fail("timestamp", raw)),
 );
 
+/** 二进制数据。 */
 export const bytes: SqlType<Uint8Array> = type(
   "bytes",
   "bytes",
@@ -178,10 +188,10 @@ export const bytes: SqlType<Uint8Array> = type(
   },
 );
 
-/** Values exactly as the driver returns them; used by untyped SQL fragments. */
+/** 值原样取自驱动的返回；无类型的 SQL 片段使用它。 */
 export const untyped: SqlType<unknown> = type("untyped", "unknown", (v) => v, (raw) => raw);
 
-/** A field type stored as another type, e.g. SAP dates kept as 'yyyyMMdd' text. */
+/** 以另一种类型存储的字段类型，例如 SAP 把日期存成 'yyyyMMdd' 文本。 */
 export function converted<J, D>(storage: SqlType<D>, converter: Converter<J, D>, name = `converted ${storage.name}`): SqlType<J> {
   return type(
     name,
@@ -191,7 +201,7 @@ export function converted<J, D>(storage: SqlType<D>, converter: Converter<J, D>,
   );
 }
 
-/** The type of a JavaScript value, for parameters and literals written without a declared type. */
+/** JavaScript 值的类型，用于没有声明类型的参数和字面量。 */
 export function typeOf(value: unknown): SqlType<unknown> {
   switch (typeof value) {
     case "string":
@@ -208,7 +218,7 @@ export function typeOf(value: unknown): SqlType<unknown> {
   }
 }
 
-/** A logical CAST target; each dialect renders its own type name. */
+/** 逻辑上的 CAST 目标；各方言渲染自己的类型名。 */
 export class CastType<T> {
   private constructor(
     readonly kind: Exclude<TypeKind, "bytes" | "unknown">,
@@ -217,11 +227,13 @@ export class CastType<T> {
     readonly scale = 0,
   ) {}
 
+  /** VARCHAR(length)。 */
   static text(length: number): CastType<string> {
     if (!Number.isInteger(length) || length < 1) throw new RangeError("Text length must be a positive integer");
     return new CastType("text", text, length);
   }
 
+  /** DECIMAL(precision, scale)。 */
   static decimal(precision: number, scale: number): CastType<string> {
     if (!Number.isInteger(precision) || !Number.isInteger(scale) || precision < 1 || scale < 0 || scale > precision) {
       throw new RangeError(`Invalid DECIMAL(${precision},${scale})`);
@@ -229,26 +241,32 @@ export class CastType<T> {
     return new CastType("decimal", decimal, precision, scale);
   }
 
+  /** 整数。 */
   static integer(): CastType<number> {
     return new CastType("integer", integer);
   }
 
+  /** 大整数。 */
   static bigint(): CastType<bigint> {
     return new CastType("bigint", bigint);
   }
 
+  /** 双精度浮点数。 */
   static double(): CastType<number> {
     return new CastType("double", double);
   }
 
+  /** 日期。 */
   static date(): CastType<string> {
     return new CastType("date", date);
   }
 
+  /** 时间戳。 */
   static timestamp(): CastType<string> {
     return new CastType("timestamp", timestamp);
   }
 
+  /** 布尔值。 */
   static boolean(): CastType<boolean> {
     return new CastType("boolean", boolean);
   }

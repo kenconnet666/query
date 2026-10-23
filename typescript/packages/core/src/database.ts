@@ -4,45 +4,48 @@ import { decoderOf, limitAtMost, renderCount, rendered, renderStatement, timeout
 import { integer, untyped, type SqlType } from "./types.js";
 import { SqlWriter, type Rendered, type RenderSettings } from "./writer.js";
 
-// ---------- drivers ----------
+// ---------- 驱动 ----------
 
-/** Rows in column order, with the column labels the database reported. */
+/** 按列顺序排列的行，以及数据库返回的列标签。 */
 export interface DriverResult {
   readonly columns: readonly string[];
   readonly rows: readonly (readonly unknown[])[];
 }
 
 /**
- * What a dialect package's driver adapter provides. Parameters arrive encoded by their types;
- * drivers hand decimals, big integers, dates and timestamps back as strings.
+ * 方言包的驱动适配器需要提供的能力。参数按各自类型编码后传入；
+ * 驱动把 decimal、大整数、日期和时间戳以字符串形式返回。
  */
 export interface Driver {
+  /** 执行一条语句并一次性返回全部行。 */
   query(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): Promise<DriverResult>;
-  /** Rows one at a time from one cursor; databases without it read everything first. */
+  /** 用一个游标逐行读取；不支持游标的数据库先读完全部再返回。 */
   stream?(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): AsyncIterable<readonly unknown[]>;
 }
 
-/** Per-statement settings a driver applies; a driver that cannot honour one ignores it. */
+/** 驱动对单条语句应用的设置；驱动不支持的项直接忽略。 */
 export interface ExecuteOptions {
-  /** Milliseconds after which the database cancels the statement. */
+  /** 超过该毫秒数后由数据库取消语句。 */
   readonly timeoutMs?: number;
 }
 
-// ---------- listeners, caching, paging, errors ----------
+// ---------- 监听、缓存、分页、错误 ----------
 
+/** 一次语句执行的记录，交给 {@link QueryListener}。 */
 export interface QueryEvent {
   readonly database: string;
   readonly statement: Rendered;
   readonly elapsedMs: number;
-  /** Rows read, or delivered from the cache. */
+  /** 读取到的行数，或从缓存取得的行数。 */
   readonly rows: number;
   readonly error: unknown;
   readonly cached: boolean;
 }
 
-/** Observes executed statements: logging, timing, slow-query reports. Exceptions it throws are ignored. */
+/** 观察已执行的语句：日志、计时、慢查询报告。监听器抛出的异常会被忽略。 */
 export type QueryListener = (event: QueryEvent) => void;
 
+/** 查询结果缓存的键：数据库名、SQL 文本和参数。 */
 export interface CacheKey {
   readonly database: string;
   readonly sql: string;
@@ -52,16 +55,17 @@ export interface CacheKey {
 type Rows = readonly (readonly unknown[])[];
 
 /**
- * Result cache for queries marked `.cached(ttl)`. It stores decoded rows, not mapped objects,
- * because a projection may build different objects on each call. Implement it to use Redis or
- * anything else.
+ * 标记了 `.cached(ttl)` 的查询所用的结果缓存。缓存的是解码后的行而不是映射后的对象，
+ * 因为投影每次调用可能构造不同的对象。实现它即可接入 Redis 等任何存储。
  */
 export interface QueryCache {
+  /** 命中且未过期时返回缓存的行，否则调用 `load` 加载并缓存。 */
   get(key: CacheKey, ttlMs: number, load: () => Promise<Rows>): Promise<Rows>;
+  /** 清空全部缓存项。 */
   clear(): void;
 }
 
-/** In-process cache with per-entry expiry and a size bound; concurrent loads of one key share a query. */
+/** 进程内缓存：每项独立过期并限制总条数；同一个键的并发加载共用一次查询。 */
 export function inMemoryCache(maxEntries = 1000): QueryCache {
   if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new RangeError("maxEntries must be a positive integer");
   const entries = new Map<string, { rows: Promise<Rows>; expiresAt: number }>();
@@ -88,7 +92,7 @@ export function inMemoryCache(maxEntries = 1000): QueryCache {
   };
 }
 
-/** One page of rows and the total row count. Pages are numbered from 1. */
+/** 一页数据和总行数。页码从 1 开始。 */
 export interface Page<R> {
   readonly rows: readonly R[];
   readonly total: number;
@@ -97,12 +101,13 @@ export interface Page<R> {
   readonly totalPages: number;
 }
 
+/** 语句执行失败时抛出的错误，附带数据库名和渲染后的语句；原始异常放在 `cause`。 */
 export class QueryExecutionError extends Error {
   constructor(
     readonly database: string,
     readonly statement: Rendered,
     cause: unknown,
-    /** Whether the database cancelled the statement because it ran past its timeout. */
+    /** 数据库是否因语句超时而取消了它。 */
     readonly timedOut = false,
   ) {
     super(`${database}${timedOut ? " (timed out)" : ""}: ${cause instanceof Error ? cause.message : String(cause)}\n${statement.sql}`, { cause });
@@ -110,22 +115,23 @@ export class QueryExecutionError extends Error {
   }
 }
 
-// ---------- the database instance ----------
+// ---------- 数据库实例 ----------
 
+/** 创建 {@link Database} 时的可选项。 */
 export interface DatabaseOptions {
-  /** Conditions for every table of an entity type, e.g. the current client: `filter(ClientEntity, r => ...)`. */
+  /** 作用于某实体类型所有表的条件，例如当前租户：`filter(ClientEntity, r => ...)`。 */
   readonly filters?: readonly SourceFilter[];
   readonly cache?: QueryCache;
   readonly listener?: QueryListener;
-  /** Column names for decorated fields without an explicit name. */
+  /** 未显式指定列名的装饰字段所用的命名策略。 */
   readonly naming?: NamingStrategy;
-  /** Renders functions differently on this database only. */
+  /** 仅在这个数据库上改写函数的渲染方式。 */
   readonly functions?: ReadonlyMap<FunctionDef, FunctionRenderer>;
-  /** Shown in errors, listener events and cache keys; defaults to the dialect name and a number. */
+  /** 出现在错误、监听事件和缓存键中；默认是方言名加序号。 */
   readonly name?: string;
   /**
-   * Milliseconds after which statements are cancelled; a query's own `.timeout(ms)` takes precedence.
-   * HANA and PostgreSQL cancel on the server; see the dialect package's driver for details.
+   * 语句被取消的毫秒数；查询自己的 `.timeout(ms)` 优先。
+   * HANA 和 PostgreSQL 由服务端取消，详见方言包的驱动说明。
    */
   readonly queryTimeoutMs?: number;
 }
@@ -134,8 +140,8 @@ let instances = 0;
 let executeNative: (db: Database, statement: Rendered, timeoutMs: number | undefined) => Promise<DriverResult>;
 
 /**
- * One database of one dialect. Each dialect package subclasses it; there is no dialect-neutral
- * instance. Meant to be a long-lived singleton per connection pool.
+ * 某个方言的一个数据库。各方言包各自继承它，不存在与方言无关的实例。
+ * 每个连接池对应一个长生命周期的单例。
  */
 export abstract class Database {
   readonly name: string;
@@ -163,26 +169,27 @@ export abstract class Database {
     this.#timeout = options.queryTimeoutMs;
   }
 
-  // ---------- execution ----------
+  // ---------- 执行 ----------
 
+  /** 执行查询，返回全部行映射后的对象。 */
   async list<R>(q: Query<R>): Promise<R[]> {
     const { assemble } = decoderOf(q);
     return (await this.#rows(q, this.render(q))).map(assemble);
   }
 
-  /** Exactly one row, otherwise an error. */
+  /** 恰好一行，否则抛错。 */
   async one<R>(q: Query<R>): Promise<R> {
     const rows = await this.list(limitAtMost(q, 2));
     if (rows.length !== 1) throw new Error(`Expected exactly one row, got ${rows.length === 0 ? "none" : "more than one"}`);
     return rows[0]!;
   }
 
-  /** The first row, reading at most one. */
+  /** 第一行，至多读取一行；没有结果时返回 `undefined`。 */
   async first<R>(q: Query<R>): Promise<R | undefined> {
     return (await this.list(limitAtMost(q, 1)))[0];
   }
 
-  /** Rows read one at a time from one cursor where the driver supports it. */
+  /** 驱动支持时，用一个游标逐行读取。 */
   async *stream<R>(q: Query<R>): AsyncGenerator<R, void, undefined> {
     if (this.#driver.stream === undefined) {
       yield* await this.list(q);
@@ -205,43 +212,48 @@ export abstract class Database {
     this.#notify(statement, start, count, undefined, false);
   }
 
+  /** 逐行对结果调用 `action`，基于 {@link stream}，会等待每次回调完成。 */
   async forEach<R>(q: Query<R>, action: (row: R) => void | Promise<void>): Promise<void> {
     for await (const row of this.stream(q)) await action(row);
   }
 
+  /** 查询的总行数，用 `COUNT(*)` 包住同一个查询得到。 */
   async count(q: Query<unknown>): Promise<number> {
     const statement = renderCount(this.#writer(), q);
     const result = await this.#execute(statement, timeoutOf(q));
     return integer.decode(result.rows[0]?.[0]);
   }
 
-  /** Page numbers start at 1; the total comes from a COUNT(*) over the same query. */
+  /** 页码从 1 开始；总数来自对同一查询的 COUNT(*)。 */
   async page<R>(q: Query<R>, page: number, size: number): Promise<Page<R>> {
     if (!Number.isInteger(page) || !Number.isInteger(size) || page < 1 || size < 1) throw new RangeError("page and size are integers from 1");
     const [rows, total] = await Promise.all([this.list(q.limit(size).offset((page - 1) * size)), this.count(q)]);
     return Object.freeze({ rows, total, page, size, totalPages: Math.ceil(total / size) });
   }
 
-  /** Hand-written SQL with :named parameters, mapped by column label. Arrays expand for IN (:list). */
+  /** 手写 SQL，使用 :name 命名参数，按列标签映射。数组会为 IN (:list) 展开。 */
   sql(text: string): NativeQuery {
     return new NativeQuery(this, text);
   }
 
-  /** The SQL this database runs for the query, with filters and overrides applied. */
+  /** 这个数据库实际执行的 SQL，已应用过滤条件和函数改写。 */
   render(q: Query<unknown>): Rendered {
     return rendered(q, this, () => renderStatement(this.#writer(), q));
   }
 
+  /** 清空结果缓存；没有配置缓存时什么也不做。 */
   clearCache(): void {
     this.#cache?.clear();
   }
 
-  // ---------- internals ----------
+  // ---------- 内部实现 ----------
 
+  /** 每次渲染新建一个写入器，因为写入器带有别名和参数的状态。 */
   #writer(): SqlWriter {
     return new SqlWriter(this.dialect, this.#settings);
   }
 
+  /** 取得解码后的行：标记了 `.cached(...)` 的查询经由缓存，其余直接执行。 */
   async #rows(q: Query<unknown>, statement: Rendered): Promise<Rows> {
     const { types } = decoderOf(q);
     const fetch = async () => (await this.#execute(statement, timeoutOf(q))).rows.map((raw) => decode(q, types, raw));
@@ -258,7 +270,7 @@ export abstract class Database {
     return rows;
   }
 
-  /** Runs a statement and reports it to the listener; `timeoutMs` undefined means the instance's default. */
+  /** 执行语句并通知监听器；`timeoutMs` 为 undefined 时用实例的默认值。 */
   async #execute(statement: Rendered, timeoutMs: number | undefined): Promise<DriverResult> {
     this.#checkParameterCount(statement);
     const start = Date.now();
@@ -272,12 +284,13 @@ export abstract class Database {
     }
   }
 
+  /** 合并查询自带的超时和实例默认超时，得到传给驱动的选项。 */
   #options(timeoutMs: number | undefined): ExecuteOptions {
     const limit = timeoutMs ?? this.#timeout;
     return limit === undefined ? {} : { timeoutMs: limit };
   }
 
-  /** Fails before contacting the database, whose own error for too many parameters is often cryptic. */
+  /** 在联系数据库之前就失败，因为数据库自己对参数过多的报错往往难以理解。 */
   #checkParameterCount(statement: Rendered): void {
     const count = statement.parameters.length;
     const max = this.dialect.maxParameters;
@@ -289,20 +302,23 @@ export abstract class Database {
     }
   }
 
+  /** 把一次执行报告给监听器。 */
   #notify(statement: Rendered, start: number, rows: number, error: unknown, cached: boolean): void {
     if (this.#listener === undefined) return;
     try {
       this.#listener({ database: this.name, statement, elapsedMs: Date.now() - start, rows, error, cached });
     } catch {
-      // A failing listener must not fail the query.
+      // 监听器出错不能让查询失败。
     }
   }
 
+  // 让同一模块里的 NativeQuery 能调用私有的 #execute。
   static {
     executeNative = (db, statement, timeoutMs) => db.#execute(statement, timeoutMs);
   }
 }
 
+/** 按列类型解码一行原始值；`null` 原样保留，解码失败时指出列标签。 */
 function decode(q: Query<unknown>, types: readonly SqlType<unknown>[], raw: readonly unknown[]): unknown[] {
   return types.map((type, i) => {
     const value = raw[i];
@@ -315,16 +331,17 @@ function decode(q: Query<unknown>, types: readonly SqlType<unknown>[], raw: read
   });
 }
 
-// ---------- native SQL ----------
+// ---------- 原生 SQL ----------
 
+/** 原生查询可绑定的参数值类型。 */
 export type NativeValue = string | number | bigint | boolean | Uint8Array | null;
 
+/** 列标签的比较形式：去掉下划线并转小写。 */
 const normalized = (label: string) => label.replaceAll("_", "").toLowerCase();
 
 /**
- * Hand-written SQL with `:name` parameters, mapped by column label. An array value expands to
- * `?, ?, ...` for `IN (:names)`. The escape hatch for statements the builder cannot express, and a
- * migration path for existing SQL text. Values are read as the driver returns them.
+ * 手写 SQL，使用 `:name` 参数，按列标签映射。数组值会为 `IN (:names)` 展开成 `?, ?, ...`。
+ * 用于构建器表达不了的语句，也是已有 SQL 文本的迁移通道。值按驱动返回的样子读取。
  */
 export class NativeQuery {
   readonly #params = new Map<string, NativeValue | readonly NativeValue[]>();
@@ -335,20 +352,21 @@ export class NativeQuery {
     readonly text: string,
   ) {}
 
+  /** 绑定 `:name` 参数；`undefined` 会被拒绝，要表示 NULL 请传 `null`。 */
   bind(name: string, value: NativeValue | readonly NativeValue[]): this {
     if (value === undefined) throw new TypeError(`:${name} is undefined; bind null for NULL`);
     this.#params.set(name, value);
     return this;
   }
 
-  /** Cancels the statement when it runs longer than this many milliseconds; overrides the database instance's queryTimeoutMs. */
+  /** 语句运行超过该毫秒数时取消；优先于数据库实例的 queryTimeoutMs。 */
   timeout(ms: number): this {
     if (!(ms > 0)) throw new RangeError("timeout must be positive");
     this.#timeout = ms;
     return this;
   }
 
-  /** Rows as objects keyed by column label, or as instances of a class matched by label ignoring case and underscores. */
+  /** 行以列标签为键的对象返回，或传入类时按忽略大小写和下划线的标签匹配成该类的实例。 */
   async list(): Promise<Record<string, unknown>[]>;
   async list<C extends object>(type: new () => C): Promise<C[]>;
   async list(type?: new () => object): Promise<object[]> {
@@ -369,23 +387,25 @@ export class NativeQuery {
     });
   }
 
-  /** The first column of every row. */
+  /** 每一行的第一列。 */
   async values<T = unknown>(): Promise<T[]> {
     const { rows } = await executeNative(this.database, this.render(), this.#timeout);
     return rows.map((row) => row[0] as T);
   }
 
+  /** 第一行；没有结果时返回 `undefined`。 */
   async first(): Promise<Record<string, unknown> | undefined> {
     return (await this.list())[0];
   }
 
+  /** 恰好一行，否则抛错。 */
   async one(): Promise<Record<string, unknown>> {
     const rows = await this.list();
     if (rows.length !== 1) throw new Error(`Expected exactly one row, got ${rows.length}`);
     return rows[0]!;
   }
 
-  /** Replaces :name outside the dialect's quoted parts, comments and PostgreSQL's :: casts. */
+  /** 替换 :name，但跳过方言的引号部分、注释和 PostgreSQL 的 :: 类型转换。 */
   render(): Rendered {
     const dialect = this.database.dialect;
     const w = new SqlWriter(dialect);
@@ -422,6 +442,7 @@ export class NativeQuery {
     return w.statement();
   }
 
+  /** 写出一个参数：数组展开成逗号分隔的占位符，空数组和含 null 的数组都不合法。 */
   #expand(w: SqlWriter, name: string, value: NativeValue | readonly NativeValue[]): void {
     if (!Array.isArray(value)) {
       w.bind(value, untyped);

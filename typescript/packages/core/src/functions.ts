@@ -24,28 +24,29 @@ import type { Query } from "./query.js";
 import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "./types.js";
 
 /**
- * Core functions: the ones whose semantics are the same on every supported database. Generic
- * functions here take one generic operand; functions whose operands must share a type live on
- * `Expr` as instance methods.
+ * 核心函数：在所有受支持的数据库上语义一致的函数。这里的泛型函数只接受一个泛型操作数；
+ * 要求操作数同类型的函数写在 `Expr` 上，作为实例方法。
  */
 
-/** `a || b || ...`; dialects without the operator (MySQL) register their own rendering. */
+/** `a || b || ...`；没有该运算符的方言（MySQL）注册自己的渲染。 */
 export const CONCAT = FunctionDef.of("CONCAT", (w, args) => w.sql("(").join(args, " || ").sql(")"));
 
-/** `LOCATE(text, search)`; PostgreSQL and MySQL register their own spelling. */
+/** `LOCATE(text, search)`；PostgreSQL 和 MySQL 注册自己的写法。 */
 export const LOCATE = FunctionDef.of("LOCATE");
 
+/** 可以参与算术运算的类型；`unknown` 放行原生 SQL 片段。 */
 const NUMERIC: readonly TypeKind[] = ["integer", "bigint", "double", "decimal", "unknown"];
 
+/** 要求表达式是数值类型，否则抛错并指出函数名。 */
 function numeric(e: Expr<unknown>, fn: string): void {
   if (!NUMERIC.includes(e.type.kind)) throw new TypeError(`${fn} needs a numeric expression, got ${e.type.name}`);
 }
 
-// ---------- values ----------
+// ---------- 值 ----------
 
 /**
- * A bound parameter, typed by the value or by the given type. Text, numbers and booleans widen to
- * `string`, `number` and `boolean`, so `val("A")` and `val("B")` have the same type.
+ * 绑定参数，类型取自值或给定的类型。文本、数字和布尔会放宽为 `string`、`number`、`boolean`，
+ * 所以 `val("A")` 和 `val("B")` 的类型相同。
  */
 export function val(value: string): Expr<string>;
 export function val(value: number): Expr<number>;
@@ -55,7 +56,7 @@ export function val<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): E
   return param((type ?? typeOf(value)) as SqlType<NonNullable<T>>, value);
 }
 
-/** A literal written into the SQL text; use for fixed codes, never for user input. Widens like `val`. */
+/** 直接写进 SQL 文本的字面量；只用于固定代码，绝不用于用户输入。类型放宽方式同 `val`。 */
 export function lit(value: string): Expr<string>;
 export function lit(value: number): Expr<number>;
 export function lit(value: boolean): Expr<boolean>;
@@ -65,11 +66,12 @@ export function lit<T>(value: NonNullable<T>, type?: SqlType<NonNullable<T>>): E
   return new Literal((type ?? typeOf(value)) as SqlType<NonNullable<T>>, value);
 }
 
+/** 指定类型的 NULL。 */
 export function nullOf<T>(type: SqlType<T>): Expr<T | null> {
   return raw(type as SqlType<NonNullable<T>>, "NULL");
 }
 
-// ---------- conditions ----------
+// ---------- 条件 ----------
 
 /** test 成立时才加这个条件，否则没有条件。 */
 export function onlyIf(test: boolean, cond: () => Cond): Cond {
@@ -93,66 +95,76 @@ export function notLike(e: Expr<string | null>, pattern: string | null | undefin
   return compare(e, "NOT LIKE", param(e.type, pattern as string));
 }
 
-/** A condition written as SQL; expressions render in place, other values become parameters. */
+/** 用 SQL 模板写成的条件；表达式原位渲染，其他值成为绑定参数。 */
 export function sqlCond(parts: TemplateStringsArray, ...args: TemplateArg[]): Cond {
   return condition((w) => renderTemplate(w, parts, args));
 }
 
-// ---------- text ----------
+// ---------- 文本 ----------
 
+/** UPPER：转大写。 */
 export function upper<T extends string | null>(e: Expr<T>): Expr<T> {
   return functionCall(e.type, "UPPER", [e]);
 }
 
+/** LOWER：转小写。 */
 export function lower<T extends string | null>(e: Expr<T>): Expr<T> {
   return functionCall(e.type, "LOWER", [e]);
 }
 
+/** TRIM：去掉两端空白。 */
 export function trim<T extends string | null>(e: Expr<T>): Expr<T> {
   return functionCall(e.type, "TRIM", [e]);
 }
 
+/** 校验文本位置是从 1 开始的整数。 */
 function textPosition(start: number): number {
   if (!Number.isInteger(start) || start < 1) throw new RangeError("Text positions are integers from 1; negative positions differ between databases");
   return start;
 }
 
+/** 校验长度是非负整数。 */
 function textLength(length: number): number {
   if (!Number.isInteger(length) || length < 0) throw new RangeError("A length must be a non-negative integer");
   return length;
 }
 
-/** A text position or length: a number becomes a literal, an expression is computed, e.g. from `locate`. */
+/** 文本的位置或长度：数字写成字面量，表达式则现场计算，例如来自 `locate`。 */
 type Position = number | Expr<number> | Expr<number | null>;
 
+/** 把位置参数转成表达式；数字先经 `check` 校验。 */
 function positionArg(p: Position, check: (n: number) => number): Expr<unknown> {
   return typeof p === "number" ? lit(check(p)) : p;
 }
 
-/** SUBSTRING(e, start[, length]), counting from 1. Literal positions keep the call usable as a GROUP BY key. */
+/** SUBSTRING(e, start[, length])，从 1 开始计数。位置用字面量，调用才能作为 GROUP BY 的键。 */
 export function substring<T extends string | null>(e: Expr<T>, start: Position, length?: Position): Expr<T> {
   const args: Expr<unknown>[] = [e, positionArg(start, textPosition)];
   if (length !== undefined) args.push(positionArg(length, textLength));
   return functionCall(text as SqlType<NonNullable<T>>, "SUBSTRING", args);
 }
 
+/** LEFT：取左边 `length` 个字符。 */
 export function left<T extends string | null>(e: Expr<T>, length: Position): Expr<T> {
   return functionCall(text as SqlType<NonNullable<T>>, "LEFT", [e, positionArg(length, textLength)]);
 }
 
+/** RIGHT：取右边 `length` 个字符。 */
 export function right<T extends string | null>(e: Expr<T>, length: Position): Expr<T> {
   return functionCall(text as SqlType<NonNullable<T>>, "RIGHT", [e, positionArg(length, textLength)]);
 }
 
-/** Where search first occurs in value, counting from 1, or 0 when it does not. */
+/** `search` 在 `value` 中第一次出现的位置，从 1 开始计数；没有出现时为 0。 */
 export function locate<T extends string | null>(value: Expr<T>, search: string | Expr<string> | Expr<string | null>): Expr<KeepNull<T, number>> {
   return functionCall(integer, LOCATE, [value, typeof search === "string" ? param(text, search) : search]);
 }
 
+/** REPLACE：把 `search` 全部替换为 `replacement`。 */
 export function replace<T extends string | null>(e: Expr<T>, search: string, replacement: string): Expr<T> {
   return functionCall(text as SqlType<NonNullable<T>>, "REPLACE", [e, param(text, search), param(text, replacement)]);
 }
 
+/** 拼接至少两个文本；各方言写法不同，见 {@link CONCAT}。 */
 export function concat(...parts: Expr<string>[]): Expr<string>;
 export function concat(...parts: Expr<string | null>[]): Expr<string | null>;
 export function concat(...parts: Expr<string | null>[]): Expr<string | null> {
@@ -160,11 +172,12 @@ export function concat(...parts: Expr<string | null>[]): Expr<string | null> {
   return functionCall(text, CONCAT, parts);
 }
 
-// ---------- numbers ----------
+// ---------- 数值 ----------
 
+/** 数值表达式可以取的值类型（decimal 用字符串）。 */
 type Numeric = number | bigint | string | null;
 
-/** The result has the first operand's type. A list sums all its terms, e.g. sixteen period columns. */
+/** 加法，结果取第一个操作数的类型。传入列表则对所有项求和，例如十六个期间列。 */
 export function plus<T extends Numeric>(terms: readonly Expr<T>[]): Expr<T>;
 export function plus<T extends Numeric>(first: Expr<T>, ...rest: Expr<Numeric>[]): Expr<T>;
 export function plus<T extends Numeric>(first: Expr<T> | readonly Expr<T>[], ...rest: Expr<Numeric>[]): Expr<T> {
@@ -174,109 +187,127 @@ export function plus<T extends Numeric>(first: Expr<T> | readonly Expr<T>[], ...
   return arithmetic("+", head, tail);
 }
 
-/** Unary minus: `-(e)`; the parentheses keep a negative literal from turning into a comment. */
+/** 取负：`-(e)`；加括号是为了避免负的字面量连成 `--` 变成注释。 */
 export function negate<T extends Numeric>(e: Expr<T>): Expr<T> {
   numeric(e as Expr<unknown>, "negate");
   return expression(e.type, (w) => w.sql("-(").render(e).sql(")"));
 }
 
+/** 乘法，结果取第一个操作数的类型。 */
 export function times<T extends Numeric>(first: Expr<T>, ...rest: Expr<Numeric>[]): Expr<T> {
   return arithmetic("*", first, rest);
 }
 
+/** 减法，结果取被减数的类型。 */
 export function minus<T extends Numeric>(left: Expr<T>, right: Expr<Numeric>): Expr<T> {
   return arithmetic("-", left, [right]);
 }
 
-/** Decimal or double division only: integer division truncates on some databases and not on others. */
+/** 只允许 decimal 或 double 的除法：整数除法在有的数据库截断、有的不截断。 */
 export function divide<T extends number | string | null>(left: Expr<T>, right: Expr<Numeric>): Expr<T> {
   if (left.type.kind !== "decimal" && left.type.kind !== "double") throw new TypeError(`divide() needs a decimal or double dividend, got ${left.type.name}`);
   return arithmetic("/", left, [right]);
 }
 
+/** 校验所有操作数都是数值，构造算术表达式。 */
 function arithmetic<T>(operator: string, first: Expr<T>, rest: readonly Expr<unknown>[]): Expr<T> {
   for (const e of [first, ...rest]) numeric(e as Expr<unknown>, operator);
   return new Arithmetic(first.type, operator, [first as Expr<unknown>, ...rest]);
 }
 
+/** ABS：绝对值。 */
 export function abs<T extends Numeric>(e: Expr<T>): Expr<T> {
   numeric(e as Expr<unknown>, "ABS");
   return functionCall(e.type, "ABS", [e]);
 }
 
+/** FLOOR：向下取整。 */
 export function floor<T extends Numeric>(e: Expr<T>): Expr<T> {
   numeric(e as Expr<unknown>, "FLOOR");
   return functionCall(e.type, "FLOOR", [e]);
 }
 
+/** CEIL：向上取整。 */
 export function ceil<T extends Numeric>(e: Expr<T>): Expr<T> {
   numeric(e as Expr<unknown>, "CEIL");
   return functionCall(e.type, "CEIL", [e]);
 }
 
+/** ROUND：四舍五入到 `scale` 位小数。 */
 export function round<T extends Numeric>(e: Expr<T>, scale: number): Expr<T> {
   numeric(e as Expr<unknown>, "ROUND");
   return functionCall(e.type, "ROUND", [e, lit(scale)]);
 }
 
-// ---------- aggregates ----------
+// ---------- 聚合 ----------
 
+/** COUNT：不传参数时是 COUNT(*)，传入表达式时不计 NULL。 */
 export function count(e?: Expr<unknown>): Aggregate<number> {
   return new Aggregate(integer, "COUNT", false, e === undefined ? [] : [e]);
 }
 
+/** COUNT(DISTINCT e)。 */
 export function countDistinct(e: Expr<unknown>): Aggregate<number> {
   return new Aggregate(integer, "COUNT", true, [e]);
 }
 
+/** SUM：求和，没有行时为 NULL。 */
 export function sum<T extends Numeric>(e: Expr<T>): Aggregate<T | null> {
   numeric(e as Expr<unknown>, "SUM");
   return new Aggregate(e.type, "SUM", false, [e as Expr<unknown>]);
 }
 
-/** The average as an exact decimal. */
+/** AVG：平均值，以精确的 decimal 返回。 */
 export function avg(e: Expr<Numeric>): Aggregate<string | null> {
   numeric(e as Expr<unknown>, "AVG");
   return new Aggregate(decimal, "AVG", false, [e as Expr<unknown>]);
 }
 
+/** MIN：最小值。 */
 export function min<T>(e: Expr<T>): Aggregate<T | null> {
   return new Aggregate(e.type, "MIN", false, [e as Expr<unknown>]);
 }
 
+/** MAX：最大值。 */
 export function max<T>(e: Expr<T>): Aggregate<T | null> {
   return new Aggregate(e.type, "MAX", false, [e as Expr<unknown>]);
 }
 
-/** 1 on the subtotal rows of `groupByRollup` where the key is rolled up, 0 elsewhere. */
+/** 在 `groupByRollup` 的小计行上，该键被汇总时为 1，其余为 0。 */
 export function grouping(key: Expr<unknown>): Expr<number> {
   return functionCall(integer, "GROUPING", [key]);
 }
 
-// ---------- window functions ----------
+// ---------- 窗口函数 ----------
 
+/** ROW_NUMBER：分区内的连续行号。 */
 export function rowNumber(): WindowFunction<number> {
   return new WindowFunction(integer, "ROW_NUMBER", []);
 }
 
+/** RANK：并列时跳号的排名。 */
 export function rank(): WindowFunction<number> {
   return new WindowFunction(integer, "RANK", []);
 }
 
+/** DENSE_RANK：并列时不跳号的排名。 */
 export function denseRank(): WindowFunction<number> {
   return new WindowFunction(integer, "DENSE_RANK", []);
 }
 
+/** LAG：往前第 `offset` 行的值，越界为 NULL。 */
 export function lag<T>(e: Expr<T>, offset = 1): WindowFunction<T | null> {
   return new WindowFunction(e.type, "LAG", [e, lit(offset)]);
 }
 
+/** LEAD：往后第 `offset` 行的值，越界为 NULL。 */
 export function lead<T>(e: Expr<T>, offset = 1): WindowFunction<T | null> {
   return new WindowFunction(e.type, "LEAD", [e, lit(offset)]);
 }
 
-// ---------- CASE, CAST, SQL fragments, functions, subqueries ----------
+// ---------- CASE、CAST、SQL 片段、函数、子查询 ----------
 
+/** 开始 CASE WHEN condition THEN result；第一个分支决定结果类型，后续用 `.when(...)` 追加。 */
 export function caseWhen(condition: Cond, result: string): Case<string>;
 export function caseWhen(condition: Cond, result: number): Case<number>;
 export function caseWhen(condition: Cond, result: boolean): Case<boolean>;
@@ -286,18 +317,19 @@ export function caseWhen(condition: Cond, result: unknown): Case<unknown> {
   return new Case(e.type, [[condition, e]]);
 }
 
-/** `CASE subject WHEN value THEN result ... END`: `caseOf(code).when("1", "own").when("2", "supplier").otherwise("other")`. */
+/** `CASE subject WHEN value THEN result ... END`：`caseOf(code).when("1", "own").when("2", "supplier").otherwise("other")`。 */
 export function caseOf<V>(subject: Expr<V>): CaseOf<V> {
   return new CaseOf(subject);
 }
 
+/** CAST(e AS 目标类型)，等同 `e.cast(target)`。 */
 export function cast<T, U>(e: Expr<T>, target: CastType<U>): Expr<KeepNull<T, U>> {
   return e.cast(target);
 }
 
 /**
- * A typed SQL fragment: `sql(integer)\`DAYS_BETWEEN(${a}, ${b})\``. Expressions render in place,
- * other values become parameters. Without a type the value is read as the driver returns it.
+ * 带类型的 SQL 片段：`sql(integer)\`DAYS_BETWEEN(${a}, ${b})\``。表达式原位渲染，
+ * 其他值成为绑定参数。不指定类型时，值按驱动返回的样子读取。
  */
 export function sql<T>(type: SqlType<T>): (parts: TemplateStringsArray, ...args: TemplateArg[]) => Expr<T>;
 export function sql(parts: TemplateStringsArray, ...args: TemplateArg[]): Expr<unknown>;
@@ -308,20 +340,22 @@ export function sql(first: SqlType<unknown> | TemplateStringsArray, ...rest: Tem
   return (parts: TemplateStringsArray, ...args: TemplateArg[]) => build(first as SqlType<unknown>, parts, args);
 }
 
-/** A call of a function definition, the way built-in and user functions are made alike. */
+/** 调用一个函数定义；内置函数和用户自定义函数用同一种方式构造。 */
 export function call<T>(fn: FunctionDef, type: SqlType<NonNullable<T>>, ...args: Expr<unknown>[]): Expr<T> {
   return functionCall(type, fn, args);
 }
 
-/** A one-column query used as a value; NULL when it finds no row. */
+/** 只有一列的查询当作一个值使用；没有行时为 NULL。 */
 export function scalar<T>(subquery: Query<T>): Expr<T | null> {
   return new Scalar(subquery);
 }
 
+/** CURRENT_DATE：数据库当前日期。 */
 export function currentDate(): Expr<string> {
   return raw(date, "CURRENT_DATE");
 }
 
+/** CURRENT_TIMESTAMP：数据库当前时间戳。 */
 export function currentTimestamp(): Expr<string> {
   return raw(timestamp, "CURRENT_TIMESTAMP");
 }
