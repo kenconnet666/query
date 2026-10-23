@@ -1,8 +1,10 @@
-# 交接（2026-10-21）
+# 交接（2026-10-23）
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6、[0004 生产就绪](../docs/decisions/0004-production-readiness.md)和 [0005 API 简化审查](../docs/decisions/0005-api-simplification.md)都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
+[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6、[0004 生产就绪](../docs/decisions/0004-production-readiness.md)和 [0005 API 简化审查](../docs/decisions/0005-api-simplification.md)都已完成，1.0.0 已于 2026-10-22 发布到 Maven 中央仓库和 npm。
+
+**待讨论的建议**：[Java 写法进一步简化](../docs/proposals/java-conciseness.md)，只是调研建议，代码没有改动。
 
 ## 当前状态
 
@@ -12,6 +14,7 @@
 - M1 到 M6 在 `feat/v1` 上，已通过 [PR #2](https://github.com/kenconnet666/query/pull/2) 合并进 `master`。
 - 生产就绪已通过 [PR #3](https://github.com/kenconnet666/query/pull/3) 合并进 `master`。
 - API 简化在 `feat/api-simplify` 上，通过 PR #4 合并进 `master`。
+- 之后的基础设施（各库自包含的 `infra/` 目录）在 PR #10 合并。
 - 用户已授权在 CI 全绿后自行合并 PR，不必再问。新的工作从 `master` 开分支。
 
 ### 1.0 完成了什么
@@ -75,6 +78,7 @@
 
 ## 下一步（建议）
 
+0. 和用户讨论 [Java 写法简化的建议](../docs/proposals/java-conciseness.md)：1.x 小改确认后两端一起做；表接口方案属于 2.0 级改动，先出方案再动手。探针没有入库，需要时按文档的"实测"一节重写。
 1. 合并后看 `master` 上的 CI 是否全绿。
 2. 用 `versions:set` 进入 `1.1.0-SNAPSHOT`，`CHANGELOG.md` 顶部加"未发布"，并决定要不要建 GitHub Release（正文取 CHANGELOG 的 1.0.0 一节）。
 3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。影子试点已证明技术栈兼容。
@@ -93,7 +97,7 @@
 | 参考仓库（只读） | `IdeaProjects\easy_query_pro`、`IdeaProjects\easy-query`、`IdeaProjects\orm-references\*` | 按 CLAUDE.md 的说明重新克隆；不影响构建，只用于设计参考 |
 | 使用方代码（只读） | 旧电脑的本地目录 | 只在 Claude 项目记忆里有路径和说明，不进公开仓库 |
 | Claude 项目记忆 | `C:\Users\Administrator\.claude\projects\C--Users-Administrator-IdeaProjects-query\memory\` | 含使用方说明和设计证据，按需手动拷贝到新电脑对应目录；没有它也能继续，只是缺少使用方背景 |
-| 开发数据库 | WSL Debian 里的 Docker，由前身仓库的 `tools/*.ps1` 启动 | 见下文；没有本机库也能开发，实库测试交给 CI |
+| 开发数据库 | WSL Debian 里的 Docker，由本仓库 `infra/` 下各库目录的 `compose.yaml` 启动 | 见下文；没有本机库也能开发，实库测试交给 CI |
 | IDEA 的 MCP 与数据源 | 用户级配置 `idea` 与四个数据源 | 在新电脑的 IDEA 中重新配置，连接 ID 会变 |
 | 对照程序 | 旧电脑的会话临时目录，含使用方的业务常量，不进仓库 | 不需要；结论在 0002 与 0003 里 |
 
