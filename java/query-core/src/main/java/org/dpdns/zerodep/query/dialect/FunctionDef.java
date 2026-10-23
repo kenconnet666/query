@@ -12,6 +12,7 @@ public final class FunctionDef {
     /** 独占该函数的方言；null 表示所有方言通用。 */
     private final Class<? extends Dialect> owner;
 
+    /** 由 of 与 only 创建。 */
     private FunctionDef(String name, FunctionRenderer standard, Class<? extends Dialect> owner) {
         this.name = name;
         this.standard = standard;

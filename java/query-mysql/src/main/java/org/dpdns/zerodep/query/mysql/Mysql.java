@@ -34,6 +34,7 @@ public final class Mysql extends Sql {
         w.sql(" SEPARATOR ").render(args.get(1)).sql(")");
     });
 
+    /** 只放静态方法，不能实例化。 */
     private Mysql() { }
 
     // ---------- 数据库 ----------

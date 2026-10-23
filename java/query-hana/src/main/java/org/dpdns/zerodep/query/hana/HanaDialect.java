@@ -44,6 +44,7 @@ public class HanaDialect extends Dialect {
             ps.setTimestamp(i, t, utc());
         });
 
+    /** 用 INSTANCE；子类可以改写个别写法。 */
     protected HanaDialect() { }
 
     /** 方言名，用于异常信息和监听事件。 */

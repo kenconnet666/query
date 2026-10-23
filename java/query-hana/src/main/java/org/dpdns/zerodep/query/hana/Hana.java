@@ -46,6 +46,7 @@ public final class Hana extends Sql {
         w.sql(")");
     });
 
+    /** 只放静态方法，不能实例化。 */
     private Hana() { }
 
     // ---------- 数据库 ----------

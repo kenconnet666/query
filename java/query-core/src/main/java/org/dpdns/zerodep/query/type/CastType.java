@@ -18,6 +18,7 @@ public final class CastType<T> {
     private final int scale;
     private final Class<T> javaType;
 
+    /** 由各个静态工厂创建。 */
     private CastType(Kind kind, int length, int scale, Class<T> javaType) {
         this.kind = kind;
         this.length = length;

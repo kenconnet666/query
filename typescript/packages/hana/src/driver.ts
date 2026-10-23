@@ -18,6 +18,7 @@ export function hanaDriver(source: ConnectionPool | Connection): Driver {
     if (pooled) c.disconnect();
   };
   return {
+    /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const connection = await acquire();
       try {

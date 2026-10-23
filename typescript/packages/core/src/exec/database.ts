@@ -137,6 +137,7 @@ export function inMemoryCache(maxEntries = 1000): QueryCache {
       typeof v === "bigint" ? `${v}n` : v instanceof Uint8Array ? Array.from(v) : v,
     );
   return {
+    /** 命中且未过期时返回缓存的行，否则调用 load 并保存结果。 */
     get(key, ttlMs, load) {
       const now = Date.now();
       const k = keyOf(key);
@@ -149,6 +150,7 @@ export function inMemoryCache(maxEntries = 1000): QueryCache {
       rows.catch(() => entries.delete(k));
       return rows;
     },
+    /** 清空全部缓存。 */
     clear() {
       entries.clear();
     },

@@ -32,6 +32,7 @@ public final class Postgres extends Sql {
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(PostgresDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
 
+    /** 只放静态方法，不能实例化。 */
     private Postgres() { }
 
     // ---------- 数据库 ----------
@@ -105,6 +106,7 @@ public final class Postgres extends Sql {
     public static final class Ops<T> {
         private final Expr<T> expr;
 
+        /** 包住 expr，在它上面提供 PostgreSQL 专属的比较。 */
         private Ops(Expr<T> expr) { this.expr = expr; }
 
         /** {@code expr IS DISTINCT FROM other}：把 NULL 当作普通值比较的不等。 */

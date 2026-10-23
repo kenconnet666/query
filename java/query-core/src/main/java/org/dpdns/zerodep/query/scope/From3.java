@@ -28,6 +28,7 @@ public final class From3<T1, T2, T3> extends AbstractFrom<From3<T1, T2, T3>> {
         this.p3 = p3;
     }
 
+    /** 换一份 SELECT 内容，各表的参数不变。 */
     @Override From3<T1, T2, T3> rebuild(SelectSpec spec) { return new From3<>(spec, p1, p2, p3); }
 
     /** INNER JOIN 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
@@ -48,6 +49,7 @@ public final class From3<T1, T2, T3> extends AbstractFrom<From3<T1, T2, T3>> {
     /** CROSS JOIN 一个 CTE、派生表或常量行，例如码表。 */
     public <E> From4<T1, T2, T3, Ref<E>> crossJoin(Source<E> source) { return next(SelectSpec.JoinKind.CROSS, Ref.of(source), null); }
 
+    /** 连接 ref 后的作用域：先用 on 构造连接条件（skipEmpty 下省略空值条件），新表成为最后一个参数。 */
     private <N> From4<T1, T2, T3, N> next(SelectSpec.JoinKind kind, Ref<?> ref, Fn.F4<T1, T2, T3, N, Cond> on) {
         N param = ref.param();
         Cond condition = on == null ? null : condition(() -> on.apply(p1, p2, p3, param));

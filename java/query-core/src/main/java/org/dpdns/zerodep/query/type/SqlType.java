@@ -12,6 +12,7 @@ import java.util.Objects;
 public final class SqlType<T> {
     /** 无转换器的默认类型，按 Java 类缓存。 */
     private static final ClassValue<SqlType<?>> PLAIN = new ClassValue<>() {
+        /** 每个 Java 类一个不带转换器的类型。 */
         @Override
         @SuppressWarnings({"unchecked", "rawtypes"})
         protected SqlType<?> computeValue(Class<?> type) {
@@ -24,6 +25,7 @@ public final class SqlType<T> {
     private final Class<?> storageType;
     private final Converter<T, Object> converter;
 
+    /** 由 of 与 converted 创建。 */
     private SqlType(Class<T> javaType, Class<?> storageType, Converter<T, Object> converter) {
         this.javaType = javaType;
         this.storageType = storageType;

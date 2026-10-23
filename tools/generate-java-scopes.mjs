@@ -26,6 +26,7 @@ function fn() {
 
 /** 作用域 lambda 与 row(...) 构造器引用使用的函数接口，按参数个数编号。 */
 public final class Fn {
+    /** 只放函数式接口，不能实例化。 */
     private Fn() { }
 
 ${lines.join("\n\n")}
@@ -78,7 +79,8 @@ function from(n) {
     m.push(`    /** 以一个来源开始作用域；p1 是表接口，或 CTE 等来源的 Ref。 */
     public static <T1> From1<T1> start(Ref<?> ref, T1 p1) { return new From1<>(SelectSpec.from(ref), p1); }`);
   }
-  m.push(`    @Override ${self} rebuild(SelectSpec spec) { return new From${n}<>(spec, ${call}); }`);
+  m.push(`    /** 换一份 SELECT 内容，各表的参数不变。 */
+    @Override ${self} rebuild(SelectSpec spec) { return new From${n}<>(spec, ${call}); }`);
 
   if (n < MAX_TABLES) {
     const next = `From${n + 1}`;
@@ -96,7 +98,8 @@ function from(n) {
     public <N extends Entity> ${next}<${tp.join(", ")}, N> crossJoin(Class<N> table) { return next(SelectSpec.JoinKind.CROSS, Ref.table(table), null); }`);
     m.push(`    /** CROSS JOIN 一个 CTE、派生表或常量行，例如码表。 */
     public <E> ${next}<${tp.join(", ")}, Ref<E>> crossJoin(Source<E> source) { return next(SelectSpec.JoinKind.CROSS, Ref.of(source), null); }`);
-    m.push(`    private <N> ${next}<${tp.join(", ")}, N> next(SelectSpec.JoinKind kind, Ref<?> ref, ${on("N")} on) {
+    m.push(`    /** 连接 ref 后的作用域：先用 on 构造连接条件（skipEmpty 下省略空值条件），新表成为最后一个参数。 */
+    private <N> ${next}<${tp.join(", ")}, N> next(SelectSpec.JoinKind kind, Ref<?> ref, ${on("N")} on) {
         N param = ref.param();
         Cond condition = on == null ? null : condition(() -> on.apply(${call}, param));
         return new ${next}<>(spec.join(kind, ref, condition), ${call}, param);

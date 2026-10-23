@@ -10,6 +10,7 @@ public final class Converters {
     private record Info(Converter<Object, Object> instance, Class<?> javaType, Class<?> storageType) { }
 
     private static final ClassValue<Info> INFO = new ClassValue<>() {
+        /** 读取转换器类实现的 Converter 的类型参数，并实例化它。 */
         @Override
         protected Info computeValue(Class<?> type) {
             Class<?>[] args = typeArguments(type);
@@ -25,6 +26,7 @@ public final class Converters {
         }
     };
 
+    /** 工具类，不能实例化。 */
     private Converters() { }
 
     /** 转换器类的共享实例。 */

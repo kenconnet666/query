@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public abstract class Dialect {
     private final Map<FunctionDef, FunctionRenderer> functions = new ConcurrentHashMap<>();
 
+    /** 供各方言继承。 */
     protected Dialect() { }
 
     /** 方言名称，用于错误信息和调试。 */

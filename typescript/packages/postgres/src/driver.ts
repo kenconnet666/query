@@ -24,6 +24,7 @@ export function pgDriver(source: Pool | PoolClient | Client): Driver {
     return { columns: result.fields.map((f) => f.name), rows: result.rows };
   };
   const driver: Driver = {
+    /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const ms = milliseconds(options);
       if (ms === undefined) return run(source, sql, parameters);

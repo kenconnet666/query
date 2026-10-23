@@ -56,6 +56,7 @@ public final class TypeRegistry {
 
     private final Map<Class<?>, Entry> entries;
 
+    /** 由本类的工厂方法创建。 */
     private TypeRegistry(Map<Class<?>, Entry> entries) { this.entries = Map.copyOf(entries); }
 
     /** 通用 JDBC 类型的默认注册表。 */

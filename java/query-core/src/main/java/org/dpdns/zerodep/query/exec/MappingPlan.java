@@ -51,6 +51,7 @@ public final class MappingPlan<R> {
     /** 按列下标排列：目标读取该列所用的类型，目标不用的列为 null。 */
     private final SqlType<?>[] columnTypes;
 
+    /** 由 of 构建并缓存。 */
     private MappingPlan(Class<R> target, Strategy strategy, SqlType<?>[] columnTypes) {
         this.target = target;
         this.strategy = strategy;

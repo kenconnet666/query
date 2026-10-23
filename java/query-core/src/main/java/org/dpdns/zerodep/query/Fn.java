@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query;
 
 /** 作用域 lambda 与 row(...) 构造器引用使用的函数接口，按参数个数编号。 */
 public final class Fn {
+    /** 只放函数式接口，不能实例化。 */
     private Fn() { }
 
     /** 1 个参数的函数。 */

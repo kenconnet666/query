@@ -42,6 +42,7 @@ public final class From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> extends Abstr
         this.p10 = p10;
     }
 
+    /** 换一份 SELECT 内容，各表的参数不变。 */
     @Override From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> rebuild(SelectSpec spec) { return new From10<>(spec, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10); }
 
     /** INNER JOIN 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
@@ -62,6 +63,7 @@ public final class From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> extends Abstr
     /** CROSS JOIN 一个 CTE、派生表或常量行，例如码表。 */
     public <E> From11<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, Ref<E>> crossJoin(Source<E> source) { return next(SelectSpec.JoinKind.CROSS, Ref.of(source), null); }
 
+    /** 连接 ref 后的作用域：先用 on 构造连接条件（skipEmpty 下省略空值条件），新表成为最后一个参数。 */
     private <N> From11<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, N> next(SelectSpec.JoinKind kind, Ref<?> ref, Fn.F11<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, N, Cond> on) {
         N param = ref.param();
         Cond condition = on == null ? null : condition(() -> on.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, param));

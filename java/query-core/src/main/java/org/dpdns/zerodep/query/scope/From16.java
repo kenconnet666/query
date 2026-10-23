@@ -54,6 +54,7 @@ public final class From16<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13
         this.p16 = p16;
     }
 
+    /** 换一份 SELECT 内容，各表的参数不变。 */
     @Override From16<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> rebuild(SelectSpec spec) { return new From16<>(spec, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16); }
 
     /** WHERE 条件；多次调用之间是 AND，值为空而省略的条件（Cond.EMPTY）会被丢弃。 */

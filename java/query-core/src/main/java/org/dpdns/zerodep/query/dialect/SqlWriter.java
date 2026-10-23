@@ -46,6 +46,7 @@ public final class SqlWriter {
         this(dialect, functionOverrides, attributes, new Aliases());
     }
 
+    /** 全部字段的构造；fork 与探查写入器用它共享或新建别名表。 */
     private SqlWriter(Dialect dialect, Map<FunctionDef, FunctionRenderer> functionOverrides, Map<Object, Object> attributes, Aliases aliases) {
         this.dialect = dialect;
         this.functionOverrides = functionOverrides;

@@ -42,12 +42,14 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class Metadata {
     /** 每个类型的元数据：接口按表扫描，其余按结果类或行类扫描。 */
     private static final ClassValue<EntityMeta<?>> ENTITIES = new ClassValue<>() {
+        /** 表是接口，结果类和行类是普通类。 */
         @Override
         protected EntityMeta<?> computeValue(Class<?> type) { return type.isInterface() ? scanTable(type) : scanClass(type); }
     };
 
     /** 以 lambda 的类为键；解析需要拿到实例，所以首次使用时才填充。 */
     private static final ClassValue<AtomicReference<GetterInfo>> GETTERS = new ClassValue<>() {
+        /** 每个 getter 类一个空槽，第一次解析后填入。 */
         @Override
         protected AtomicReference<GetterInfo> computeValue(Class<?> type) { return new AtomicReference<>(); }
     };
@@ -60,6 +62,7 @@ public final class Metadata {
      */
     private record GetterInfo(String property, Class<?> returnType) { }
 
+    /** 工具类，不能实例化。 */
     private Metadata() { }
 
     /** 取得类型的元数据：接口按表描述，其余类按结果类或行类描述。 */

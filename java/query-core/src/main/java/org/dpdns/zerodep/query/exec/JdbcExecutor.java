@@ -135,6 +135,7 @@ public final class JdbcExecutor {
         ResultSet r = rs;
         long[] count = {0};
         Spliterator<Object[]> rows = new Spliterators.AbstractSpliterator<>(Long.MAX_VALUE, Spliterator.ORDERED | Spliterator.NONNULL) {
+            /** 读下一行交给 action；没有更多行时关闭游标并返回 false。 */
             @Override
             public boolean tryAdvance(Consumer<? super Object[]> action) {
                 try {

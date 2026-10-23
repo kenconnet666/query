@@ -22,6 +22,7 @@ export function mysqlDriver(source: Pool | PoolConnection | Connection): Driver 
     return { columns: (fields ?? []).map((f) => f.name), rows: Array.isArray(rows) ? (rows as unknown[][]) : [] };
   };
   const driver: Driver = {
+    /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const ms = milliseconds(options);
       if (ms === undefined) return run(source, sql, parameters);
