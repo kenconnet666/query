@@ -41,3 +41,9 @@ export class TestDatabase extends Database {
 }
 
 export const rows = (columns: readonly string[], ...values: readonly (readonly unknown[])[]): DriverResult => ({ columns, rows: values });
+
+/** 对每条语句都返回给定行的数据库实例，以及它背后的驱动。 */
+export function answering(columns: readonly string[], ...values: unknown[][]): { db: TestDatabase; driver: FakeDriver } {
+  const driver = new FakeDriver(() => rows(columns, ...values));
+  return { db: new TestDatabase({}, driver), driver };
+}

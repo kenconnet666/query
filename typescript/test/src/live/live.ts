@@ -25,7 +25,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { dynamicColumns, floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -473,6 +473,14 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
             .select((m) => m.material),
         ),
         ["M1"],
+      );
+    });
+
+    it("排除分组维度后按排序串汇总", async () => {
+      const rows = await live().db.list(dynamicColumns());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.unit}:${r.partNumber}:${Number(r.total)}`),
+        ["M2:null:null:12", "M1:null:null:6"],
       );
     });
 

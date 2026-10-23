@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.MappingPlan;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.Order;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
@@ -16,8 +17,10 @@ import org.dpdns.zerodep.query.type.SqlType;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -265,6 +268,79 @@ public final class Query<R> {
         }
         MappingPlan<V> plan = MappingPlan.of(type, ordered);
         return new Query<>(reordered(order), combination, ordered, true, plan::map, type, limit, offset, execution);
+    }
+
+    // ---------- 动态列与排序 ----------
+
+    /**
+     * 不取这些列：SQL 里写成 NULL，结果里为 null，结果的形态不变。只被它们用到的导航关系不再连接；
+     * 有分组时，与它们相同的分组键（以及按这些键的排序）一起去掉，于是同一个查询可以按用户选的维度汇总。
+     * 列名就是 {@link #labels()}，不分大小写和下划线；不存在的列名报错。
+     */
+    public Query<R> exclude(String... names) { return omit(positionsOf(List.of(names), "exclude")); }
+
+    /** condition 为 true 时才 {@link #exclude}，例如 {@code .excludeIf(!withText, "text")}。 */
+    public Query<R> excludeIf(boolean condition, String... names) { return condition ? exclude(names) : this; }
+
+    /**
+     * 只取这些列，其余的按 {@link #exclude} 处理。names 为 null 或空时保持不变，所以可以直接传入用户选的列；
+     * 只认结果里已有的列名，不存在的列名报错。
+     */
+    public Query<R> only(Collection<String> names) {
+        if (names == null || names.isEmpty()) return this;
+        Set<Integer> kept = positionsOf(names, "only");
+        Set<Integer> others = new HashSet<>();
+        for (int i = 0; i < labels.size(); i++) if (!kept.contains(i)) others.add(i);
+        return omit(others);
+    }
+
+    /**
+     * 按排序串排序，例如 {@code "partNumber desc, material"}：逗号分隔，每项是一个结果列名，可以跟 asc 或 desc。
+     * 只能按结果里的列排序，相当于白名单，所以可以直接传入用户的排序参数；未知列名或写法报错。
+     * spec 为 null 或空白时保持原来的 ORDER BY，否则替换它。合并后的查询先放进 CTE 再排序。
+     */
+    public Query<R> sortBy(String spec) {
+        if (spec == null || spec.isBlank()) return this;
+        if (arms.size() > 1) throw new IllegalStateException("sortBy(...) works on a single SELECT; wrap the UNION in a CTE first");
+        List<Expr<?>> items = arms.get(0).items();
+        List<Order> orders = new ArrayList<>();
+        for (String part : spec.split(",")) {
+            String[] words = part.trim().split("\\s+");
+            if (words[0].isEmpty()) continue;
+            String direction = words.length > 1 ? words[1].toLowerCase(Locale.ROOT) : "asc";
+            if (words.length > 2 || !(direction.equals("asc") || direction.equals("desc"))) {
+                throw new IllegalArgumentException("Cannot read sort item '" + part.trim() + "'; write 'column', 'column asc' or 'column desc'");
+            }
+            int i = positionsOf(List.of(words[0]), "sortBy").iterator().next();
+            if (items.get(i) instanceof Omitted<?>) throw new IllegalArgumentException("Cannot sort by '" + words[0] + "', it is excluded");
+            orders.add(direction.equals("desc") ? items.get(i).desc() : items.get(i).asc());
+        }
+        return withSpec(arms.get(0).spec().reorder(orders));
+    }
+
+    /** 列名在结果里的位置；未知的列名报错并列出可用的列。 */
+    private Set<Integer> positionsOf(Collection<String> names, String use) {
+        Set<Integer> found = new LinkedHashSet<>();
+        for (String name : names) {
+            int at = -1;
+            for (int i = 0; i < labels.size() && at < 0; i++) if (normalize(labels.get(i)).equals(normalize(name))) at = i;
+            if (at < 0) throw new IllegalArgumentException(use + "(...): unknown column '" + name + "'; the query has " + labels);
+            found.add(at);
+        }
+        return found;
+    }
+
+    /** 把各段里这些位置的列换成 NULL。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Query<R> omit(Set<Integer> positions) {
+        if (positions.isEmpty()) return this;
+        List<Arm> out = new ArrayList<>();
+        for (Arm a : arms) {
+            List<Expr<?>> items = new ArrayList<>(a.items());
+            for (int i : positions) if (!(items.get(i) instanceof Omitted<?>)) items.set(i, new Omitted(items.get(i)));
+            out.add(new Arm(a.spec(), items));
+        }
+        return new Query<>(out, combination, labels, byName, mapper, shape, limit, offset, execution);
     }
 
     /** 同一条 SQL，在映射好的每行上再套一个 Java 函数。 */

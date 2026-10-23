@@ -127,6 +127,11 @@ public final class SelectSpec {
         return new SelectSpec(joins, where, groupBy, rollup, having, List.copyOf(all), distinct, limit, offset, filtered, skipEmpty, clauses);
     }
 
+    /** 用 orders 替换已有的排序项。 */
+    public SelectSpec reorder(List<Order> orders) {
+        return new SelectSpec(joins, where, groupBy, rollup, having, List.copyOf(orders), distinct, limit, offset, filtered, skipEmpty, clauses);
+    }
+
     /** SELECT DISTINCT。 */
     public SelectSpec distinct() {
         return new SelectSpec(joins, where, groupBy, rollup, having, orderBy, true, limit, offset, filtered, skipEmpty, clauses);

@@ -236,6 +236,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "simple-case": plain(() => simpleCase()),
   "floor-ceil": plain(() => floorCeil()),
   "reserved-alias": plain(() => reservedAlias()),
+  "dynamic-columns": plain(() => dynamicColumns()),
   navigation: {
     filtered: true,
     query: () =>
@@ -321,6 +322,16 @@ export function floorCeil() {
 }
 
 /** An entity named Order: its alias is a reserved word and must be quoted. */
+/** 排除分组维度和导航列后按用户的排序串排序：分组键、排序和连接都随之去掉。 */
+export function dynamicColumns() {
+  return from(Lips)
+    .groupBy((l) => [l.material, l.unit, l.mara.partNumber])
+    .orderBy((l) => [l.material.asc(), l.unit.asc()])
+    .select((l) => ({ material: l.material, unit: l.unit, partNumber: l.mara.partNumber, total: sum(l.quantity) }))
+    .exclude("unit", "partNumber")
+    .sortBy("total desc, material");
+}
+
 export function reservedAlias() {
   return from(Order)
     .where((o) => o.material.eq("M1"))

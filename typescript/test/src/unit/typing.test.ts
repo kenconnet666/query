@@ -66,6 +66,16 @@ export function typeChecks(): unknown[] {
   // @ts-expect-error a generic template applied to a table without the shared fields
   stockArm(Lips, (h) => h.quantity, "2026");
 
+  // ---------- dynamic columns ----------
+
+  const excluded = from(Lips)
+    .select((l) => ({ delivery: l.delivery, stock: { quantity: l.quantity, unit: l.unit } }))
+    .exclude("stock");
+  expectType<Equal<typeof excluded, Query<{ delivery: string; stock: { quantity: string | null; unit: string | null } }>>>();
+
+  // @ts-expect-error exclude names a key of the result
+  from(Lips).select((l) => ({ delivery: l.delivery })).exclude("plant");
+
   // ---------- relations ----------
 
   const navigated = from(Lips).select((l) => ({
@@ -107,7 +117,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded];
 }
 
 describe("编译期类型检查", () => {

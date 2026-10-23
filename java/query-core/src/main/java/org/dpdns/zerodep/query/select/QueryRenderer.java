@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.select;
 
 import org.dpdns.zerodep.query.dialect.Clause;
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
@@ -11,6 +12,7 @@ import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -84,10 +86,18 @@ public final class QueryRenderer {
             }
         }
         if (s.distinct && !replacedDistinct) w.sql("DISTINCT ");
+        List<Expr<?>> groupBy = s.groupBy;
+        List<Order> orderBy = s.orderBy;
+        Set<String> excluded = excludedKeys(w, arm);
+        if (!excluded.isEmpty()) {
+            SqlWriter probe = w.probe();
+            groupBy = groupBy.stream().filter(g -> !excluded.contains(text(probe, g))).toList();
+            orderBy = orderBy.stream().filter(o -> !excluded.contains(text(probe, o.expr()))).toList();
+        }
         // SELECT 列表里的常量写成字面量：HANA 无法给这里的参数定类型（CTE 里的 COALESCE(x, ?)
         // 对外层的 SUM 来说不是数值）。GROUP BY、DISTINCT 及其 ORDER BY 按文本匹配表达式，
         // 所以它们里面的常量也必须是字面量。
-        boolean grouped = !s.groupBy.isEmpty() || s.distinct || replacedDistinct;
+        boolean grouped = !groupBy.isEmpty() || s.distinct || replacedDistinct;
         boolean outer = w.inlining(true);
         List<Expr<?>> items = arm.items();
         for (int i = 0; i < items.size(); i++) {
@@ -100,7 +110,7 @@ public final class QueryRenderer {
         SourceFilters filters = s.filtered ? (SourceFilters) w.attribute(SourceFilters.class) : null;
         if (filters == null) filters = SourceFilters.NONE;
         List<Cond> where = new ArrayList<>();
-        Set<Ref.Relation> implicit = usedRelations(w, arm);
+        Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy);
         for (SelectSpec.Join j : s.joins) {
             List<Cond> extra = filters.conditionsFor(j.ref());
             switch (j.kind()) {
@@ -130,14 +140,14 @@ public final class QueryRenderer {
         Cond whereAll = Nodes.all(where);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
         w.inlining(grouped);
-        if (!s.groupBy.isEmpty()) {
+        if (!groupBy.isEmpty()) {
             w.sql("\nGROUP BY ");
-            w.dialect().groupBy(w, s.groupBy, s.rollup);
+            w.dialect().groupBy(w, groupBy, s.rollup);
         }
         Cond having = Nodes.all(s.having);
         if (!having.isEmpty()) w.sql("\nHAVING ").render(having);
         boolean limited = s.limit != null || s.offset != null;
-        if (!s.orderBy.isEmpty() && (ordered || limited)) w.sql("\nORDER BY ").join(s.orderBy, ", ");
+        if (!orderBy.isEmpty() && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
         w.inlining(outer);
         w.dialect().limit(w, s.limit, s.offset);
         for (Clause c : s.clauses) {
@@ -146,19 +156,44 @@ public final class QueryRenderer {
     }
 
     /**
+     * {@link Query#exclude} 去掉的列原来的写法，用来去掉与它们相同的分组键和排序项；没有分组时为空，
+     * 因为不分组时按不在结果里的列排序仍然成立。常量按字面量写出，只差参数值的两个表达式不会被当成相同。
+     */
+    private static Set<String> excludedKeys(SqlWriter w, Query.Arm arm) {
+        if (arm.spec().groupBy.isEmpty()) return Set.of();
+        SqlWriter probe = null;
+        Set<String> keys = new HashSet<>();
+        for (Expr<?> e : arm.items()) {
+            if (!(e instanceof Omitted<?> o)) continue;
+            if (probe == null) probe = w.probe();
+            keys.add(text(probe, o.original));
+        }
+        return keys;
+    }
+
+    /** node 在 probe 里的写法；同一个 probe 里别名一致，所以写法相同就是同一个表达式。 */
+    private static String text(SqlWriter probe, Renderable node) {
+        SqlWriter f = probe.fork();
+        f.inlining(true);
+        f.render(node);
+        return f.text();
+    }
+
+    /**
      * 这一段真正用到的隐式连接（导航关系）。先用探查写入器把 SELECT、条件、分组、排序试渲染一遍，记下引用到的数据源；
      * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。没有关系时不做探查。
+     * groupBy 和 orderBy 是去掉被排除的列之后实际要写出的。
      */
-    private static Set<Ref.Relation> usedRelations(SqlWriter w, Query.Arm arm) {
+    private static Set<Ref.Relation> usedRelations(SqlWriter w, Query.Arm arm, List<Expr<?>> groupBy, List<Order> orderBy) {
         SelectSpec s = arm.spec();
         if (s.joins.stream().allMatch(j -> j.ref().relations().isEmpty())) return Set.of();
         SqlWriter probe = w.probe();
         for (Expr<?> e : arm.items()) probe.render(e);
         for (SelectSpec.Join j : s.joins) if (!j.on().isEmpty()) probe.render(j.on());
         for (Cond c : s.where) if (!c.isEmpty()) probe.render(c);
-        for (Expr<?> g : s.groupBy) probe.render(g);
+        for (Expr<?> g : groupBy) probe.render(g);
         for (Cond c : s.having) if (!c.isEmpty()) probe.render(c);
-        for (Order o : s.orderBy) probe.render(o);
+        for (Order o : orderBy) probe.render(o);
         for (Clause c : s.clauses) probe.render(c);
         Set<Ref.Relation> used = new LinkedHashSet<>();
         boolean grew = true;

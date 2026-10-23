@@ -5,7 +5,7 @@ import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { Many } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
-import { SqlWriter, type Rendered } from "../sql/writer.js";
+import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
 declare const rowType: unique symbol;
@@ -227,6 +227,83 @@ export class Query<R> {
     return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl, timeout: a.timeout });
   }
 
+  // ---------- 动态列与排序 ----------
+
+  /**
+   * 不取这些列：SQL 里写成 NULL，结果里为 null，结果的形态不变。只被它们用到的导航关系不再连接；
+   * 有分组时，与它们相同的分组键（以及按这些键的排序）一起去掉，于是同一个查询可以按用户选的维度汇总。
+   * 名字是结果的键，嵌套对象的键去掉它下面的全部列；不分大小写和下划线，不存在的名字报错。
+   */
+  exclude<K extends keyof R & string>(...names: K[]): Query<{ [P in keyof R]: P extends K ? Excluded<R[P]> : R[P] }> {
+    return this.#omit(this.#positionsOf(names, "exclude"));
+  }
+
+  /** condition 为真时才 {@link exclude}，例如 `.excludeIf(!withText, "text")`。 */
+  excludeIf<K extends keyof R & string>(condition: boolean, ...names: K[]): Query<{ [P in keyof R]: P extends K ? Excluded<R[P]> : R[P] }> {
+    return condition ? this.exclude(...names) : (this as never);
+  }
+
+  /**
+   * 只取这些列，其余的按 {@link exclude} 处理。names 为 null、undefined 或空时保持不变，所以可以直接传入用户选的列；
+   * 只认结果里已有的名字，不存在的名字报错。
+   */
+  only(names: readonly string[] | null | undefined): Query<{ [P in keyof R]: Excluded<R[P]> }> {
+    if (names == null || names.length === 0) return this as never;
+    const kept = this.#positionsOf(names, "only");
+    return this.#omit(this.#s.labels.map((_, i) => i).filter((i) => !kept.has(i)));
+  }
+
+  /**
+   * 按排序串排序，例如 `"partNumber desc, material"`：逗号分隔，每项是一个结果列名，可以跟 asc 或 desc。
+   * 只能按结果里的列排序，相当于白名单，所以可以直接传入用户的排序参数；未知列名或写法报错。
+   * spec 为空时保持原来的 ORDER BY，否则替换它。合并后的查询先放进 CTE 再排序。
+   */
+  sortBy(spec: string | null | undefined): Query<R> {
+    if (spec == null || spec.trim() === "") return this;
+    if (this.#s.arms.length > 1) throw new Error("sortBy(...) works on a single SELECT; wrap the UNION in a CTE first");
+    const items = this.#s.arms[0]!.items;
+    const orders: Order[] = [];
+    for (const part of spec.split(",")) {
+      const words = part.trim().split(/\s+/);
+      const name = words[0]!;
+      if (name === "") continue;
+      const direction = (words[1] ?? "asc").toLowerCase();
+      if (words.length > 2 || (direction !== "asc" && direction !== "desc")) {
+        throw new Error(`Cannot read sort item '${part.trim()}'; write 'column', 'column asc' or 'column desc'`);
+      }
+      const at = [...this.#positionsOf([name], "sortBy")];
+      if (at.length !== 1) throw new Error(`Cannot sort by '${name}'; it names a nested object, sort by one of its columns`);
+      const item = items[at[0]!]!;
+      if (item instanceof Omitted) throw new Error(`Cannot sort by '${name}', it is excluded`);
+      orders.push(direction === "desc" ? item.desc() : item.asc());
+    }
+    return this.#withSpec({ ...this.#s.arms[0]!.spec, orderBy: orders });
+  }
+
+  /** 名字在结果里的列位置：同名的列，或嵌套对象下的全部列；未知的名字报错并列出可用的列。 */
+  #positionsOf(names: readonly string[], use: string): Set<number> {
+    const labels = this.#s.labels.map(normalize);
+    const found = new Set<number>();
+    for (const name of names) {
+      const key = normalize(name);
+      const hits = labels.flatMap((label, i) => (label === key || label.startsWith(`${key}.`) ? [i] : []));
+      if (hits.length === 0) throw new Error(`${use}(...): unknown column '${name}'; the query has [${this.#s.labels.join(", ")}]`);
+      for (const i of hits) found.add(i);
+    }
+    return found;
+  }
+
+  /** 把各段里这些位置的列换成 NULL。 */
+  #omit(positions: Iterable<number>): Query<never> {
+    const at = new Set(positions);
+    if (at.size === 0) return this as never;
+    const arms = this.#s.arms.map((arm) => ({
+      spec: arm.spec,
+      items: arm.items.map((e, i) => (at.has(i) && !(e instanceof Omitted) ? new Omitted(e) : e)),
+    }));
+    return makeQuery({ ...this.#s, arms });
+  }
+
   /** SQL 不变，对每一行应用一个函数。 */
   map<V>(fn: (row: R) => V): Query<V> {
     const inner = this.#s.assemble;
@@ -327,6 +404,29 @@ type WritableKeys<C> = { [K in keyof C]-?: IfEquals<{ [Q in K]: C[K] }, { -reado
 /** `into` 填充的类字段：不含方法，也不含 getter（它们在类型上是只读的）。 */
 export type Fields<C> = { [K in keyof C as K extends WritableKeys<C> ? (C[K] extends (...args: never[]) => unknown ? never : K) : never]: C[K] };
 
+/** 被排除后的值：叶子可能为 null，嵌套对象保持结构（它的每一列都是 null）。 */
+export type Excluded<V> = V extends Record<string, unknown> ? { [K in keyof V]: Excluded<V[K]> } : V | null;
+
+/** 列名与名字的比较形式：去掉下划线并忽略大小写，与 Java 一致。 */
+function normalize(name: string): string {
+  return name.replaceAll("_", "").toLowerCase();
+}
+
+/**
+ * {@link Query.exclude} 去掉的一列：SQL 里写成 NULL，所以结果的形态不变，这一列读出来是 null。
+ * 保留原来的表达式，渲染时用它找出要一起去掉的分组键。
+ */
+class Omitted extends Expr<unknown> {
+  constructor(readonly original: Expr<unknown>) {
+    super(original.type);
+  }
+
+  /** 写出 `NULL`。 */
+  render(w: SqlWriter): void {
+    w.sql("NULL");
+  }
+}
+
 /** 分支是否带 ORDER BY 或分页；UNION 的分支不允许。 */
 function hasOrderOrLimit(s: SelectSpec): boolean {
   return s.orderBy.length > 0 || s.limit !== undefined || s.offset !== undefined;
@@ -406,10 +506,18 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   const distinctClauses = s.clauses.filter((c) => c.position === "distinct");
   for (const c of distinctClauses) w.render(c).sql(" ");
   if (s.distinct && distinctClauses.length === 0) w.sql("DISTINCT ");
+  let groupBy = s.groupBy;
+  let orderBy = s.orderBy;
+  const excluded = excludedKeys(w, arm);
+  if (excluded.size > 0) {
+    const probe = w.probe();
+    groupBy = groupBy.filter((g) => !excluded.has(textOf(probe, g)));
+    orderBy = orderBy.filter((o) => !excluded.has(textOf(probe, o.expr)));
+  }
   // SELECT 列表里的常量写成字面量：HANA 无法确定那里参数的类型（CTE 里的 COALESCE(x, ?)
   // 对外层的 SUM 来说不是数值）。GROUP BY、DISTINCT 及其 ORDER BY 按文本匹配表达式，
   // 所以其中的常量也必须是字面量。
-  const grouped = s.groupBy.length > 0 || s.distinct || distinctClauses.length > 0;
+  const grouped = groupBy.length > 0 || s.distinct || distinctClauses.length > 0;
   const outer = w.inline(true);
   arm.items.forEach((item, i) => {
     if (i > 0) w.sql(", ");
@@ -420,7 +528,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   if (s.joins.length === 0) w.dialect.fromNothing(w);
   const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : [];
   const where: Cond[] = [];
-  const implicit = usedRelations(w, arm);
+  const implicit = usedRelations(w, arm, groupBy, orderBy);
   for (const j of s.joins) {
     const extra = conditionsFor(filters, j.ref);
     const owner = ownerOf(j.ref);
@@ -439,32 +547,53 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   const whereAll = all(...where, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
   w.inline(grouped);
-  if (s.groupBy.length > 0) {
+  if (groupBy.length > 0) {
     w.sql("\nGROUP BY ");
-    w.dialect.groupBy(w, s.groupBy, s.rollup);
+    w.dialect.groupBy(w, groupBy, s.rollup);
   }
   const having = all(...s.having);
   if (!having.isEmpty) w.sql("\nHAVING ").render(having);
   const limited = s.limit !== undefined || s.offset !== undefined;
-  if (s.orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(s.orderBy, ", ");
+  if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
   w.inline(outer);
   w.dialect.limit(w, s.limit, s.offset);
   for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
 }
 
 /**
+ * {@link Query.exclude} 去掉的列原来的写法，用来去掉与它们相同的分组键和排序项；没有分组时为空，
+ * 因为不分组时按不在结果里的列排序仍然成立。
+ */
+function excludedKeys(w: SqlWriter, arm: Arm): Set<string> {
+  const keys = new Set<string>();
+  if (arm.spec.groupBy.length === 0) return keys;
+  let probe: SqlWriter | undefined;
+  for (const e of arm.items) if (e instanceof Omitted) keys.add(textOf((probe ??= w.probe()), e.original));
+  return keys;
+}
+
+/** node 在 probe 里的写法；同一个 probe 里别名一致，所以写法相同就是同一个表达式。常量按字面量写出。 */
+function textOf(probe: SqlWriter, node: Renderable): string {
+  const f = probe.fork();
+  f.inline(true);
+  f.render(node);
+  return f.text;
+}
+
+/**
  * 这一段真正用到的隐式连接（导航关系）。先用探查写入器把 SELECT、条件、分组、排序试渲染一遍，记下引用到的数据源；
  * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。没有关系时不做探查。
+ * groupBy 和 orderBy 是去掉被排除的列之后实际要写出的。
  */
-function usedRelations(w: SqlWriter, arm: Arm): Set<Relation> {
+function usedRelations(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[]): Set<Relation> {
   const s = arm.spec;
   if (s.joins.every((j) => ownerOf(j.ref).relations.length === 0)) return new Set();
   const probe = w.probe();
   for (const e of arm.items) probe.render(e);
   for (const j of s.joins) if (!j.on.isEmpty) probe.render(j.on);
   for (const c of [...s.where, ...s.having]) if (!c.isEmpty) probe.render(c);
-  for (const g of s.groupBy) probe.render(g);
-  for (const o of s.orderBy) probe.render(o);
+  for (const g of groupBy) probe.render(g);
+  for (const o of orderBy) probe.render(o);
   for (const c of s.clauses) probe.render(c);
   const used = new Set<Relation>();
   let grew = true;

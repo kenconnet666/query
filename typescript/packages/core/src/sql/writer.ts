@@ -218,6 +218,11 @@ export class SqlWriter {
     return this.#aliases.touched ?? new Set();
   }
 
+  /** 目前写出的文本，参数写成 ?；渲染器用它比较两个表达式的写法。 */
+  get text(): string {
+    return this.#chunks.map((c) => (c === PARAMETER ? "?" : c)).join("");
+  }
+
   /** 设置和别名相同、缓冲区为空的新写入器，用于单独渲染某一部分。 */
   fork(): SqlWriter {
     const w = new SqlWriter(this.dialect, this.settings);

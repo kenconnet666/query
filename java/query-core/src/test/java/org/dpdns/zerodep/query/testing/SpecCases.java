@@ -120,6 +120,7 @@ public final class SpecCases {
         cases.put("floor-ceil", SpecCase.plain(SpecCases::floorCeil));
         cases.put("reserved-alias", SpecCase.plain(SpecCases::reservedAlias));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
+        cases.put("dynamic-columns", SpecCase.plain(SpecCases::dynamicColumns));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         return cases;
@@ -238,6 +239,16 @@ public final class SpecCases {
                 Expr<BigDecimal> half = divide(l.quantity(), lit(new BigDecimal("2")));
                 return cols(l.delivery(), floor(half).as("down"), ceil(half).as("up"));
             });
+    }
+
+    /** 排除分组维度和导航列后按用户的排序串排序：分组键、排序和连接都随之去掉。 */
+    public static Query<Map<String, Object>> dynamicColumns() {
+        return from(Lips.class)
+            .groupBy(l -> keys(l.material(), l.unit(), l.mara().partNumber()))
+            .orderBy(l -> orders(l.material().asc(), l.unit().asc()))
+            .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), sum(l.quantity()).as("total")))
+            .exclude("unit", "partNumber")
+            .sortBy("total desc, material");
     }
 
     /** 多对一导航：按需 LEFT JOIN，可以继续导航，全局过滤器进入 ON。 */

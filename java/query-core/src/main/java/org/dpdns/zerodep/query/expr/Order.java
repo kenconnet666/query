@@ -21,6 +21,9 @@ public final class Order implements Renderable, OrderItem {
         this.nullsFirst = nullsFirst;
     }
 
+    /** 排序依据的表达式。 */
+    public Expr<?> expr() { return expr; }
+
     /** NULL 排在最前。 */
     public Order nullsFirst() { return new Order(expr, descending, true); }
 

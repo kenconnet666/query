@@ -407,6 +407,13 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 排除分组维度后按排序串汇总() {
+        assertEquals(List.of("M2:null:null:12", "M1:null:null:6"), db.list(SpecCases.dynamicColumns()).stream()
+            .map(r -> r.get("material") + ":" + r.get("unit") + ":" + r.get("partNumber") + ":" + plain(r.get("total")))
+            .toList());
+    }
+
+    @Test
     void 右侧的UNION保持原有分组() {
         assertEquals(List.of("M1", "M1", "M2"), db.list(SpecCases.unionGrouping()).stream().sorted().toList());
     }
