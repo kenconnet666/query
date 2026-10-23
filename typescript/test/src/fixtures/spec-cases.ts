@@ -236,6 +236,27 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "simple-case": plain(() => simpleCase()),
   "floor-ceil": plain(() => floorCeil()),
   "reserved-alias": plain(() => reservedAlias()),
+  navigation: {
+    filtered: true,
+    query: () =>
+      from(Lips)
+        .where((l) => l.mara.manufacturer.eq("MK1"))
+        .orderBy((l) => l.delivery)
+        .select((l) => ({ delivery: l.delivery, partNumber: l.mara.partNumber, text: l.mara.text.text })),
+  },
+  "one-to-many": {
+    filtered: true,
+    query: () =>
+      from(Mara)
+        .where((m) => all(m.materialType.eq("ZMAT"), m.deliveries.any((l) => l.unit.eq("EA"))))
+        .orderBy((m) => m.material)
+        .select((m) => ({
+          material: m.material,
+          lines: m.deliveries.count(),
+          total: m.deliveries.sum((l) => l.quantity),
+          latest: m.deliveries.first((l) => l.createdOn.desc()).delivery,
+        })),
+  },
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))

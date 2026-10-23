@@ -17,7 +17,7 @@ export function typeChecks(): unknown[] {
   // ---------- scope ----------
 
   // @ts-expect-error a column of a table that is not in the scope
-  from(Lips).where((l) => l.text.eq("x"));
+  from(Lips).where((l) => l.language.eq("x"));
 
   // @ts-expect-error more callback parameters than tables
   from(Lips).join(Mara, (l, ma) => ma.material.eq(l.material)).where((l, ma, extra) => extra.eq("x"));
@@ -66,6 +66,27 @@ export function typeChecks(): unknown[] {
   // @ts-expect-error a generic template applied to a table without the shared fields
   stockArm(Lips, (h) => h.quantity, "2026");
 
+  // ---------- relations ----------
+
+  const navigated = from(Lips).select((l) => ({
+    part: l.mara.partNumber,
+    lines: l.mara.deliveries.count(),
+    latest: l.mara.deliveries.first((d) => d.createdOn.desc()).delivery,
+  }));
+  expectType<Equal<typeof navigated, Query<{ part: string | null; lines: number; latest: string | null }>>>();
+
+  // Spreading a reference keeps only the columns.
+  const spread = from(Makt).select((t) => ({ ...t }));
+  expectType<Equal<typeof spread, Query<{ client: string; material: string; language: string; text: string }>>>();
+  const withoutRelations = from(Mara).select((m) => ({ material: m.material, deliveries: m.deliveries, text: m.text }));
+  expectType<Equal<typeof withoutRelations, Query<{ material: string }>>>();
+
+  // @ts-expect-error a one-to-many relation is not a column
+  from(Mara).where((m) => m.deliveries.eq("x"));
+
+  // @ts-expect-error a many-to-one relation is a reference, not a column
+  from(Lips).where((l) => l.mara.eq("x"));
+
   // ---------- decorators ----------
 
   class BadColumns {
@@ -86,7 +107,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, quantityOf, expectType, codes];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations];
 }
 
 describe("编译期类型检查", () => {

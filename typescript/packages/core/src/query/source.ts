@@ -1,6 +1,7 @@
-import { Column, type ColumnOwner, type Expr, type SourceColumn } from "../sql/expr.js";
+import { Column, type ColumnOwner, type Cond, type Expr, type SourceColumn } from "../sql/expr.js";
 import { COLUMNS, NAMED } from "../internal.js";
-import { columnName, entityMeta, type Ctor, type PropertyMeta, type Table } from "../schema/metadata.js";
+import { columnName, entityMeta, type Ctor, type One, type PropertyMeta, type RelationMeta, type Table } from "../schema/metadata.js";
+import { Many } from "./many.js";
 import type { Query } from "./query.js";
 import type { CteDefinition, SqlWriter } from "../sql/writer.js";
 
@@ -13,10 +14,34 @@ declare const rowType: unique symbol;
  * 它对 `keyof E` 是同态映射，因此基于 `E extends Shared` 的泛型代码可以读取共有字段。
  * 展开它（`{ ...l }`）即可选取全部列。
  */
-export type Ref<E> = { readonly [K in keyof E]-?: Expr<E[K]> };
+export type Ref<E> = { readonly [K in keyof E]-?: Member<E[K], false> };
 
 /** LEFT JOIN 中可能缺失的一侧：每一列都可能为 null。 */
-export type NullableRef<E> = { readonly [K in keyof E]-?: Expr<E[K] | null> };
+export type NullableRef<E> = { readonly [K in keyof E]-?: Member<E[K], true> };
+
+/** 关系目标的引用带有的标记：对象投影略过带这个标记的值，所以展开引用（`{ ...l }`）只得到本表的列。 */
+export const RELATED: unique symbol = Symbol("query.related");
+
+/** 经由关系得到的目标表引用（多对一、`first(...)`）：列可能为 null。 */
+export type Related<E> = NullableRef<E> & { readonly [RELATED]: true };
+
+/**
+ * 引用上一个字段的类型：多对一关系是目标表的引用（列可能为 null），一对多是 {@link Many}，其余是列表达式。
+ * 有意写成对 V 分配的条件类型：泛型代码里的 `E["client"]` 无法求值时，编译器按 V 的约束（如 string）求值，
+ * 得到列表达式；列表达式里用未拆开的 Whole，可空列仍是一个 `Expr<string | null>` 而不是两个表达式的联合。
+ */
+type Member<V, Nullable extends boolean, Whole = V> = V extends One<infer T>
+  ? Related<T>
+  : V extends Many<infer T>
+    ? Many<T>
+    : Expr<Nullable extends true ? Whole | null : Whole>;
+
+/** 一个隐式连接：LEFT JOIN 目标的那次出现，连接条件是 on。 */
+export interface Relation {
+  readonly owner: RefOwner;
+  readonly ref: object;
+  readonly on: Cond;
+}
 
 /**
  * 查询读取行的来源：表、CTE、派生表。实现它即可增加一种来源，例如某个方言的参数化视图。
@@ -40,6 +65,9 @@ const OWNER = Symbol("query.ref");
 
 /** 数据源一次出现的身份；别名在渲染时按语句分配。 */
 export class RefOwner implements ColumnOwner {
+  /** 从这次出现出发的隐式连接，按登记顺序；渲染时只连接真正被用到的。 */
+  readonly relations: Relation[] = [];
+
   constructor(readonly source: Source<unknown>) {}
 
   /** 本次出现在当前语句中的别名。 */
@@ -68,13 +96,33 @@ export class RefOwner implements ColumnOwner {
   }
 }
 
-/** 为数据源创建一个引用：每个列一个属性，并暗中挂上 {@link RefOwner}。 */
-export function createRef<E>(source: Source<E>): Ref<E> {
+/**
+ * 为数据源创建一个引用：每个列一个属性，并暗中挂上 {@link RefOwner}。entity 的 `@one`、`@many` 字段成为
+ * 惰性取值的属性：第一次读到时才登记连接，之后读到的是同一个结果，所以同一关系只连接一次。
+ * 关系属性不可枚举，展开引用（`{ ...l }`）只得到列。related 为 true 时带上 {@link RELATED} 标记。
+ */
+export function createRef<E>(source: Source<E>, entity: Ctor<unknown> | undefined = source.entity, related = false): Ref<E> {
   const owner = new RefOwner(source as Source<unknown>);
-  const ref: Record<string, Expr<unknown>> = {};
+  const ref: Record<string, unknown> = {};
   for (const c of source.columns) ref[c.name] = new Column(owner, c);
   Object.defineProperty(ref, OWNER, { value: owner });
+  if (related) ref[RELATED as unknown as string] = true;
+  if (entity !== undefined) {
+    for (const relation of entityMeta(entity).relations) {
+      let value: unknown;
+      Object.defineProperty(ref, relation.name, { get: () => (value ??= relationValue(owner, ref, relation)) });
+    }
+  }
   return Object.freeze(ref) as unknown as Ref<E>;
+}
+
+/** 关系属性的值：一对多是 Many；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
+function relationValue(owner: RefOwner, self: object, relation: RelationMeta): unknown {
+  const on = relation.on as (self: object, target: object) => Cond;
+  if (relation.many) return new Many(owner, relation.target, (t) => on(self, t));
+  const target = createRef(tableSource(relation.target()), undefined, true);
+  owner.relations.push({ owner: ownerOf(target), ref: target, on: on(self, target) });
+  return target;
 }
 
 /** 取引用背后的 {@link RefOwner}；不是查询回调给出的引用就报错。 */

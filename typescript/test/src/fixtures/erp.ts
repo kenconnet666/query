@@ -1,4 +1,4 @@
-import { blankAsNull, column, converted, date, decimal, ignore, integer, table, text, timestamp, trimmed } from "@zerodep-dev/query-core";
+import { all, blankAsNull, column, converted, date, decimal, ignore, integer, many, one, table, text, timestamp, trimmed, type Many, type One } from "@zerodep-dev/query-core";
 
 /** SAP-style entities shared by the unit tests and the live scenarios of every dialect, as in the Java tests. */
 export const SCHEMA = "QUERY_IT";
@@ -24,6 +24,12 @@ export class Mara extends ClientEntity {
   @column("MFRPN") partNumber!: string;
   @column("MFRNR") manufacturer!: string;
   @column("MTART") materialType!: string;
+
+  /** 一对多：这个物料的交货行（同一集团）。 */
+  @many(() => Lips, (m, l) => all(l.material.eq(m.material), l.client.eq(m.client))) deliveries!: Many<Lips>;
+
+  /** 多对一：语言 1 的物料描述。 */
+  @one(() => Makt, (m, t) => all(t.material.eq(m.material), t.client.eq(m.client), t.language.eq("1"))) text!: One<Makt>;
 }
 
 /** MARA read the way SAP data is used: trimmed part numbers, blank makers as NULL, and the stored maker. */
@@ -50,6 +56,18 @@ export class Lips extends ClientEntity {
   @column("LFIMG", decimal) quantity!: string;
   @column("VRKME") unit!: string;
   @column("VGBEL") salesOrder!: string;
+
+  /** 多对一：物料主数据（同一集团）。 */
+  @one(() => Mara, (l, m) => all(m.material.eq(l.material), m.client.eq(l.client))) mara!: One<Mara>;
+
+  /** 多对一：语言 1 的物料描述。 */
+  @one(() => Makt, (l, t) => all(t.material.eq(l.material), t.client.eq(l.client), t.language.eq("1"))) text!: One<Makt>;
+
+  /** 一对多：参考的销售订单的业务数据。 */
+  @many(() => Vbkd, (l, v) => v.salesOrder.eq(l.salesOrder)) salesData!: Many<Vbkd>;
+
+  /** 多对一：任意语言的物料描述，只用于渲染测试。 */
+  @one(() => Makt, (l, t) => all(t.client.eq(l.client), t.material.eq(l.material))) anyText!: One<Makt>;
 }
 
 @table("MAKT", { schema: SCHEMA })

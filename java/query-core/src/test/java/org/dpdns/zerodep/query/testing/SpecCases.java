@@ -120,6 +120,8 @@ public final class SpecCases {
         cases.put("floor-ceil", SpecCase.plain(SpecCases::floorCeil));
         cases.put("reserved-alias", SpecCase.plain(SpecCases::reservedAlias));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
+        cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
+        cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         return cases;
     }
 
@@ -236,6 +238,23 @@ public final class SpecCases {
                 Expr<BigDecimal> half = divide(l.quantity(), lit(new BigDecimal("2")));
                 return cols(l.delivery(), floor(half).as("down"), ceil(half).as("up"));
             });
+    }
+
+    /** 多对一导航：按需 LEFT JOIN，可以继续导航，全局过滤器进入 ON。 */
+    public static Query<Map<String, Object>> navigation() {
+        return from(Lips.class)
+            .where(l -> l.mara().manufacturer().eq("MK1"))
+            .orderBy(l -> l.delivery())
+            .select(l -> cols(l.delivery(), l.mara().partNumber(), l.mara().text().text()));
+    }
+
+    /** 一对多：EXISTS、相关子查询（行数、合计）和每组第一行。 */
+    public static Query<Map<String, Object>> oneToMany() {
+        return from(Mara.class)
+            .where(m -> all(m.materialType().eq("ZMAT"), m.deliveries().any(l -> l.unit().eq("EA"))))
+            .orderBy(m -> m.material())
+            .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total"),
+                m.deliveries().first(l -> l.createdOn().desc()).delivery().as("latest")));
     }
 
     /** 表名是 Order：别名是保留字，必须加引号。 */

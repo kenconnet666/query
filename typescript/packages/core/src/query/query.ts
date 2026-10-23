@@ -2,7 +2,8 @@ import type { Clause, Dialect } from "../sql/dialect.js";
 import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
-import { createRef, Cte, Derived, ownerOf, tableSource, type NullableRef, type Ref, type Source } from "./source.js";
+import { Many } from "./many.js";
+import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Rendered } from "../sql/writer.js";
 
@@ -78,11 +79,18 @@ function list<T>(value: T | readonly T[]): readonly T[] {
 
 // ---------- 投影 ----------
 
-/** 对象投影：每个叶子是一个表达式，嵌套的对象得到嵌套的结果。 */
-export type Projection = { readonly [key: string]: Expr<any> | Projection };
+/**
+ * 对象投影：每个叶子是一个表达式，嵌套的对象得到嵌套的结果。
+ * 一对多（{@link Many}）和关系目标的引用不是列，会被略过，所以展开带关系的引用也能直接投影。
+ */
+export type Projection = { readonly [key: string]: Expr<any> | Projection | Many<any> };
 
-/** 投影的结果类型。 */
-export type Shape<P> = { -readonly [K in keyof P]: P[K] extends Expr<infer V> ? V : Shape<P[K]> };
+/** 投影的结果类型；略过一对多和关系目标的引用，与运行时一致。 */
+export type Shape<P> = {
+  -readonly [K in keyof P as K extends string ? (P[K] extends Many<any> | { readonly [RELATED]: true } ? never : K) : never]: P[K] extends Expr<infer V>
+    ? V
+    : Shape<P[K]>;
+};
 
 /** 是否是字面量对象，用来区分嵌套投影与类的实例。 */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -97,6 +105,8 @@ function flatten(p: object, path: readonly string[], items: Expr<unknown>[], pat
     if (value instanceof Expr) {
       items.push(value as Expr<unknown>);
       paths.push([...path, key]);
+    } else if (value instanceof Many || (isPlainObject(value) && RELATED in value)) {
+      continue;
     } else if (isPlainObject(value)) {
       flatten(value, [...path, key], items, paths);
     } else {
@@ -410,6 +420,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   if (s.joins.length === 0) w.dialect.fromNothing(w);
   const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : [];
   const where: Cond[] = [];
+  const implicit = usedRelations(w, arm);
   for (const j of s.joins) {
     const extra = conditionsFor(filters, j.ref);
     const owner = ownerOf(j.ref);
@@ -423,6 +434,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
       // 被连接的表的过滤条件放进 ON，LEFT JOIN 才仍是 LEFT JOIN。
       w.sql(" ON ").render(all(j.on, ...extra));
     }
+    emitRelations(w, owner, implicit, filters);
   }
   const whereAll = all(...where, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
@@ -438,6 +450,59 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   w.inline(outer);
   w.dialect.limit(w, s.limit, s.offset);
   for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
+}
+
+/**
+ * 这一段真正用到的隐式连接（导航关系）。先用探查写入器把 SELECT、条件、分组、排序试渲染一遍，记下引用到的数据源；
+ * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。没有关系时不做探查。
+ */
+function usedRelations(w: SqlWriter, arm: Arm): Set<Relation> {
+  const s = arm.spec;
+  if (s.joins.every((j) => ownerOf(j.ref).relations.length === 0)) return new Set();
+  const probe = w.probe();
+  for (const e of arm.items) probe.render(e);
+  for (const j of s.joins) if (!j.on.isEmpty) probe.render(j.on);
+  for (const c of [...s.where, ...s.having]) if (!c.isEmpty) probe.render(c);
+  for (const g of s.groupBy) probe.render(g);
+  for (const o of s.orderBy) probe.render(o);
+  for (const c of s.clauses) probe.render(c);
+  const used = new Set<Relation>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const j of s.joins) grew = collect(ownerOf(j.ref), probe, used) || grew;
+  }
+  return used;
+}
+
+/** 把 owner 出发的、用到了的关系加入 used，并试渲染它们的连接条件；有新增时返回 true。 */
+function collect(owner: RefOwner, probe: SqlWriter, used: Set<Relation>): boolean {
+  let grew = false;
+  for (const r of owner.relations) {
+    if (!used.has(r) && reaches(r.owner, probe.touched)) {
+      used.add(r);
+      probe.render(r.on);
+      grew = true;
+    }
+    if (used.has(r)) grew = collect(r.owner, probe, used) || grew;
+  }
+  return grew;
+}
+
+/** owner 或从它出发的某个关系的目标是否被引用到。 */
+function reaches(owner: RefOwner, touched: ReadonlySet<object>): boolean {
+  return touched.has(owner) || owner.relations.some((r) => reaches(r.owner, touched));
+}
+
+/** 紧跟在 owner 的 FROM 或 JOIN 之后写出它用到的隐式连接（LEFT JOIN），再写更深的关系；全局过滤器放进 ON。 */
+function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[]): void {
+  for (const r of owner.relations) {
+    if (!used.has(r)) continue;
+    w.sql("\nLEFT JOIN ");
+    r.owner.renderSource(w);
+    w.sql(" ON ").render(all(r.on, ...conditionsFor(filters, r.ref)));
+    emitRelations(w, r.owner, used, filters);
+  }
 }
 
 // ---------- 作用域 ----------

@@ -439,6 +439,43 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       );
     });
 
+    it("导航关系在实库上按需连接并给出正确结果", async () => {
+      const { db } = live();
+      const rows = await db.list(
+        from(Mara)
+          .orderBy((m) => m.material)
+          .select((m) => ({
+            material: m.material,
+            lines: m.deliveries.count(),
+            total: m.deliveries.sum((l) => l.quantity),
+            latest: m.deliveries.first((l) => l.createdOn.desc()).delivery,
+            text: m.text.text,
+          })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${Number(r.lines)}:${r.total === null ? null : Number(r.total)}:${r.latest}:${r.text}`),
+        ["M1:3:6:D5:Pump", "M2:2:12:D3:null", "M3:0:null:null:null", "M4:0:null:null:null"],
+      );
+      assert.deepEqual(
+        await db.list(
+          from(Lips)
+            .where((l) => l.mara.materialType.eq("ZMAT"))
+            .orderBy((l) => l.delivery)
+            .select((l) => l.delivery),
+        ),
+        ["D1", "D2", "D3", "D4", "D5"],
+      );
+      assert.deepEqual(await db.list(from(Lips).where((l) => l.salesData.none()).select((l) => l.delivery)), ["D5"]);
+      assert.deepEqual(
+        await db.list(
+          from(Mara)
+            .where((m) => m.deliveries.any((l) => l.quantity.gt("2.5")).and(m.deliveries.count().ge(3)))
+            .select((m) => m.material),
+        ),
+        ["M1"],
+      );
+    });
+
     it("右侧的 UNION 保持原有分组", async () => {
       assert.deepEqual((await live().db.list(unionGrouping())).sort(), ["M1", "M1", "M2"]);
     });

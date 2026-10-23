@@ -21,14 +21,18 @@ export {
   column,
   entityMeta,
   ignore,
+  many,
   NamingStrategy,
+  one,
   readAs,
   shapeFields,
   table,
   trimmed,
   type Ctor,
   type EntityMeta,
+  type One,
   type PropertyMeta,
+  type RelationMeta,
   type Table,
 } from "./schema/metadata.js";
 export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./sql/writer.js";
@@ -60,7 +64,8 @@ export {
   type SourceColumn,
   type TemplateArg,
 } from "./sql/expr.js";
-export { Cte, Derived, type NullableRef, type Ref, type Source } from "./query/source.js";
+export { Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
+export { Many } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
 export {
   abs,

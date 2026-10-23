@@ -281,7 +281,25 @@ export function all(...conds: readonly Cond[]): Cond {
   const list = kept(conds);
   if (list.length === 0) return Cond.EMPTY;
   if (list.length === 1) return list[0]!;
-  return condition((w) => w.join(list, " AND "));
+  return new Conjunction(list.flatMap(conjuncts));
+}
+
+/** 用 AND 连接的多个条件；保留各项，供一对多关系的 `first(...)` 拆开连接条件。 */
+export class Conjunction extends Cond {
+  constructor(readonly parts: readonly Cond[]) {
+    super();
+  }
+
+  /** 写出 `a AND b AND ...`。 */
+  render(w: SqlWriter): void {
+    w.join(this.parts, " AND ");
+  }
+}
+
+/** 把条件拆成用 AND 连接的各项；不是 AND 的条件就是它自己。 */
+export function conjuncts(c: Cond): readonly Cond[] {
+  if (c.isEmpty) return [];
+  return c instanceof Conjunction ? c.parts : [c];
 }
 
 /** 用 OR 连接全部条件，空条件被丢弃；每个操作数都加括号，使 OR 里的 AND 保持原意。 */
@@ -307,7 +325,23 @@ const TRUE = condition((w) => w.sql("1 = 1"));
 
 /** 用比较运算符连接两个操作数：`left operator right`。 */
 export function compare(left: Renderable, operator: string, right: Renderable): Cond {
-  return condition((w) => w.render(left).sql(` ${operator} `).render(right));
+  return new Comparison(left, operator, right);
+}
+
+/** 比较条件 `left op right`；保留两侧，一对多关系的 `first(...)` 从中找出连接两张表的等值键。 */
+export class Comparison extends Cond {
+  constructor(
+    readonly left: Renderable,
+    readonly operator: string,
+    readonly right: Renderable,
+  ) {
+    super();
+  }
+
+  /** 写出 `left op right`。 */
+  render(w: SqlWriter): void {
+    w.render(this.left).sql(` ${this.operator} `).render(this.right);
+  }
 }
 
 /** IN / NOT IN 值列表；超过方言上限时拆成多个谓词，IN 用 OR 连接，NOT IN 用 AND 连接。 */

@@ -1,3 +1,6 @@
+import type { Many } from "../query/many.js";
+import type { Ref } from "../query/source.js";
+import type { Cond } from "../sql/expr.js";
 import { text, type SqlType } from "./types.js";
 
 // 标准装饰器把元数据记录在 Symbol.metadata 上，而 Node 还没有定义它。编译后的类在
@@ -34,6 +37,28 @@ interface FieldMeta {
   readonly type?: SqlType<unknown>;
   readonly ignore?: true;
   readonly read?: string;
+  readonly relation?: Omit<RelationMeta, "name">;
+}
+
+/** 关系字段的声明：目标表（延迟取得，表之间可以互相引用）和连接条件。 */
+export interface RelationMeta {
+  readonly name: string;
+  /** 是否一对多。 */
+  readonly many: boolean;
+  /** 目标表实体。 */
+  readonly target: () => Table<unknown>;
+  /** 连接条件：本表的引用和目标表的引用。 */
+  readonly on: (self: never, target: never) => Cond;
+}
+
+declare const ONE: unique symbol;
+
+/**
+ * 多对一关系字段的类型：`@one(() => Mara, (l, m) => m.material.eq(l.material)) mara!: One<Mara>;`。
+ * 查询回调里 `l.mara` 是目标表的引用（列可能为 null），可以继续取列或继续导航。
+ */
+export interface One<T> {
+  readonly [ONE]: T;
 }
 
 /** 实体的一个列属性。 */
@@ -56,8 +81,10 @@ export interface EntityMeta {
   readonly fields: readonly string[];
   /** 按属性名取列属性，不是列时为 undefined。 */
   property(name: string): PropertyMeta | undefined;
-  /** 该字段是否被 `ignore` 标记。 */
+  /** 该字段是否被 `ignore` 标记，或是关系字段（两者都不接收列值）。 */
   ignored(name: string): boolean;
+  /** 用 `@one`、`@many` 声明的关系。 */
+  readonly relations: readonly RelationMeta[];
 }
 
 /** 类的元数据对象。 */
@@ -123,6 +150,24 @@ export const blankAsNull = readAs("NULLIF({0}, '')");
 /** 该列读取时去掉两端空格：`TRIM(column)`。 */
 export const trimmed = readAs("TRIM({0})");
 
+/**
+ * 多对一或一对一关系：用 on 把目标表 LEFT JOIN 进来。同一个关系在一条查询里只连接一次，没有被用到时不连接。
+ * 字段写成 `@one(() => Mara, (l, m) => m.material.eq(l.material)) mara!: One<Mara>;`，回调的 l 就是本表。
+ */
+export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => Cond) {
+  return (_value: undefined, context: ClassFieldDecoratorContext<S, One<T>>): void =>
+    record(context, { relation: { many: false, target, on: on as RelationMeta["on"] } });
+}
+
+/**
+ * 一对多关系：目标表里满足 on 的那些行，通过 `any`、`none`、`count`、`sum`、`first` 等使用。
+ * 字段写成 `@many(() => Lips, (m, l) => l.material.eq(m.material)) deliveries!: Many<Lips>;`。
+ */
+export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => Cond) {
+  return (_value: undefined, context: ClassFieldDecoratorContext<S, Many<T>>): void =>
+    record(context, { relation: { many: true, target, on: on as RelationMeta["on"] } });
+}
+
 /** 不由任何查询填充的 DTO 字段。 */
 export function ignore(_value: undefined, context: ClassFieldDecoratorContext): void {
   record(context, { ignore: true });
@@ -157,9 +202,10 @@ function describe(type: Ctor<unknown>): EntityMeta {
     type,
     table,
     properties,
-    fields: fields.filter((f) => !f.ignore).map((f) => f.name),
+    fields: fields.filter((f) => !f.ignore && f.relation === undefined).map((f) => f.name),
     property: (name: string) => byName.get(name),
-    ignored: (name: string) => fieldsByName.get(name)?.ignore === true,
+    ignored: (name: string) => fieldsByName.get(name)?.ignore === true || fieldsByName.get(name)?.relation !== undefined,
+    relations: fields.filter((f) => f.relation !== undefined).map((f) => Object.freeze({ ...f.relation!, name: f.name })),
   });
 }
 

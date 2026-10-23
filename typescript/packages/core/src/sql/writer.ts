@@ -91,6 +91,8 @@ export interface RenderSettings {
 class Aliases {
   readonly byOwner = new Map<object, string>();
   readonly used = new Set<string>();
+  /** 探查用的写入器记下渲染过程中引用到的数据源；普通写入器为 undefined。 */
+  touched: Set<object> | undefined;
 }
 
 /** 文本块中参数占位符的标记；编号要到 {@link SqlWriter.statement} 时才定。 */
@@ -122,6 +124,7 @@ export class SqlWriter {
   /** 来源在整条语句中的别名；首选名已被占用时加数字后缀。 */
   aliasFor(owner: object, preferred: string): string {
     const aliases = this.#aliases;
+    aliases.touched?.add(owner);
     const known = aliases.byOwner.get(owner);
     if (known !== undefined) return known;
     const base = this.dialect.foldCase(preferred);
@@ -198,6 +201,21 @@ export class SqlWriter {
       node.render(this);
     });
     return this;
+  }
+
+  /**
+   * 探查用的写入器：设置与本写入器相同，别名独立，并记下渲染过程中引用到的每个数据源，见 {@link touched}。
+   * 渲染器用它先试渲染一遍，找出哪些隐式连接真正被用到。
+   */
+  probe(): SqlWriter {
+    const w = new SqlWriter(this.dialect, this.settings);
+    w.#aliases.touched = new Set();
+    return w;
+  }
+
+  /** 探查写入器记下的数据源；普通写入器返回空集合。 */
+  get touched(): ReadonlySet<object> {
+    return this.#aliases.touched ?? new Set();
   }
 
   /** 设置和别名相同、缓冲区为空的新写入器，用于单独渲染某一部分。 */
