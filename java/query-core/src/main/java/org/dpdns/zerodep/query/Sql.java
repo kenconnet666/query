@@ -2,6 +2,7 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Renderable;
+import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Aggregate;
 import org.dpdns.zerodep.query.expr.Case;
 import org.dpdns.zerodep.query.expr.Cond;
@@ -31,6 +32,7 @@ import org.dpdns.zerodep.query.type.SqlType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.Temporal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -50,6 +52,34 @@ public class Sql extends Rows {
 
     /** {@code LOCATE(text, search)}；PostgreSQL 与 MySQL 注册自己的写法。 */
     public static final FunctionDef LOCATE = FunctionDef.of("LOCATE");
+
+    /** {@code YEAR(d)}；PostgreSQL 注册 EXTRACT 写法，下面的 MONTH、DAYOFMONTH 相同。 */
+    public static final FunctionDef YEAR = FunctionDef.of("YEAR");
+
+    /** {@code MONTH(d)}。 */
+    public static final FunctionDef MONTH = FunctionDef.of("MONTH");
+
+    /** {@code DAYOFMONTH(d)}。 */
+    public static final FunctionDef DAY = FunctionDef.of("DAYOFMONTH");
+
+    /** {@code ADD_DAYS(d, n)}；PostgreSQL、MySQL 注册自己的写法，下面的 ADD_MONTHS、ADD_YEARS 相同。 */
+    public static final FunctionDef ADD_DAYS = FunctionDef.of("ADD_DAYS");
+
+    /** {@code ADD_MONTHS(d, n)}。 */
+    public static final FunctionDef ADD_MONTHS = FunctionDef.of("ADD_MONTHS");
+
+    /** {@code ADD_YEARS(d, n)}。 */
+    public static final FunctionDef ADD_YEARS = FunctionDef.of("ADD_YEARS");
+
+    /** {@code DAYS_BETWEEN(from, to)}；PostgreSQL 写成相减，MySQL 写成 DATEDIFF(to, from)。 */
+    public static final FunctionDef DAYS_BETWEEN = FunctionDef.of("DAYS_BETWEEN");
+
+    /** {@code STRING_AGG(value, separator ORDER BY ...)}，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
+    public static final FunctionDef STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) -> {
+        w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
+        if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
+        w.sql(")");
+    });
 
     /** 只供方言门面继承，不能直接实例化。 */
     protected Sql() { }
@@ -325,6 +355,33 @@ public class Sql extends Rows {
         return new Nodes.Arithmetic<>(first.type(), operator, operands);
     }
 
+    // ---------- 日期 ----------
+
+    /** 年份，参数可以是日期或时间戳：{@code groupBy(l -> keys(year(l.createdOn()), month(l.createdOn())))}。 */
+    public static Expr<Integer> year(Expr<? extends Temporal> e) { return Nodes.call(SqlType.of(Integer.class), YEAR, List.of(e)); }
+
+    /** 月份，1 到 12。 */
+    public static Expr<Integer> month(Expr<? extends Temporal> e) { return Nodes.call(SqlType.of(Integer.class), MONTH, List.of(e)); }
+
+    /** 月中的第几天，1 到 31。 */
+    public static Expr<Integer> day(Expr<? extends Temporal> e) { return Nodes.call(SqlType.of(Integer.class), DAY, List.of(e)); }
+
+    /** 日期加上 days 天，可以为负。 */
+    public static Expr<LocalDate> addDays(Expr<LocalDate> date, int days) { return Nodes.call(date.type(), ADD_DAYS, List.of(date, lit(days))); }
+
+    /** 日期加上 months 个月；目标月没有那一天时取月末，例如 1 月 31 日加一个月是 2 月末。 */
+    public static Expr<LocalDate> addMonths(Expr<LocalDate> date, int months) {
+        return Nodes.call(date.type(), ADD_MONTHS, List.of(date, lit(months)));
+    }
+
+    /** 日期加上 years 年；2 月 29 日加一年是 2 月 28 日。 */
+    public static Expr<LocalDate> addYears(Expr<LocalDate> date, int years) { return Nodes.call(date.type(), ADD_YEARS, List.of(date, lit(years))); }
+
+    /** 从 from 到 to 相隔的天数，to 较早时为负。 */
+    public static Expr<Integer> daysBetween(Expr<LocalDate> from, Expr<LocalDate> to) {
+        return Nodes.call(SqlType.of(Integer.class), DAYS_BETWEEN, List.of(from, to));
+    }
+
     // ---------- 聚合 ----------
 
     /** COUNT(*)。 */
@@ -349,6 +406,22 @@ public class Sql extends Rows {
 
     /** 最大值。 */
     public static <T> Aggregate<T> max(Expr<T> e) { return new Aggregate<>(e.type(), "MAX", false, List.of(e)); }
+
+    /**
+     * 把组内的文本用 separator 拼接，可以指定拼接顺序：{@code stringAgg(l.delivery(), ",", l.delivery().asc())}。
+     * HANA、PostgreSQL 写成 STRING_AGG，MySQL 写成 GROUP_CONCAT（结果长度受 group_concat_max_len 限制，默认 1024 字节）。
+     */
+    public static Expr<String> stringAgg(Expr<String> value, String separator, OrderItem... order) {
+        List<Renderable> args = new ArrayList<>();
+        args.add(value);
+        args.add(lit(Objects.requireNonNull(separator, "separator")));
+        args.addAll(orders(order));
+        return new Expr<>(value.type()) {
+            @Override public void render(SqlWriter w) { STRING_AGG.render(w, args); }
+
+            @Override public String nameHint() { return value.nameHint(); }
+        };
+    }
 
     /** groupByRollup 的汇总行上，被汇总掉的键为 1，其余为 0。 */
     public static Expr<Integer> grouping(Expr<?> key) { return Nodes.call(SqlType.of(Integer.class), "GROUPING", List.of(key)); }

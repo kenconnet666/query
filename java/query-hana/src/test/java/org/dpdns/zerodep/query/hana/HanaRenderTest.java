@@ -44,7 +44,7 @@ class HanaRenderTest {
 
     @Test
     void HANA专属函数和子句不能在别的方言上渲染() {
-        Query<Integer> fn = from(Lips.class).select(l -> daysBetween(lit(LocalDate.of(2026, 1, 1)), lit(LocalDate.of(2026, 1, 2))));
+        Query<Integer> fn = from(Lips.class).select(l -> toInteger(l.quantity()));
         assertThrows(UnsupportedOperationException.class, () -> fn.toSql(new TestDialect()));
         Query<String> clause = from(Lips.class).with(hint("NO_CS_JOIN")).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> clause.toSql(new TestDialect()));

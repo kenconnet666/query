@@ -205,6 +205,27 @@ class RenderTest {
     }
 
     @Test
+    void 半开区间写成大于等于加小于且skipEmpty下缺少的一端被忽略() {
+        LocalDate none = null;
+        assertTrue(from(Lips.class).where(l -> l.createdOn().range(START, END)).select(l -> l.delivery()).toSql(DIALECT).sql()
+            .endsWith("WHERE LIPS.ERDAT >= ? AND LIPS.ERDAT < ?"));
+        assertTrue(from(Lips.class).skipEmpty().where(l -> l.createdOn().range(START, none)).select(l -> l.delivery()).toSql(DIALECT).sql()
+            .endsWith("WHERE LIPS.ERDAT >= ?"));
+        assertThrows(IllegalArgumentException.class,
+            () -> from(Lips.class).where(l -> l.createdOn().range(START, none)).select(l -> l.delivery()).toSql(DIALECT));
+    }
+
+    @Test
+    void 条件聚合写成CASE且多次过滤按AND合并而空条件不过滤() {
+        String sql = from(Lips.class)
+            .select(l -> cols(
+                count().filter(l.unit().eq("EA")).filter(l.material().eq("M1")).as("n"),
+                sum(l.quantity()).filter(onlyIf(false, () -> l.unit().eq("KG"))).as("total")))
+            .toSql(DIALECT).sql();
+        assertTrue(sql.startsWith("SELECT COUNT(CASE WHEN LIPS.VRKME = 'EA' AND LIPS.MATNR = 'M1' THEN 1 END) AS \"n\", SUM(LIPS.LFIMG) AS \"total\""), sql);
+    }
+
+    @Test
     void skipEmpty也作用于连接条件和子查询且不开启时与null比较报错() {
         String none = null;
         String sql = from(Lips.class).skipEmpty()

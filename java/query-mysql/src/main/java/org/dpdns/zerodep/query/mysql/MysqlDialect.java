@@ -17,10 +17,27 @@ public class MysqlDialect extends Dialect {
     /** 无状态单例，{@link MysqlDatabase} 使用它。 */
     public static final MysqlDialect INSTANCE = new MysqlDialect();
 
-    /** 因为 {@code ||} 不是连接，CONCAT 改写为函数；LOCATE 的参数顺序与核心定义相反，需要对调。 */
+    /**
+     * 因为 {@code ||} 不是连接，CONCAT 改写为函数；LOCATE 的参数顺序与核心定义相反，需要对调；
+     * 日期加减写成 DATE_ADD，相隔天数写成 DATEDIFF(to, from)，STRING_AGG 写成 GROUP_CONCAT。
+     */
     protected MysqlDialect() {
         register(Sql.CONCAT, (w, args) -> FunctionDef.call(w, "CONCAT", args));
         register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "LOCATE", List.of(args.get(1), args.get(0))));
+        register(Sql.ADD_DAYS, (w, args) -> dateAdd(w, args, "DAY"));
+        register(Sql.ADD_MONTHS, (w, args) -> dateAdd(w, args, "MONTH"));
+        register(Sql.ADD_YEARS, (w, args) -> dateAdd(w, args, "YEAR"));
+        register(Sql.DAYS_BETWEEN, (w, args) -> FunctionDef.call(w, "DATEDIFF", List.of(args.get(1), args.get(0))));
+        register(Sql.STRING_AGG, (w, args) -> {
+            w.sql("GROUP_CONCAT(").render(args.get(0));
+            if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
+            w.sql(" SEPARATOR ").render(args.get(1)).sql(")");
+        });
+    }
+
+    /** 写出 {@code DATE_ADD(date, INTERVAL n UNIT)}。 */
+    private static void dateAdd(SqlWriter w, List<? extends Renderable> args, String unit) {
+        w.sql("DATE_ADD(").render(args.get(0)).sql(", INTERVAL ").render(args.get(1)).sql(" " + unit + ")");
     }
 
     /** 方言名，用于异常信息和监听事件。 */

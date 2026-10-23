@@ -1,42 +1,13 @@
-import { call, Cond, condition, date, Expr, expression, FunctionDef, integer, lit, param, skips, text, toOrder, untyped, type Clause, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { call, Cond, condition, date, Expr, expression, FunctionDef, integer, lit, param, skips, text, untyped, type Clause, type KeepNull, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA 专有的函数和子句；在其他方言上拒绝渲染。 */
 
-const DAYS_BETWEEN = FunctionDef.only(HanaDialect, "DAYS_BETWEEN");
-const ADD_DAYS = FunctionDef.only(HanaDialect, "ADD_DAYS");
-const ADD_MONTHS = FunctionDef.only(HanaDialect, "ADD_MONTHS");
-const ADD_YEARS = FunctionDef.only(HanaDialect, "ADD_YEARS");
 const TO_VARCHAR = FunctionDef.only(HanaDialect, "TO_VARCHAR");
 const TO_DATE = FunctionDef.only(HanaDialect, "TO_DATE");
 const TO_NVARCHAR = FunctionDef.only(HanaDialect, "TO_NVARCHAR");
 const LENGTH = FunctionDef.only(HanaDialect, "LENGTH");
 const TO_INTEGER = FunctionDef.only(HanaDialect, "TO_INTEGER");
-const STRING_AGG = FunctionDef.only(HanaDialect, "STRING_AGG", (w, args) => {
-  w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
-  if (args.length > 2) w.sql(" ORDER BY ").join(args.slice(2), ", ");
-  w.sql(")");
-});
-
-/** 从 `from` 到 `to` 的天数。 */
-export function daysBetween(from: Expr<string | null>, to: Expr<string | null>): Expr<number | null> {
-  return call(DAYS_BETWEEN, integer, from, to);
-}
-
-/** ADD_DAYS：日期加上若干天。 */
-export function addDays<T extends string | null>(day: Expr<T>, days: number): Expr<T> {
-  return call(ADD_DAYS, day.type, day, lit(days));
-}
-
-/** ADD_MONTHS：日期加上若干月。 */
-export function addMonths<T extends string | null>(day: Expr<T>, months: number): Expr<T> {
-  return call(ADD_MONTHS, day.type, day, lit(months));
-}
-
-/** ADD_YEARS：日期加上若干年。 */
-export function addYears<T extends string | null>(day: Expr<T>, years: number): Expr<T> {
-  return call(ADD_YEARS, day.type, day, lit(years));
-}
 
 /** TO_VARCHAR(value, format)，例如 `toVarchar(day, "YYYYMMDD")`。 */
 export function toVarchar<T>(value: Expr<T>, format: string): Expr<KeepNull<T, string>> {
@@ -73,11 +44,6 @@ export function toInteger<T>(value: Expr<T>): Expr<KeepNull<T, number>> {
   return call(TO_INTEGER, integer, value);
 }
 
-/** STRING_AGG(value, separator ORDER BY ...)：把多行文本用分隔符聚合成一个。 */
-export function stringAgg(value: Expr<string | null>, separator: string, ...order: OrderItem[]): Expr<string | null> {
-  const args = [value, lit(separator), ...order.map(toOrder)];
-  return expression(text, (w) => STRING_AGG.render(w, args));
-}
 
 /** 语句末尾的 WITH HINT(...)。 */
 export function hint(...hints: string[]): Clause {

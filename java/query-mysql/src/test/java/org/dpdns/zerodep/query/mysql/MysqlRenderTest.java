@@ -61,7 +61,7 @@ class MysqlRenderTest {
     @Test
     void MySQL专属函数和子句不能在别的方言上渲染() {
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class)
-            .select(l -> groupConcat(l.delivery(), ",")).toSql(new TestDialect()));
+            .select(l -> dateFormat(l.createdOn(), "%Y")).toSql(new TestDialect()));
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class)
             .with(maxExecutionTime(10)).select(l -> l.delivery()).toSql(new TestDialect()));
     }

@@ -19,6 +19,15 @@
 - **第七期 文档**：两份 API 说明、[迁移指南](../docs/migration.md)（含从 1.x 升级）、[CHANGELOG](../CHANGELOG.md) 的 2.0.0、0006 改为已采纳、场景对照、README。
 - 1.x 已有场景的金样例全部不变；新增 `navigation`、`one-to-many`、`dynamic-columns`、`filter-object`、`native-sql` 五个场景。
 
+### 阶段 A：对照 EasyQuery 简化与补全（进行中）
+
+四个子代理读完 EasyQuery 的测试（`sql-test`）和官方文档后结论一致，按三批推进：
+
+- **第 1 批 可移植函数（已完成）**：聚合的 `.filter(cond)`（CASE WHEN，取代 PG 专属的 FILTER）、核心 `stringAgg`（取代 MySQL `groupConcat` 和两个方言版本）、`year`/`month`/`day`/`addDays`/`addMonths`/`addYears`/`daysBetween`（取代 HANA、MySQL 的同类函数）、`e.range(from, until)` 半开区间；金样例 `date-functions`、`conditional-aggregates`。
+- **第 2 批 查询结构（待做）**：`qualify(窗口条件)` 自动包派生表（取每组前 N 行）；`Many` 的 `countDistinct`、`stringAgg`；`firstValue`/`lastValue`、`lag`/`lead` 默认值；`db.page` 传入已知总数。
+- **第 3 批 性能（待做）**：`groupJoin(m -> m.deliveries())` 把同一关系的多个 count/sum/any 合成一个 GROUP BY 派生表；子列表每个父行限数；`@Where` 走一对多路径时生成 EXISTS。
+- **决定不做**：类型化元组（Java 局部 record 加 `row` 已够）、跨方言日期格式串翻译（易错，保留方言函数）、递归 CTE（HANA 不支持）、动态表名、多对多中间表、JSON。
+
 ### 测试（本机三库与 CI 全部通过）
 
 - **Java**：core 130，HANA 76，PostgreSQL 80，MySQL 73，Spring 5（含实库场景与金样例）。
@@ -35,7 +44,7 @@
 
 用户在 2026-10-23 定下的后续阶段，2.0 完成后依次进行：
 
-1. **研读 EasyQuery 的文档和测试场景**（`C:UserslionheartIdeaProjectseasy-query`，以 tag `3.2.17` 为准），对照本库逐项简化和补全写法。
+1. **研读 EasyQuery 的文档和测试场景**（`C:\Users\lionheart\IdeaProjects\easy-query`，以提交 `2b25e9510`（3.2.17）为准），对照本库逐项简化和补全写法。
 2. **调研成熟的流程引擎**（Flowable、Camunda 7、Activiti、jBPM、Warm-Flow、SnakerFlow 等）：收集它们的查询 SQL（待办与候选人、流程实例加变量过滤、历史、分页与计数），用本库在三库上多种写法测试，把别扭的写法简化优化。之后会自研流程引擎，这一步只做准备。
    - 流程引擎需要写入（insert、update、delete、乐观锁），本库目前只做查询，涉及写入时先请用户决定。
 

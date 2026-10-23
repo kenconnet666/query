@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Window.Bound;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
+import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Makt;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -126,6 +127,8 @@ public final class SpecCases {
         cases.put("native-sql", SpecCase.plain(SpecCases::nativeSql));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
+        cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
+        cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         return cases;
     }
 
@@ -298,6 +301,28 @@ public final class SpecCases {
             .orderBy(m -> m.material())
             .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total"),
                 m.deliveries().first(l -> l.createdOn().desc()).delivery().as("latest")));
+    }
+
+    /** 日期部分、日期加减和相隔天数，按半开区间筛选。 */
+    public static Query<Map<String, Object>> dateFunctions() {
+        return from(Event.class)
+            .where(e -> e.onDay().range(LocalDate.of(2011, 1, 1), LocalDate.of(2025, 1, 1)))
+            .orderBy(e -> e.id())
+            .select(e -> cols(e.id(), year(e.onDay()).as("y"), month(e.atTime()).as("m"), day(e.onDay()).as("d"),
+                addDays(e.onDay(), 3).as("plusDays"), addMonths(e.onDay(), -1).as("minusMonth"), addYears(e.onDay(), 1).as("plusYear"),
+                daysBetween(e.onDay(), lit(LocalDate.of(2024, 4, 30))).as("days")));
+    }
+
+    /** 条件聚合与文本拼接：每个物料按单位分开合计。 */
+    public static Query<Map<String, Object>> conditionalAggregates() {
+        return from(Lips.class)
+            .groupBy(l -> l.material())
+            .orderBy(l -> l.material())
+            .select(l -> cols(l.material(),
+                sum(l.quantity()).filter(l.unit().eq("KG")).as("kg"),
+                count().filter(l.unit().eq("EA")).as("eachLines"),
+                countDistinct(l.unit()).filter(l.quantity().gt(BigDecimal.ZERO)).as("units"),
+                stringAgg(l.delivery(), ",", l.delivery().asc()).as("deliveries")));
     }
 
     /** 表名是 Order：别名是保留字，必须加引号。 */

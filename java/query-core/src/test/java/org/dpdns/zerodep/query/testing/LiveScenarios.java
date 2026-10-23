@@ -51,6 +51,7 @@ import static org.dpdns.zerodep.query.Sql.replace;
 import static org.dpdns.zerodep.query.Sql.right;
 import static org.dpdns.zerodep.query.Sql.row;
 import static org.dpdns.zerodep.query.Sql.substring;
+import static org.dpdns.zerodep.query.Sql.stringAgg;
 import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.val;
 import static org.dpdns.zerodep.query.Sql.values;
@@ -454,6 +455,28 @@ public abstract class LiveScenarios {
         assertEquals(List.of("M2:null:null:12", "M1:null:null:6"), db.list(SpecCases.dynamicColumns()).stream()
             .map(r -> r.get("material") + ":" + r.get("unit") + ":" + r.get("partNumber") + ":" + plain(r.get("total")))
             .toList());
+    }
+
+    @Test
+    void 日期部分与日期加减在三个库上结果相同() {
+        long days = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.of(2011, 12, 30), LocalDate.of(2024, 4, 30));
+        assertEquals(List.of("1:2024:3:31:2024-04-03:2024-02-29:2025-03-31:30", "2:2011:12:30:2012-01-02:2011-11-30:2012-12-30:" + days),
+            db.list(SpecCases.dateFunctions()).stream()
+                .map(r -> r.get("id") + ":" + r.get("y") + ":" + r.get("m") + ":" + r.get("d") + ":" + r.get("plusDays") + ":"
+                    + r.get("minusMonth") + ":" + r.get("plusYear") + ":" + r.get("days"))
+                .toList());
+    }
+
+    @Test
+    void 条件聚合只聚合满足条件的行且文本按指定顺序拼接() {
+        assertEquals(List.of("M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"), db.list(from(Lips.class)
+                .groupBy(l -> l.material())
+                .orderBy(l -> l.material())
+                .select(l -> cols(l.material(),
+                    sum(l.quantity()).filter(l.createdOn().ge(LocalDate.of(2026, 1, 1))).as("recent"),
+                    count().filter(l.quantity().gt(new BigDecimal("2"))).as("big"),
+                    stringAgg(l.delivery(), ",", l.delivery().desc()).as("deliveries"))))
+            .stream().map(r -> r.get("material") + ":" + plain(r.get("recent")) + ":" + r.get("big") + ":" + r.get("deliveries")).toList());
     }
 
     @Test

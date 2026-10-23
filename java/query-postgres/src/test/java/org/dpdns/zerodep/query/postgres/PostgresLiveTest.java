@@ -69,7 +69,7 @@ class PostgresLiveTest extends LiveScenarios {
 
     @Test
     void 聚合FILTER与ILIKE以及IS_DISTINCT_FROM() {
-        BigDecimal m1 = db.one(from(Lips.class).select(l -> filter(sum(l.quantity()), l.material().eq("M1"))));
+        BigDecimal m1 = db.one(from(Lips.class).select(l -> sum(l.quantity()).filter(l.material().eq("M1"))));
         assertEquals(0, new BigDecimal("6").compareTo(m1));
         long ea = db.one(from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> count()));
         assertEquals(5, ea);

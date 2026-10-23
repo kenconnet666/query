@@ -89,6 +89,12 @@ public abstract non-sealed class Expr<T> implements Renderable, Keys, OrderItem,
     /** 介于两个表达式之间（含两端）。 */
     public final Cond between(Expr<T> low, Expr<T> high) { return Nodes.between(this, low, high); }
 
+    /**
+     * 半开区间 {@code [from, until)}：写成 {@code x >= from AND x < until}，适合日期和时间段，
+     * 例如 {@code l.createdOn().range(monthStart, nextMonthStart)}。开启 skipEmpty 时缺少的一端被忽略。
+     */
+    public final Cond range(T from, T until) { return Sql.all(ge(from), lt(until)); }
+
     /** 在 values 之中。空集合恒为假（开启 skipEmpty 则不产生条件）；过长的列表按方言的 IN 上限拆开。 */
     public final Cond in(Collection<? extends T> values) {
         if (SkipEmpty.skips(values)) return Cond.EMPTY;

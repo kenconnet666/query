@@ -13,6 +13,7 @@ import {
   plus,
   replace,
   right,
+  stringAgg,
   substring,
   sum,
   val,
@@ -25,7 +26,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { DeliverySearch, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { dateFunctions, DeliverySearch, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -526,6 +527,33 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.deepEqual(
         rows.map((r) => `${r.material}:${r.unit}:${r.partNumber}:${Number(r.total)}`),
         ["M2:null:null:12", "M1:null:null:6"],
+      );
+    });
+
+    it("日期部分与日期加减在三个库上结果相同", async () => {
+      const days = (Date.UTC(2024, 3, 30) - Date.UTC(2011, 11, 30)) / 86_400_000;
+      const rows = await live().db.list(dateFunctions());
+      assert.deepEqual(
+        rows.map((r) => `${r.id}:${r.y}:${r.m}:${r.d}:${r.plusDays}:${r.minusMonth}:${r.plusYear}:${r.days}`),
+        ["1:2024:3:31:2024-04-03:2024-02-29:2025-03-31:30", `2:2011:12:30:2012-01-02:2011-11-30:2012-12-30:${days}`],
+      );
+    });
+
+    it("条件聚合只聚合满足条件的行且文本按指定顺序拼接", async () => {
+      const rows = await live().db.list(
+        from(Lips)
+          .groupBy((l) => l.material)
+          .orderBy((l) => l.material)
+          .select((l) => ({
+            material: l.material,
+            recent: sum(l.quantity).filter(l.createdOn.ge("2026-01-01")),
+            big: count().filter(l.quantity.gt("2")),
+            deliveries: stringAgg(l.delivery, ",", l.delivery.desc()),
+          })),
+      );
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${Number(r.recent)}:${r.big}:${r.deliveries}`),
+        ["M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"],
       );
     });
 

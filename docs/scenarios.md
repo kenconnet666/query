@@ -18,6 +18,8 @@
 | 常量行（码表 CTE） | 原生 SQL 片段 | `values(Shape.class, rows)`：每行一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY` | 1 |
 | 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy(l -> l.material())`，多个键用 `keys(...)`；`having(...)` | 1 |
 | ROLLUP / CUBE / GROUPING SETS | 增强包提供 | 核心包 `groupByRollup(...)` 与 `grouping(e)`，MySQL 渲染为 `WITH ROLLUP`；MySQL 不支持的 `cube`、`groupingSets` 由 HANA、PostgreSQL 方言包提供 | 1 |
+| 条件聚合（行转列） | `count().filter(...)`、`sum().filter(...)` | 聚合加 `.filter(cond)`，三个库都写成 `SUM(CASE WHEN ... THEN x END)` | 2.0 |
+| 文本聚合 | `joining(",")` | `stringAgg(e, sep, order...)`，MySQL 写成 `GROUP_CONCAT` | 2.0 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包，`RANGE` 由方言包提供 | 1 |
 | `QUALIFY` / 分区取第一行 | `partitionBy` | HANA 不支持 `QUALIFY`；用 CTE 加 `rowNumber` 再过滤 | 1 |
 | 分页 | `toPageResult` | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)` | 1 |
@@ -40,6 +42,7 @@
 
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
+| 半开区间 | `rangeClosedOpen(a, b)` | `e.range(from, until)`：`>= from AND < until`，skipEmpty 下缺少的一端被忽略 | 2.0 |
 | 按开关加条件 | `where(boolean, ...)` | `onlyIf(test, () -> cond)` 写在 `where` 里 | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件省略；不开启时与 null 比较报错 | 2.0 |
 | 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR（见 0006） | 2.0 |
@@ -60,6 +63,7 @@
 | SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
 | 加密列 | `@Encryption` | 读取一侧可用 `@ReadAs`；参数一侧的包装与写入一起评估 | 3 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
+| 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`） | 2.0 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
 | 自定义方言 | 继承上游的内部类 | 继承开放的 `Dialect` 类，覆盖其中的钩子 | 1 |
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import mysql from "mysql2/promise";
-import { date, dateDiff, decimal, from, greatest, groupConcat, least, lit, maxExecutionTime, MysqlDatabase, mysqlDriver, nullOf } from "@zerodep-dev/query-mysql";
+import { date, daysBetween, decimal, from, greatest, least, stringAgg, lit, maxExecutionTime, MysqlDatabase, mysqlDriver, nullOf } from "@zerodep-dev/query-mysql";
 import { Lips } from "../fixtures/erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -30,12 +30,12 @@ liveScenarios(
     timestamp: "DATETIME(6)",
   },
   (live) => {
-    it("MySQL 日期函数与 GROUP_CONCAT", async () => {
+    it("DATEDIFF 与 GROUP_CONCAT", async () => {
       const { db } = live();
       const days = await db.one(
         from(Lips)
           .limit(1)
-          .select(() => dateDiff(lit("2026-02-01", date), lit("2026-01-01", date))),
+          .select(() => daysBetween(lit("2026-01-01", date), lit("2026-02-01", date))),
       );
       assert.equal(days, 31);
       const rows = await db.list(
@@ -43,7 +43,7 @@ liveScenarios(
           .with(maxExecutionTime(5000))
           .groupBy((l) => l.material)
           .orderBy((l) => l.material)
-          .select((l) => ({ material: l.material, deliveries: groupConcat(l.delivery, ",", l.delivery.asc()) }))
+          .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc()) }))
           .map((r) => `${r.material}=${r.deliveries}`),
       );
       assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);

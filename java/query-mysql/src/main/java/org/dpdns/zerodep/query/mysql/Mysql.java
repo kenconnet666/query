@@ -4,16 +4,11 @@ import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
-import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Expr;
-import org.dpdns.zerodep.query.expr.OrderItem;
 
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
@@ -24,15 +19,9 @@ import javax.sql.DataSource;
  */
 public final class Mysql extends Sql {
     // 只能在 MySQL 方言上渲染的函数；在其他方言上渲染会报错。
-    private static final FunctionDef DATEDIFF = FunctionDef.only(MysqlDialect.class, "DATEDIFF");
     private static final FunctionDef GREATEST = FunctionDef.only(MysqlDialect.class, "GREATEST");
     private static final FunctionDef LEAST = FunctionDef.only(MysqlDialect.class, "LEAST");
     private static final FunctionDef DATE_FORMAT = FunctionDef.only(MysqlDialect.class, "DATE_FORMAT");
-    private static final FunctionDef GROUP_CONCAT = FunctionDef.only(MysqlDialect.class, "GROUP_CONCAT", (w, args) -> {
-        w.sql("GROUP_CONCAT(").render(args.get(0));
-        if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
-        w.sql(" SEPARATOR ").render(args.get(1)).sql(")");
-    });
 
     /** 只放静态方法，不能实例化。 */
     private Mysql() { }
@@ -54,24 +43,8 @@ public final class Mysql extends Sql {
 
     // ---------- 函数 ----------
 
-    /** DATEDIFF(later, earlier)：从 {@code earlier} 到 {@code later} 相隔的天数。 */
-    public static Expr<Integer> dateDiff(Expr<LocalDate> later, Expr<LocalDate> earlier) {
-        return call(DATEDIFF, Integer.class, later, earlier);
-    }
-
     /** DATE_FORMAT(value, format)，例如 {@code dateFormat(date, "%Y%m%d")}。 */
     public static Expr<String> dateFormat(Expr<?> value, String format) { return call(DATE_FORMAT, String.class, value, lit(format)); }
-
-    /** GROUP_CONCAT(value ORDER BY ... SEPARATOR separator)：把组内的值按 {@code order} 排序后用 {@code separator} 拼接。 */
-    public static Expr<String> groupConcat(Expr<String> value, String separator, OrderItem... order) {
-        List<Renderable> args = new ArrayList<>();
-        args.add(value);
-        args.add(lit(separator));
-        args.addAll(orders(order));
-        return new Expr<>(value.type()) {
-            @Override public void render(SqlWriter w) { GROUP_CONCAT.render(w, args); }
-        };
-    }
 
     // ---------- 子句 ----------
 

@@ -7,7 +7,7 @@ import { pgDriver } from "./driver.js";
 export * from "@zerodep-dev/query-core";
 export { PostgresDialect } from "./dialect.js";
 export { pgDriver } from "./driver.js";
-export { cube, distinctOn, filterWhere, greatest, groupingSets, ilike, least, pg, PgOps, stringAgg } from "./functions.js";
+export { cube, distinctOn, greatest, groupingSets, ilike, least, pg, PgOps } from "./functions.js";
 
 /** PostgreSQL 数据库：查询渲染成 PostgreSQL SQL，经由给定的驱动执行。 */
 export class PostgresDatabase extends Database {

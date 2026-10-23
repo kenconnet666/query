@@ -4,13 +4,14 @@
 
 ## [2.0.0] - 未发布
 
-查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例全部不变。
+查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。
 
 ### 不兼容的变化
 
 - Java 的表是继承 `Entity`、带 `@Table` 的接口，列是返回 `Col<T>` 的抽象方法，注解写在方法上；lambda 里直接写 `l.material()`。CTE、派生表等行类来源仍用 `r.col(Row::x)`。声明为类的 `@Table` 会报错。
 - 投影只留三种：单个表达式、按名取列的 `cols(...)`（Map 行）、按位置构造的 `row(X::new, ...)`；加上按同名映射的 `selectAs(X.class)` 和 `into(X.class)`。删除函数式投影、`selectAs(X, 额外列)`、`selectValue`、`@MapFrom`、`Nest` / `nest`。
 - 可选条件统一用作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件自动省略；不开启时与 null 比较报错。删除 `eqIfPresent` 等 `IfPresent` 系列和 `likeIfPresent`，以及 `(表, getter)` 比较简写。
+- 原来分在方言门面里的同类函数并入核心：`stringAgg`（取代 MySQL 的 `groupConcat`）、`daysBetween`（取代 MySQL 的 `dateDiff`，参数顺序为 from、to）、`addDays`、`addMonths`、`addYears`；PostgreSQL 的 `filter(agg, cond)`（TS `filterWhere`）改为所有方言通用的 `agg.filter(cond)`，写法从 `FILTER (WHERE ...)` 变为 `CASE WHEN`。
 - 改名：`mapTo` → `into`，`SimpleCase` → `Case.Simple`，`Entity.all()` → `columns()`；删除单参数的 `coalesce(Expr)` 重载。
 - Java 包按职责分子包：`table`、`expr`、`scope`、`select`、`exec`（另有 `annotation`、`dialect`、`meta`、`type`），根包只有 `Sql` 和 `Fn`。
 
@@ -21,6 +22,9 @@
 - **对象树**：`many.list(...)` 给每个父行一个子列表，父查询只多取连接键，子行用一条按键批量的 IN 查询加载（每 500 个键一批），可以逐层嵌套；`many.orderBy(...)` 决定子行顺序。Java 的 `selectAs(VO.class)` 按同名关系自动映射嵌套 VO 和 `List<X>` 属性。
 - **动态列与排序**：`exclude`、`excludeIf`、`only` 把不要的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉；`sortBy("total desc, material")` 只认结果列，可以直接传用户的排序参数。
 - **条件对象**：`where(search)` 把对象的每个非空字段变成条件，默认与同名列相等（集合用 IN），`@Where` / `@where` 指定比较方式和列，列可以走关系路径，多列为 OR，`@Ignore` 的字段跳过；字段名找不到列时报错。
+- **条件聚合**：`sum(x).filter(cond)`、`count().filter(cond)` 等只聚合满足条件的行，三个库都写成 `AGG(CASE WHEN cond THEN x END)`，多次调用按 AND 合并。
+- **日期函数**：`year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween` 在三个库上语义一致（月末对齐、可为负）。
+- **文本聚合与半开区间**：核心 `stringAgg(e, sep, order...)`；`e.range(from, until)` 写成 `>= from AND < until`，skipEmpty 下缺少的一端被忽略。
 - **文本匹配**：`contains`、`startsWith`、`endsWith`，用户输入里的 `%`、`_` 按普通字符匹配。
 - **原生 SQL 片段**：`sql`、`sqlCond` 的参数可以混用表达式和值，集合展开成多个参数；`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 把原生查询当作数据源；`identifier(name)` 按方言加引号。
 - **打印与测试 SQL**：`Rendered.debugSql()`（参数写回原处）、`parameterText()`；数据库实例的 `printSql` 选项按 MyBatis 的格式打印语句、参数、行数和耗时；`db.capture(...)` 收集一段代码执行的全部语句；`ConnectionProvider.dryRun()` / `dryRunDriver()` 不连数据库也能执行。

@@ -44,7 +44,7 @@ class PostgresSpecTest extends RenderSpec {
                 .groupBy(l -> l.material())
                 .select(l -> cols(
                     l.material(),
-                    filter(sum(l.quantity()), l.unit().eq("EA")).as("each"),
+                    sum(l.quantity()).filter(l.unit().eq("EA")).as("each"),
                     stringAgg(l.delivery(), ";", l.delivery().desc()).as("deliveries")))));
     }
 }

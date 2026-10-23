@@ -8,10 +8,8 @@ import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
-import org.dpdns.zerodep.query.expr.Aggregate;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
-import org.dpdns.zerodep.query.expr.OrderItem;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
@@ -84,22 +82,6 @@ public final class Postgres extends Sql {
         if (skipped(pattern)) return Cond.EMPTY;
         Expr<String> p = val(pattern, e.type());
         return cond(w -> w.render(e).sql(" ILIKE ").render(p));
-    }
-
-    /** aggregate FILTER (WHERE condition)：只聚合满足条件的行。 */
-    public static <T> Expr<T> filter(Aggregate<T> aggregate, Cond condition) {
-        return expr(aggregate, w -> w.render(aggregate).sql(" FILTER (WHERE ").render(condition).sql(")"));
-    }
-
-    /** STRING_AGG(value, separator ORDER BY ...)：把组内的值按 {@code order} 排序后用 {@code separator} 拼接。 */
-    public static Expr<String> stringAgg(Expr<String> value, String separator, OrderItem... order) {
-        List<Renderable> sort = new ArrayList<>(orders(order));
-        Expr<String> sep = lit(separator);
-        return expr(value, w -> {
-            w.sql("STRING_AGG(").render(value).sql(", ").render(sep);
-            if (!sort.isEmpty()) w.sql(" ORDER BY ").join(sort, ", ");
-            w.sql(")");
-        });
     }
 
     /** {@link #pg} 返回的运算符集合，绑定到一个表达式。 */

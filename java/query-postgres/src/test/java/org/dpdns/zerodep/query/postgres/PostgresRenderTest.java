@@ -33,11 +33,11 @@ class PostgresRenderTest {
     }
 
     @Test
-    void 聚合FILTER与类型转换用NUMERIC() {
+    void 条件聚合与类型转换用NUMERIC() {
         String sql = from(Lips.class)
-            .select(l -> filter(sum(cast(l.quantity(), CastType.decimal(15, 3))), l.material().eq("M1")))
+            .select(l -> sum(cast(l.quantity(), CastType.decimal(15, 3))).filter(l.material().eq("M1")))
             .toSql(PostgresDialect.INSTANCE).sql();
-        assertTrue(sql.startsWith("SELECT SUM(CAST(lips.\"LFIMG\" AS NUMERIC(15,3))) FILTER (WHERE lips.\"MATNR\" = 'M1')"), sql);
+        assertTrue(sql.startsWith("SELECT SUM(CASE WHEN lips.\"MATNR\" = 'M1' THEN CAST(lips.\"LFIMG\" AS NUMERIC(15,3)) END)"), sql);
     }
 
     @Test

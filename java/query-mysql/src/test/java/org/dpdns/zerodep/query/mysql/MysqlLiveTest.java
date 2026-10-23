@@ -43,13 +43,13 @@ class MysqlLiveTest extends LiveScenarios {
     @Test
     void MySQL日期函数与GROUP_CONCAT() {
         LocalDate day = LocalDate.of(2026, 1, 1);
-        int days = db.one(from(Lips.class).limit(1).select(l -> dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(day))));
+        int days = db.one(from(Lips.class).limit(1).select(l -> daysBetween(lit(day), lit(LocalDate.of(2026, 2, 1)))));
         assertEquals(31, days);
         List<String> rows = db.list(from(Lips.class)
             .with(maxExecutionTime(5000))
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
-            .select(l -> row((m, d) -> m + "=" + d, l.material(), groupConcat(l.delivery(), ",", l.delivery().asc()))));
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), stringAgg(l.delivery(), ",", l.delivery().asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
 

@@ -390,7 +390,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 **`Expr<T>` 的实例方法**：接收者先固定 T，参数类型不符就编译失败。
 
 - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`，参数可以是值或表达式；值为空时的行为见第 3 节的 `skipEmpty()`。
-- 区间与集合：`between`、`in(数组 | 查询)`、`notIn`、`isNull`、`isNotNull`。
+- 区间与集合：`between`（含两端）、`range(from, until)`（半开区间 `>= from AND < until`，适合日期段；skipEmpty 下缺少的一端被忽略）、`in(数组 | 查询)`、`notIn`、`isNull`、`isNotNull`。
 - 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, "EA")`，渲染成一个 COALESCE）、`nullif`。
 - 排序与转换：`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`、`as("label")`。
 
@@ -402,27 +402,27 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)`；文本、数字、布尔的类型放宽为 `string`、`number`、`boolean`，所以只差一个常量的 UNION 各段类型相同 |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
 | 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
+| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)` |
+| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, ...order)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity).filter(l.unit.eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(type)` 与 `sqlCond`，见第 9 节 |
 
-`sum`、`avg` 等数值函数在构造时检查列的类型，用在文本列上会立刻报错。TS 的类型系统区分不了 decimal 字符串和文本，所以这一项只能在运行时检查。
+`sum`、`avg` 等数值函数和 `year`、`addDays` 等日期函数在构造时检查列的类型，用在文本列上会立刻报错。TS 的类型系统区分不了 decimal 字符串和文本，所以这一项只能在运行时检查。
 
 **方言专属能力**只在对应的包里提供，放到别的方言上渲染时会明确报错：
 
 | `@zerodep-dev/query-hana` | `@zerodep-dev/query-postgres` | `@zerodep-dev/query-mysql` |
 | --- | --- | --- |
-| `daysBetween`、`addDays`、`addMonths`、`addYears` | `distinctOn(...)` 子句 | `dateDiff`、`dateFormat` |
-| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | `groupConcat(e, sep, ...order)` |
+| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `distinctOn(...)` 子句 | `dateFormat(e, "%Y%m")` |
+| `hint(...)` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | — |
 | `likeRegexpr(e, pattern)` | — | — |
-| `length`（按 UTF-16 单元计） | `ilike`、`filterWhere(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
-| `stringAgg(e, sep, ...order)`、`hint(...)` | `stringAgg(e, sep, ...order)` | — |
+| `length`（按 UTF-16 单元计） | `ilike` | `maxExecutionTime(ms)` 优化器提示 |
 | `cube(a, b)`、`groupingSets([a, b], [a], [])` | 同左 | — |
 | `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
 | `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
 
-三个库对 `greatest`、`least` 的 NULL 处理不同，所以它们放在各自的方言包里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。PostgreSQL 的聚合过滤叫 `filterWhere`，用来和核心包里定义全局过滤器的 `filter` 区分。
+三个库对 `greatest`、`least` 的 NULL 处理不同，所以它们放在各自的方言包里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。
 
 **常量与参数**：SELECT 列表里的常量写成字面量；带 GROUP BY 或 DISTINCT 的查询，GROUP BY、HAVING、ORDER BY 里的常量也写成字面量。WHERE 和 ON 里的值仍然绑定为参数。这样分组表达式（例如按 CASE 分桶）在三个库上都能执行，HANA 也能确定 SELECT 列的类型。需要绑定的值写在 WHERE 中。
 
@@ -588,4 +588,3 @@ const db = new HanaDatabase(driver, {
 | 日期、精确小数 | `LocalDate`、`BigDecimal` | 字符串 |
 | 表数 | 最多 16 张，`row(...)` 最多 22 个参数 | 不限 |
 | 执行 | 同步，JDBC | Promise，各库的 Node 驱动 |
-| 聚合过滤（PostgreSQL） | `filter(agg, cond)` | `filterWhere(agg, cond)` |

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
-import { count, cube, decimal, distinctOn, filterWhere, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
+import { count, cube, decimal, distinctOn, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
 import { Lips } from "../fixtures/erp.js";
 import { liveScenarios } from "./live.js";
 
@@ -41,9 +41,9 @@ liveScenarios(
       assert.deepEqual(rows, ["D5", "D3"]);
     });
 
-    it("聚合 FILTER 与 ILIKE 以及 IS DISTINCT FROM", async () => {
+    it("条件聚合与 ILIKE 以及 IS DISTINCT FROM", async () => {
       const { db } = live();
-      assert.equal(Number(await db.one(from(Lips).select((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))))), 6);
+      assert.equal(Number(await db.one(from(Lips).select((l) => sum(l.quantity).filter(l.material.eq("M1"))))), 6);
       assert.equal(
         await db.one(
           from(Lips)

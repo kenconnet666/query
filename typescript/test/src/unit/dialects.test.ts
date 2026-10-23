@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { cast, CastType, date, from, lit, sum } from "@zerodep-dev/query-core";
-import { addDays, cube, daysBetween, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@zerodep-dev/query-hana";
-import { greatest as mysqlGreatest, groupConcat, maxExecutionTime, MysqlDatabase } from "@zerodep-dev/query-mysql";
-import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@zerodep-dev/query-postgres";
+import { cast, CastType, from, lit, sum } from "@zerodep-dev/query-core";
+import { cube, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@zerodep-dev/query-hana";
+import { dateFormat, greatest as mysqlGreatest, maxExecutionTime, MysqlDatabase } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { Lips } from "../fixtures/erp.js";
 import { deliveries } from "../fixtures/scenarios.js";
 import { TestDialect } from "../fixtures/support.js";
@@ -49,20 +49,17 @@ describe("方言", () => {
   });
 
   it("方言专属函数和子句不能在别的方言上渲染", () => {
-    const day = lit("2026-01-01", date);
     const cases = [
-      from(Lips).select(() => daysBetween(day, addDays(day, 1))),
       from(Lips)
         .with(hint("NO_CS_JOIN"))
         .select((l) => l.delivery),
-      from(Lips).select((l) => groupConcat(l.delivery, ",")),
+      from(Lips).select((l) => dateFormat(l.createdOn, "%Y")),
       from(Lips)
         .with(maxExecutionTime(10))
         .select((l) => l.delivery),
       from(Lips)
         .where((l) => ilike(l.unit, "ea"))
         .select((l) => l.delivery),
-      from(Lips).select((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))),
       from(Lips)
         .with((l) => distinctOn(l.material))
         .select((l) => l.delivery),
@@ -84,9 +81,9 @@ describe("方言", () => {
       from(Lips).select((l) => mysqlGreatest(l.quantity, "4")),
     ];
     for (const q of cases) assert.throws(() => q.toSql(other), /HanaDialect|MysqlDialect|PostgreSQL|PostgresDialect/);
-    assert.throws(() => postgres.render(cases[0]!), /DAYS_BETWEEN is a HanaDialect function; this database uses PostgreSQL/);
-    assert.throws(() => mysql.render(cases[7]!), /CUBE is a HanaDialect function/);
-    assert.throws(() => mysql.render(cases[10]!), /GROUPING SETS is a PostgresDialect function/);
+    assert.throws(() => postgres.render(cases[10]!), /TO_INTEGER is a HanaDialect function; this database uses PostgreSQL/);
+    assert.throws(() => mysql.render(cases[5]!), /CUBE is a HanaDialect function/);
+    assert.throws(() => mysql.render(cases[8]!), /GROUPING SETS is a PostgresDialect function/);
   });
 
   it("HANA 的非 ASCII 字面量带 N 前缀，类型转换用 NVARCHAR", () => {

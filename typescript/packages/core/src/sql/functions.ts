@@ -16,8 +16,10 @@ import {
   renderTemplate,
   skips,
   Scalar,
+  toOrder,
   WindowFunction,
   type KeepNull,
+  type OrderItem,
   type TemplateArg,
 } from "./expr.js";
 import type { Query } from "../query/query.js";
@@ -35,12 +37,51 @@ export const CONCAT = FunctionDef.of("CONCAT", (w, args) => w.sql("(").join(args
 /** `LOCATE(text, search)`；PostgreSQL 和 MySQL 注册自己的写法。 */
 export const LOCATE = FunctionDef.of("LOCATE");
 
+/** `YEAR(d)`；PostgreSQL 注册 EXTRACT 写法，下面的 MONTH、DAYOFMONTH 相同。 */
+export const YEAR = FunctionDef.of("YEAR");
+
+/** `MONTH(d)`。 */
+export const MONTH = FunctionDef.of("MONTH");
+
+/** `DAYOFMONTH(d)`。 */
+export const DAY = FunctionDef.of("DAYOFMONTH");
+
+/** `ADD_DAYS(d, n)`；PostgreSQL、MySQL 注册自己的写法，下面的 ADD_MONTHS、ADD_YEARS 相同。 */
+export const ADD_DAYS = FunctionDef.of("ADD_DAYS");
+
+/** `ADD_MONTHS(d, n)`。 */
+export const ADD_MONTHS = FunctionDef.of("ADD_MONTHS");
+
+/** `ADD_YEARS(d, n)`。 */
+export const ADD_YEARS = FunctionDef.of("ADD_YEARS");
+
+/** `DAYS_BETWEEN(from, to)`；PostgreSQL 写成相减，MySQL 写成 DATEDIFF(to, from)。 */
+export const DAYS_BETWEEN = FunctionDef.of("DAYS_BETWEEN");
+
+/** `STRING_AGG(value, separator ORDER BY ...)`，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
+export const STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) => {
+  w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
+  if (args.length > 2) w.sql(" ORDER BY ").join(args.slice(2), ", ");
+  w.sql(")");
+});
+
 /** 可以参与算术运算的类型；`unknown` 放行原生 SQL 片段。 */
 const NUMERIC: readonly TypeKind[] = ["integer", "bigint", "double", "decimal", "unknown"];
 
 /** 要求表达式是数值类型，否则抛错并指出函数名。 */
 function numeric(e: Expr<unknown>, fn: string): void {
   if (!NUMERIC.includes(e.type.kind)) throw new TypeError(`${fn} needs a numeric expression, got ${e.type.name}`);
+}
+
+/** 可以取日期部分的类型；`unknown` 放行原生 SQL 片段。 */
+const TEMPORAL: readonly TypeKind[] = ["date", "timestamp", "unknown"];
+
+/** 日期加减和相隔天数只接受日期：时间戳在 PostgreSQL 上加整数会失败。 */
+const DATE_ONLY: readonly TypeKind[] = ["date", "unknown"];
+
+/** 参数不是日期或时间戳时抛出 TypeError；TS 里日期是字符串，所以只能在运行时检查列的类型。 */
+function temporal(e: Expr<unknown>, fn: string, kinds: readonly TypeKind[] = TEMPORAL): void {
+  if (!kinds.includes(e.type.kind)) throw new TypeError(`${fn} needs a ${kinds.slice(0, -1).join(" or ")} expression, got ${e.type.name}`);
 }
 
 // ---------- 值 ----------
@@ -263,6 +304,55 @@ export function round<T extends Numeric>(e: Expr<T>, scale: number): Expr<T> {
   return functionCall(e.type, "ROUND", [e, lit(scale)]);
 }
 
+// ---------- 日期 ----------
+
+/** 年份，参数可以是日期或时间戳：`groupBy((l) => [year(l.createdOn), month(l.createdOn)])`。 */
+export function year<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "YEAR");
+  return functionCall(integer, YEAR, [e]);
+}
+
+/** 月份，1 到 12。 */
+export function month<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "MONTH");
+  return functionCall(integer, MONTH, [e]);
+}
+
+/** 月中的第几天，1 到 31。 */
+export function day<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "DAYOFMONTH");
+  return functionCall(integer, DAY, [e]);
+}
+
+/** 日期加上 days 天，可以为负。 */
+export function addDays<T extends string | null>(day: Expr<T>, days: number): Expr<T> {
+  return dateShift(ADD_DAYS, day, days);
+}
+
+/** 日期加上 months 个月；目标月没有那一天时取月末，例如 1 月 31 日加一个月是 2 月末。 */
+export function addMonths<T extends string | null>(day: Expr<T>, months: number): Expr<T> {
+  return dateShift(ADD_MONTHS, day, months);
+}
+
+/** 日期加上 years 年；2 月 29 日加一年是 2 月 28 日。 */
+export function addYears<T extends string | null>(day: Expr<T>, years: number): Expr<T> {
+  return dateShift(ADD_YEARS, day, years);
+}
+
+/** 从 from 到 to 相隔的天数，to 较早时为负。 */
+export function daysBetween(from: Expr<string | null>, to: Expr<string | null>): Expr<number | null> {
+  temporal(from, "DAYS_BETWEEN", DATE_ONLY);
+  temporal(to, "DAYS_BETWEEN", DATE_ONLY);
+  return functionCall(integer, DAYS_BETWEEN, [from, to]);
+}
+
+/** 日期加减的公共部分：检查类型、整数个数，再按函数定义渲染。 */
+function dateShift<T extends string | null>(fn: FunctionDef, day: Expr<T>, n: number): Expr<T> {
+  temporal(day, fn.name, DATE_ONLY);
+  if (!Number.isInteger(n)) throw new RangeError(`${fn.name} needs a whole number, got ${n}`);
+  return functionCall(day.type, fn, [day, lit(n)]);
+}
+
 // ---------- 聚合 ----------
 
 /** COUNT：不传参数时是 COUNT(*)，传入表达式时不计 NULL。 */
@@ -295,6 +385,15 @@ export function min<T>(e: Expr<T>): Aggregate<T | null> {
 /** MAX：最大值。 */
 export function max<T>(e: Expr<T>): Aggregate<T | null> {
   return new Aggregate(e.type, "MAX", false, [e as Expr<unknown>]);
+}
+
+/**
+ * 把组内的文本用 separator 拼接，可以指定拼接顺序：`stringAgg(l.delivery, ",", l.delivery.asc())`。
+ * HANA、PostgreSQL 写成 STRING_AGG，MySQL 写成 GROUP_CONCAT（结果长度受 group_concat_max_len 限制，默认 1024 字节）。
+ */
+export function stringAgg(value: Expr<string | null>, separator: string, ...order: OrderItem[]): Expr<string | null> {
+  const args = [value, lit(separator), ...order.map(toOrder)];
+  return expression(text, (w) => STRING_AGG.render(w, args));
 }
 
 /** 在 `groupByRollup` 的小计行上，该键被汇总时为 1，其余为 0。 */

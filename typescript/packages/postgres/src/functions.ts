@@ -1,4 +1,4 @@
-import { call, Cond, condition, Expr, expression, FunctionDef, lit, param, skips, text, toOrder, untyped, type Aggregate, type Clause, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { call, Cond, condition, Expr, expression, FunctionDef, param, skips, untyped, type Clause, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { PostgresDialect } from "./dialect.js";
 
 /** PostgreSQL 专有的函数和子句；在其他方言上拒绝渲染。 */
@@ -66,22 +66,6 @@ export function ilike(e: Expr<string | null>, pattern: string | null | undefined
   if (skips(pattern)) return Cond.EMPTY;
   const p = param(e.type, pattern as string);
   return pgCond((w) => w.render(e).sql(" ILIKE ").render(p));
-}
-
-/** 聚合的 FILTER (WHERE 条件)。取名区别于核心包的全局过滤器 `filter`。 */
-export function filterWhere<T>(aggregate: Aggregate<T>, cond: Cond): Expr<T> {
-  return pgExpr(aggregate, (w) => w.render(aggregate).sql(" FILTER (WHERE ").render(cond).sql(")"));
-}
-
-/** STRING_AGG(value, separator ORDER BY ...)：把多行文本用分隔符聚合成一个。 */
-export function stringAgg(value: Expr<string | null>, separator: string, ...order: OrderItem[]): Expr<string | null> {
-  const sep = lit(separator, text);
-  const orders = order.map(toOrder);
-  return pgExpr(value, (w) => {
-    w.sql("STRING_AGG(").render(value).sql(", ").render(sep);
-    if (orders.length > 0) w.sql(" ORDER BY ").join(orders, ", ");
-    w.sql(")");
-  });
 }
 
 /** CUBE 与 GROUPING SETS 只能出现在 GROUP BY 里。 */

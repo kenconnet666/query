@@ -3,11 +3,14 @@ package org.dpdns.zerodep.query.postgres;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.Renderable;
+import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.CastType;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,9 +28,29 @@ public class PostgresDialect extends Dialect {
     /** 美元引用的分隔符：标签遵循名字的规则，但不含美元符号。 */
     private static final Pattern DOLLAR_TAG = Pattern.compile("\\$(?:[\\p{L}_][\\p{L}\\p{N}_]*)?\\$");
 
-    /** PostgreSQL 没有 LOCATE，改写为 STRPOS。 */
+    /**
+     * PostgreSQL 没有 LOCATE，改写为 STRPOS；日期部分写成 EXTRACT 再转成整数（EXTRACT 返回 numeric），
+     * 加天数是 {@code date + n}，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减。
+     */
     protected PostgresDialect() {
         register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "STRPOS", args));
+        register(Sql.YEAR, (w, args) -> extract(w, args, "YEAR"));
+        register(Sql.MONTH, (w, args) -> extract(w, args, "MONTH"));
+        register(Sql.DAY, (w, args) -> extract(w, args, "DAY"));
+        register(Sql.ADD_DAYS, (w, args) -> w.sql("(").render(args.get(0)).sql(" + ").render(args.get(1)).sql(")"));
+        register(Sql.ADD_MONTHS, (w, args) -> addInterval(w, args, "month"));
+        register(Sql.ADD_YEARS, (w, args) -> addInterval(w, args, "year"));
+        register(Sql.DAYS_BETWEEN, (w, args) -> w.sql("(").render(args.get(1)).sql(" - ").render(args.get(0)).sql(")"));
+    }
+
+    /** 写出 {@code CAST(EXTRACT(FIELD FROM e) AS INTEGER)}。 */
+    private static void extract(SqlWriter w, List<? extends Renderable> args, String field) {
+        w.sql("CAST(EXTRACT(" + field + " FROM ").render(args.get(0)).sql(") AS INTEGER)");
+    }
+
+    /** 写出 {@code CAST(date + n * INTERVAL '1 unit' AS DATE)}。 */
+    private static void addInterval(SqlWriter w, List<? extends Renderable> args, String unit) {
+        w.sql("CAST(").render(args.get(0)).sql(" + ").render(args.get(1)).sql(" * INTERVAL '1 " + unit + "' AS DATE)");
     }
 
     /** 方言名，用于异常信息和监听事件。 */

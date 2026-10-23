@@ -452,7 +452,7 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 **`Expr<T>` 的实例方法**（接收者固定 T，参数类型不符就编译失败）：
 
 - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`。参数可以是值或另一个表达式。
-- 区间与集合：`between`、`in(Collection | Query)`、`notIn`、`isNull`、`isNotNull`。
+- 区间与集合：`between`（含两端）、`range(from, until)`（半开区间 `>= from AND < until`，适合日期段；skipEmpty 下缺少的一端被忽略）、`in(Collection | Query)`、`notIn`、`isNull`、`isNotNull`。
 - 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, val("EA"))`，渲染成一个 COALESCE）、`nullif`。
 - 别名、排序与转换：`as("x")`、`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`。
 - 条件的组合：`cond.and(c)`、`cond.or(c)`、`cond.not()`。
@@ -465,7 +465,8 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 | 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
 | 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`grouping(e)`（汇总行为 1） |
+| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)` |
+| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, order...)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity()).filter(l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 
@@ -473,11 +474,10 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 
 | HANA | PostgreSQL | MySQL |
 | --- | --- | --- |
-| `daysBetween`、`addDays`、`addMonths`、`addYears` | `distinctOn(...)` 子句 | `dateDiff`、`dateFormat` |
-| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | `groupConcat(e, sep, order...)` |
+| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `distinctOn(...)` 子句 | `dateFormat(e, "%Y%m")` |
+| `hint(...)` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | — |
 | `likeRegexpr(e, pattern)` | — | — |
-| `length`（按 UTF-16 单元计） | `ilike`、`filter(sum(x), cond)` | `maxExecutionTime(ms)` 优化器提示 |
-| `stringAgg(e, sep, order...)`、`hint(...)` | `stringAgg(e, sep, order...)` | — |
+| `length`（按 UTF-16 单元计） | `ilike` | `maxExecutionTime(ms)` 优化器提示 |
 | `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
 | `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
 | `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |

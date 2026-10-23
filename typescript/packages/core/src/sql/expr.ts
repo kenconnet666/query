@@ -94,6 +94,14 @@ export abstract class Expr<T> implements Renderable {
     return condition((w) => w.render(this).sql(" BETWEEN ").render(lo).sql(" AND ").render(hi));
   }
 
+  /**
+   * 半开区间 [from, until)：写成 `x >= from AND x < until`，适合日期和时间段，
+   * 例如 `l.createdOn.range(monthStart, nextMonthStart)`。skipEmpty 下缺少的一端被忽略。
+   */
+  range(from: NonNullable<T> | null | undefined, until: NonNullable<T> | null | undefined): Cond {
+    return all(this.ge(from), this.lt(until));
+  }
+
   /** IN 列表或子查询；空列表恒假（skipEmpty 下没有条件），很长的列表按方言上限拆开。 */
   in(values: readonly NonNullable<T>[] | null | undefined): Cond;
   in(subquery: Query<NonNullable<T> | null>): Cond;
@@ -712,8 +720,20 @@ export class Aggregate<T> extends Expr<T> {
     readonly name: string,
     readonly distinct: boolean,
     readonly args: readonly Expr<unknown>[],
+    /** 只聚合满足它的行；没有时不过滤。 */
+    readonly condition?: Cond,
   ) {
     super(type);
+  }
+
+  /**
+   * 条件聚合：只聚合满足 cond 的行，例如 `sum(l.quantity).filter(l.unit.eq("KG"))`。
+   * 三个库都写成 `SUM(CASE WHEN 条件 THEN x END)`，COUNT(*) 写成 `COUNT(CASE WHEN 条件 THEN 1 END)`；
+   * 多次调用按 AND 合并，空条件（例如 skipEmpty 省略掉的）不过滤。
+   */
+  filter(cond: Cond): Aggregate<T> {
+    if (cond.isEmpty) return this;
+    return new Aggregate(this.type, this.name, this.distinct, this.args, this.condition ? all(this.condition, cond) : cond);
   }
 
   /** 把聚合作为窗口函数使用。 */
@@ -721,11 +741,16 @@ export class Aggregate<T> extends Expr<T> {
     return new Over(this, window(Window.EMPTY));
   }
 
-  /** 写出 NAME([DISTINCT ]args)；没有参数时是 NAME(*)。 */
+  /** 写出 NAME([DISTINCT ]args)；没有参数时是 NAME(*)，有过滤条件时参数换成 CASE WHEN 条件 THEN 参数 END。 */
   render(w: SqlWriter): void {
     w.sql(this.name + "(");
     if (this.distinct) w.sql("DISTINCT ");
-    if (this.args.length === 0) w.sql("*");
+    if (this.condition) {
+      w.sql("CASE WHEN ").render(this.condition).sql(" THEN ");
+      if (this.args.length === 0) w.sql("1");
+      else w.join(this.args, ", ");
+      w.sql(" END");
+    } else if (this.args.length === 0) w.sql("*");
     else w.join(this.args, ", ");
     w.sql(")");
   }

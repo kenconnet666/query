@@ -32,8 +32,8 @@ class MysqlSpecTest extends RenderSpec {
                 .groupBy(l -> l.material())
                 .select(l -> cols(
                     l.material(),
-                    dateDiff(lit(LocalDate.of(2026, 2, 1)), lit(LocalDate.of(2026, 1, 1))).as("days"),
+                    daysBetween(lit(LocalDate.of(2026, 1, 1)), lit(LocalDate.of(2026, 2, 1))).as("days"),
                     dateFormat(lit(LocalDate.of(2026, 1, 31)), "%Y%m%d").as("formatted"),
-                    groupConcat(l.delivery(), "|", l.delivery().asc()).as("deliveries")))));
+                    stringAgg(l.delivery(), "|", l.delivery().asc()).as("deliveries")))));
     }
 }

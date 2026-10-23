@@ -59,10 +59,11 @@ import {
   type Query,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { addDays, addMonths, addYears, cube as hanaCube, daysBetween, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, stringAgg as hanaStringAgg, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
-import { dateDiff, dateFormat, greatest as mysqlGreatest, groupConcat, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
-import { cube as pgCube, distinctOn, filterWhere, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg, stringAgg as pgStringAgg } from "@zerodep-dev/query-postgres";
-import { Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
+import { addDays, addMonths, addYears, day, daysBetween, month, stringAgg, year } from "@zerodep-dev/query-core";
+import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
+import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg } from "@zerodep-dev/query-postgres";
+import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 
 /**
@@ -264,6 +265,8 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
           latest: m.deliveries.first((l) => l.createdOn.desc()).delivery,
         })),
   },
+  "date-functions": plain(() => dateFunctions()),
+  "conditional-aggregates": plain(() => conditionalAggregates()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -283,6 +286,37 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
 };
 
 /** Totals per material and unit, subtotals per material, and the grand total. */
+/** 日期部分、日期加减和相隔天数，按半开区间筛选。 */
+export function dateFunctions() {
+  return from(Event)
+    .where((e) => e.onDay.range("2011-01-01", "2025-01-01"))
+    .orderBy((e) => e.id)
+    .select((e) => ({
+      id: e.id,
+      y: year(e.onDay),
+      m: month(e.atTime),
+      d: day(e.onDay),
+      plusDays: addDays(e.onDay, 3),
+      minusMonth: addMonths(e.onDay, -1),
+      plusYear: addYears(e.onDay, 1),
+      days: daysBetween(e.onDay, lit("2024-04-30", date)),
+    }));
+}
+
+/** 条件聚合与文本拼接：每个物料按单位分开合计。 */
+export function conditionalAggregates() {
+  return from(Lips)
+    .groupBy((l) => l.material)
+    .orderBy((l) => l.material)
+    .select((l) => ({
+      material: l.material,
+      kg: sum(l.quantity).filter(l.unit.eq("KG")),
+      eachLines: count().filter(l.unit.eq("EA")),
+      units: countDistinct(l.unit).filter(l.quantity.gt("0")),
+      deliveries: stringAgg(l.delivery, ",", l.delivery.asc()),
+    }));
+}
+
 export function rollup() {
   return from(Lips)
     .groupByRollup((l) => [l.material, l.unit])
@@ -421,7 +455,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     "hana-string-agg": plain(() =>
       from(Lips)
         .groupBy((l) => l.material)
-        .select((l) => ({ material: l.material, deliveries: hanaStringAgg(l.delivery, ",", l.delivery.asc(), l.unit.desc()) })),
+        .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc(), l.unit.desc()) })),
     ),
   },
   postgres: {
@@ -441,8 +475,8 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         .groupBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          each: filterWhere(sum(l.quantity), l.unit.eq("EA")),
-          deliveries: pgStringAgg(l.delivery, ";", l.delivery.desc()),
+          each: sum(l.quantity).filter(l.unit.eq("EA")),
+          deliveries: stringAgg(l.delivery, ";", l.delivery.desc()),
         })),
     ),
   },
@@ -456,9 +490,9 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         .groupBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          days: dateDiff(lit("2026-02-01", date), lit("2026-01-01", date)),
+          days: daysBetween(lit("2026-01-01", date), lit("2026-02-01", date)),
           formatted: dateFormat(lit(DAY, date), "%Y%m%d"),
-          deliveries: groupConcat(l.delivery, "|", l.delivery.asc()),
+          deliveries: stringAgg(l.delivery, "|", l.delivery.asc()),
         })),
     ),
   },
