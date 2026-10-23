@@ -1,4 +1,4 @@
-import type { CastType, SqlType } from "./types.js";
+import type { CastType, SqlType } from "../schema/types.js";
 import type { Renderable, SqlWriter } from "./writer.js";
 
 /** 写出一次函数调用。 */

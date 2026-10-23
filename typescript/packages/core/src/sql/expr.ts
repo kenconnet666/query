@@ -1,7 +1,7 @@
 import { FunctionDef } from "./dialect.js";
-import { COLUMN_TYPES, SUBQUERY } from "./internal.js";
-import type { From, Query } from "./query.js";
-import { typeOf, type CastType, type SqlType } from "./types.js";
+import { COLUMN_TYPES, SUBQUERY } from "../internal.js";
+import type { From, Query } from "../query/query.js";
+import { typeOf, type CastType, type SqlType } from "../schema/types.js";
 import type { Renderable, SqlWriter } from "./writer.js";
 
 declare const valueType: unique symbol;

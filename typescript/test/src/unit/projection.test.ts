@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { count, cte, date, from, max, rowNumber, sum, values, type Query } from "@zerodep-dev/query-core";
-import { DeliveryVO, LineVO, Lips, Mara } from "../erp.js";
-import { deliveries, lines, partTotals } from "../scenarios.js";
-import { FakeDriver, rows, TestDatabase } from "../support.js";
+import { DeliveryVO, LineVO, Lips, Mara } from "../fixtures/erp.js";
+import { deliveries, lines, partTotals } from "../fixtures/scenarios.js";
+import { FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
 /** A database answering every statement with the given rows. */
 function answering(columns: readonly string[], ...values: unknown[][]): { db: TestDatabase; driver: FakeDriver } {

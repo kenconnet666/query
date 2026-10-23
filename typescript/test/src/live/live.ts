@@ -24,9 +24,9 @@ import {
   type QueryEvent,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../erp.js";
-import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../spec-cases.js";
-import { deliveries, latestDeliveries, lines, partTotals, stock } from "../scenarios.js";
+import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
+import { floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
  * Connection settings for live tests, from the JDBC-style QUERY_{NAME}_URL / _USER / _PASSWORD the

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { blankAsNull, column, entityMeta, from, ignore, integer, NamingStrategy, readAs, shapeFields, table, trimmed } from "@zerodep-dev/query-core";
-import { ClientEntity, LineVO, Lips, MaraView } from "../erp.js";
-import { TestDatabase } from "../support.js";
+import { ClientEntity, LineVO, Lips, MaraView } from "../fixtures/erp.js";
+import { TestDatabase } from "../fixtures/support.js";
 
 @table("ORDERS")
 class Order {

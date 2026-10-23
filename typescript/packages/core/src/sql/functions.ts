@@ -20,8 +20,8 @@ import {
   type KeepNull,
   type TemplateArg,
 } from "./expr.js";
-import type { Query } from "./query.js";
-import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "./types.js";
+import type { Query } from "../query/query.js";
+import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "../schema/types.js";
 
 /**
  * 核心函数：在所有受支持的数据库上语义一致的函数。这里的泛型函数只接受一个泛型操作数；

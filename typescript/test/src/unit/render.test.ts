@@ -24,9 +24,9 @@ import {
   type From,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { ClientEntity, Lips, Mara } from "../erp.js";
-import { deliveries, latestDeliveries, lines, stock } from "../scenarios.js";
-import { TestDatabase, TestDialect } from "../support.js";
+import { ClientEntity, Lips, Mara } from "../fixtures/erp.js";
+import { deliveries, latestDeliveries, lines, stock } from "../fixtures/scenarios.js";
+import { TestDatabase, TestDialect } from "../fixtures/support.js";
 
 const DIALECT = new TestDialect();
 const clientFilter = filter(ClientEntity, (r) => r.client.eq("100"));

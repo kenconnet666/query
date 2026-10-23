@@ -15,7 +15,7 @@ export {
   type Converter,
   type SqlType,
   type TypeKind,
-} from "./types.js";
+} from "./schema/types.js";
 export {
   blankAsNull,
   column,
@@ -30,9 +30,9 @@ export {
   type EntityMeta,
   type PropertyMeta,
   type Table,
-} from "./metadata.js";
-export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./writer.js";
-export { Dialect, FunctionDef, type Clause, type DialectClass, type FunctionRenderer } from "./dialect.js";
+} from "./schema/metadata.js";
+export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./sql/writer.js";
+export { Dialect, FunctionDef, type Clause, type DialectClass, type FunctionRenderer } from "./sql/dialect.js";
 export {
   Aggregate,
   all,
@@ -59,9 +59,9 @@ export {
   type OrderItem,
   type SourceColumn,
   type TemplateArg,
-} from "./expr.js";
-export { Cte, Derived, type NullableRef, type Ref, type Source } from "./source.js";
-export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query.js";
+} from "./sql/expr.js";
+export { Cte, Derived, type NullableRef, type Ref, type Source } from "./query/source.js";
+export { cte, filter, from, From, Query, values, type ConstantValue, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
 export {
   abs,
   avg,
@@ -111,7 +111,7 @@ export {
   trim,
   upper,
   val,
-} from "./functions.js";
+} from "./sql/functions.js";
 export {
   Database,
   inMemoryCache,
@@ -127,4 +127,4 @@ export {
   type QueryCache,
   type QueryEvent,
   type QueryListener,
-} from "./database.js";
+} from "./exec/database.js";

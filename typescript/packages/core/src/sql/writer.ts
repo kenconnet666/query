@@ -1,6 +1,6 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "./dialect.js";
-import { NamingStrategy } from "./metadata.js";
-import type { SqlType } from "./types.js";
+import { NamingStrategy } from "../schema/metadata.js";
+import type { SqlType } from "../schema/types.js";
 
 /** 能把自己写进语句的对象：表达式、条件、子句。 */
 export interface Renderable {

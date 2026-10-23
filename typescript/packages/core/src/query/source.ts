@@ -1,8 +1,8 @@
-import { Column, type ColumnOwner, type Expr, type SourceColumn } from "./expr.js";
-import { COLUMNS, NAMED } from "./internal.js";
-import { columnName, entityMeta, type Ctor, type PropertyMeta, type Table } from "./metadata.js";
+import { Column, type ColumnOwner, type Expr, type SourceColumn } from "../sql/expr.js";
+import { COLUMNS, NAMED } from "../internal.js";
+import { columnName, entityMeta, type Ctor, type PropertyMeta, type Table } from "../schema/metadata.js";
 import type { Query } from "./query.js";
-import type { CteDefinition, SqlWriter } from "./writer.js";
+import type { CteDefinition, SqlWriter } from "../sql/writer.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
 declare const rowType: unique symbol;

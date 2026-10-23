@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
 import { count, cube, decimal, distinctOn, filterWhere, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
-import { Lips } from "../erp.js";
+import { Lips } from "../fixtures/erp.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(

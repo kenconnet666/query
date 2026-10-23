@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@zerodep-dev/query-core";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
-import { DeliveryVO, Lips } from "../erp.js";
-import { FakeDriver, rows, TestDatabase } from "../support.js";
+import { DeliveryVO, Lips } from "../fixtures/erp.js";
+import { FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
 describe("执行", () => {
   it("原生 SQL 替换引号、注释和类型转换之外的命名参数并展开数组", () => {

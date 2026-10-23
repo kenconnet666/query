@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import mysql from "mysql2/promise";
 import { date, dateDiff, decimal, from, greatest, groupConcat, least, lit, maxExecutionTime, MysqlDatabase, mysqlDriver, nullOf } from "@zerodep-dev/query-mysql";
-import { Lips } from "../erp.js";
+import { Lips } from "../fixtures/erp.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(

@@ -4,9 +4,9 @@ import { cast, CastType, date, from, lit, sum } from "@zerodep-dev/query-core";
 import { addDays, cube, daysBetween, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@zerodep-dev/query-hana";
 import { greatest as mysqlGreatest, groupConcat, maxExecutionTime, MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { cube as pgCube, distinctOn, filterWhere, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@zerodep-dev/query-postgres";
-import { Lips } from "../erp.js";
-import { deliveries } from "../scenarios.js";
-import { TestDialect } from "../support.js";
+import { Lips } from "../fixtures/erp.js";
+import { deliveries } from "../fixtures/scenarios.js";
+import { TestDialect } from "../fixtures/support.js";
 
 const never = { query: () => Promise.reject(new Error("never connects")) };
 const hana = new HanaDatabase(never);

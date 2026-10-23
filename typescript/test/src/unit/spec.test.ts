@@ -6,8 +6,8 @@ import { filter, type Database, type DatabaseOptions, type Driver } from "@zerod
 import { HanaDatabase } from "@zerodep-dev/query-hana";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
-import { ClientEntity } from "../erp.js";
-import { dialectCases, sharedCases } from "../spec-cases.js";
+import { ClientEntity } from "../fixtures/erp.js";
+import { dialectCases, sharedCases } from "../fixtures/spec-cases.js";
 
 /**
  * Golden SQL shared with the Java tests: spec/render/<case>.<dialect>.sql holds the parameters on

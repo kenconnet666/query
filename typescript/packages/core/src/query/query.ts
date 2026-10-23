@@ -1,10 +1,10 @@
-import type { Clause, Dialect } from "./dialect.js";
-import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "./expr.js";
-import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "./internal.js";
-import { shapeFields, type Ctor, type Table } from "./metadata.js";
+import type { Clause, Dialect } from "../sql/dialect.js";
+import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
+import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { createRef, Cte, Derived, ownerOf, tableSource, type NullableRef, type Ref, type Source } from "./source.js";
-import { double, integer, typeOf, type SqlType } from "./types.js";
-import { SqlWriter, type Rendered } from "./writer.js";
+import { double, integer, typeOf, type SqlType } from "../schema/types.js";
+import { SqlWriter, type Rendered } from "../sql/writer.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
 declare const rowType: unique symbol;
