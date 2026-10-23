@@ -4,8 +4,9 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 
-/** Converter instances and their declared type arguments, resolved once per converter class. */
+/** 转换器实例及其声明的类型参数，每个转换器类只解析一次并缓存。 */
 public final class Converters {
+    /** 一个转换器类解析后的结果：共享实例，以及 J 和 D 的具体类型。 */
     private record Info(Converter<Object, Object> instance, Class<?> javaType, Class<?> storageType) { }
 
     private static final ClassValue<Info> INFO = new ClassValue<>() {
@@ -26,13 +27,16 @@ public final class Converters {
 
     private Converters() { }
 
+    /** 转换器类的共享实例。 */
     public static Converter<Object, Object> instance(Class<?> converterType) { return INFO.get(converterType).instance(); }
 
+    /** 转换器声明的 Java 类型 J。 */
     public static Class<?> javaType(Class<?> converterType) { return INFO.get(converterType).javaType(); }
 
+    /** 转换器声明的存储类型 D。 */
     public static Class<?> storageType(Class<?> converterType) { return INFO.get(converterType).storageType(); }
 
-    /** Walks the class hierarchy to find the concrete J and D of Converter<J, D>. */
+    /** 沿类的继承链向上查找 Converter<J, D> 中具体的 J 和 D。 */
     static Class<?>[] typeArguments(Class<?> type) {
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
             for (Type t : c.getGenericInterfaces()) {
@@ -44,6 +48,7 @@ public final class Converters {
         throw new IllegalArgumentException(type.getName() + " must implement Converter<J, D> with concrete type arguments");
     }
 
+    /** 取类型参数的原始类；仍是泛型变量或不支持的形式时抛出异常。 */
     private static Class<?> raw(Type t, Class<?> owner) {
         if (t instanceof Class<?> c) return c;
         if (t instanceof ParameterizedType p) return (Class<?>) p.getRawType();

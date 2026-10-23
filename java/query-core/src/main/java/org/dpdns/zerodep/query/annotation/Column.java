@@ -9,17 +9,16 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Maps a column method of a table interface to a column. Without it the database's naming strategy
- * derives the column name from the method name.
+ * 把表接口上的列方法映射到数据库列。不加该注解时，由数据库的命名策略根据方法名推导列名。
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Column {
-    /** Column name, used exactly as written; empty means "derive from the method name". */
+    /** 列名，原样使用；为空表示由方法名推导。 */
     String value() default "";
 
-    /** Converter between the column's Java type and the stored value; {@code Converter.class} means none. */
+    /** 列的 Java 类型与库中存储值之间的转换器；{@code Converter.class} 表示不转换。 */
     @SuppressWarnings("rawtypes")
     Class<? extends Converter> converter() default Converter.class;
 }

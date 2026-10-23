@@ -10,27 +10,32 @@ import org.dpdns.zerodep.query.type.CastType;
 import java.util.List;
 
 /**
- * MySQL 8 with its default SQL mode. Identifiers are always quoted with backticks (window function
- * names such as RANK are reserved words), {@code ||} is not concatenation, and backslashes in string
- * literals are escapes.
+ * 默认 SQL 模式下的 MySQL 8。标识符一律用反引号引用（窗口函数名如 RANK 是保留字），
+ * {@code ||} 不是字符串连接，字符串字面量里的反斜杠是转义符。
  */
 public class MysqlDialect extends Dialect {
+    /** 无状态单例，{@link MysqlDatabase} 使用它。 */
     public static final MysqlDialect INSTANCE = new MysqlDialect();
 
+    /** 因为 {@code ||} 不是连接，CONCAT 改写为函数；LOCATE 的参数顺序与核心定义相反，需要对调。 */
     protected MysqlDialect() {
         register(Sql.CONCAT, (w, args) -> FunctionDef.call(w, "CONCAT", args));
         register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "LOCATE", List.of(args.get(1), args.get(0))));
     }
 
+    /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "MySQL"; }
 
+    /** 标识符一律加引号，所以没有任何名字算作无需引用。 */
     @Override protected boolean isBare(String identifier) { return false; }
 
+    /** MySQL 不折叠标识符的大小写，保持原样。 */
     @Override public String foldCase(String identifier) { return identifier; }
 
+    /** 用反引号引用标识符，名字里的反引号写成两个。 */
     @Override public String quote(String identifier) { return '`' + identifier.replace("`", "``") + '`'; }
 
-    /** Names are also quoted with backticks, and inside strings a backslash escapes the next character. */
+    /** 名字也用反引号引用，字符串内部的反斜杠会转义下一个字符。 */
     @Override public int quotedEnd(String sql, int start) {
         return switch (sql.charAt(start)) {
             case '\'', '"' -> closingQuote(sql, start, true);
@@ -39,12 +44,13 @@ public class MysqlDialect extends Dialect {
         };
     }
 
+    /** 字符串字面量：反斜杠和单引号都要转义。 */
     @Override protected String stringLiteral(String s) { return "'" + s.replace("\\", "\\\\").replace("'", "''") + "'"; }
 
-    /** Connector/J writes parameters into the statement text on the client unless useServerPrepStmts is on. */
+    /** Connector/J 在 useServerPrepStmts 关闭时由客户端把参数写进语句文本，所以没有参数个数上限。 */
     @Override public int maxParameters() { return Integer.MAX_VALUE; }
 
-    /** MySQL needs LIMIT before OFFSET; the documented way to say "no limit" is the largest BIGINT UNSIGNED. */
+    /** MySQL 的 OFFSET 必须跟在 LIMIT 之后；只有偏移时，按文档写法用最大的 BIGINT UNSIGNED 表示不限行数。 */
     @Override public void limit(SqlWriter w, Integer limit, Integer offset) {
         boolean hasOffset = offset != null && offset > 0;
         if (limit == null && !hasOffset) return;
@@ -52,18 +58,19 @@ public class MysqlDialect extends Dialect {
         if (hasOffset) w.sql(" OFFSET ").sql(Integer.toString(offset));
     }
 
-    /** MySQL writes ROLLUP as a suffix over the whole GROUP BY list. */
+    /** MySQL 把 ROLLUP 写成整个 GROUP BY 列表的后缀。 */
     @Override public void groupBy(SqlWriter w, List<? extends Renderable> keys, boolean rollup) {
         w.join(keys, ", ");
         if (rollup) w.sql(" WITH ROLLUP");
     }
 
-    /** No NULLS FIRST/LAST in MySQL: sort on "is null" first, which places NULLs the same way. */
+    /** MySQL 没有 NULLS FIRST/LAST：先按 "IS NULL" 排序，效果等同。 */
     @Override public void orderItem(SqlWriter w, Renderable expr, boolean descending, Boolean nullsFirst) {
         if (nullsFirst != null) w.render(expr).sql(nullsFirst ? " IS NULL DESC, " : " IS NULL ASC, ");
         w.render(expr).sql(descending ? " DESC" : " ASC");
     }
 
+    /** CAST 的目标类型：文本用 CHAR，整数用 SIGNED，时间戳用 DATETIME(6)；MySQL 不能 CAST 成 BOOLEAN。 */
     @Override public String castType(CastType<?> type) {
         return switch (type.kind()) {
             case TEXT -> "CHAR(" + type.length() + ")";

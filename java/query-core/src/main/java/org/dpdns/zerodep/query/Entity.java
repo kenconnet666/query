@@ -1,10 +1,9 @@
 package org.dpdns.zerodep.query;
 
 /**
- * Base of every table interface. A table is an interface annotated with {@code @Table} whose
- * abstract methods returning {@code Col<T>} are its columns; default methods hold reusable logic
- * such as computed columns. The library implements the interface once per table occurrence in a
- * query, so {@code l.material()} is that occurrence's column:
+ * 所有表接口的基接口。表是带 {@code @Table} 注解的接口，返回 {@code Col<T>} 的抽象方法是它的列，
+ * default 方法放可复用的逻辑，例如计算列。查询里的每次表出现，库都会生成一个该接口的实现，
+ * 所以 {@code l.material()} 就是这次出现的那一列：
  * <pre>{@code
  * @Table(schema = "ERP", value = "LIPS")
  * public interface Lips extends Entity {
@@ -13,10 +12,9 @@ package org.dpdns.zerodep.query;
  *     default Expr<BigDecimal> doubled() { return times(quantity(), lit(2)); }
  * }
  * }</pre>
- * Shared columns go into base interfaces (without {@code @Table}) that tables extend; a table
- * redeclaring a column method with its own {@code @Column} renames that column.
+ * 公共列放进不带 {@code @Table} 的基接口，由各表继承；表里重新声明某个列方法并带上自己的 {@code @Column}，就改了这一列的列名。
  */
 public interface Entity {
-    /** Every column of this table, by method name, for {@code select(l -> cols(l.all(), ...))}. */
+    /** 这张表的全部列，列名为方法名，用于 {@code select(l -> cols(l.all(), ...))}。 */
     Cols all();
 }

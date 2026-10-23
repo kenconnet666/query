@@ -9,10 +9,13 @@ final class SourceFilters {
     /** type 是表接口或它继承的接口；condition 收到这张表的表接口。 */
     record Filter(Class<?> type, Function<Object, Cond> condition) { }
 
+    /** 没有任何过滤器，查询用了 {@code .unfiltered()} 时使用。 */
     static final SourceFilters NONE = new SourceFilters(List.of());
 
+    /** 已注册的过滤器，按注册顺序生效。 */
     private final List<Filter> filters;
 
+    /** 由 {@link Database} 用配置里的过滤器创建。 */
     SourceFilters(List<Filter> filters) { this.filters = List.copyOf(filters); }
 
     /** 这张表要追加的条件：FROM 的表加到 WHERE，JOIN 的表加到 ON。 */

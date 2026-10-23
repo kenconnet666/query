@@ -30,35 +30,42 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Lazily built, cached metadata. Scans and getter resolutions are keyed by class through
- * {@link ClassValue}, so they are computed once and never keep a class loader alive.
+ * 惰性构建并缓存的元数据。类的扫描结果和 getter 的解析结果都通过 {@link ClassValue} 按类缓存，
+ * 只计算一次，也不会让类加载器无法回收。
  *
- * <p>A table is an interface extending {@link Entity}; its columns are the abstract methods returning
- * {@code Col<T>}. Result and row classes (records, beans) are described by their fields.
+ * <p>表是继承 {@link Entity} 的接口，列是返回 {@code Col<T>} 的抽象方法。
+ * 结果类和行类（record、bean）则按字段描述。
  */
 public final class Metadata {
+    /** 每个类型的元数据：接口按表扫描，其余按结果类或行类扫描。 */
     private static final ClassValue<EntityMeta<?>> ENTITIES = new ClassValue<>() {
         @Override
         protected EntityMeta<?> computeValue(Class<?> type) { return type.isInterface() ? scanTable(type) : scanClass(type); }
     };
 
-    /** Keyed by the lambda's class; filled on first use because resolving needs an instance. */
+    /** 以 lambda 的类为键；解析需要拿到实例，所以首次使用时才填充。 */
     private static final ClassValue<AtomicReference<GetterInfo>> GETTERS = new ClassValue<>() {
         @Override
         protected AtomicReference<GetterInfo> computeValue(Class<?> type) { return new AtomicReference<>(); }
     };
 
-    /** @param returnType the getter's declared return type, or null when it cannot be loaded */
+    /**
+     * 一个 getter 引用解析出的信息。
+     *
+     * @param property   属性名
+     * @param returnType getter 声明的返回类型；无法加载时为 null
+     */
     private record GetterInfo(String property, Class<?> returnType) { }
 
     private Metadata() { }
 
+    /** 取得类型的元数据：接口按表描述，其余类按结果类或行类描述。 */
     @SuppressWarnings("unchecked")
     public static <E> EntityMeta<E> entity(Class<E> type) { return (EntityMeta<E>) ENTITIES.get(type); }
 
     /**
-     * Resolves a getter or record accessor of a row class, e.g. {@code Row::total} on a CTE. The
-     * getter may be declared on a base class or an interface; resolution is by property name.
+     * 解析行类的 getter 或 record 访问器，例如 CTE 上的 {@code Row::total}。
+     * getter 可以声明在父类或接口上，解析按属性名进行；返回类型与属性类型不兼容时报错。
      */
     public static <E> PropertyMeta property(Class<E> entity, Getter<? super E, ?> getter) {
         GetterInfo info = info(getter);
@@ -71,8 +78,9 @@ public final class Metadata {
         return property;
     }
 
-    // ---------- table interfaces ----------
+    // ---------- 表接口 ----------
 
+    /** 扫描表接口：把返回 {@code Col<T>} 的抽象方法收集为列，非列的抽象方法报错。 */
     private static <E> EntityMeta<E> scanTable(Class<E> type) {
         if (!Entity.class.isAssignableFrom(type)) {
             throw new IllegalArgumentException(type.getSimpleName() + " is an interface but does not extend Entity");
@@ -82,7 +90,7 @@ public final class Metadata {
             if (m.isDefault() || Modifier.isStatic(m.getModifiers()) || m.getDeclaringClass() == Entity.class) continue;
             if (columns.containsKey(m.getName())) continue;
             List<Method> declarations = declarations(type, m.getName());
-            if (declarations.isEmpty() || declarations.get(0).isDefault()) continue;   // overridden by a default method
+            if (declarations.isEmpty() || declarations.get(0).isDefault()) continue;   // 已被 default 方法覆盖
             Method first = declarations.get(0);
             if (first.getReturnType() != Col.class || first.getParameterCount() != 0) {
                 throw new IllegalArgumentException(type.getSimpleName() + "." + m.getName()
@@ -95,7 +103,7 @@ public final class Metadata {
             table == null || table.schema().isEmpty() ? null : table.schema(), List.copyOf(columns.values()));
     }
 
-    /** No-argument methods of that name, the most specific declaration first, so a sub-interface can rename a column. */
+    /** 同名的无参方法声明，最具体的在前，这样子接口可以重新指定列的注解。 */
     private static List<Method> declarations(Class<?> type, String name) {
         List<Method> out = new ArrayList<>();
         Set<Class<?>> seen = new LinkedHashSet<>();
@@ -106,13 +114,14 @@ public final class Metadata {
             try {
                 out.add(c.getDeclaredMethod(name));
             } catch (NoSuchMethodException ignored) {
-                // declared further up, if at all
+                // 可能声明在更上层的接口里，也可能根本没有
             }
             queue.addAll(List.of(c.getInterfaces()));
         }
         return out;
     }
 
+    /** 描述一列：注解取自第一个带列注解的声明，值类型取自最具体的声明的泛型参数。 */
     private static PropertyMeta describeColumn(Class<?> owner, String name, List<Method> declarations) {
         Method annotated = declarations.stream().filter(Metadata::describesColumn).findFirst().orElse(declarations.get(0));
         Type returned = declarations.get(0).getGenericReturnType();
@@ -125,6 +134,7 @@ public final class Metadata {
         return new PropertyMeta(owner, name, columnName, type, null, readTemplate(owner, name, annotated));
     }
 
+    /** 方法上是否带有描述列的注解：{@code @Column}、{@code @ReadAs}，或带 {@code @ConvertWith}/{@code @ReadAs} 元注解的组合注解。 */
     private static boolean describesColumn(Method m) {
         if (m.isAnnotationPresent(Column.class) || m.isAnnotationPresent(ReadAs.class)) return true;
         for (Annotation a : m.getAnnotations()) {
@@ -134,20 +144,22 @@ public final class Metadata {
         return false;
     }
 
-    // ---------- result and row classes ----------
+    // ---------- 结果类与行类 ----------
 
+    /** 扫描结果类或行类：每个字段是一个属性；声明了 {@code @Table} 的类报错，表必须是接口。 */
     private static <E> EntityMeta<E> scanClass(Class<E> type) {
         if (type.isAnnotationPresent(Table.class)) {
             throw new IllegalArgumentException(type.getSimpleName() + " is a class; declare a table as an interface extending Entity");
         }
         List<PropertyMeta> properties = new ArrayList<>();
         for (Field f : fields(type)) {
-            // A composed converter annotation on a field decodes the column when native SQL maps into the class.
+            // 字段上的组合转换器注解，用于原生 SQL 映射进该类时解码列。
             properties.add(new PropertyMeta(type, f.getName(), null, sqlType(type, f.getName(), f, f.getType(), null), f, null));
         }
         return new EntityMeta<>(type, null, null, properties);
     }
 
+    /** 类的属性字段：record 按组件顺序，其余类父类在前，跳过静态、transient、合成和 {@code @Ignore} 字段。 */
     private static List<Field> fields(Class<?> type) {
         List<Field> out = new ArrayList<>();
         if (type.isRecord()) {
@@ -172,8 +184,9 @@ public final class Metadata {
         return out;
     }
 
-    // ---------- shared ----------
+    // ---------- 共用 ----------
 
+    /** 决定属性的 SQL 类型：{@code @Column} 与组合注解声明的转换器至多一个，没有则按 Java 类型推断。 */
     private static SqlType<?> sqlType(Class<?> owner, String name, AnnotatedElement element, Class<?> javaType, Column column) {
         Class<?> converter = column != null && column.converter() != Converter.class ? column.converter() : null;
         for (Annotation a : element.getAnnotations()) {
@@ -187,7 +200,7 @@ public final class Metadata {
         return converter == null ? SqlType.of(javaType) : SqlType.converted(javaType, converter);
     }
 
-    /** The {@link ReadAs} template on the column itself or on one composed annotation. */
+    /** 列自身或其组合注解上的 {@link ReadAs} 模板；至多一个，且必须含 {@code {0}} 占位符。 */
     private static String readTemplate(Class<?> owner, String name, AnnotatedElement element) {
         String found = null;
         List<ReadAs> declared = new ArrayList<>();
@@ -206,6 +219,7 @@ public final class Metadata {
         return found;
     }
 
+    /** 取得 getter 的解析结果，按 lambda 的类缓存。 */
     private static GetterInfo info(Getter<?, ?> getter) {
         AtomicReference<GetterInfo> holder = GETTERS.get(getter.getClass());
         GetterInfo info = holder.get();
@@ -216,6 +230,7 @@ public final class Metadata {
         return info;
     }
 
+    /** 通过序列化 lambda 的 {@code writeReplace} 还原被引用的方法，并由方法名推出属性名。 */
     private static GetterInfo resolve(Getter<?, ?> getter) {
         SerializedLambda lambda;
         try {
@@ -240,6 +255,7 @@ public final class Metadata {
         return new GetterInfo(property, descriptorType(returned, loader));
     }
 
+    /** 内部类名对应的类是否是 record；加载不到时视为否。 */
     private static boolean isRecordClass(String internalName, ClassLoader loader) {
         try {
             return Class.forName(internalName.replace('/', '.'), false, loader).isRecord();
@@ -248,6 +264,7 @@ public final class Metadata {
         }
     }
 
+    /** 把 JVM 返回类型描述符转成 Class；无法加载或是数组等其他描述符时为 null。 */
     private static Class<?> descriptorType(String d, ClassLoader loader) {
         return switch (d) {
             case "I" -> int.class;
@@ -269,6 +286,7 @@ public final class Metadata {
         };
     }
 
+    /** 与 JavaBeans 规则一致：前两个字母都大写时保持原样，否则首字母小写。 */
     private static String decapitalize(String s) {
         if (s.length() > 1 && Character.isUpperCase(s.charAt(1)) && Character.isUpperCase(s.charAt(0))) return s;
         return Character.toLowerCase(s.charAt(0)) + s.substring(1);

@@ -71,6 +71,7 @@ public final class Query<R> {
         R map(Object[] values);
     }
 
+    /** 最近一次渲染的缓存：key 是渲染它的数据库实例，同一实例再次渲染时直接复用。 */
     private record Memo(Object key, Rendered rendered) { }
 
     /** 怎样执行而不是查什么；null 表示用数据库实例的默认值。 */
@@ -78,19 +79,27 @@ public final class Query<R> {
         static final Execution DEFAULT = new Execution(null, null);
     }
 
+    /** 各段 SELECT；没有 UNION 时只有一段。 */
     private final List<Arm> arms;
+    /** 各段之间的合并方式；单段查询为 {@link Combination#NONE}。 */
     private final Combination combination;
+    /** 结果列名，按 SELECT 顺序。 */
     private final List<String> labels;
     /** 列名是否有意义（cols、into、selectAs、values）：UNION 时按列名对齐，否则按位置。 */
     private final boolean byName;
+    /** 把一行解码后的列值变成结果对象。 */
     private final RowMapper<R> mapper;
     /** 结果类；只有按名映射到类的查询才有，这样的查询可以做 CTE 或派生表。 */
     private final Class<R> shape;
+    /** 合并后整体的 LIMIT；单段查询的 LIMIT 在该段的 spec 里，这里为 null。 */
     private final Integer limit;
+    /** 合并后整体的 OFFSET；同上。 */
     private final Integer offset;
     private final Execution execution;
+    /** 渲染缓存；volatile，多线程同时渲染只是多做一次，结果相同。 */
     private volatile Memo memo;
 
+    /** 所有字段的完整构造；各公开方法通过它派生出新的不可变查询。 */
     private Query(List<Arm> arms, Combination combination, List<String> labels, boolean byName, RowMapper<R> mapper, Class<R> shape,
                   Integer limit, Integer offset, Execution execution) {
         this.arms = List.copyOf(arms);
@@ -158,6 +167,7 @@ public final class Query<R> {
         return new Query<>(List.of(new Arm(spec, items)), Combination.NONE, labels, true, plan::map, type, null, null, Execution.DEFAULT);
     }
 
+    /** 把 row 的一个属性值变成字面量，values() 用它拼出每行的 SELECT。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Expr<?> constant(Class<?> shape, PropertyMeta p, Object row) {
         Object value;
@@ -173,6 +183,7 @@ public final class Query<R> {
         return new Nodes.Literal(p.type(), value);
     }
 
+    /** 在作用域的表里找与属性同名的那一列；没有或多于一张表有同名列时报错，提示改用 cols(...)。 */
     private static Expr<?> sameNamed(SelectSpec spec, Class<?> type, String name) {
         List<Expr<?>> hits = new ArrayList<>();
         for (SelectSpec.Join j : spec.joins) {
@@ -207,6 +218,7 @@ public final class Query<R> {
     /** UNION（去重），规则同 {@link #unionAll}。 */
     public Query<R> union(Query<R> other) { return combine("UNION", other); }
 
+    /** 合并两个查询：校验列数、LIMIT 和 ORDER BY 的位置，按名的查询把右侧列按列名对齐到左侧。 */
     private Query<R> combine(String operator, Query<R> other) {
         if (other.columnCount() != columnCount()) {
             throw new IllegalArgumentException("UNION arms select " + columnCount() + " and " + other.columnCount() + " columns");
@@ -289,6 +301,7 @@ public final class Query<R> {
         return current != null && current <= rows ? this : limit(rows);
     }
 
+    /** 单段查询换一个 SELECT 规格，其余不变。 */
     private Query<R> withSpec(SelectSpec spec) {
         return new Query<>(List.of(new Arm(spec, arms.get(0).items())), combination, labels, byName, mapper, shape, limit, offset, execution);
     }
@@ -307,20 +320,27 @@ public final class Query<R> {
     /** 只按方言渲染，不带任何数据库实例的过滤器和改写，便于测试。 */
     public Rendered toSql(Dialect dialect) { return QueryRenderer.statement(new SqlWriter(dialect), this); }
 
+    /** 只显示列名，便于调试。 */
     @Override public String toString() { return "Query" + labels; }
 
     // ---------- 包内使用 ----------
 
+    /** 各段 SELECT。 */
     List<Arm> arms() { return arms; }
 
+    /** 各段的合并方式。 */
     Combination combination() { return combination; }
 
+    /** 合并后整体的 LIMIT，没有时为 null。 */
     Integer limitValue() { return limit; }
 
+    /** 合并后整体的 OFFSET，没有时为 null。 */
     Integer offsetValue() { return offset; }
 
+    /** 结果缓存时长，null 表示不缓存。 */
     Duration ttl() { return execution.ttl(); }
 
+    /** 语句超时，null 表示用数据库实例的默认值。 */
     Duration timeout() { return execution.timeout(); }
 
     /** CTE 或派生表的行类。 */
@@ -329,6 +349,7 @@ public final class Query<R> {
         return shape;
     }
 
+    /** 要求查询已映射到类，否则不能做 CTE 或派生表。 */
     private void requireShape(String use) {
         if (shape == null) {
             throw new IllegalStateException("Only a query mapped into a class can be used as " + use
@@ -336,6 +357,7 @@ public final class Query<R> {
         }
     }
 
+    /** 列数；各段列数相同，取第一段。 */
     int columnCount() { return arms.get(0).items().size(); }
 
     /** 各列的类型，执行时按它读取。 */
@@ -352,6 +374,7 @@ public final class Query<R> {
         return (SqlType<R>) arms.get(0).items().get(0).type();
     }
 
+    /** 把一行解码后的列值映射成结果对象。 */
     R mapRow(Object[] values) { return mapper.map(values); }
 
     /** 按数据库实例缓存的渲染结果。 */
@@ -400,5 +423,6 @@ public final class Query<R> {
         return out;
     }
 
+    /** 列名与属性名的比较形式：去掉下划线并忽略大小写。 */
     private static String normalize(String name) { return name.replace("_", "").toLowerCase(Locale.ROOT); }
 }

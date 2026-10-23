@@ -27,6 +27,7 @@ public class Sql extends Rows {
     /** {@code LOCATE(text, search)}；PostgreSQL 与 MySQL 注册自己的写法。 */
     public static final FunctionDef LOCATE = FunctionDef.of("LOCATE");
 
+    /** 只供方言门面继承，不能直接实例化。 */
     protected Sql() { }
 
     // ---------- 来源 ----------
@@ -206,11 +207,13 @@ public class Sql extends Rows {
             new Nodes.Param<>(text, Objects.requireNonNull(replacement, "replacement"))));
     }
 
+    /** 校验文本位置从 1 开始。 */
     private static int position(int start) {
         if (start < 1) throw new IllegalArgumentException("Text positions start at 1; negative positions differ between databases");
         return start;
     }
 
+    /** 校验字符个数不为负。 */
     private static int count(int length) {
         if (length < 0) throw new IllegalArgumentException("A length must not be negative");
         return length;
@@ -266,6 +269,7 @@ public class Sql extends Rows {
     /** 保留 scale 位小数四舍五入。 */
     public static <N extends Number> Expr<N> round(Expr<N> e, int scale) { return Nodes.call(e.type(), "ROUND", List.of(e, lit(scale))); }
 
+    /** 把 first 与 rest 用同一个运算符连成一个算术表达式，类型取 first 的。 */
     private static <N extends Number> Expr<N> arithmetic(String operator, Expr<N> first, Expr<? extends Number>[] rest) {
         List<Expr<?>> operands = new ArrayList<>();
         operands.add(first);

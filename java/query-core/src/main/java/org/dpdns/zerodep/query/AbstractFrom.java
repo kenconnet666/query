@@ -6,8 +6,10 @@ import java.util.function.Supplier;
 
 /** 所有作用域（From1 ... From16）共有的部分。不可变：每次调用都返回新的作用域。 */
 public abstract class AbstractFrom<S extends AbstractFrom<S>> {
+    /** 本作用域累积的 SELECT 内容（除投影外）。 */
     final SelectSpec spec;
 
+    /** 由生成的 From1 ... From16 调用。 */
     AbstractFrom(SelectSpec spec) { this.spec = spec; }
 
     /** 用新的 SELECT 内容重建同类作用域，由生成的子类实现。 */

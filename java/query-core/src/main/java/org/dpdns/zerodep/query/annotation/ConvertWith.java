@@ -9,7 +9,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Meta-annotation for composed type annotations, so a mounted type reads as one word on the column:
+ * 组合类型注解用的元注解，让挂载的类型在列上只写一个词：
  * <pre>{@code
  * @Retention(RUNTIME) @Target(METHOD) @ConvertWith(SapDateConverter.class)
  * public @interface SapDate { }
@@ -21,6 +21,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.ANNOTATION_TYPE)
 public @interface ConvertWith {
+    /** 转换器类，作用与 {@link Column#converter()} 相同。 */
     @SuppressWarnings("rawtypes")
     Class<? extends Converter> value();
 }

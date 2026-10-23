@@ -11,30 +11,50 @@ final class SelectSpec {
     enum JoinKind {
         FROM("FROM"), INNER("JOIN"), LEFT("LEFT JOIN"), CROSS("CROSS JOIN");
 
+        /** 渲染时写出的关键字。 */
         final String sql;
 
+        /** 指定渲染时的关键字。 */
         JoinKind(String sql) { this.sql = sql; }
     }
 
     /** 一个来源出现在 FROM 或 JOIN 里，on 是连接条件（FROM 和 CROSS JOIN 为空条件）。 */
     record Join(JoinKind kind, Ref<?> ref, Cond on) { }
 
+    /** FROM 与各 JOIN，按出现顺序；第一个是 FROM，没有来源时为空。 */
     final List<Join> joins;
+
+    /** WHERE 条件，渲染时以 AND 连接。 */
     final List<Cond> where;
+
+    /** GROUP BY 的分组键。 */
     final List<Expr<?>> groupBy;
     /** GROUP BY ROLLUP：按分组键的每个前缀出小计，最后出总计。 */
     final boolean rollup;
+
+    /** HAVING 条件，渲染时以 AND 连接。 */
     final List<Cond> having;
+
+    /** ORDER BY 的排序项。 */
     final List<Order> orderBy;
+
+    /** 是否 SELECT DISTINCT。 */
     final boolean distinct;
+
+    /** 最多返回的行数，null 表示不限。 */
     final Integer limit;
+
+    /** 跳过的行数，null 表示不跳过。 */
     final Integer offset;
     /** 是否套用数据库实例的全局过滤器。 */
     final boolean filtered;
     /** 是否开启 skipEmpty：与空值比较的条件直接省略。 */
     final boolean skipEmpty;
+
+    /** 方言专属的子句，例如 HANA 的提示。 */
     final List<Clause> clauses;
 
+    /** 全部字段逐个赋值；每个修改方法都通过它构造副本。 */
     private SelectSpec(List<Join> joins, List<Cond> where, List<Expr<?>> groupBy, boolean rollup, List<Cond> having, List<Order> orderBy,
                        boolean distinct, Integer limit, Integer offset, boolean filtered, boolean skipEmpty, List<Clause> clauses) {
         this.joins = joins;
@@ -138,11 +158,13 @@ final class SelectSpec {
     /** 是否已有 ORDER BY、LIMIT 或 OFFSET；UNION 的分支不允许有。 */
     boolean hasOrderOrLimit() { return !orderBy.isEmpty() || limit != null || offset != null; }
 
+    /** 条件不能为 null；没有条件要明确写 {@link Cond#EMPTY}。 */
     private static Cond nonNull(Cond c) {
         if (c == null) throw new IllegalArgumentException("A condition is null; use Cond.EMPTY for no condition");
         return c;
     }
 
+    /** 在列表末尾追加一项，返回新的不可变列表。 */
     private static <T> List<T> plus(List<T> list, T item) {
         List<T> copy = new ArrayList<>(list);
         copy.add(item);

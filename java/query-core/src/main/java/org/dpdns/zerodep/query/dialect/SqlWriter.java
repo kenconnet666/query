@@ -11,10 +11,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Accumulates SQL text and parameters for one statement. Every node renders itself into a writer;
- * the dialect decides quoting, literals, paging and function rendering. CTEs registered while
- * rendering are hoisted into one leading WITH by {@link #statement()}, dependencies first, so no
- * WITH ever appears inside a derived table.
+ * 累积一条语句的 SQL 文本和参数。每个节点都把自己渲染进一个写入器；
+ * 引号、字面量、分页和函数的写法由方言决定。渲染过程中登记的 CTE 会由 {@link #statement()}
+ * 提升为语句开头的同一个 WITH，被依赖的排在前面，因此 WITH 不会出现在派生表内部。
  */
 public final class SqlWriter {
     private final Dialect dialect;
@@ -26,14 +25,21 @@ public final class SqlWriter {
     private final List<Binding> bindings = new ArrayList<>();
     private boolean inlining;
 
-    /** Table aliases are unique per statement, across subqueries and CTE bodies, so correlation never shadows. */
+    /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联查询不会出现别名遮蔽。 */
     private static final class Aliases {
         final Map<Object, String> byOwner = new IdentityHashMap<>();
         final Set<String> used = new HashSet<>();
     }
 
+    /** 使用方言的默认设置，没有函数覆盖和渲染属性。 */
     public SqlWriter(Dialect dialect) { this(dialect, Map.of(), Map.of()); }
 
+    /**
+     * 创建一个写入器。
+     *
+     * @param functionOverrides 数据库实例对函数渲染的覆盖
+     * @param attributes        数据库实例传给渲染过程的设置，用 {@link #attribute} 读取
+     */
     public SqlWriter(Dialect dialect, Map<FunctionDef, FunctionRenderer> functionOverrides, Map<Object, Object> attributes) {
         this(dialect, functionOverrides, attributes, new Aliases());
     }
@@ -45,7 +51,7 @@ public final class SqlWriter {
         this.aliases = aliases;
     }
 
-    /** The statement-wide alias of a source; the preferred name gets a numeric suffix when taken. */
+    /** 数据源在整条语句中的别名；首选名已被占用时加数字后缀。 */
     public String aliasFor(Object owner, String preferred) {
         String known = aliases.byOwner.get(owner);
         if (known != null) return known;
@@ -56,53 +62,62 @@ public final class SqlWriter {
         return alias;
     }
 
+    /** 当前语句使用的方言。 */
     public Dialect dialect() { return dialect; }
 
-    /** Settings the database instance passes to rendering, such as filters or the naming strategy. */
+    /** 数据库实例传给渲染过程的设置，例如过滤器或命名策略。 */
     public Object attribute(Object key) { return attributes.get(key); }
 
+    /** 数据库实例对该函数的覆盖渲染；没有则为 null。仅供 {@link FunctionDef} 使用。 */
     FunctionRenderer functionOverride(FunctionDef def) { return functionOverrides.get(def); }
 
+    /** 原样追加 SQL 文本。 */
     public SqlWriter sql(String text) {
         sql.append(text);
         return this;
     }
 
+    /** 写出按方言需要加引号的标识符。 */
     public SqlWriter identifier(String name) { return sql(dialect.quote(name)); }
 
+    /** 写出别名，别名应来自 {@link #aliasFor}。 */
     public SqlWriter alias(String alias) { return sql(dialect.alias(alias)); }
 
+    /** 写出一个 {@code ?} 占位符，并按顺序登记要绑定的值及其类型。 */
     public SqlWriter bind(Object value, SqlType<?> type) {
         sql.append('?');
         bindings.add(new Binding(value, type));
         return this;
     }
 
+    /** 把值按方言的字面量形式写入语句，而不是作为参数。 */
     public SqlWriter literal(Object value) {
         dialect.literal(this, value);
         return this;
     }
 
     /**
-     * Whether constants render as literals instead of parameters. Every SELECT list turns it on, because
-     * HANA cannot infer the type of a parameter there. Grouped and DISTINCT SELECTs also turn it on for
-     * GROUP BY, HAVING and ORDER BY: HANA, PostgreSQL and MySQL all reject {@code GROUP BY SUBSTRING(x, ?, ?)}
-     * because two placeholders never count as the same expression. WHERE and ON keep parameters.
+     * 常量是否渲染为字面量而不是参数。所有 SELECT 列表都会打开它，因为 HANA 无法推断列表里参数的类型。
+     * 带分组和 DISTINCT 的 SELECT 还会在 GROUP BY、HAVING 和 ORDER BY 中打开：
+     * HANA、PostgreSQL 和 MySQL 都会拒绝 {@code GROUP BY SUBSTRING(x, ?, ?)}，
+     * 因为两处占位符永远不被视为同一个表达式。WHERE 和 ON 仍然使用参数。
      */
     public boolean inlining() { return inlining; }
 
-    /** Sets {@link #inlining()} and returns the previous setting, so the caller can restore it. */
+    /** 设置 {@link #inlining()} 并返回之前的值，方便调用方恢复。 */
     public boolean inlining(boolean on) {
         boolean previous = inlining;
         inlining = on;
         return previous;
     }
 
+    /** 渲染一个节点。 */
     public SqlWriter render(Renderable node) {
         node.render(this);
         return this;
     }
 
+    /** 依次渲染多个节点，中间用 {@code separator} 分隔。 */
     public SqlWriter join(List<? extends Renderable> nodes, String separator) {
         for (int i = 0; i < nodes.size(); i++) {
             if (i > 0) sql.append(separator);
@@ -111,10 +126,10 @@ public final class SqlWriter {
         return this;
     }
 
-    /** A writer with the same settings and an empty buffer, for rendering a part separately. */
+    /** 返回设置相同、缓冲区为空的新写入器，用来单独渲染某一部分；别名表与当前写入器共享。 */
     public SqlWriter fork() { return new SqlWriter(dialect, functionOverrides, attributes, aliases); }
 
-    /** Appends another writer's text and parameters, and adopts the CTEs it registered. */
+    /** 追加另一个写入器的文本和参数，并接收它登记的 CTE。 */
     public SqlWriter append(SqlWriter other) {
         sql.append(other.sql);
         bindings.addAll(other.bindings);
@@ -122,6 +137,7 @@ public final class SqlWriter {
         return this;
     }
 
+    /** 登记一个 CTE，稍后由 {@link #statement()} 提升到语句开头；同名的不同 CTE 会抛出异常。 */
     public void cte(CteDefinition definition) {
         CteDefinition known = ctes.putIfAbsent(definition.name(), definition);
         if (known != null && known != definition) {
@@ -129,11 +145,13 @@ public final class SqlWriter {
         }
     }
 
+    /** 当前累积的 SQL 文本，不含提升的 CTE。 */
     public String text() { return sql.toString(); }
 
+    /** 当前累积的参数，按占位符顺序，不含 CTE 主体里的参数。 */
     public List<Binding> bindings() { return List.copyOf(bindings); }
 
-    /** The finished statement: hoisted CTEs, then this writer's text. */
+    /** 完整的语句：先是提升的 CTE，再是本写入器的文本。 */
     public Rendered statement() {
         List<CteDefinition> order = new ArrayList<>();
         Map<CteDefinition, SqlWriter> bodies = new IdentityHashMap<>();
@@ -154,6 +172,7 @@ public final class SqlWriter {
         return new Rendered(out.toString(), all);
     }
 
+    /** 渲染一个 CTE 的主体并递归处理它依赖的 CTE，依赖先于它加入 {@code order}。 */
     private void emit(CteDefinition c, List<CteDefinition> order, Map<CteDefinition, SqlWriter> bodies, Map<String, CteDefinition> names) {
         if (bodies.containsKey(c)) return;
         CteDefinition clash = names.putIfAbsent(c.name(), c);
@@ -165,6 +184,6 @@ public final class SqlWriter {
         order.add(c);
     }
 
-    /** The CTEs registered so far, by name. */
+    /** 目前已登记的 CTE 名字。 */
     public Set<String> cteNames() { return ctes.keySet(); }
 }

@@ -20,12 +20,12 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * The HANA facade: everything of {@link Sql} plus HANA-only functions and clauses. One static
- * import gives the whole vocabulary:
+ * HANA 门面：包含 {@link Sql} 的全部能力，外加 HANA 专属的函数和子句。一次静态导入即可使用全部词汇：
  * <pre>{@code import static org.dpdns.zerodep.query.hana.Hana.*;}</pre>
- * HANA-only functions refuse to render on another dialect.
+ * HANA 专属函数在其他方言上渲染时会报错。
  */
 public final class Hana extends Sql {
+    // 只能在 HANA 方言上渲染的函数；在其他方言上渲染会报错。
     private static final FunctionDef DAYS_BETWEEN = FunctionDef.only(HanaDialect.class, "DAYS_BETWEEN");
     private static final FunctionDef ADD_DAYS = FunctionDef.only(HanaDialect.class, "ADD_DAYS");
     private static final FunctionDef ADD_MONTHS = FunctionDef.only(HanaDialect.class, "ADD_MONTHS");
@@ -48,42 +48,50 @@ public final class Hana extends Sql {
 
     private Hana() { }
 
-    // ---------- database ----------
+    // ---------- 数据库 ----------
 
+    /** 用默认配置创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接。 */
     public static HanaDatabase database(DataSource dataSource) { return database(ConnectionProvider.of(dataSource), null); }
 
+    /** 创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接，并用 {@code configure} 调整配置。 */
     public static HanaDatabase database(DataSource dataSource, Consumer<Database.Config> configure) {
         return database(ConnectionProvider.of(dataSource), configure);
     }
 
+    /** 创建 HANA 数据库实例，连接由 {@code connections} 提供；{@code configure} 可为 null。 */
     public static HanaDatabase database(ConnectionProvider connections, Consumer<Database.Config> configure) {
         return new HanaDatabase(connections, configure);
     }
 
-    // ---------- functions ----------
+    // ---------- 函数 ----------
 
-    /** Days from {@code from} to {@code to}. */
+    /** DAYS_BETWEEN：从 {@code from} 到 {@code to} 相隔的天数。 */
     public static Expr<Integer> daysBetween(Expr<LocalDate> from, Expr<LocalDate> to) {
         return call(DAYS_BETWEEN, Integer.class, from, to);
     }
 
+    /** ADD_DAYS：日期加上 {@code days} 天。 */
     public static Expr<LocalDate> addDays(Expr<LocalDate> date, int days) { return call(ADD_DAYS, date.type(), date, lit(days)); }
 
+    /** ADD_MONTHS：日期加上 {@code months} 个月。 */
     public static Expr<LocalDate> addMonths(Expr<LocalDate> date, int months) { return call(ADD_MONTHS, date.type(), date, lit(months)); }
 
+    /** ADD_YEARS：日期加上 {@code years} 年。 */
     public static Expr<LocalDate> addYears(Expr<LocalDate> date, int years) { return call(ADD_YEARS, date.type(), date, lit(years)); }
 
-    /** TO_VARCHAR(value, format), e.g. {@code toVarchar(date, "YYYYMMDD")}. */
+    /** TO_VARCHAR(value, format)，例如 {@code toVarchar(date, "YYYYMMDD")}。 */
     public static Expr<String> toVarchar(Expr<?> value, String format) { return call(TO_VARCHAR, String.class, value, lit(format)); }
 
+    /** TO_DATE(text, format)：按 {@code format} 把文本解析为日期。 */
     public static Expr<LocalDate> toDate(Expr<String> text, String format) { return call(TO_DATE, LocalDate.class, text, lit(format)); }
 
-    /** TO_NVARCHAR(value, format), the Unicode form of {@link #toVarchar}. */
+    /** TO_NVARCHAR(value, format)，{@link #toVarchar} 的 Unicode 版本。 */
     public static Expr<String> toNvarchar(Expr<?> value, String format) { return call(TO_NVARCHAR, String.class, value, lit(format)); }
 
+    /** TO_NVARCHAR(value)，不带格式。 */
     public static Expr<String> toNvarchar(Expr<?> value) { return call(TO_NVARCHAR, String.class, value); }
 
-    /** {@code e LIKE_REGEXPR pattern}, HANA's regular-expression predicate. */
+    /** {@code e LIKE_REGEXPR pattern}，HANA 的正则谓词。skipEmpty 下模式为空时没有条件。 */
     public static Cond likeRegexpr(Expr<String> e, String pattern) {
         if (skipped(pattern)) return Cond.EMPTY;
         Expr<String> p = val(pattern, SqlType.of(String.class));
@@ -97,13 +105,13 @@ public final class Hana extends Sql {
         };
     }
 
-    /** HANA's LENGTH counts UTF-16 code units, so a character outside the BMP counts as 2. */
+    /** LENGTH：HANA 按 UTF-16 码元计数，所以 BMP 之外的字符算 2。 */
     public static Expr<Integer> length(Expr<String> text) { return call(LENGTH, Integer.class, text); }
 
-    /** TO_INTEGER(value), also written TO_INT: text or a number as an integer; text that is no number fails the query. */
+    /** TO_INTEGER(value)，也可写作 TO_INT：把文本或数字转成整数；文本不是数字时查询会失败。 */
     public static Expr<Integer> toInteger(Expr<?> value) { return call(TO_INTEGER, Integer.class, value); }
 
-    /** STRING_AGG(value, separator ORDER BY ...). */
+    /** STRING_AGG(value, separator ORDER BY ...)：把组内的值按 {@code order} 排序后用 {@code separator} 拼接。 */
     public static Expr<String> stringAgg(Expr<String> value, String separator, OrderItem... order) {
         List<Renderable> args = new ArrayList<>();
         args.add(value);
@@ -112,12 +120,12 @@ public final class Hana extends Sql {
         return new StringAgg(value.type(), args);
     }
 
-    // ---------- grouping keys ----------
+    // ---------- 分组键 ----------
 
-    /** CUBE(keys) as a GROUP BY key: subtotals for every combination of the keys. */
+    /** CUBE(keys) 作为 GROUP BY 键：对键的每种组合都给出小计。 */
     public static Expr<Object> cube(Expr<?>... keys) { return call(CUBE, Object.class, keys); }
 
-    /** GROUPING SETS ((a, b), (a), ()) as a GROUP BY key: exactly the listed groupings; an empty list is the grand total. */
+    /** GROUPING SETS ((a, b), (a), ()) 作为 GROUP BY 键：恰好给出所列的分组；空列表表示总计。 */
     @SafeVarargs
     public static Expr<Object> groupingSets(List<? extends Expr<?>>... sets) {
         List<Renderable> args = new ArrayList<>();
@@ -127,9 +135,9 @@ public final class Hana extends Sql {
         };
     }
 
-    // ---------- clauses ----------
+    // ---------- 子句 ----------
 
-    /** WITH HINT(...) at the end of the statement. */
+    /** 语句末尾的 WITH HINT(...)。 */
     public static Clause hint(String... hints) {
         if (hints.length == 0) throw new IllegalArgumentException("hint() needs at least one hint");
         String text = "WITH HINT(" + String.join(", ", hints) + ")";
@@ -142,7 +150,7 @@ public final class Hana extends Sql {
         };
     }
 
-    /** The ORDER BY items ride along as arguments; the renderer places them inside the call. */
+    /** STRING_AGG 表达式：ORDER BY 项作为参数一起传入，由渲染器放进函数调用内部。 */
     private static final class StringAgg extends Expr<String> {
         private final List<Renderable> args;
 
@@ -154,13 +162,13 @@ public final class Hana extends Sql {
         @Override public void render(SqlWriter w) { STRING_AGG.render(w, args); }
     }
 
-    /** GREATEST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    /** GREATEST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
     public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
         return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
     }
 
-    /** LEAST(a, b, ...), constants as {@code val(x)}: NULL as soon as one argument is NULL. */
+    /** LEAST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
     public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
         return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));

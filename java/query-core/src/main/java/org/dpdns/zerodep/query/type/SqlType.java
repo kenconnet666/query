@@ -3,11 +3,14 @@ package org.dpdns.zerodep.query.type;
 import java.util.Objects;
 
 /**
- * The Java type an expression produces, plus how it is stored: the storage type is what JDBC reads
- * and writes, and an optional converter bridges the two. Reading and writing the storage type is
- * left to the database's {@link TypeRegistry}, so a dialect can override JDBC details per type.
+ * 表达式产生的 Java 类型，以及它的存储方式：存储类型是 JDBC 实际读写的类型，
+ * 可选的转换器在两者之间转换。存储类型的读写交给数据库的 {@link TypeRegistry}，
+ * 因此方言可以按类型覆盖 JDBC 的细节。
+ *
+ * @param <T> Java 类型
  */
 public final class SqlType<T> {
+    /** 无转换器的默认类型，按 Java 类缓存。 */
     private static final ClassValue<SqlType<?>> PLAIN = new ClassValue<>() {
         @Override
         @SuppressWarnings({"unchecked", "rawtypes"})
@@ -27,19 +30,19 @@ public final class SqlType<T> {
         this.converter = converter;
     }
 
-    /** The default type for a Java class; enums are stored by name. */
+    /** Java 类的默认类型；枚举按名字存储。基本类型会先装箱。 */
     @SuppressWarnings("unchecked")
     public static <T> SqlType<T> of(Class<T> javaType) {
         return (SqlType<T>) PLAIN.get(box(Objects.requireNonNull(javaType, "javaType")));
     }
 
-    /** A type stored through a converter, e.g. a LocalDate kept as 'yyyyMMdd' text. */
+    /** 通过转换器存储的类型，例如以 'yyyyMMdd' 文本保存的 LocalDate。 */
     @SuppressWarnings("unchecked")
     public static <J, D> SqlType<J> converted(Class<J> javaType, Class<D> storageType, Converter<J, D> converter) {
         return new SqlType<>((Class<J>) box(javaType), box(storageType), (Converter<J, Object>) converter);
     }
 
-    /** A type stored through a converter class referenced from an annotation. */
+    /** 通过注解引用的转换器类存储的类型；转换器的 Java 类型与 {@code javaType} 不兼容时抛出异常。 */
     @SuppressWarnings("unchecked")
     public static <J> SqlType<J> converted(Class<J> javaType, Class<?> converterType) {
         Class<?> declared = Converters.javaType(converterType);
@@ -51,26 +54,29 @@ public final class SqlType<T> {
             (Converter<J, Object>) (Converter<?, ?>) Converters.instance(converterType));
     }
 
+    /** 应用代码看到的 Java 类型。 */
     public Class<T> javaType() { return javaType; }
 
+    /** JDBC 实际读写的存储类型。 */
     public Class<?> storageType() { return storageType; }
 
+    /** 是否经过转换器。 */
     public boolean converted() { return converter != null; }
 
-    /** Java value to the value handed to JDBC; null stays null. */
+    /** Java 值转成交给 JDBC 的值；null 保持 null。 */
     public Object toDatabase(T value) {
         if (value == null) return null;
         return converter == null ? value : converter.toDatabase(value);
     }
 
-    /** Value read through JDBC (already of the storage type) to the Java value; null stays null. */
+    /** 把经 JDBC 读到的值（已是存储类型）转成 Java 值；null 保持 null。 */
     @SuppressWarnings("unchecked")
     public T fromDatabase(Object raw) {
         if (raw == null) return null;
         return converter == null ? (T) raw : converter.fromDatabase(raw);
     }
 
-    /** A harmless stand-in value, used while recording a projection lambda. */
+    /** 一个无害的占位值，在录制投影 lambda 时使用。 */
     @SuppressWarnings("unchecked")
     public T placeholder() { return (T) TypeRegistry.placeholder(javaType); }
 
@@ -78,6 +84,7 @@ public final class SqlType<T> {
         return converter == null ? javaType.getSimpleName() : javaType.getSimpleName() + " as " + storageType.getSimpleName();
     }
 
+    /** 基本类型装箱为对应的包装类，其他类型原样返回。 */
     public static Class<?> box(Class<?> type) {
         if (!type.isPrimitive()) return type;
         if (type == int.class) return Integer.class;
@@ -91,6 +98,7 @@ public final class SqlType<T> {
         return Void.class;
     }
 
+    /** 枚举与其名字之间的转换。 */
     private static final class EnumNameConverter<E extends Enum<E>> implements Converter<E, Object> {
         private final Class<E> type;
 

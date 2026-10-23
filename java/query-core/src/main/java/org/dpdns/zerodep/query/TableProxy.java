@@ -15,26 +15,35 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Implements a table interface for one occurrence: column methods return that occurrence's columns,
- * default methods run as written. Scopes may be extended from several threads, so state is concurrent.
+ * 为表的一次出现实现表接口：列方法返回这次出现的列，default 方法照原样运行。
+ * 作用域可能在多个线程里被延伸使用，所以内部状态用并发集合。
  */
 final class TableProxy implements InvocationHandler {
+    /** default 方法的调用句柄缓存，各代理共用。 */
     private static final Map<Method, MethodHandle> DEFAULTS = new ConcurrentHashMap<>();
 
+    /** 这个代理所属的表出现。 */
     private final Ref<?> ref;
+
+    /** 表接口的元数据。 */
     private final EntityMeta<?> meta;
+
+    /** 已创建的列，按方法名缓存，保证同一方法总是返回同一个对象。 */
     private final Map<String, Col<?>> columns = new ConcurrentHashMap<>();
 
+    /** 只能通过 {@link #create} 创建。 */
     private TableProxy(Ref<?> ref) {
         this.ref = ref;
         this.meta = Metadata.entity(ref.entity());
     }
 
+    /** 创建 ref 的表接口代理。 */
     static Object create(Ref<?> ref) {
         Class<?> type = ref.entity();
         return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, new TableProxy(ref));
     }
 
+    /** 分派接口方法：Object 的方法按代理自身处理，{@code all()} 返回全部列，default 方法照原样运行，其余的列方法返回对应的列。 */
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         if (method.getDeclaringClass() == Object.class) {
@@ -49,15 +58,17 @@ final class TableProxy implements InvocationHandler {
         return column(method.getName());
     }
 
+    /** 按属性名取这次出现的列。 */
     Col<?> column(String name) { return columns.computeIfAbsent(name, n -> new Col<>(ref, meta.property(n))); }
 
+    /** 这张表的全部列，按属性顺序。 */
     private Cols all() {
         List<Expr<?>> all = new ArrayList<>();
         for (PropertyMeta p : meta.properties()) all.add(column(p.name()));
         return new Cols(all);
     }
 
-    /** A default method called on the proxy itself; privateLookupIn also reaches non-public interfaces. */
+    /** 在代理自身上调用 default 方法；privateLookupIn 也能访问非 public 的接口。 */
     private static MethodHandle special(Method method) {
         return DEFAULTS.computeIfAbsent(method, m -> {
             Class<?> owner = m.getDeclaringClass();

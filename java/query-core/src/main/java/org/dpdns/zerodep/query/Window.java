@@ -5,28 +5,37 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 
 import java.util.List;
 
-/** An OVER (...) specification, built from {@link #EMPTY} inside {@code over(w -> w.partitionBy(...))}. */
+/** OVER (...) 里的窗口定义，在 {@code over(w -> w.partitionBy(...))} 里从 {@link #EMPTY} 开始构造。不可变。 */
 public final class Window implements Renderable {
+    /** 空窗口：没有分区、排序和窗口帧。 */
     public static final Window EMPTY = new Window(List.of(), List.of(), null);
 
+    /** PARTITION BY 的键。 */
     private final List<Expr<?>> partition;
+
+    /** 窗口内的 ORDER BY。 */
     private final List<Order> order;
+
+    /** 窗口帧的 SQL，null 表示不写。 */
     private final String frame;
 
+    /** 只能通过 {@link #EMPTY} 和各修改方法创建。 */
     private Window(List<Expr<?>> partition, List<Order> order, String frame) {
         this.partition = partition;
         this.order = order;
         this.frame = frame;
     }
 
+    /** 按 keys 分区。 */
     public Window partitionBy(Expr<?>... keys) { return new Window(List.of(keys), order, frame); }
 
-    /** A bare expression sorts ascending. */
+    /** 窗口内的排序；单独的表达式按升序。 */
     public Window orderBy(OrderItem... items) { return new Window(partition, OrderList.of(items), frame); }
 
-    /** ROWS BETWEEN start AND end; RANGE frames differ between databases and live in dialect packages. */
+    /** 窗口帧 ROWS BETWEEN start AND end；RANGE 帧各数据库不同，放在方言包里。 */
     public Window rows(Bound start, Bound end) { return new Window(partition, order, "ROWS BETWEEN " + start.sql + " AND " + end.sql); }
 
+    /** 写出 OVER 括号里的内容：PARTITION BY、ORDER BY、窗口帧，缺的部分省略。 */
     @Override public void render(SqlWriter w) {
         String sep = "";
         if (!partition.isEmpty()) {
@@ -40,17 +49,30 @@ public final class Window implements Renderable {
         if (frame != null) w.sql(sep).sql(frame);
     }
 
+    /** 窗口帧的一端。 */
     public static final class Bound {
+        /** 这一端的 SQL。 */
         private final String sql;
 
+        /** 只能通过下面的静态方法创建。 */
         private Bound(String sql) { this.sql = sql; }
 
+        /** UNBOUNDED PRECEDING：分区的第一行。 */
         public static Bound unboundedPreceding() { return new Bound("UNBOUNDED PRECEDING"); }
+
+        /** 当前行之前 rows 行；rows 不能为负。 */
         public static Bound preceding(int rows) { return new Bound(nonNegative(rows) + " PRECEDING"); }
+
+        /** CURRENT ROW：当前行。 */
         public static Bound currentRow() { return new Bound("CURRENT ROW"); }
+
+        /** 当前行之后 rows 行；rows 不能为负。 */
         public static Bound following(int rows) { return new Bound(nonNegative(rows) + " FOLLOWING"); }
+
+        /** UNBOUNDED FOLLOWING：分区的最后一行。 */
         public static Bound unboundedFollowing() { return new Bound("UNBOUNDED FOLLOWING"); }
 
+        /** 校验帧偏移不为负。 */
         private static int nonNegative(int rows) {
             if (rows < 0) throw new IllegalArgumentException("Frame offsets must not be negative");
             return rows;

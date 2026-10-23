@@ -6,7 +6,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** The column reads without surrounding spaces: {@code TRIM(column)}. */
+/** 读取列时去掉首尾空格，按 {@code TRIM(column)} 处理。 */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
