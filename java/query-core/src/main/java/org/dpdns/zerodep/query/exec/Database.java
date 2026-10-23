@@ -16,6 +16,7 @@ import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.table.SourceFilters;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
+import org.dpdns.zerodep.query.write.Write;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
@@ -166,6 +168,46 @@ public abstract class Database {
 
     /** 本数据库会为这条查询执行的 SQL 与参数，已套用全局过滤器和函数覆盖；同一条查询在同一个数据库上的渲染结果会被缓存。 */
     public Rendered render(Query<?> q) { return q.rendered(this, () -> QueryRenderer.statement(writer(), q)); }
+
+    // ---------- 写入 ----------
+
+    /**
+     * 执行写语句（{@code insert}、{@code update}、{@code delete}），返回影响的总行数；多行插入按批执行。
+     * 语句带期望的行数（{@code expect(n)}、{@code byId(row)}）而实际不符时抛出 {@link UnexpectedRowCountException}。
+     * 驱动没有报告批量的行数时（例如 MySQL 的 rewriteBatchedStatements）返回 -1，这时有期望的行数会报错。
+     * 写入成功后清空结果缓存，免得读到改动前的结果。
+     */
+    public long execute(Write write) {
+        List<Rendered> statements = render(write);
+        if (statements.isEmpty()) return 0;
+        long rows = executor.update(statements, null);
+        clearCache();
+        Long expected = write.expected();
+        if (expected == null || executor.dryRun()) return rows;
+        if (rows < 0) {
+            throw new IllegalStateException(name + ": the driver did not report how many rows the batch changed, so expect(...) cannot be checked;"
+                + " turn off batch rewriting (MySQL rewriteBatchedStatements, PostgreSQL reWriteBatchedInserts)");
+        }
+        if (rows != expected) throw new UnexpectedRowCountException(name, statements.get(0), expected, rows);
+        return rows;
+    }
+
+    /** 本数据库会为这条写语句执行的语句与参数，已套用全局过滤器；多行插入每行一条。 */
+    public List<Rendered> render(Write write) { return write.render(this::writer); }
+
+    /**
+     * 在一个事务里执行 work 并返回它的结果：其中的查询和写语句用同一个连接，正常结束时提交，抛出异常时回滚；
+     * 嵌套调用加入外层事务。Spring 项目用 {@code @Transactional}，这里会报错。
+     */
+    public <T> T transaction(Supplier<T> work) { return executor.transaction(work); }
+
+    /** 同上，没有返回值。 */
+    public void transaction(Runnable work) {
+        executor.transaction(() -> {
+            work.run();
+            return null;
+        });
+    }
 
     /** 清空查询结果缓存；没有配置缓存时什么也不做。 */
     public void clearCache() {

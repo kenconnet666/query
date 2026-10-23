@@ -2,11 +2,15 @@ package org.dpdns.zerodep.query.meta;
 
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
+import org.dpdns.zerodep.query.annotation.Generated;
+import org.dpdns.zerodep.query.annotation.Id;
 import org.dpdns.zerodep.query.annotation.Ignore;
+import org.dpdns.zerodep.query.annotation.LogicDelete;
 import org.dpdns.zerodep.query.annotation.ManyToOne;
 import org.dpdns.zerodep.query.annotation.OneToMany;
 import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
@@ -22,9 +26,11 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +99,7 @@ public final class Metadata {
         }
         Map<String, PropertyMeta> columns = new TreeMap<>();
         Map<String, RelationMeta> relations = new TreeMap<>();
+        Map<Class<? extends Annotation>, List<String>> marked = new HashMap<>();
         for (Method m : type.getMethods()) {
             if (m.isDefault() || Modifier.isStatic(m.getModifiers()) || m.getDeclaringClass() == Entity.class) continue;
             if (columns.containsKey(m.getName()) || relations.containsKey(m.getName())) continue;
@@ -109,10 +116,59 @@ public final class Metadata {
                     + "() is neither a column (Col<T> name()) nor a default method");
             }
             columns.put(m.getName(), describeColumn(type, m.getName(), declarations));
+            for (Class<? extends Annotation> a : List.of(Id.class, Version.class, Generated.class, LogicDelete.class)) {
+                if (declarations.stream().anyMatch(d -> d.isAnnotationPresent(a))) marked.computeIfAbsent(a, k -> new ArrayList<>()).add(m.getName());
+            }
         }
         Table table = type.getAnnotation(Table.class);
         return new EntityMeta<>(type, table == null ? null : table.value(),
-            table == null || table.schema().isEmpty() ? null : table.schema(), List.copyOf(columns.values()), relations);
+            table == null || table.schema().isEmpty() ? null : table.schema(), List.copyOf(columns.values()), relations,
+            writes(type, columns, marked));
+    }
+
+    /** 由列上的写入注解得到 {@link WriteMeta}；版本列、生成列、逻辑删除列各至多一列，版本列必须是整数。 */
+    private static WriteMeta writes(Class<?> type, Map<String, PropertyMeta> columns, Map<Class<? extends Annotation>, List<String>> marked) {
+        if (marked.isEmpty()) return WriteMeta.NONE;
+        List<String> ids = marked.getOrDefault(Id.class, List.of()).stream().sorted().toList();
+        String version = single(type, marked, Version.class);
+        if (version != null) {
+            Class<?> v = columns.get(version).javaType();
+            if (v != Integer.class && v != Long.class) {
+                throw new IllegalArgumentException(type.getSimpleName() + "." + version + "(): @Version needs Col<Integer> or Col<Long>");
+            }
+        }
+        String logic = single(type, marked, LogicDelete.class);
+        return new WriteMeta(ids, version, single(type, marked, Generated.class), logic == null ? null : logicDelete(type, columns.get(logic)));
+    }
+
+    /** 带注解 a 的唯一一列；没有时为 null，多于一列时报错。 */
+    private static String single(Class<?> type, Map<Class<? extends Annotation>, List<String>> marked, Class<? extends Annotation> a) {
+        List<String> names = marked.getOrDefault(a, List.of());
+        if (names.size() > 1) throw new IllegalArgumentException(type.getSimpleName() + " has more than one @" + a.getSimpleName() + " column: " + names);
+        return names.isEmpty() ? null : names.get(0);
+    }
+
+    /** 逻辑删除列：时间戳列记录删除时间，其余按列的类型解析未删除和已删除的值。 */
+    private static WriteMeta.LogicDeleteMeta logicDelete(Class<?> type, PropertyMeta column) {
+        Class<?> javaType = column.javaType();
+        if (javaType == LocalDateTime.class) return new WriteMeta.LogicDeleteMeta(column.name(), null, null, true);
+        LogicDelete a = null;
+        for (Method d : declarations(type, column.name())) if ((a = d.getAnnotation(LogicDelete.class)) != null) break;
+        String where = type.getSimpleName() + "." + column.name() + "()";
+        return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), parse(where, javaType, a.deleted()), false);
+    }
+
+    /** 把 {@code @LogicDelete} 里写的值按列的 Java 类型解析。 */
+    private static Object parse(String where, Class<?> javaType, String text) {
+        if (javaType == String.class) return text;
+        if (javaType == Integer.class) return Integer.valueOf(text);
+        if (javaType == Long.class) return Long.valueOf(text);
+        if (javaType == Short.class) return Short.valueOf(text);
+        if (javaType == Boolean.class) {
+            if (text.equals("1") || text.equalsIgnoreCase("true")) return true;
+            if (text.equals("0") || text.equalsIgnoreCase("false")) return false;
+        }
+        throw new IllegalArgumentException(where + ": @LogicDelete cannot use '" + text + "' for a " + javaType.getSimpleName() + " column");
     }
 
     /** 用 {@code @ManyToOne} 或 {@code @OneToMany} 声明的关系方法；不是关系时返回 null。 */
@@ -189,7 +245,7 @@ public final class Metadata {
             // 字段上的组合转换器注解，用于原生 SQL 映射进该类时解码列。
             properties.add(new PropertyMeta(type, f.getName(), null, sqlType(type, f.getName(), f, f.getType(), null), f, null));
         }
-        return new EntityMeta<>(type, null, null, properties, Map.of());
+        return new EntityMeta<>(type, null, null, properties, Map.of(), WriteMeta.NONE);
     }
 
     /** 类的属性字段：record 按组件顺序，其余类父类在前，跳过静态、transient、合成和 {@code @Ignore} 字段。 */

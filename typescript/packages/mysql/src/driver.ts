@@ -16,10 +16,16 @@ const OPTIONS = { rowsAsArray: true, dateStrings: true, supportBigNumbers: true,
  * 连接池会借出一个连接来做这件事，无法还原该设置的连接会被销毁。
  */
 export function mysqlDriver(source: Pool | PoolConnection | Connection): Driver {
+  return driverFor(source, false);
+}
+
+/** mysqlDriver 的实现；inTransaction 为 true 时 source 是事务里的连接，transaction 直接执行，加入这个事务。 */
+function driverFor(source: Pool | PoolConnection | Connection, inTransaction: boolean): Driver {
   const run = async (connection: Pool | PoolConnection | Connection, sql: string, parameters: readonly unknown[]): Promise<DriverResult> => {
     const [rows, fields] = (await connection.execute({ sql, ...OPTIONS }, parameters.map(parameter) as never)) as unknown as [unknown, FieldPacket[] | undefined];
     // 没有结果集的语句（DDL、DML）返回的是一个头信息对象而不是行。
-    return { columns: (fields ?? []).map((f) => f.name), rows: Array.isArray(rows) ? (rows as unknown[][]) : [] };
+    if (!Array.isArray(rows)) return { columns: [], rows: [], affected: (rows as { affectedRows?: number }).affectedRows ?? 0 };
+    return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
   };
   const driver: Driver = {
     /** 执行一条语句，返回列名和各行的值。 */
@@ -36,6 +42,24 @@ export function mysqlDriver(source: Pool | PoolConnection | Connection): Driver 
         reset = await connection.query("SET SESSION max_execution_time = DEFAULT").then(() => true, () => false);
         if (lent !== undefined && reset) lent.release();
         else if (lent !== undefined) lent.destroy();
+      }
+    },
+
+    /** 连接池借出一个连接，单个连接直接用，beginTransaction 后执行 work，再提交或回滚。 */
+    async transaction(work) {
+      if (inTransaction) return work(driver);
+      const lent = "getConnection" in source ? await source.getConnection() : undefined;
+      const connection = lent ?? (source as PoolConnection | Connection);
+      try {
+        await connection.beginTransaction();
+        const result = await work(driverFor(connection, true));
+        await connection.commit();
+        return result;
+      } catch (e) {
+        await connection.rollback().catch(() => undefined);
+        throw e;
+      } finally {
+        lent?.release();
       }
     },
   };

@@ -19,9 +19,14 @@ const BATCH = 500;
  * 无法还原该设置的客户端会被丢弃。
  */
 export function pgDriver(source: Pool | PoolClient | Client): Driver {
+  return driverFor(source, false);
+}
+
+/** pgDriver 的实现；inTransaction 为 true 时 source 是事务里的客户端，transaction 直接执行，加入这个事务。 */
+function driverFor(source: Pool | PoolClient | Client, inTransaction: boolean): Driver {
   const run = async (client: Pool | PoolClient | Client, sql: string, parameters: readonly unknown[]): Promise<DriverResult> => {
     const result: QueryArrayResult = await client.query({ text: sql, values: parameters.map(parameter), rowMode: "array", types: TYPES });
-    return { columns: result.fields.map((f) => f.name), rows: result.rows };
+    return { columns: result.fields.map((f) => f.name), rows: result.rows, affected: result.rowCount ?? 0 };
   };
   const driver: Driver = {
     /** 执行一条语句，返回列名和各行的值。 */
@@ -46,6 +51,25 @@ export function pgDriver(source: Pool | PoolClient | Client): Driver {
       } finally {
         await client.query("RESET statement_timeout").catch(() => (broken = true));
         client.release(broken);
+      }
+    },
+
+    /** 连接池借出一个客户端，单个客户端直接用，BEGIN 后执行 work，再 COMMIT 或 ROLLBACK。 */
+    async transaction(work) {
+      if (inTransaction) return work(driver);
+      const lent = "totalCount" in source ? await source.connect() : undefined;
+      const client = lent ?? (source as PoolClient | Client);
+      let broken = false;
+      try {
+        await client.query("BEGIN");
+        const result = await work(driverFor(client, true));
+        await client.query("COMMIT");
+        return result;
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => (broken = true));
+        throw e;
+      } finally {
+        lent?.release(broken);
       }
     },
   };

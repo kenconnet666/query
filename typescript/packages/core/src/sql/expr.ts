@@ -216,6 +216,11 @@ export function param<T>(type: SqlType<T>, value: T): Expr<T> {
   return new Param(type as SqlType<NonNullable<T>>, value);
 }
 
+/** 写语句的值：与 {@link param} 相同，但 null 也绑定为参数（插入或 SET 成 NULL）。 */
+export function bindValue<T>(type: SqlType<T>, value: T | null): Expr<T | null> {
+  return new Param(type as SqlType<NonNullable<T>>, value);
+}
+
 /** 用一个函数写出的表达式节点；方言包增加自己语法的方式。 */
 export function expression<T>(type: SqlType<NonNullable<T>>, render: (w: SqlWriter) => void): Expr<T> {
   return new (class extends Expr<T> {

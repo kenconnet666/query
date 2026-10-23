@@ -28,6 +28,9 @@ import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.table.SqlTable;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
+import org.dpdns.zerodep.query.write.Delete;
+import org.dpdns.zerodep.query.write.Insert;
+import org.dpdns.zerodep.query.write.Update;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -109,6 +112,17 @@ public class Sql extends Rows {
      * 可以做 CTE 或派生表；每个属性都要有值。
      */
     public static <V> Query<V> values(Class<V> shape, List<? extends V> rows) { return Query.constants(shape, rows); }
+
+    // ---------- 写入 ----------
+
+    /** 插入 table：{@code insertInto(Lips.class).values(rows)} 或 {@code .from(query)}，见 {@link Insert}。 */
+    public static <T extends Entity> Insert<T> insertInto(Class<T> table) { return Insert.into(table); }
+
+    /** 更新 table：{@code update(Lips.class).set(l -> l.unit().to("KG")).where(...)}，见 {@link Update}。 */
+    public static <T extends Entity> Update<T> update(Class<T> table) { return Update.of(table); }
+
+    /** 从 table 删除：{@code deleteFrom(Lips.class).where(...)}，见 {@link Delete}。 */
+    public static <T extends Entity> Delete<T> deleteFrom(Class<T> table) { return Delete.of(table); }
 
     // ---------- 投影 ----------
 

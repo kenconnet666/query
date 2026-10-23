@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Client;
+import org.dpdns.zerodep.query.write.Write;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -33,11 +34,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * languages must render every file exactly; {@code QUERY_SPEC_WRITE=1} rewrites the files from Java.
  */
 public abstract class RenderSpec {
-    /** One case: a query, rendered by a database with or without the live scenarios' client filter. */
-    public record SpecCase(boolean filtered, Supplier<Query<?>> query) {
-        public static SpecCase plain(Supplier<Query<?>> query) { return new SpecCase(false, query); }
+    /** One case: a query or a single-statement write, rendered by a database with or without the live scenarios' client filter. */
+    public record SpecCase(boolean filtered, Supplier<?> query) {
+        public static SpecCase plain(Supplier<?> query) { return new SpecCase(false, query); }
 
-        public static SpecCase filtered(Supplier<Query<?>> query) { return new SpecCase(true, query); }
+        public static SpecCase filtered(Supplier<?> query) { return new SpecCase(true, query); }
     }
 
     private static final String HEADER = "-- parameters: ";
@@ -68,7 +69,16 @@ public abstract class RenderSpec {
         Database plain = database(NO_CONNECTIONS, null);
         boolean write = System.getenv("QUERY_SPEC_WRITE") != null;
         return cases().entrySet().stream().map(e -> DynamicTest.dynamicTest(dialect() + " 渲染 " + e.getKey() + " 与金样例一致", () -> {
-            Rendered r = (e.getValue().filtered() ? filtered : plain).render(e.getValue().query().get());
+            Database db = e.getValue().filtered() ? filtered : plain;
+            Object statement = e.getValue().query().get();
+            Rendered r;
+            if (statement instanceof Write w) {
+                List<Rendered> all = db.render(w);
+                assertEquals(1, all.size(), "a write case renders one statement");
+                r = all.get(0);
+            } else {
+                r = db.render((Query<?>) statement);
+            }
             List<String> parameters = r.parameters().stream().map(String::valueOf).toList();
             Path file = directory().resolve(e.getKey() + "." + dialect() + ".sql");
             if (write) {

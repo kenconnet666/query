@@ -25,7 +25,7 @@ export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => Cond): Sour
 }
 
 /** 取适用于该数据源引用的全局过滤条件。 */
-function conditionsFor(filters: readonly SourceFilter[], ref: object): Cond[] {
+export function conditionsFor(filters: readonly SourceFilter[], ref: object): Cond[] {
   const entity = ownerOf(ref).source.entity;
   if (filters.length === 0 || entity === undefined || !ownerOf(ref).source.filtered) return [];
   return filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
@@ -464,6 +464,11 @@ function hasOrderOrLimit(s: SelectSpec): boolean {
 }
 
 // ---------- 供数据库使用的包内部函数 ----------
+
+/** 带列名渲染查询，用于 INSERT ... SELECT 等嵌在别的语句里的查询。 */
+export function renderNamed(w: SqlWriter, q: Query<unknown>): void {
+  renderQuery(w, stateOf(q), true, true);
+}
 
 /** 把查询渲染成完整语句。 */
 export function renderStatement(w: SqlWriter, q: Query<unknown>): Rendered {

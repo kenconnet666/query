@@ -5,9 +5,11 @@ import {
   count,
   countDistinct,
   cte,
+  deleteFrom,
   filter,
   from,
   inMemoryCache,
+  insertInto,
   left,
   negate,
   plus,
@@ -19,6 +21,7 @@ import {
   val,
   values,
   QueryExecutionError,
+  UnexpectedRowCountError,
   type Database,
   type DatabaseOptions,
   type Driver,
@@ -29,6 +32,7 @@ import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/e
 import { dateFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 import * as wf from "../fixtures/workflow.js";
+import * as writes from "../fixtures/writes.js";
 
 /**
  * Connection settings for live tests, from the JDBC-style QUERY_{NAME}_URL / _USER / _PASSWORD the
@@ -106,7 +110,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const ts = target.timestamp ?? "TIMESTAMP";
       const statements = [
         `-CREATE SCHEMA ${q("QUERY_IT")}`,
-        ...["MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK", "WF_VARIABLE", "WF_HI_TASK"].map(
+        ...["MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK", "WF_VARIABLE", "WF_HI_TASK", "W_NOTE"].map(
           (name) => `-DROP TABLE ${t(name)}`,
         ),
         create("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)),
@@ -172,6 +176,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         insert("WF_HI_TASK", "'H2', 'pay', 'alice', 'P3', TIMESTAMP '2026-01-11 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 5400000"),
         insert("WF_HI_TASK", "'H3', 'approve', 'bob', 'P4', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 09:10:00', 600000"),
         insert("WF_HI_TASK", "'H4', 'approve', 'alice', 'P1', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
+        create("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), `${q("QTY")} INTEGER`, c("STATUS", 10)),
         ...(target.setup ?? []),
       ];
       // A statement starting with "-" may fail, e.g. dropping what does not exist.
@@ -696,6 +701,49 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         (await db.list(wf.workload())).map((r) => `${r.assignee}:${r.tasks}:${r.totalDuration}:${r.slow}`),
         ["alice:2:9000000:1", "bob:1:600000:0"],
       );
+    });
+
+    it("插入、更新、删除在实库上按期望的行数执行", async () => {
+      const { db } = live();
+      await db.execute(deleteFrom(writes.Note).all());
+      assert.equal(await db.execute(writes.insertNotes()), 2);
+      assert.equal(await db.execute(writes.closeOpenNote("N1")), 1);
+      const stale = await db.execute(writes.closeOpenNote("N1")).then(() => undefined, (e: unknown) => e);
+      assert.ok(stale instanceof UnexpectedRowCountError && stale.actual === 0, String(stale));
+      const rows = await db.list(
+        from(writes.Note)
+          .orderBy((n) => n.id)
+          .select((n) => ({ id: n.id, title: n.title, qty: n.qty, status: n.status })),
+      );
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.title}:${r.qty}:${r.status}`), ["N1:first:11:closed", "N2:null:2:open"]);
+      assert.equal(await db.execute(writes.copyNote()), 1);
+      assert.equal(await db.execute(writes.deleteClosed()), 2);
+      assert.deepEqual(await writes.ids(db), ["N2"]);
+    });
+
+    it("事务里出错时写入整体回滚", async () => {
+      const { db } = live();
+      await db.execute(deleteFrom(writes.Note).all());
+      await assert.rejects(
+        db.transaction(async () => {
+          await db.execute(writes.insertNotes());
+          assert.deepEqual(await writes.ids(db), ["N1", "N2"], "the transaction sees its own rows");
+          throw new Error("roll back");
+        }),
+        /roll back/,
+      );
+      assert.deepEqual(await writes.ids(db), []);
+      await db.transaction(() => db.execute(writes.insertNotes()));
+      assert.deepEqual(await writes.ids(db), ["N1", "N2"]);
+    });
+
+    it("多行插入在一个事务里执行", async () => {
+      const { db } = live();
+      await db.execute(deleteFrom(writes.Note).all());
+      const rows = Array.from({ length: 120 }, (_, i) => ({ id: `B${i}`, tenant: "T1", title: "bulk", qty: i, status: "open" }));
+      assert.equal(await db.execute(insertInto(writes.Note).values(...rows)), 120);
+      assert.equal(await db.count(from(writes.Note).select((n) => n.id)), 120);
+      assert.equal(await db.execute(deleteFrom(writes.Note).where((n) => n.title.eq("bulk"))), 120);
     });
 
     it("右侧的 UNION 保持原有分组", async () => {

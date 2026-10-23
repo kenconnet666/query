@@ -9,6 +9,11 @@ import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-co
  * `Statement.exec` 的 `queryTimeout` 选项在客户端 2.30 中被静默忽略。
  */
 export function hanaDriver(source: ConnectionPool | Connection): Driver {
+  return driverFor(source, false);
+}
+
+/** hanaDriver 的实现；inTransaction 为 true 时 source 是事务里的连接，transaction 直接执行，加入这个事务。 */
+function driverFor(source: ConnectionPool | Connection, inTransaction: boolean): Driver {
   const pooled = "getConnection" in source;
   const acquire = (): Promise<Connection> =>
     pooled
@@ -17,7 +22,7 @@ export function hanaDriver(source: ConnectionPool | Connection): Driver {
   const release = (c: Connection) => {
     if (pooled) c.disconnect();
   };
-  return {
+  const driver: Driver = {
     /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const connection = await acquire();
@@ -25,12 +30,11 @@ export function hanaDriver(source: ConnectionPool | Connection): Driver {
         const statement = await prepare(connection, sql, options);
         try {
           // 没有结果集的语句（DDL、DML）返回的是影响行数而不是行。
-          const rows = await new Promise<unknown[][]>((resolve, reject) =>
-            statement.exec<unknown>(parameters.map(parameter), { rowsAsArray: true }, (e: Error, r?: unknown) =>
-              e ? reject(e) : resolve(Array.isArray(r) ? r : []),
-            ),
+          const result = await new Promise<unknown>((resolve, reject) =>
+            statement.exec<unknown>(parameters.map(parameter), { rowsAsArray: true }, (e: Error, r?: unknown) => (e ? reject(e) : resolve(r))),
           );
-          return { columns: statement.getColumnInfo().map((c) => c.columnName), rows };
+          if (!Array.isArray(result)) return { columns: [], rows: [], affected: typeof result === "number" ? result : 0 };
+          return { columns: statement.getColumnInfo().map((c) => c.columnName), rows: result as unknown[][] };
         } finally {
           statement.drop();
         }
@@ -62,7 +66,27 @@ export function hanaDriver(source: ConnectionPool | Connection): Driver {
         release(connection);
       }
     },
+
+    /** 连接池借出一个连接，单个连接直接用，关闭自动提交后执行 work，再提交或回滚，最后恢复自动提交。 */
+    async transaction(work) {
+      if (inTransaction) return work(driver);
+      const connection = await acquire();
+      const call = (f: (cb: (e?: Error) => void) => void) => new Promise<void>((resolve, reject) => f((e) => (e ? reject(e) : resolve())));
+      try {
+        connection.setAutoCommit(false);
+        const result = await work(driverFor(connection, true));
+        await call((cb) => connection.commit(cb));
+        return result;
+      } catch (e) {
+        await call((cb) => connection.rollback(cb)).catch(() => undefined);
+        throw e;
+      } finally {
+        connection.setAutoCommit(true);
+        release(connection);
+      }
+    },
   };
+  return driver;
 }
 
 /** 预编译语句，并按选项设置超时。 */

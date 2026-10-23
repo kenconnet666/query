@@ -41,4 +41,7 @@ public final class SpringConnections implements ConnectionProvider {
 
     /** 若处于带超时的事务中，把事务剩余的时间套用为语句的查询超时。 */
     @Override public void prepared(PreparedStatement statement) throws SQLException { DataSourceUtils.applyTransactionTimeout(statement, dataSource); }
+
+    /** 事务由 Spring 管理：用 {@code @Transactional} 或 {@code TransactionTemplate}，不用 {@code Database.transaction(...)}。 */
+    @Override public boolean managesTransactions() { return true; }
 }

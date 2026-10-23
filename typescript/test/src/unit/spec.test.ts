@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { filter, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
+import { filter, Write, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { HanaDatabase } from "@zerodep-dev/query-hana";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
@@ -45,7 +45,11 @@ describe("渲染金样例", () => {
         const file = `${name}.${dialect}.sql`;
         assert.ok(existsSync(SPEC + file), `spec/render/${file} is missing; the Java spec tests write it with QUERY_SPEC_WRITE=1`);
         const expected = golden(file);
-        const rendered = (spec.filtered ? filtered : unfiltered).render(spec.query());
+        const db = spec.filtered ? filtered : unfiltered;
+        const statement = spec.query();
+        const all = statement instanceof Write ? db.render(statement) : [db.render(statement)];
+        assert.equal(all.length, 1, "a write case renders one statement");
+        const rendered = all[0]!;
         assert.equal(rendered.sql.replace(/\$\d+/g, "?"), expected.sql);
         assert.deepEqual(
           rendered.parameters.map((p) => String(p)),

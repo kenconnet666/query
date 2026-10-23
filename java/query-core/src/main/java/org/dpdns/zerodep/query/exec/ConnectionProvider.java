@@ -22,6 +22,12 @@ public interface ConnectionProvider {
     default void prepared(PreparedStatement statement) throws SQLException { }
 
     /**
+     * 连接来源是否自己管理事务（例如 Spring 适配器加入外层的 {@code @Transactional}）；为 true 时
+     * {@code Database.transaction(...)} 报错，事务交给它自己的机制。
+     */
+    default boolean managesTransactions() { return false; }
+
+    /**
      * 空跑：不连接任何数据库，每条查询都得到空结果（计数为 0），但照常渲染、打印和触发监听器。
      * 配合 {@code Database.capture(...)}，不用数据库也能测试代码发出的 SQL：
      * {@code Hana.database(ConnectionProvider.dryRun(), c -> c.printSql())}。

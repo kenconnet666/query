@@ -20,7 +20,10 @@ export {
   blankAsNull,
   column,
   entityMeta,
+  generated,
+  id,
   ignore,
+  logicDelete,
   where,
   many,
   NamingStrategy,
@@ -29,6 +32,7 @@ export {
   shapeFields,
   table,
   trimmed,
+  version,
   type Ctor,
   type EntityMeta,
   type One,
@@ -36,6 +40,8 @@ export {
   type RelationMeta,
   type WhereMeta,
   type WhereOp,
+  type WriteMeta,
+  type LogicDeleteMeta,
   type Table,
 } from "./schema/metadata.js";
 export { identifier, SqlCond, SqlExpr, type SqlVariant, type VariantTag } from "./sql/template.js";
@@ -153,6 +159,7 @@ export {
   inMemoryCache,
   NativeQuery,
   QueryExecutionError,
+  UnexpectedRowCountError,
   type CacheKey,
   type DatabaseOptions,
   type Driver,
@@ -166,3 +173,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
+export { Delete, deleteFrom, Insert, insertInto, update, Update, Write, type Assignments, type InsertRow } from "./write/write.js";

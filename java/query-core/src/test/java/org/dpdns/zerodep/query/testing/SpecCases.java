@@ -138,6 +138,10 @@ public final class SpecCases {
         cases.put("workflow-statistics", SpecCase.plain(Workflow::definitionStatistics));
         cases.put("workflow-workload", SpecCase.plain(Workflow::workload));
         cases.put("workflow-elapsed", SpecCase.plain(Workflow::elapsed));
+        cases.put("write-insert", SpecCase.plain(() -> insertInto(Writes.Note.class).values(new Writes.NoteRow("N1", "T1", "first", 1, "open"))));
+        cases.put("write-insert-select", SpecCase.plain(Writes::copyNote));
+        cases.put("write-update", SpecCase.plain(() -> Writes.closeOpenNote("N1")));
+        cases.put("write-delete", SpecCase.plain(Writes::deleteClosed));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));

@@ -44,6 +44,12 @@ public final class JdbcExecutor {
     private final int fetchSize;
     private final Duration defaultTimeout;
 
+    /** 当前线程在 {@link #transaction} 里时，所有语句共用的连接。 */
+    private final ThreadLocal<Connection> bound = new ThreadLocal<>();
+
+    /** 多行写入时每次 executeBatch 的行数。 */
+    static final int BATCH = 500;
+
     /**
      * @param database       数据库实例名，用于异常信息和监听事件
      * @param dialect        方言，提供游标处理、超时识别和参数个数上限
@@ -92,7 +98,7 @@ public final class JdbcExecutor {
         long start = System.nanoTime();
         Connection connection = null;
         try {
-            connection = connections.acquire();
+            connection = acquire();
             try (PreparedStatement ps = prepare(connection, statement, timeout); ResultSet rs = ps.executeQuery()) {
                 T result = handler.handle(rs);
                 notify(statement, start, rowCount.applyAsLong(result), null, false);
@@ -118,7 +124,7 @@ public final class JdbcExecutor {
         CursorCleanup cleanup = CursorCleanup.NONE;
         ResultSet rs = null;
         try {
-            connection = connections.acquire();
+            connection = acquire();
             ps = prepare(connection, statement, timeout);
             cleanup = dialect.openCursor(connection, ps);
             rs = ps.executeQuery();
@@ -156,6 +162,130 @@ public final class JdbcExecutor {
         });
     }
 
+    /**
+     * 执行写语句，返回影响的总行数；驱动没有报告行数（批量时的 SUCCESS_NO_INFO）时返回 -1。
+     * SQL 相同的多条语句按批执行，每批 {@link #BATCH} 条；每批通知一次监听器，带上这一批的第一条语句。
+     */
+    public long update(List<Rendered> statements, Duration timeout) {
+        statements.forEach(this::checkParameterCount);
+        boolean batched = statements.size() > 1 && statements.stream().allMatch(s -> s.sql().equals(statements.get(0).sql()));
+        long total = 0;
+        Connection connection = null;
+        try {
+            connection = acquire();
+            if (!batched) {
+                for (Rendered s : statements) total = add(total, executeOne(connection, s, timeout));
+                return total;
+            }
+            for (int from = 0; from < statements.size(); from += BATCH) {
+                total = add(total, executeBatch(connection, statements.subList(from, Math.min(statements.size(), from + BATCH)), timeout));
+            }
+            return total;
+        } catch (SQLException e) {
+            throw new QueryExecutionException(database, statements.get(0), e, timedOut(e));
+        } finally {
+            release(connection);
+        }
+    }
+
+    /** 执行一条写语句并通知监听器。 */
+    private long executeOne(Connection connection, Rendered statement, Duration timeout) throws SQLException {
+        long start = System.nanoTime();
+        try (PreparedStatement ps = prepare(connection, statement, timeout)) {
+            long rows = ps.executeUpdate();
+            notify(statement, start, rows, null, false);
+            return rows;
+        } catch (SQLException | RuntimeException e) {
+            notify(statement, start, 0, e, false);
+            throw e;
+        }
+    }
+
+    /** 把 SQL 相同的一批语句加进同一个 PreparedStatement 执行；任一行没有报告行数时返回 -1。 */
+    private long executeBatch(Connection connection, List<Rendered> batch, Duration timeout) throws SQLException {
+        long start = System.nanoTime();
+        try (PreparedStatement ps = prepare(connection, batch.get(0), timeout)) {
+            ps.addBatch();
+            for (int i = 1; i < batch.size(); i++) {
+                bind(ps, batch.get(i));
+                ps.addBatch();
+            }
+            int[] counts = ps.executeBatch();
+            long rows = 0;
+            for (int c : counts == null ? new int[batch.size()] : counts) rows = add(rows, c);
+            notify(batch.get(0), start, Math.max(rows, 0), null, false);
+            return rows;
+        } catch (SQLException | RuntimeException e) {
+            notify(batch.get(0), start, 0, e, false);
+            throw e;
+        }
+    }
+
+    /** 累加行数；任一方未知（负数）时结果未知。 */
+    private static long add(long total, long rows) { return total < 0 || rows < 0 ? -1 : total + rows; }
+
+    /**
+     * 在一个事务里执行 work：线程上绑定一个连接，work 里执行的语句都用它；正常结束时提交，抛出异常时回滚。
+     * 已经在事务里时直接执行，加入外层事务。连接来源自己管理事务（例如 Spring）时报错，那时用它的事务机制。
+     */
+    public <T> T transaction(java.util.function.Supplier<T> work) {
+        if (bound.get() != null) return work.get();
+        if (connections.managesTransactions()) {
+            throw new UnsupportedOperationException(database + ": the connection provider joins its own transactions (e.g. Spring); "
+                + "use @Transactional or its TransactionTemplate instead of transaction(...)");
+        }
+        Connection connection = null;
+        boolean autoCommit = true;
+        try {
+            connection = connections.acquire();
+            autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            bound.set(connection);
+            T result = work.get();
+            connection.commit();
+            return result;
+        } catch (SQLException e) {
+            rollbackQuietly(connection);
+            throw new IllegalStateException(database + ": the transaction failed: " + e.getMessage(), e);
+        } catch (RuntimeException | Error e) {
+            rollbackQuietly(connection);
+            throw e;
+        } finally {
+            bound.remove();
+            if (connection != null) {
+                try {
+                    connection.setAutoCommit(autoCommit);
+                } catch (SQLException ignored) {
+                    // 归还前尽力恢复，失败不覆盖事务本身的结果
+                }
+                try {
+                    connections.release(connection);
+                } catch (SQLException ignored) {
+                    // 同上
+                }
+            }
+        }
+    }
+
+    /** 是否是空跑的连接来源：写语句不报告真实的行数，所以不检查期望的行数。 */
+    public boolean dryRun() { return DryRun.is(connections); }
+
+    /** 回滚，失败只吞掉，保留原来的异常。 */
+    private static void rollbackQuietly(Connection connection) {
+        if (connection == null) return;
+        try {
+            connection.rollback();
+        } catch (SQLException ignored) {
+            // 原来的异常更重要
+        }
+    }
+
+    /** 当前线程在事务里时用事务的连接，否则从连接来源取一个。 */
+    private Connection acquire() throws SQLException {
+        Connection c = bound.get();
+        return c != null ? c : connections.acquire();
+    }
+
     /** 命中缓存时由数据库实例调用：不执行任何语句，只通知监听器。 */
     public void cacheHit(Rendered statement, long rows) { notify(statement, System.nanoTime(), rows, null, true); }
 
@@ -179,15 +309,20 @@ public final class JdbcExecutor {
             Duration limit = timeout != null ? timeout : defaultTimeout;
             if (limit != null) ps.setQueryTimeout(seconds(limit));
             connections.prepared(ps);
-            List<Binding> bindings = statement.bindings();
-            for (int i = 0; i < bindings.size(); i++) {
-                Binding b = bindings.get(i);
-                types.write(ps, i + 1, b.type().storageType(), b.databaseValue());
-            }
+            bind(ps, statement);
             return ps;
         } catch (SQLException | RuntimeException e) {
             ps.close();
             throw e;
+        }
+    }
+
+    /** 按语句的绑定依次设置参数。 */
+    private void bind(PreparedStatement ps, Rendered statement) throws SQLException {
+        List<Binding> bindings = statement.bindings();
+        for (int i = 0; i < bindings.size(); i++) {
+            Binding b = bindings.get(i);
+            types.write(ps, i + 1, b.type().storageType(), b.databaseValue());
         }
     }
 
@@ -197,9 +332,9 @@ public final class JdbcExecutor {
         return (int) Math.min(Integer.MAX_VALUE, Math.max(1, seconds));
     }
 
-    /** 归还连接；归还失败只吞掉，不覆盖语句本身的结果。 */
+    /** 归还连接（事务里的连接由事务归还）；归还失败只吞掉，不覆盖语句本身的结果。 */
     private void release(Connection connection) {
-        if (connection == null) return;
+        if (connection == null || connection == bound.get()) return;
         try {
             connections.release(connection);
         } catch (SQLException ignored) {

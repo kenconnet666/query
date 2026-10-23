@@ -17,16 +17,22 @@ public final class EntityMeta<E> {
     private final List<PropertyMeta> properties;
     private final Map<String, PropertyMeta> byName;
     private final Map<String, RelationMeta> relations;
+    private final WriteMeta writes;
 
     /** 仅由 {@link Metadata} 构造；属性名在同一类型内必须唯一。 */
-    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties, Map<String, RelationMeta> relations) {
+    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties, Map<String, RelationMeta> relations,
+               WriteMeta writes) {
         this.type = type;
         this.table = table;
         this.schema = schema;
         this.properties = List.copyOf(properties);
         this.byName = properties.stream().collect(Collectors.toUnmodifiableMap(PropertyMeta::name, Function.identity()));
         this.relations = Map.copyOf(relations);
+        this.writes = writes;
     }
+
+    /** 主键、版本、生成列和逻辑删除列；结果类和行类没有。 */
+    public WriteMeta writes() { return writes; }
 
     /** 用注解声明的关系；name 不是关系时返回 null。 */
     public RelationMeta relation(String name) { return relations.get(name); }

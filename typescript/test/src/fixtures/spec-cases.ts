@@ -66,6 +66,8 @@ import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgG
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
+import * as writes from "./writes.js";
+import { insertInto, type Write } from "@zerodep-dev/query-core";
 
 /**
  * The golden-SQL cases of spec/render, built the TypeScript way. The Java tests build the same
@@ -75,10 +77,11 @@ import * as wf from "./workflow.js";
 export interface SpecCase {
   /** Rendered by a database instance with the client filter of the live scenarios. */
   readonly filtered: boolean;
-  readonly query: () => Query<unknown>;
+  /** A query, or a write that renders one statement. */
+  readonly query: () => Query<unknown> | Write;
 }
 
-const plain = (query: () => Query<unknown>): SpecCase => ({ filtered: false, query });
+const plain = (query: () => Query<unknown> | Write): SpecCase => ({ filtered: false, query });
 const DAY = "2026-01-31";
 
 export const sharedCases: Readonly<Record<string, SpecCase>> = {
@@ -282,6 +285,10 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "workflow-statistics": plain(() => wf.definitionStatistics()),
   "workflow-workload": plain(() => wf.workload()),
   "workflow-elapsed": plain(() => wf.elapsed()),
+  "write-insert": plain(() => insertInto(writes.Note).values({ id: "N1", tenant: "T1", title: "first", qty: 1, status: "open" })),
+  "write-insert-select": plain(() => writes.copyNote()),
+  "write-update": plain(() => writes.closeOpenNote("N1")),
+  "write-delete": plain(() => writes.deleteClosed()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))

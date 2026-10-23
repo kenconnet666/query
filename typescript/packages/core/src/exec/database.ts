@@ -2,6 +2,7 @@ import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
 import { shapeFields, type NamingStrategy } from "../schema/metadata.js";
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, untyped, type SqlType } from "../schema/types.js";
+import { Write } from "../write/write.js";
 import { SqlWriter, type Rendered, type RenderSettings } from "../sql/writer.js";
 
 // ---------- 驱动 ----------
@@ -10,6 +11,8 @@ import { SqlWriter, type Rendered, type RenderSettings } from "../sql/writer.js"
 export interface DriverResult {
   readonly columns: readonly string[];
   readonly rows: readonly (readonly unknown[])[];
+  /** 写语句影响的行数；查询不用填。 */
+  readonly affected?: number;
 }
 
 /**
@@ -21,6 +24,11 @@ export interface Driver {
   query(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): Promise<DriverResult>;
   /** 用一个游标逐行读取；不支持游标的数据库先读完全部再返回。 */
   stream?(sql: string, parameters: readonly unknown[], options?: ExecuteOptions): AsyncIterable<readonly unknown[]>;
+  /**
+   * 在一个事务里执行 work：给它一个绑定在同一个连接上的驱动，work 正常结束时提交，抛出异常时回滚。
+   * 已经在事务里的驱动直接执行 work。不支持时 `db.transaction(...)` 报错。
+   */
+  transaction?<R>(work: (driver: Driver) => Promise<R>): Promise<R>;
 }
 
 /** 驱动对单条语句应用的设置；驱动不支持的项直接忽略。 */
@@ -70,11 +78,42 @@ export function formatQueryEvent(event: QueryEvent): string {
  * 配合 {@link Database.capture}，不用数据库也能测试代码发出的 SQL：`new HanaDatabase(dryRunDriver(), { printSql: true })`。
  */
 export function dryRunDriver(): Driver {
-  return {
-    query: async () => ({ columns: [], rows: [] }),
+  const driver: Driver = {
+    query: async () => ({ columns: [], rows: [], affected: 0 }),
     stream: async function* () {},
+    transaction: (work) => work(driver),
   };
+  DRY_RUN.add(driver);
+  return driver;
 }
+
+/** 空跑驱动的写语句不报告真实的行数，所以不检查期望的行数。 */
+const DRY_RUN = new WeakSet<Driver>();
+
+/**
+ * 写语句影响的行数与期望的不符：`expect(n)` 写明的行数，或 `byId(row)` 期望的每行一行。
+ * 带版本列的按主键更新出现它，通常是别人已经改过或删掉了这一行（乐观锁冲突）。
+ */
+export class UnexpectedRowCountError extends Error {
+  constructor(
+    readonly database: string,
+    readonly statement: Rendered,
+    readonly expected: number,
+    readonly actual: number,
+  ) {
+    super(`${database}: expected ${expected} row(s) to change but ${actual} did; the rows may have been changed or deleted by someone else\n${statement.sql}`);
+    this.name = "UnexpectedRowCountError";
+  }
+}
+
+/** 一次 {@link Database.transaction}：该数据库在其中使用的驱动。 */
+interface Transaction {
+  readonly database: Database;
+  readonly driver: Driver;
+  readonly outer: Transaction | undefined;
+}
+
+let activeTransaction: AsyncStorage<Transaction> | undefined;
 
 /** 一次 {@link Database.capture}：只收集该数据库的语句；outer 是外层的捕获。 */
 interface Capture {
@@ -98,14 +137,23 @@ function printToConsole(text: string): void {
 
 /** 惰性创建跨异步调用传递捕获状态的存储；不在 Node 上时 capture 不可用。 */
 function captures(): AsyncStorage<Capture> {
-  if (activeCapture === undefined) {
-    const hooks = (globalThis as { process?: { getBuiltinModule?(id: string): unknown } }).process?.getBuiltinModule?.("node:async_hooks") as
-      | { AsyncLocalStorage: new () => AsyncStorage<Capture> }
-      | undefined;
-    if (hooks === undefined) throw new Error("capture() needs Node's AsyncLocalStorage (Node 22.3 or later)");
-    activeCapture = new hooks.AsyncLocalStorage();
-  }
+  activeCapture ??= asyncStorage("capture()");
   return activeCapture;
+}
+
+/** 惰性创建跨异步调用传递事务的存储；不在 Node 上时 transaction 不可用。 */
+function transactions(): AsyncStorage<Transaction> {
+  activeTransaction ??= asyncStorage("transaction()");
+  return activeTransaction;
+}
+
+/** 新建 Node 的 AsyncLocalStorage；what 是需要它的功能，用于报错。 */
+function asyncStorage<T>(what: string): AsyncStorage<T> {
+  const hooks = (globalThis as { process?: { getBuiltinModule?(id: string): unknown } }).process?.getBuiltinModule?.("node:async_hooks") as
+    | { AsyncLocalStorage: new () => AsyncStorage<T> }
+    | undefined;
+  if (hooks === undefined) throw new Error(`${what} needs Node's AsyncLocalStorage (Node 22.3 or later)`);
+  return new hooks.AsyncLocalStorage();
 }
 
 /** 查询结果缓存的键：数据库名、SQL 文本和参数。 */
@@ -266,7 +314,8 @@ export abstract class Database {
 
   /** 驱动支持时，用一个游标逐行读取。 */
   async *stream<R>(q: Query<R>): AsyncGenerator<R, void, undefined> {
-    if (this.#driver.stream === undefined || hasChildren(q)) {
+    const driver = this.#current();
+    if (driver.stream === undefined || hasChildren(q)) {
       yield* await this.list(q);
       return;
     }
@@ -276,7 +325,7 @@ export abstract class Database {
     const start = Date.now();
     let count = 0;
     try {
-      for await (const raw of this.#driver.stream(statement.sql, statement.parameters, this.#options(timeoutOf(q)))) {
+      for await (const raw of driver.stream(statement.sql, statement.parameters, this.#options(timeoutOf(q)))) {
         count++;
         yield assemble(decode(q, types, raw));
       }
@@ -327,8 +376,59 @@ export abstract class Database {
   }
 
   /** 这个数据库实际执行的 SQL，已应用过滤条件和函数改写。 */
-  render(q: Query<unknown>): Rendered {
+  render(q: Query<unknown>): Rendered;
+  /** 这个数据库会为写语句执行的语句与参数，已套用全局过滤器；多行插入每行一条。 */
+  render(write: Write): Rendered[];
+  render(q: Query<unknown> | Write): Rendered | Rendered[] {
+    if (q instanceof Write) return q.render(() => this.#writer());
     return rendered(q, this, () => renderStatement(this.#writer(), q));
+  }
+
+  // ---------- 写入 ----------
+
+  /**
+   * 执行写语句（`insertInto`、`update`、`deleteFrom`），返回影响的总行数；多行插入在一个事务里逐行执行。
+   * 语句带期望的行数（`expect(n)`、`byId(row)`）而实际不符时抛出 {@link UnexpectedRowCountError}。
+   * 写入成功后清空结果缓存，免得读到改动前的结果。
+   */
+  async execute(write: Write): Promise<number> {
+    const statements = this.render(write);
+    if (statements.length === 0) return 0;
+    const run = async () => {
+      let rows = 0;
+      for (const s of statements) rows += (await this.#execute(s, undefined)).affected ?? 0;
+      return rows;
+    };
+    const rows = statements.length > 1 && this.#current() === this.#driver && this.#driver.transaction !== undefined ? await this.transaction(run) : await run();
+    this.#cache?.clear();
+    const expected = write.expected;
+    if (expected !== undefined && !DRY_RUN.has(this.#driver) && rows !== expected) throw new UnexpectedRowCountError(this.name, statements[0]!, expected, rows);
+    return rows;
+  }
+
+  /**
+   * 在一个事务里执行 work 并返回它的结果：其中通过这个数据库执行的查询和写语句用同一个连接，正常结束时提交，
+   * 抛出异常时回滚；嵌套调用加入外层事务。驱动不支持事务时报错。
+   */
+  async transaction<R>(work: () => Promise<R>): Promise<R> {
+    const outer = this.#bound();
+    if (outer !== undefined) return work();
+    const driver = this.#driver;
+    if (driver.transaction === undefined) throw new Error(`${this.name}: the driver does not support transactions`);
+    const storage = transactions();
+    return driver.transaction((bound) => storage.run({ database: this, driver: bound, outer: storage.getStore() }, work));
+  }
+
+  /** 当前异步上下文里这个数据库所在的事务。 */
+  #bound(): Transaction | undefined {
+    let t = activeTransaction?.getStore();
+    while (t !== undefined && t.database !== this) t = t.outer;
+    return t;
+  }
+
+  /** 当前要用的驱动：在事务里时是事务的驱动。 */
+  #current(): Driver {
+    return this.#bound()?.driver ?? this.#driver;
   }
 
   /** 清空结果缓存；没有配置缓存时什么也不做。 */
@@ -365,8 +465,8 @@ export abstract class Database {
     this.#checkParameterCount(statement);
     const start = Date.now();
     try {
-      const result = await this.#driver.query(statement.sql, statement.parameters, this.#options(timeoutMs));
-      this.#notify(statement, start, result.rows.length, undefined, false);
+      const result = await this.#current().query(statement.sql, statement.parameters, this.#options(timeoutMs));
+      this.#notify(statement, start, result.affected ?? result.rows.length, undefined, false);
       return result;
     } catch (e) {
       this.#notify(statement, start, 0, e, false);

@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.exec.Page;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.exec.QueryListener;
+import org.dpdns.zerodep.query.exec.UnexpectedRowCountException;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
@@ -19,6 +20,7 @@ import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.PartTotal;
 import org.dpdns.zerodep.query.testing.Erp.StockRow;
+import org.dpdns.zerodep.query.testing.Writes.Note;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -40,12 +42,15 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.caseWhen;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.countDistinct;
 import static org.dpdns.zerodep.query.Sql.cte;
+import static org.dpdns.zerodep.query.Sql.deleteFrom;
 import static org.dpdns.zerodep.query.Sql.from;
+import static org.dpdns.zerodep.query.Sql.insertInto;
 import static org.dpdns.zerodep.query.Sql.left;
 import static org.dpdns.zerodep.query.Sql.negate;
 import static org.dpdns.zerodep.query.Sql.plus;
@@ -93,7 +98,7 @@ public abstract class LiveScenarios {
         List<String> sql = new ArrayList<>();
         sql.add("-CREATE SCHEMA " + q("QUERY_IT"));
         for (String t : List.of("MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK",
-            "WF_VARIABLE", "WF_HI_TASK")) {
+            "WF_VARIABLE", "WF_HI_TASK", "W_NOTE")) {
             sql.add("-DROP TABLE " + t(t));
         }
         sql.add(table("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)));
@@ -105,30 +110,31 @@ public abstract class LiveScenarios {
         sql.add(table("MCHBH", c("MANDT", 3), c("MATNR", 40), c("LFGJA", 4), c("LFMON", 2), q("CLABS") + " DECIMAL(13,3)"));
         sql.add(table("EVENTS", q("ID") + " INTEGER", q("ON_DAY") + " DATE", q("AT_TIME") + " " + timestamp()));
         sql.addAll(List.of(
-            insert("MARA", "'100', 'M1', 'P1 ', 'MK1', 'ZMAT'"),
-            insert("MARA", "'100', 'M2', 'P2', 'MK2', 'ZMAT'"),
-            insert("MARA", "'100', 'M3', 'P3', 'MK1', 'ZOTH'"),
-            insert("MARA", "'200', 'M1', 'X1', 'MK1', 'ZMAT'"),
-            insert("MARA", "'100', 'M4', 'P1', '', 'ZOTH'"),
-            insert("MAKT", "'100', 'M1', '1', 'Pump'"),
-            insert("MAKT", "'100', 'M2', '2', 'Valve'"),
-            insert("MAKT", "'200', 'M1', '1', 'Other'"),
-            insert("LIPS", "'100', 'D1', 'M1', '20260115', 3.000, 'EA', 'S1'"),
-            insert("LIPS", "'100', 'D2', 'M1', '20260120', 2.000, 'EA', 'S2'"),
-            insert("LIPS", "'100', 'D3', 'M2', '20260210', 5.000, 'EA', 'S1'"),
-            insert("LIPS", "'100', 'D4', 'M2', '20251231', 7.000, 'EA', 'S1'"),
-            insert("LIPS", "'100', 'D5', 'M1', '20260301', 1.000, 'EA', 'S9'"),
-            insert("LIPS", "'200', 'D6', 'M1', '20260115', 100.000, 'EA', 'S1'"),
-            insert("VBKD", "'100', 'S1'"),
-            insert("VBKD", "'100', 'S2'"),
-            insert("VBKD", "'200', 'S1'"),
-            insert("MARDH", "'100', 'M1', '2026', '01', 10.000"),
-            insert("MARDH", "'100', 'M2', '2026', '01', NULL"),
-            insert("MARDH", "'100', 'M1', '2025', '12', 4.000"),
-            insert("MCHBH", "'100', 'M1', '2026', '02', 6.000"),
-            insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
-            insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
+            insertRow("MARA", "'100', 'M1', 'P1 ', 'MK1', 'ZMAT'"),
+            insertRow("MARA", "'100', 'M2', 'P2', 'MK2', 'ZMAT'"),
+            insertRow("MARA", "'100', 'M3', 'P3', 'MK1', 'ZOTH'"),
+            insertRow("MARA", "'200', 'M1', 'X1', 'MK1', 'ZMAT'"),
+            insertRow("MARA", "'100', 'M4', 'P1', '', 'ZOTH'"),
+            insertRow("MAKT", "'100', 'M1', '1', 'Pump'"),
+            insertRow("MAKT", "'100', 'M2', '2', 'Valve'"),
+            insertRow("MAKT", "'200', 'M1', '1', 'Other'"),
+            insertRow("LIPS", "'100', 'D1', 'M1', '20260115', 3.000, 'EA', 'S1'"),
+            insertRow("LIPS", "'100', 'D2', 'M1', '20260120', 2.000, 'EA', 'S2'"),
+            insertRow("LIPS", "'100', 'D3', 'M2', '20260210', 5.000, 'EA', 'S1'"),
+            insertRow("LIPS", "'100', 'D4', 'M2', '20251231', 7.000, 'EA', 'S1'"),
+            insertRow("LIPS", "'100', 'D5', 'M1', '20260301', 1.000, 'EA', 'S9'"),
+            insertRow("LIPS", "'200', 'D6', 'M1', '20260115', 100.000, 'EA', 'S1'"),
+            insertRow("VBKD", "'100', 'S1'"),
+            insertRow("VBKD", "'100', 'S2'"),
+            insertRow("VBKD", "'200', 'S1'"),
+            insertRow("MARDH", "'100', 'M1', '2026', '01', 10.000"),
+            insertRow("MARDH", "'100', 'M2', '2026', '01', NULL"),
+            insertRow("MARDH", "'100', 'M1', '2025', '12', 4.000"),
+            insertRow("MCHBH", "'100', 'M1', '2026', '02', 6.000"),
+            insertRow("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
+            insertRow("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
         workflow(sql);
+        sql.add(table("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), q("QTY") + " INTEGER", c("STATUS", 10)));
         live.execute(sql);
         db = database(live.connections(), c -> c.filter(Client.class, r -> r.client().eq("100")));
     }
@@ -145,32 +151,32 @@ public abstract class LiveScenarios {
         sql.add(table("WF_HI_TASK", c("ID", 10), c("NAME", 20), c("ASSIGNEE", 20), c("PROC_INST_ID", 10),
             q("START_TIME") + " " + timestamp(), q("END_TIME") + " " + timestamp(), q("DURATION") + " BIGINT"));
         sql.addAll(List.of(
-            insert("WF_PROCDEF", "'D1', 'leave', 'Leave', 1"),
-            insert("WF_PROCDEF", "'D2', 'leave', 'Leave', 2"),
-            insert("WF_PROCDEF", "'D3', 'expense', 'Expense', 1"),
-            insert("WF_PROCINST", "'P1', 'D2', 'BK-1', 'alice', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
-            insert("WF_PROCINST", "'P2', 'D2', 'BK-2', 'bob', TIMESTAMP '2026-01-11 09:00:00', NULL, NULL"),
-            insert("WF_PROCINST", "'P3', 'D3', 'BK-3', 'alice', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 7200000"),
-            insert("WF_PROCINST", "'P4', 'D1', 'BK-4', 'alice', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 10:00:00', 3600000"),
-            insert("WF_VARIABLE", "'V1', 'P1', 'amount', NULL, 1500"),
-            insert("WF_VARIABLE", "'V2', 'P1', 'dept', 'X', NULL"),
-            insert("WF_VARIABLE", "'V3', 'P2', 'amount', NULL, 500"),
-            insert("WF_VARIABLE", "'V4', 'P2', 'dept', 'X', NULL"),
-            insert("WF_VARIABLE", "'V5', 'P3', 'amount', NULL, 2000"),
-            insert("WF_VARIABLE", "'V6', 'P3', 'dept', 'Y', NULL"),
-            insert("WF_TASK", "'T1', 'approve', NULL, 'P1', 'D2', TIMESTAMP '2026-01-10 09:00:00'"),
-            insert("WF_TASK", "'T2', 'approve', 'alice', 'P2', 'D2', TIMESTAMP '2026-01-11 09:00:00'"),
-            insert("WF_TASK", "'T3', 'review', NULL, 'P2', 'D2', TIMESTAMP '2026-01-11 10:00:00'"),
-            insert("WF_TASK", "'T4', 'pay', 'carol', 'P1', 'D2', TIMESTAMP '2026-01-10 11:00:00'"),
-            insert("WF_LINK", "'L1', 'T1', 'candidate', 'bob', NULL"),
-            insert("WF_LINK", "'L2', 'T1', 'candidate', NULL, 'managers'"),
-            insert("WF_LINK", "'L3', 'T3', 'candidate', NULL, 'finance'"),
-            insert("WF_LINK", "'L4', 'T4', 'candidate', 'alice', NULL"),
-            insert("WF_LINK", "'L5', 'T3', 'participant', 'alice', NULL"),
-            insert("WF_HI_TASK", "'H1', 'approve', 'alice', 'P3', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-11 09:00:00', 3600000"),
-            insert("WF_HI_TASK", "'H2', 'pay', 'alice', 'P3', TIMESTAMP '2026-01-11 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 5400000"),
-            insert("WF_HI_TASK", "'H3', 'approve', 'bob', 'P4', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 09:10:00', 600000"),
-            insert("WF_HI_TASK", "'H4', 'approve', 'alice', 'P1', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL")));
+            insertRow("WF_PROCDEF", "'D1', 'leave', 'Leave', 1"),
+            insertRow("WF_PROCDEF", "'D2', 'leave', 'Leave', 2"),
+            insertRow("WF_PROCDEF", "'D3', 'expense', 'Expense', 1"),
+            insertRow("WF_PROCINST", "'P1', 'D2', 'BK-1', 'alice', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
+            insertRow("WF_PROCINST", "'P2', 'D2', 'BK-2', 'bob', TIMESTAMP '2026-01-11 09:00:00', NULL, NULL"),
+            insertRow("WF_PROCINST", "'P3', 'D3', 'BK-3', 'alice', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 7200000"),
+            insertRow("WF_PROCINST", "'P4', 'D1', 'BK-4', 'alice', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 10:00:00', 3600000"),
+            insertRow("WF_VARIABLE", "'V1', 'P1', 'amount', NULL, 1500"),
+            insertRow("WF_VARIABLE", "'V2', 'P1', 'dept', 'X', NULL"),
+            insertRow("WF_VARIABLE", "'V3', 'P2', 'amount', NULL, 500"),
+            insertRow("WF_VARIABLE", "'V4', 'P2', 'dept', 'X', NULL"),
+            insertRow("WF_VARIABLE", "'V5', 'P3', 'amount', NULL, 2000"),
+            insertRow("WF_VARIABLE", "'V6', 'P3', 'dept', 'Y', NULL"),
+            insertRow("WF_TASK", "'T1', 'approve', NULL, 'P1', 'D2', TIMESTAMP '2026-01-10 09:00:00'"),
+            insertRow("WF_TASK", "'T2', 'approve', 'alice', 'P2', 'D2', TIMESTAMP '2026-01-11 09:00:00'"),
+            insertRow("WF_TASK", "'T3', 'review', NULL, 'P2', 'D2', TIMESTAMP '2026-01-11 10:00:00'"),
+            insertRow("WF_TASK", "'T4', 'pay', 'carol', 'P1', 'D2', TIMESTAMP '2026-01-10 11:00:00'"),
+            insertRow("WF_LINK", "'L1', 'T1', 'candidate', 'bob', NULL"),
+            insertRow("WF_LINK", "'L2', 'T1', 'candidate', NULL, 'managers'"),
+            insertRow("WF_LINK", "'L3', 'T3', 'candidate', NULL, 'finance'"),
+            insertRow("WF_LINK", "'L4', 'T4', 'candidate', 'alice', NULL"),
+            insertRow("WF_LINK", "'L5', 'T3', 'participant', 'alice', NULL"),
+            insertRow("WF_HI_TASK", "'H1', 'approve', 'alice', 'P3', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-11 09:00:00', 3600000"),
+            insertRow("WF_HI_TASK", "'H2', 'pay', 'alice', 'P3', TIMESTAMP '2026-01-11 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 5400000"),
+            insertRow("WF_HI_TASK", "'H3', 'approve', 'bob', 'P4', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 09:10:00', 600000"),
+            insertRow("WF_HI_TASK", "'H4', 'approve', 'alice', 'P1', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL")));
     }
 
     private String t(String table) { return q("QUERY_IT") + "." + q(table); }
@@ -179,7 +185,7 @@ public abstract class LiveScenarios {
 
     private String table(String name, String... columns) { return "CREATE TABLE " + t(name) + " (" + String.join(", ", columns) + ")"; }
 
-    private String insert(String table, String values) { return "INSERT INTO " + t(table) + " VALUES (" + values + ")"; }
+    private String insertRow(String table, String values) { return "INSERT INTO " + t(table) + " VALUES (" + values + ")"; }
 
     @Test
     void 带CTE和EXISTS的交货汇总在实库上返回正确结果() {
@@ -616,6 +622,44 @@ public abstract class LiveScenarios {
             .map(r -> r.get("id") + ":" + r.get("seconds")).toList());
         assertEquals(List.of("alice:2:9000000:1", "bob:1:600000:0"), db.list(Workflow.workload()).stream()
             .map(r -> r.get("assignee") + ":" + r.get("tasks") + ":" + r.get("totalDuration") + ":" + r.get("slow")).toList());
+    }
+
+    @Test
+    void 插入更新删除在实库上按期望的行数执行() {
+        db.execute(deleteFrom(Note.class).all());
+        assertEquals(2, db.execute(Writes.insertNotes()));
+        assertEquals(1, db.execute(Writes.closeOpenNote("N1")));
+        var stale = assertThrows(UnexpectedRowCountException.class, () -> db.execute(Writes.closeOpenNote("N1")));
+        assertEquals(0, stale.actual());
+        assertEquals(List.of("N1:first:11:closed", "N2:null:2:open"), db.list(from(Note.class).orderBy(n -> n.id())
+            .select(n -> cols(n.id(), n.title(), n.qty(), n.status()))).stream()
+            .map(r -> r.get("id") + ":" + r.get("title") + ":" + r.get("qty") + ":" + r.get("status")).toList());
+        assertEquals(1, db.execute(Writes.copyNote()));
+        assertEquals(2, db.execute(Writes.deleteClosed()));
+        assertEquals(List.of("N2"), Writes.ids(db));
+    }
+
+    @Test
+    void 事务里出错时写入整体回滚() {
+        db.execute(deleteFrom(Note.class).all());
+        assertThrows(IllegalStateException.class, () -> db.transaction(() -> {
+            db.execute(Writes.insertNotes());
+            assertEquals(List.of("N1", "N2"), Writes.ids(db), "the transaction sees its own rows");
+            throw new IllegalStateException("roll back");
+        }));
+        assertEquals(List.of(), Writes.ids(db));
+        db.transaction(() -> db.execute(Writes.insertNotes()));
+        assertEquals(List.of("N1", "N2"), Writes.ids(db));
+    }
+
+    @Test
+    void 多行插入超过一批时分批执行() {
+        db.execute(deleteFrom(Note.class).all());
+        List<Writes.NoteRow> rows = new ArrayList<>();
+        for (int i = 0; i < 1203; i++) rows.add(new Writes.NoteRow("B" + i, "T1", "bulk", i, "open"));
+        assertEquals(1203, db.execute(insertInto(Note.class).values(rows)));
+        assertEquals(1203L, db.count(from(Note.class).select(n -> n.id())));
+        assertEquals(1203, db.execute(deleteFrom(Note.class).where(n -> n.title().eq("bulk"))));
     }
 
     @Test

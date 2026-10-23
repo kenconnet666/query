@@ -16,13 +16,17 @@ final class DryRun {
     private DryRun() { }
 
     /** 每次给出一个新的空跑连接。 */
-    static ConnectionProvider provider() {
-        return new ConnectionProvider() {
-            @Override public Connection acquire() { return connection(); }
+    static ConnectionProvider provider() { return new Provider(); }
 
-            @Override public void release(Connection connection) { }
-        };
+    /** 空跑的连接来源；{@link #is} 用它的类型识别。 */
+    private static final class Provider implements ConnectionProvider {
+        @Override public Connection acquire() { return connection(); }
+
+        @Override public void release(Connection connection) { }
     }
+
+    /** connections 是否是空跑的连接来源。 */
+    static boolean is(ConnectionProvider connections) { return connections instanceof Provider; }
 
     /** 准备语句时返回空跑的语句；自动提交为开，PostgreSQL 的游标准备因此照常执行。 */
     private static Connection connection() {
@@ -34,9 +38,18 @@ final class DryRun {
         });
     }
 
-    /** 执行查询时返回没有行的结果集。 */
+    /** 执行查询时返回没有行的结果集；写语句影响 0 行。 */
     private static PreparedStatement statement() {
-        return proxy(PreparedStatement.class, (method, args) -> method.equals("executeQuery") ? resultSet() : null);
+        int[] batched = {0};
+        return proxy(PreparedStatement.class, (method, args) -> switch (method) {
+            case "executeQuery" -> resultSet();
+            case "addBatch" -> {
+                batched[0]++;
+                yield null;
+            }
+            case "executeBatch" -> new int[batched[0]];
+            default -> null;
+        });
     }
 
     /** 没有行、也没有列的结果集。 */

@@ -39,6 +39,29 @@ interface FieldMeta {
   readonly read?: string;
   readonly relation?: Omit<RelationMeta, "name">;
   readonly where?: WhereMeta;
+  readonly id?: true;
+  readonly version?: true;
+  readonly generated?: true;
+  readonly logicDelete?: { readonly active: unknown; readonly deleted: unknown };
+}
+
+/**
+ * 表上与写入有关的列，取自 `@id`、`@version`、`@generated`、`@logicDelete`；没有的为空。
+ * ids 按字段名排序，与 Java 的列顺序一致。
+ */
+export interface WriteMeta {
+  readonly ids: readonly string[];
+  readonly version: string | undefined;
+  readonly generated: string | undefined;
+  readonly logicDelete: LogicDeleteMeta | undefined;
+}
+
+/** 逻辑删除列：timestamp 为 true 时记录删除时间（未删除为 NULL，删除写当前时间），否则按 active、deleted 两个值。 */
+export interface LogicDeleteMeta {
+  readonly property: string;
+  readonly active: unknown;
+  readonly deleted: unknown;
+  readonly timestamp: boolean;
 }
 
 /** 条件对象字段的比较方式。 */
@@ -97,6 +120,8 @@ export interface EntityMeta {
   readonly relations: readonly RelationMeta[];
   /** 条件对象字段的 `@where` 声明，没有时为 undefined。 */
   where(name: string): WhereMeta | undefined;
+  /** 主键、版本、生成列和逻辑删除列。 */
+  readonly writes: WriteMeta;
 }
 
 /** 类的元数据对象。 */
@@ -189,6 +214,36 @@ export function where(op: WhereOp, ...columns: string[]) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });
 }
 
+/**
+ * 主键列，多列主键在每一列上都标。`update(...).byId(row)`、`delete(...).byId(row)` 按它们定位行，
+ * 插入或更新的 `onConflict()` 不写列时也用它们。
+ */
+export function id(_value: undefined, context: ClassFieldDecoratorContext): void {
+  record(context, { id: true });
+}
+
+/**
+ * 乐观锁的版本列（integer 或 bigint），一张表至多一列。`update(...).byId(row)` 写成 `SET version = version + 1 ... WHERE id = ? AND version = ?`，
+ * 没有改到行时抛出 UnexpectedRowCountError；`delete(...).byId(row)` 同样检查版本。
+ */
+export function version(_value: undefined, context: ClassFieldDecoratorContext): void {
+  record(context, { version: true });
+}
+
+/** 由数据库生成值的列（IDENTITY、AUTO_INCREMENT），一张表至多一列：插入时不写，`db.insertKeys(insert)` 取回生成的值。 */
+export function generated(_value: undefined, context: ClassFieldDecoratorContext): void {
+  record(context, { generated: true });
+}
+
+/**
+ * 逻辑删除列，一张表至多一列：这张表的每次出现都自动加上"未删除"的条件（`unfiltered()` 一起关闭），
+ * `delete(...)` 改写成把这一列设为 deleted 的 UPDATE，`.physically()` 才真正删除。
+ * 列是时间戳时记录删除时间：未删除是 NULL，删除写当前时间，两个参数不用写。
+ */
+export function logicDelete(active: unknown = 0, deleted: unknown = 1) {
+  return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { logicDelete: Object.freeze({ active, deleted }) });
+}
+
 /** 不由任何查询填充的 DTO 字段；在条件对象里表示不作为条件（如分页、排序参数）。 */
 export function ignore(_value: undefined, context: ClassFieldDecoratorContext): void {
   record(context, { ignore: true });
@@ -228,6 +283,36 @@ function describe(type: Ctor<unknown>): EntityMeta {
     ignored: (name: string) => fieldsByName.get(name)?.ignore === true || fieldsByName.get(name)?.relation !== undefined,
     relations: fields.filter((f) => f.relation !== undefined).map((f) => Object.freeze({ ...f.relation!, name: f.name })),
     where: (name: string) => fieldsByName.get(name)?.where,
+    writes: writes(type, fields, byName),
+  });
+}
+
+/** 由字段上的写入装饰器得到 {@link WriteMeta}；版本列、生成列、逻辑删除列各至多一列，版本列必须是整数。 */
+function writes(type: Ctor<unknown>, fields: readonly FieldMeta[], columns: ReadonlyMap<string, PropertyMeta>): WriteMeta {
+  const single = (flag: "version" | "generated" | "logicDelete"): FieldMeta | undefined => {
+    const marked = fields.filter((f) => f[flag] !== undefined);
+    if (marked.length > 1) throw new Error(`${type.name} has more than one @${flag} column: ${marked.map((f) => f.name).join(", ")}`);
+    return marked[0];
+  };
+  const version = single("version");
+  if (version !== undefined && !["integer", "bigint"].includes(columns.get(version.name)?.type.kind ?? "")) {
+    throw new Error(`${type.name}.${version.name}: @version needs an integer or bigint column`);
+  }
+  const logic = single("logicDelete");
+  const timestamp = logic !== undefined && columns.get(logic.name)?.type.kind === "timestamp";
+  return Object.freeze({
+    ids: fields.filter((f) => f.id).map((f) => f.name).sort(),
+    version: version?.name,
+    generated: single("generated")?.name,
+    logicDelete:
+      logic === undefined
+        ? undefined
+        : Object.freeze({
+            property: logic.name,
+            active: timestamp ? null : logic.logicDelete!.active,
+            deleted: timestamp ? null : logic.logicDelete!.deleted,
+            timestamp,
+          }),
   });
 }
 
