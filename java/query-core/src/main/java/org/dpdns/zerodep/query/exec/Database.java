@@ -84,10 +84,7 @@ public abstract class Database {
 
     /** 执行查询，返回全部行。设置了 {@code .cached(...)} 的查询先查结果缓存。 */
     public <R> List<R> list(Query<R> q) {
-        List<Object[]> rows = rows(q, render(q));
-        List<R> out = new ArrayList<>(rows.size());
-        for (Object[] row : rows) out.add(q.mapRow(row));
-        return out;
+        return q.mapRows(rows(q, render(q)), this::list);
     }
 
     /** 恰好一行，没有或多于一行都抛出异常。最多只读取两行。 */
@@ -105,6 +102,7 @@ public abstract class Database {
 
     /** 从同一个游标惰性读取各行；用完要关闭流（try-with-resources）以释放连接。 */
     public <R> Stream<R> stream(Query<R> q) {
+        if (q.hasChildren()) throw new UnsupportedOperationException("A query with list(...) needs all rows before it can load the children; use list() or page()");
         return executor.stream(render(q), executor.columns(q.columnTypes()), q.timeout()).map(q::mapRow);
     }
 

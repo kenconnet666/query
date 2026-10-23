@@ -65,7 +65,7 @@ export {
   type TemplateArg,
 } from "./sql/expr.js";
 export { Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
-export { Many } from "./query/many.js";
+export { Children, Many } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Excluded, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
 export {
   abs,

@@ -6,9 +6,12 @@ import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.expr.OrderItem;
+import org.dpdns.zerodep.query.expr.OrderList;
 import org.dpdns.zerodep.query.scope.From1;
+import org.dpdns.zerodep.query.select.Children;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;
+import org.dpdns.zerodep.query.select.Selection;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.math.BigDecimal;
@@ -41,18 +44,27 @@ public final class Many<R extends Entity> {
     /** 追加的筛选条件，没有时为 null。 */
     private final Function<R, Cond> filter;
 
+    /** {@link #list} 的子行顺序，没有时为 null。 */
+    private final Function<R, ? extends OrderItem> order;
+
     /** 由表接口的 {@code many(...)} 创建。 */
     Many(Ref<?> owner, Class<R> target, Function<R, Cond> on, Function<R, Cond> filter) {
+        this(owner, target, on, filter, null);
+    }
+
+    /** 全部字段的构造，where 与 orderBy 由它派生新的 Many。 */
+    private Many(Ref<?> owner, Class<R> target, Function<R, Cond> on, Function<R, Cond> filter, Function<R, ? extends OrderItem> order) {
         this.owner = owner;
         this.target = target;
         this.on = on;
         this.filter = filter;
+        this.order = order;
     }
 
     /** 只看满足 condition 的目标行，返回新的 Many。 */
     public Many<R> where(Function<R, Cond> condition) {
         Function<R, Cond> before = filter;
-        return new Many<>(owner, target, on, before == null ? condition : r -> Sql.all(before.apply(r), condition.apply(r)));
+        return new Many<>(owner, target, on, before == null ? condition : r -> Sql.all(before.apply(r), condition.apply(r)), order);
     }
 
     /** 至少有一行：{@code EXISTS (...)}。 */
@@ -89,6 +101,53 @@ public final class Many<R extends Entity> {
      * 所以没有匹配行时各列为 NULL。HANA 没有 LATERAL，三个库都用这一种写法。
      */
     public R first(Function<R, ? extends OrderItem> order) {
+        Split<R> split = split("first()");
+        Expr<?>[] partition = split.keys().toArray(Expr<?>[]::new);
+        R row = split.row();
+        Query<?> ranked = Query.select(SelectSpec.from(split.inner()).where(Sql.all(split.filters())),
+            Sql.cols(((Entity) row).columns(), Sql.rowNumber().over(w -> w.partitionBy(partition).orderBy(order.apply(row))).as(ROW_NUMBER)));
+        Ref<R> first = Ref.of(new Derived<>(ranked, target, target.getSimpleName().toLowerCase(java.util.Locale.ROOT) + "_first"));
+        List<Cond> join = new ArrayList<>();
+        for (int i = 0; i < partition.length; i++) join.add(Nodes.compare(first.column(split.keys().get(i).property().name()), "=", split.outer().get(i)));
+        join.add(Nodes.compare(new RowNumber(first), "=", Sql.lit(1L)));
+        owner.relate(first, Sql.all(join));
+        return first.param();
+    }
+
+    /**
+     * 子行按 order 排序，用于 {@link #list}：{@code h.items().orderBy(i -> i.position()).list(...)}。
+     * 对 any、count 等集合运算没有影响。
+     */
+    public Many<R> orderBy(Function<R, ? extends OrderItem> order) {
+        return new Many<>(owner, target, on, filter, order);
+    }
+
+    /**
+     * 每个父行的子行列表，放进 {@code row(...)} 的参数，例如
+     * {@code row(MaterialTree::new, m.material(), m.deliveries().list(l -> row(Line::new, l.delivery(), l.quantity())))}。
+     * 父查询只多取连接键；执行时用一条按键批量的 IN 查询取出全部子行，所以 N 个父行只多一条 SQL。
+     * 连接条件里"目标列 = 所属表的列"的部分作为键，其余条件只筛选子行。
+     */
+    public <C> Children<C> list(Function<R, ? extends Selection<C>> projection) {
+        Split<R> split = split("list()");
+        SelectSpec spec = SelectSpec.from(split.inner()).where(Sql.all(split.filters()));
+        if (order != null) spec = spec.orderBy(OrderList.of(order.apply(split.row())));
+        return new Children<>(spec, projection.apply(split.row()), split.keys(), split.outer());
+    }
+
+    /** 行号列在排名子查询里的名字。 */
+    private static final String ROW_NUMBER = "rn__";
+
+    /**
+     * 连接条件拆成三部分：键（目标表的列）、所属行里与键相等的列、其余只筛选目标行的条件。
+     *
+     * @param inner 目标表新的一次出现
+     * @param row   inner 的表接口实例
+     */
+    private record Split<R>(Ref<R> inner, R row, List<Col<?>> keys, List<Expr<?>> outer, List<Cond> filters) { }
+
+    /** 在目标表新的一次出现上展开连接条件和筛选条件并拆分；没有"目标列 = 所属表的列"时报错，use 是方法名。 */
+    private Split<R> split(String use) {
         Ref<R> inner = Ref.table(target);
         R row = inner.param();
         Cond condition = filter == null ? on.apply(row) : Sql.all(on.apply(row), filter.apply(row));
@@ -101,24 +160,13 @@ public final class Many<R extends Entity> {
             filters.add(c);
         }
         if (keys.isEmpty()) {
-            throw new IllegalArgumentException("first() needs an equality between a column of " + target.getSimpleName()
+            throw new IllegalArgumentException(use + " needs an equality between a column of " + target.getSimpleName()
                 + " and a column of the table the relation belongs to, e.g. i -> i.delivery().eq(delivery())");
         }
-        Expr<?>[] partition = keys.toArray(Expr<?>[]::new);
-        Query<?> ranked = Query.select(SelectSpec.from(inner).where(Sql.all(filters)),
-            Sql.cols(((Entity) row).columns(), Sql.rowNumber().over(w -> w.partitionBy(partition).orderBy(order.apply(row))).as(ROW_NUMBER)));
-        Ref<R> first = Ref.of(new Derived<>(ranked, target, target.getSimpleName().toLowerCase(java.util.Locale.ROOT) + "_first"));
-        List<Cond> join = new ArrayList<>();
-        for (int i = 0; i < keys.size(); i++) join.add(Nodes.compare(first.column(keys.get(i).property().name()), "=", outer.get(i)));
-        join.add(Nodes.compare(new RowNumber(first), "=", Sql.lit(1L)));
-        owner.relate(first, Sql.all(join));
-        return first.param();
+        return new Split<>(inner, row, keys, outer, filters);
     }
 
-    /** 行号列在排名子查询里的名字。 */
-    private static final String ROW_NUMBER = "rn__";
-
-    /** maybeInner 是目标表的列、other 不是时，记为一对分组键，返回 true。 */
+    /** maybeInner 是目标表的列、other 不是时，记为一对键，返回 true。 */
     private static boolean link(Expr<?> maybeInner, Expr<?> other, Ref<?> inner, List<Col<?>> keys, List<Expr<?>> outer) {
         if (!(maybeInner instanceof Col<?> col) || col.ref() != inner) return false;
         if (other instanceof Col<?> o && o.ref() == inner) return false;

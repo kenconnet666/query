@@ -91,6 +91,9 @@ export function typeChecks(): unknown[] {
   const withoutRelations = from(Mara).select((m) => ({ material: m.material, deliveries: m.deliveries, text: m.text }));
   expectType<Equal<typeof withoutRelations, Query<{ material: string }>>>();
 
+  const tree = from(Mara).select((m) => ({ material: m.material, lines: m.deliveries.list((l) => ({ delivery: l.delivery })), orders: m.deliveries.list((l) => l.salesOrder) }));
+  expectType<Equal<typeof tree, Query<{ material: string; lines: { delivery: string }[]; orders: string[] }>>>();
+
   // @ts-expect-error a one-to-many relation is not a column
   from(Mara).where((m) => m.deliveries.eq("x"));
 
@@ -117,7 +120,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded, tree];
 }
 
 describe("编译期类型检查", () => {

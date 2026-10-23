@@ -2,7 +2,7 @@ import type { Clause, Dialect } from "../sql/dialect.js";
 import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
-import { Many } from "./many.js";
+import { Children, Many } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
@@ -83,13 +83,15 @@ function list<T>(value: T | readonly T[]): readonly T[] {
  * 对象投影：每个叶子是一个表达式，嵌套的对象得到嵌套的结果。
  * 一对多（{@link Many}）和关系目标的引用不是列，会被略过，所以展开带关系的引用也能直接投影。
  */
-export type Projection = { readonly [key: string]: Expr<any> | Projection | Many<any> };
+export type Projection = { readonly [key: string]: Expr<any> | Projection | Many<any> | Children<any> };
 
 /** 投影的结果类型；略过一对多和关系目标的引用，与运行时一致。 */
 export type Shape<P> = {
-  -readonly [K in keyof P as K extends string ? (P[K] extends Many<any> | { readonly [RELATED]: true } ? never : K) : never]: P[K] extends Expr<infer V>
-    ? V
-    : Shape<P[K]>;
+  -readonly [K in keyof P as K extends string ? (P[K] extends Many<any> | { readonly [RELATED]: true } ? never : K) : never]: P[K] extends Children<infer C>
+    ? C[]
+    : P[K] extends Expr<infer V>
+      ? V
+      : Shape<P[K]>;
 };
 
 /** 是否是字面量对象，用来区分嵌套投影与类的实例。 */
@@ -99,26 +101,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** 把嵌套投影展平成表达式列表和对应的键路径。 */
-function flatten(p: object, path: readonly string[], items: Expr<unknown>[], paths: string[][]): void {
+/**
+ * 把嵌套投影展平成表达式列表、对应的键路径和列名。子数组（{@link Children}）只取父行的键：第一个键占着它的路径，
+ * 加载后那里放的是子数组；其余的键路径为 null，组装时跳过。
+ */
+function flatten(p: object, path: readonly string[], items: Expr<unknown>[], paths: (string[] | null)[], labels: string[], slots: Slot[]): void {
   for (const [key, value] of Object.entries(p)) {
+    const label = [...path, key].join(".");
     if (value instanceof Expr) {
       items.push(value as Expr<unknown>);
       paths.push([...path, key]);
+      labels.push(label);
+    } else if (value instanceof Children) {
+      slots.push({ children: value, start: items.length });
+      value.outer.forEach((e, i) => {
+        items.push(e);
+        paths.push(i === 0 ? [...path, key] : null);
+        labels.push(i === 0 ? label : `${label}.${i + 1}`);
+      });
     } else if (value instanceof Many || (isPlainObject(value) && RELATED in value)) {
       continue;
     } else if (isPlainObject(value)) {
-      flatten(value, [...path, key], items, paths);
+      flatten(value, [...path, key], items, paths, labels, slots);
     } else {
       throw new TypeError(`Projection field '${[...path, key].join(".")}' must be an expression or a nested object; use val(...) for constants`);
     }
   }
 }
 
-/** 按键路径把一行的值组装回对象；路径都只有一层时走更快的扁平分支。 */
-function assembler(paths: readonly (readonly string[])[]): (values: readonly unknown[]) => unknown {
-  if (paths.every((p) => p.length === 1)) {
-    const keys = paths.map((p) => p[0]!);
+/** 按键路径把一行的值组装回对象，跳过路径为 null 的列；路径都只有一层时走更快的扁平分支。 */
+function assembler(paths: readonly (readonly string[] | null)[]): (values: readonly unknown[]) => unknown {
+  if (paths.every((p) => p !== null && p.length === 1)) {
+    const keys = paths.map((p) => p![0]!);
     return (values) => {
       const row: Record<string, unknown> = {};
       keys.forEach((k, i) => (row[k] = values[i]));
@@ -128,6 +142,7 @@ function assembler(paths: readonly (readonly string[])[]): (values: readonly unk
   return (values) => {
     const root: Record<string, unknown> = {};
     paths.forEach((path, i) => {
+      if (path === null) return;
       let node = root;
       for (const key of path.slice(0, -1)) node = (node[key] ??= {}) as Record<string, unknown>;
       node[path.at(-1)!] = values[i];
@@ -138,10 +153,17 @@ function assembler(paths: readonly (readonly string[])[]): (values: readonly unk
 
 // ---------- 查询 ----------
 
-/** UNION 的一个分支：SELECT 内容和投影项。 */
+/** UNION 的一个分支：SELECT 内容、投影项，以及子数组（`list(...)`）的键在投影项里的位置。 */
 interface Arm {
   readonly spec: SelectSpec;
   readonly items: readonly Expr<unknown>[];
+  readonly slots?: readonly Slot[] | undefined;
+}
+
+/** 一个子数组：它的父键从第 start 列开始；加载后子数组写在第 start 列。 */
+interface Slot {
+  readonly children: Children<unknown>;
+  readonly start: number;
 }
 
 /** 查询的不可变状态。 */
@@ -215,6 +237,7 @@ export class Query<R> {
     if ([...a.arms, ...b.arms].some((arm) => hasOrderOrLimit(arm.spec))) {
       throw new Error("A UNION arm cannot have ORDER BY or LIMIT; wrap it in a CTE");
     }
+    if (hasChildren(this) || hasChildren(other)) throw new Error("A query with list(...) cannot be part of a UNION");
     let arms = b.arms;
     if (a.keyed && b.keyed && a.labels.some((l, i) => l !== b.labels[i])) {
       const position = new Map(b.labels.map((l, i) => [l, i]));
@@ -297,9 +320,12 @@ export class Query<R> {
   #omit(positions: Iterable<number>): Query<never> {
     const at = new Set(positions);
     if (at.size === 0) return this as never;
+    // 子数组的父键不是结果列，一直保留
+    const covered = (arm: Arm, i: number) => (arm.slots ?? []).some((s) => i >= s.start && i < s.start + s.children.outer.length);
     const arms = this.#s.arms.map((arm) => ({
       spec: arm.spec,
-      items: arm.items.map((e, i) => (at.has(i) && !(e instanceof Omitted) ? new Omitted(e) : e)),
+      items: arm.items.map((e, i) => (at.has(i) && !covered(arm, i) && !(e instanceof Omitted) ? new Omitted(e) : e)),
+      slots: arm.slots,
     }));
     return makeQuery({ ...this.#s, arms });
   }
@@ -355,7 +381,7 @@ export class Query<R> {
 
   /** 替换唯一分支的 SELECT 内容。 */
   #withSpec(spec: SelectSpec): Query<R> {
-    return makeQuery({ ...this.#s, arms: [{ spec, items: this.#s.arms[0]!.items }] });
+    return makeQuery({ ...this.#s, arms: [{ ...this.#s.arms[0]!, spec }] });
   }
 
   /** 作为派生表使用：`from(query.asTable())`。需要扁平的对象投影。 */
@@ -462,6 +488,32 @@ export function rendered(q: Query<unknown>, key: object, render: () => Rendered)
 /** 解码驱动返回的行所需的信息：先按列类型解码，再按投影组装。 */
 export function decoderOf<R>(q: Query<R>): { readonly types: readonly SqlType<unknown>[]; readonly assemble: (values: readonly unknown[]) => R } {
   return { types: q[COLUMN_TYPES], assemble: stateOf(q).assemble as (values: readonly unknown[]) => R };
+}
+
+/** 是否带子数组（`list(...)`）；这样的查询要读完全部行才能组装，不能流式读取。 */
+export function hasChildren(q: Query<unknown>): boolean {
+  return (stateOf(q).arms[0]!.slots ?? []).length > 0;
+}
+
+/**
+ * 把解码后的全部行组装成结果。带子数组时先加载子行：run 执行一条子查询（沿用本查询的缓存时长和超时）
+ * 并返回组装好的行。rows 不会被修改，缓存里的行可以直接传入。
+ */
+export async function assembleRows<R>(q: Query<R>, rows: readonly (readonly unknown[])[], run: (child: Query<never>) => Promise<readonly unknown[]>): Promise<R[]> {
+  const s = stateOf(q);
+  const slots = s.arms[0]!.slots ?? [];
+  let source = rows;
+  if (slots.length > 0) {
+    const copies = rows.map((r) => [...r]);
+    for (const slot of slots) {
+      await slot.children.attach(copies, slot.start, (child) => {
+        const c = stateOf(child);
+        return run(makeQuery({ ...c, ttl: s.ttl, timeout: s.timeout })) as never;
+      });
+    }
+    source = copies;
+  }
+  return source.map((r) => s.assemble(r) as R);
 }
 
 /** 查询的缓存时长（毫秒），未标记缓存时为 undefined。 */
@@ -768,16 +820,18 @@ export class From<T extends readonly unknown[]> {
     const selected = projection(...this.#refs);
     if (selected instanceof Expr) return this.#single(selected as Expr<unknown>, selected.label ?? "value");
     const items: Expr<unknown>[] = [];
-    const paths: string[][] = [];
-    flatten(selected, [], items, paths);
+    const paths: (string[] | null)[] = [];
+    const labels: string[] = [];
+    const slots: Slot[] = [];
+    flatten(selected, [], items, paths, labels, slots);
     if (items.length === 0) throw new Error("The projection selects no column");
     return makeQuery({
-      arms: [{ spec: this.#spec, items }],
+      arms: [{ spec: this.#spec, items, slots }],
       operators: [],
       groups: [],
-      labels: paths.map((p) => p.join(".")),
+      labels,
       keyed: true,
-      flat: paths.every((p) => p.length === 1),
+      flat: slots.length === 0 && paths.every((p) => p !== null && p.length === 1),
       assemble: assembler(paths),
       limit: undefined,
       offset: undefined,

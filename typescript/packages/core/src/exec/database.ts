@@ -1,6 +1,6 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
 import { shapeFields, type NamingStrategy } from "../schema/metadata.js";
-import { decoderOf, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
+import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, untyped, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Rendered, type RenderSettings } from "../sql/writer.js";
 
@@ -247,8 +247,7 @@ export abstract class Database {
 
   /** 执行查询，返回全部行映射后的对象。 */
   async list<R>(q: Query<R>): Promise<R[]> {
-    const { assemble } = decoderOf(q);
-    return (await this.#rows(q, this.render(q))).map(assemble);
+    return assembleRows(q, await this.#rows(q, this.render(q)), (child) => this.list(child));
   }
 
   /** 恰好一行，否则抛错。 */
@@ -265,7 +264,7 @@ export abstract class Database {
 
   /** 驱动支持时，用一个游标逐行读取。 */
   async *stream<R>(q: Query<R>): AsyncGenerator<R, void, undefined> {
-    if (this.#driver.stream === undefined) {
+    if (this.#driver.stream === undefined || hasChildren(q)) {
       yield* await this.list(q);
       return;
     }

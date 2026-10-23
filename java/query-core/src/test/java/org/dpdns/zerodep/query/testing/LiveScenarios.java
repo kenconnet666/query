@@ -406,6 +406,33 @@ public abstract class LiveScenarios {
             .select(m -> m.material())));
     }
 
+    /** 子列表场景：物料和它的交货单号。 */
+    public record MaterialDeliveries(String material, List<String> deliveries) { }
+
+    /** selectAs 对象树：语言 1 的描述（多对一）和交货行（一对多）。 */
+    public record MaterialTree(String material, TreeText text, List<TreeLine> deliveries) { }
+
+    /** 对象树里的描述。 */
+    public record TreeText(String text) { }
+
+    /** 对象树里的交货行。 */
+    public record TreeLine(String delivery, BigDecimal quantity) { }
+
+    @Test
+    void 子列表与对象树在实库上用一条批量查询加载() {
+        var events = db.capture(() -> assertEquals(
+            List.of("M1:[D1, D2, D5]", "M2:[D3, D4]", "M3:[]", "M4:[]"),
+            db.list(from(Mara.class).orderBy(m -> m.material()).select(m -> row(MaterialDeliveries::new, m.material(),
+                    m.deliveries().orderBy(l -> l.delivery()).list(l -> l.delivery()))))
+                .stream().map(r -> r.material() + ":" + r.deliveries()).toList()));
+        assertEquals(2, events.size(), "one statement for the parents and one for all children");
+        List<MaterialTree> trees = db.list(from(Mara.class).orderBy(m -> m.material()).selectAs(MaterialTree.class));
+        assertEquals(List.of("M1:Pump:D1/3,D2/2,D5/1", "M2:null:D3/5,D4/7", "M3:null:", "M4:null:"), trees.stream()
+            .map(t -> t.material() + ":" + t.text().text() + ":" + t.deliveries().stream()
+                .map(l -> l.delivery() + "/" + plain(l.quantity())).sorted().collect(Collectors.joining(",")))
+            .toList());
+    }
+
     @Test
     void 排除分组维度后按排序串汇总() {
         assertEquals(List.of("M2:null:null:12", "M1:null:null:6"), db.list(SpecCases.dynamicColumns()).stream()

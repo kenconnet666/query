@@ -476,6 +476,35 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       );
     });
 
+    it("子数组与对象树在实库上用一条批量查询加载", async () => {
+      const { db } = live();
+      const events = await db.capture(async () => {
+        const rows = await db.list(
+          from(Mara)
+            .orderBy((m) => m.material)
+            .select((m) => ({ material: m.material, deliveries: m.deliveries.orderBy((l) => l.delivery).list((l) => l.delivery) })),
+        );
+        assert.deepEqual(
+          rows.map((r) => `${r.material}:${r.deliveries.join(",")}`),
+          ["M1:D1,D2,D5", "M2:D3,D4", "M3:", "M4:"],
+        );
+      });
+      assert.equal(events.length, 2, "one statement for the parents and one for all children");
+      const trees = await db.list(
+        from(Mara)
+          .orderBy((m) => m.material)
+          .select((m) => ({
+            material: m.material,
+            text: { text: m.text.text },
+            deliveries: m.deliveries.list((l) => ({ delivery: l.delivery, quantity: l.quantity })),
+          })),
+      );
+      assert.deepEqual(
+        trees.map((t) => `${t.material}:${t.text.text}:${t.deliveries.map((l) => `${l.delivery}/${Number(l.quantity)}`).sort().join(",")}`),
+        ["M1:Pump:D1/3,D2/2,D5/1", "M2:null:D3/5,D4/7", "M3:null:", "M4:null:"],
+      );
+    });
+
     it("排除分组维度后按排序串汇总", async () => {
       const rows = await live().db.list(dynamicColumns());
       assert.deepEqual(

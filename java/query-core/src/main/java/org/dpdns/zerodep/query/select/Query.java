@@ -12,9 +12,13 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Derived;
+import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.type.SqlType;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -36,8 +40,17 @@ import java.util.function.Supplier;
  * <p>渲染结果按数据库实例缓存：同一个查询对象只渲染一次。
  */
 public final class Query<R> {
-    /** UNION 的一段：SELECT 的内容和它的投影列。 */
-    record Arm(SelectSpec spec, List<Expr<?>> items) { }
+    /** UNION 的一段：SELECT 的内容、它的投影列，以及子列表（{@code list(...)}）的键在投影列里的位置。 */
+    record Arm(SelectSpec spec, List<Expr<?>> items, List<Slot> slots) {
+        /** 没有子列表的一段。 */
+        Arm(SelectSpec spec, List<Expr<?>> items) { this(spec, items, List.of()); }
+    }
+
+    /** 一个子列表：它的父键从第 start 列开始；加载后子列表写在第 start 列。 */
+    record Slot(Children<?> children, int start) {
+        /** 这个位置是否是它的某个父键。 */
+        boolean covers(int position) { return position >= start && position < start + children.outer().size(); }
+    }
 
     /**
      * 各段怎样合并：除第一段外每段前面的运算符，以及需要加括号的段范围。UNION 与 UNION ALL 从左到右结合，
@@ -142,16 +155,105 @@ public final class Query<R> {
             return new Query<>(List.of(new Arm(spec, c.items())), Combination.NONE, names, true, toMap, null, null, null, Execution.DEFAULT);
         }
         List<Expr<?>> items = new ArrayList<>();
-        RowSelection.collect(selection, items);
+        List<Slot> slots = new ArrayList<>();
+        RowSelection.collect(selection, items, slots);
         RowMapper<R> build = values -> (R) RowSelection.read(selection, values, new int[1]);
-        return new Query<>(List.of(new Arm(spec, items)), Combination.NONE, labelsOf(items), false, build, null, null, null, Execution.DEFAULT);
+        return new Query<>(List.of(new Arm(spec, items, slots)), Combination.NONE, labelsOf(items), false, build, null, null, null, Execution.DEFAULT);
     }
 
-    /** selectAs(VO.class)：VO 的每个属性取自作用域里恰好一张表的同名列。 */
+    /**
+     * selectAs(VO.class)：VO 的每个属性取自作用域里恰好一张表的同名列。VO 里有对象树时：类型是另一个 VO 的属性
+     * 取同名的多对一关系（隐式 LEFT JOIN），{@code List<X>} 属性取同名的一对多关系（子行由 {@code list(...)} 批量加载），
+     * 都按同样的规则逐层映射。
+     */
     public static <V> Query<V> auto(SelectSpec spec, Class<V> type) {
-        List<Expr<?>> items = new ArrayList<>();
-        for (PropertyMeta p : Metadata.entity(type).properties()) items.add(sameNamed(spec, type, p.name()));
-        return named(spec, type, items);
+        List<PropertyMeta> properties = Metadata.entity(type).properties();
+        if (properties.stream().noneMatch(Query::isBranch)) {
+            List<Expr<?>> items = new ArrayList<>();
+            for (PropertyMeta p : properties) items.add(sameNamed(spec, type, p.name()));
+            return named(spec, type, items);
+        }
+        List<Object> rows = new ArrayList<>();
+        for (SelectSpec.Join j : spec.joins) rows.add(j.ref().param());
+        return select(spec, tree(type, rows, p -> sameNamed(spec, type, p.name())));
+    }
+
+    /** 属性是否是对象树的分支：列表，或者不是单个值的类。 */
+    private static boolean isBranch(PropertyMeta p) {
+        Class<?> t = p.field().getType();
+        return List.class.isAssignableFrom(t) || !(MappingPlan.isScalar(t) || t == Object.class);
+    }
+
+    /**
+     * 把 VO 映射成一个按位置构造的选取：值属性用 column 取列，分支属性在 rows（各表的接口实例）里找同名的关系方法。
+     */
+    private static <V> RowSelection<V> tree(Class<V> type, List<Object> rows, Function<PropertyMeta, Expr<?>> column) {
+        List<PropertyMeta> properties = Metadata.entity(type).properties();
+        Selection<?>[] parts = new Selection<?>[properties.size()];
+        for (int i = 0; i < parts.length; i++) {
+            PropertyMeta p = properties.get(i);
+            if (!isBranch(p)) {
+                parts[i] = column.apply(p);
+                continue;
+            }
+            Object related = relation(type, rows, p.name());
+            if (List.class.isAssignableFrom(p.field().getType()) && related instanceof Many<?> many) {
+                Class<?> element = elementType(type, p);
+                parts[i] = many.list(r -> tree(element, List.of(r), q -> member(element, r, q.name())));
+            } else if (related instanceof Entity target) {
+                Class<?> nested = p.field().getType();
+                parts[i] = tree(nested, List.of(target), q -> member(nested, target, q.name()));
+            } else {
+                throw new IllegalArgumentException(type.getSimpleName() + "." + p.name() + " needs a relation named " + p.name()
+                    + (List.class.isAssignableFrom(p.field().getType()) ? " returning Many" : " returning a table"));
+            }
+        }
+        List<String> names = properties.stream().map(PropertyMeta::name).toList();
+        MappingPlan<V> plan = MappingPlan.of(type, names);
+        return new RowSelection<>(plan::map, parts);
+    }
+
+    /** rows 里恰好一张表上名为 name 的无参方法的结果（关系）；没有或多于一张表有时报错。 */
+    private static Object relation(Class<?> type, List<Object> rows, String name) {
+        List<Object> hits = new ArrayList<>();
+        for (Object row : rows) {
+            if (!(row instanceof Entity)) continue;
+            Object value = invoke(row, name);
+            if (value != null) hits.add(value);
+        }
+        if (hits.size() == 1) return hits.get(0);
+        throw new IllegalArgumentException(type.getSimpleName() + "." + name + (hits.isEmpty()
+            ? " has no relation of the same name in the query's tables"
+            : " matches relations of " + hits.size() + " tables"));
+    }
+
+    /** 嵌套 VO 的值属性：row 上同名方法返回的列或表达式。 */
+    private static Expr<?> member(Class<?> type, Object row, String name) {
+        if (invoke(row, name) instanceof Expr<?> e) return e;
+        throw new IllegalArgumentException(type.getSimpleName() + "." + name + " has no same-named column in "
+            + row.getClass().getInterfaces()[0].getSimpleName() + "; select it with row(...)");
+    }
+
+    /** 调用表接口实例上名为 name 的公开无参方法；没有这个方法时为 null。 */
+    private static Object invoke(Object row, String name) {
+        Method method;
+        try {
+            method = row.getClass().getMethod(name);
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
+        method.trySetAccessible();
+        try {
+            return method.invoke(row);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Cannot call " + name + "() on " + row.getClass().getInterfaces()[0].getSimpleName(), e);
+        }
+    }
+
+    /** {@code List<X>} 属性的 X。 */
+    private static Class<?> elementType(Class<?> type, PropertyMeta p) {
+        if (p.field().getGenericType() instanceof ParameterizedType pt && pt.getActualTypeArguments()[0] instanceof Class<?> c) return c;
+        throw new IllegalArgumentException(type.getSimpleName() + "." + p.name() + " needs an element type, e.g. List<LineVO>");
     }
 
     /** 常量行：每行一条字面量 SELECT，用 UNION ALL 连接。 */
@@ -237,6 +339,7 @@ public final class Query<R> {
         for (Arm a : other.arms) {
             if (a.spec().hasOrderOrLimit()) throw new IllegalStateException("A UNION arm cannot have ORDER BY or LIMIT; wrap it in a CTE");
         }
+        if (hasChildren() || other.hasChildren()) throw new IllegalStateException("A query with list(...) cannot be part of a UNION");
         if (arms.size() == 1 && arms.get(0).spec().hasOrderOrLimit()) {
             throw new IllegalStateException("A UNION arm cannot have ORDER BY or LIMIT; wrap it in a CTE");
         }
@@ -337,8 +440,11 @@ public final class Query<R> {
         List<Arm> out = new ArrayList<>();
         for (Arm a : arms) {
             List<Expr<?>> items = new ArrayList<>(a.items());
-            for (int i : positions) if (!(items.get(i) instanceof Omitted<?>)) items.set(i, new Omitted(items.get(i)));
-            out.add(new Arm(a.spec(), items));
+            for (int i : positions) {
+                // 子列表的父键不是结果列，一直保留
+                if (a.slots().stream().noneMatch(s -> s.covers(i)) && !(items.get(i) instanceof Omitted<?>)) items.set(i, new Omitted(items.get(i)));
+            }
+            out.add(new Arm(a.spec(), items, a.slots()));
         }
         return new Query<>(out, combination, labels, byName, mapper, shape, limit, offset, execution);
     }
@@ -384,7 +490,8 @@ public final class Query<R> {
 
     /** 单段查询换一个 SELECT 规格，其余不变。 */
     private Query<R> withSpec(SelectSpec spec) {
-        return new Query<>(List.of(new Arm(spec, arms.get(0).items())), combination, labels, byName, mapper, shape, limit, offset, execution);
+        Arm arm = arms.get(0);
+        return new Query<>(List.of(new Arm(spec, arm.items(), arm.slots())), combination, labels, byName, mapper, shape, limit, offset, execution);
     }
 
     /** 作为派生表使用：{@code from(query.asTable())}，列用 {@code t.col(Row::x)} 读取。需要先 into(X.class)。 */
@@ -457,6 +564,30 @@ public final class Query<R> {
 
     /** 把一行解码后的列值映射成结果对象。 */
     public R mapRow(Object[] values) { return mapper.map(values); }
+
+    /** 是否带子列表（{@code list(...)}），这样的查询要读完全部行才能映射，不能流式读取。 */
+    public boolean hasChildren() { return !arms.get(0).slots().isEmpty(); }
+
+    /**
+     * 把读出的全部原始行映射成结果。带子列表时先加载子行：run 执行一条子查询（沿用本查询的缓存时长和超时）
+     * 并返回映射好的行。rows 不会被修改，缓存里的行可以直接传入。
+     */
+    public List<R> mapRows(List<Object[]> rows, Function<Query<Object[]>, List<Object[]>> run) {
+        List<Object[]> source = rows;
+        if (hasChildren()) {
+            source = new ArrayList<>(rows.size());
+            for (Object[] row : rows) source.add(row.clone());
+            for (Slot s : arms.get(0).slots()) s.children().attach(source, s.start(), q -> run.apply(q.withExecution(execution)));
+        }
+        List<R> out = new ArrayList<>(source.size());
+        for (Object[] row : source) out.add(mapper.map(row));
+        return out;
+    }
+
+    /** 同一条查询，换成 execution 的缓存时长和超时。 */
+    private Query<R> withExecution(Execution execution) {
+        return new Query<>(arms, combination, labels, byName, mapper, shape, limit, offset, execution);
+    }
 
     /** 按数据库实例缓存的渲染结果。 */
     public Rendered rendered(Object key, Supplier<Rendered> render) {
