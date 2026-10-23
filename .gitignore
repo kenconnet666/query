@@ -43,3 +43,4 @@ node_modules/
 typescript/**/dist/
 *.tsbuildinfo
 .claude/settings.local.json
+/infra/.env

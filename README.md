@@ -89,7 +89,7 @@ const rows = await db.list(
 | `typescript/packages/hana`、`postgres`、`mysql` | `@zerodep-dev/query-hana`、`@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`） |
 | `typescript/test` | TS 的单元、编译期、金样例与实库测试 |
 | `spec/render/` | Java 与 TS 共用的渲染金样例 |
-| `infra/` | CI 用的数据库容器定义 |
+| `infra/` | 开发和 CI 共用的数据库容器定义（MySQL、PostgreSQL、HANA），启动命令见 `compose.yaml` 开头的注释 |
 | `tools/` | 生成 `From1..From8` 的脚本，以及 LSP 验证脚本 |
 
 ## 开发环境

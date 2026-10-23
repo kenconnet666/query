@@ -1,10 +1,46 @@
-# Databases for CI live tests. Local development still uses the predecessor project's instances on the
-# same ports; do not start both at once. Memory limits live only here; CI reads them back and checks them.
+# MySQL 8.4, PostgreSQL 17 and SAP HANA Express for local development and CI live tests.
+# Each database is a profile; start only what you need. Memory limits live only in this file: CI reads
+# them back and checks that Docker enforced them. HANA treats its cgroup limit as physical memory, so do
+# not raise it to hide a failure.
+#
+# Images: PostgreSQL uses the official Debian (bookworm) image and MySQL the official Oracle Linux image
+# (8.4 has no Debian variant), each with ping, curl, ss, nano and the Asia/Singapore time zone added by
+# the Dockerfile. HANA is SAP's own SUSE-based image, used as it is.
+#
+# First time on a new machine (Debian/Ubuntu; WSL works the same once dockerd runs):
+#   curl -fsSL https://get.docker.com | sh                    # Docker Engine and the compose plugin
+#   cd infra
+#   printf 'QUERY_DB_PASSWORD=%s\nQUERY_HANA_PASSWORD=E9a%s\n' "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
+#   # set APT_MIRROR=mirrors.aliyun.com in .env if deb.debian.org is slow
+#
+# Daily use, from infra/:
+#   docker compose --profile mysql --profile postgres up -d --build   # start (builds the tool layer once)
+#   docker compose --profile hana up -d                               # HANA needs ~10 GiB free and ~4 minutes
+#   docker compose --profile hana exec hana /bin/bash /query/configure.sh   # once, right after HANA first starts
+#   docker compose ps                                                 # state and health
+#   docker compose logs -f postgres                                   # follow one service
+#   docker compose exec postgres ping -c 1 host.docker.internal       # ops tools are inside the containers
+#   docker compose --profile mysql --profile postgres --profile hana stop      # stop, data is kept
+#   docker compose --profile mysql --profile postgres --profile hana down -v   # remove containers AND data
+#
+# Connections (ports are published on 0.0.0.0; override with QUERY_*_PORT in .env):
+#   MySQL       jdbc:mysql://localhost:53306/query   user root or query, password QUERY_DB_PASSWORD
+#   PostgreSQL  jdbc:postgresql://localhost:55432/query   user query, password QUERY_DB_PASSWORD
+#   HANA        jdbc:sap://localhost:39041 (tenant HXE), SYSTEMDB on 39017, user SYSTEM, password QUERY_HANA_PASSWORD
+# Live tests read QUERY_{MYSQL|PG|HANA}_{URL|USER|PASSWORD}; see CLAUDE.md for the values.
+name: query
+
 services:
   mysql:
     profiles: [mysql]
-    image: mysql:8.4.11@sha256:1f8411cc085d2f2f92060fca926746cbf97f87b76c3008e9741ad62e604c4ffa
+    build:
+      context: .
+      args:
+        BASE_IMAGE: mysql:8.4.11@sha256:1f8411cc085d2f2f92060fca926746cbf97f87b76c3008e9741ad62e604c4ffa
+        APT_MIRROR: ${APT_MIRROR:-}
+    image: query-dev/mysql:8.4.11
     platform: linux/amd64
+    restart: unless-stopped
     mem_limit: 1g
     memswap_limit: 1g
     mem_reservation: 256m
@@ -13,21 +49,30 @@ services:
     environment:
       MYSQL_DATABASE: query
       MYSQL_USER: query
-      MYSQL_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
-      MYSQL_ROOT_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
+      MYSQL_PASSWORD: ${QUERY_DB_PASSWORD:-}
+      MYSQL_ROOT_PASSWORD: ${QUERY_DB_PASSWORD:-}
     command: [--innodb-buffer-pool-size=128M, --max-connections=30, --performance-schema=OFF]
     ports:
       - "${QUERY_MYSQL_PORT:-53306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
     healthcheck:
       test: [CMD-SHELL, 'MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u query -D query -e "SELECT 1" >/dev/null']
       interval: 3s
       timeout: 3s
       retries: 30
       start_period: 30s
+
   postgres:
     profiles: [postgres]
-    image: postgres:17.11-bookworm@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df
+    build:
+      context: .
+      args:
+        BASE_IMAGE: postgres:17.11-bookworm@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df
+        APT_MIRROR: ${APT_MIRROR:-}
+    image: query-dev/postgres:17.11
     platform: linux/amd64
+    restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m
     mem_reservation: 128m
@@ -36,12 +81,61 @@ services:
     environment:
       POSTGRES_DB: query
       POSTGRES_USER: query
-      POSTGRES_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in the environment}
+      POSTGRES_PASSWORD: ${QUERY_DB_PASSWORD:-}
     command: [postgres, -c, shared_buffers=128MB, -c, max_connections=30]
     ports:
       - "${QUERY_PG_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: [CMD, pg_isready, -h, 127.0.0.1, -U, query, -d, query]
       interval: 3s
       timeout: 3s
       retries: 20
+
+  hana:
+    profiles: [hana]
+    image: saplabs/hanaexpress:2.00.088.00.20251110.1@sha256:432be2785506e97cefc413f495393fc22fcdda034c2c80db2f0f88efeb16dfaf
+    platform: linux/amd64
+    hostname: hxehost
+    restart: unless-stopped
+    mem_limit: 8g
+    memswap_limit: 8g
+    mem_reservation: 4g
+    cpus: 4.0
+    pids_limit: 4096
+    shm_size: 2g
+    stop_grace_period: 2m
+    environment:
+      QUERY_HANA_PASSWORD: ${QUERY_HANA_PASSWORD:-}
+      TZ: Asia/Singapore
+    ports:
+      - "${QUERY_HANA_PORT:-39041}:39041"
+      - "${QUERY_HANA_SYSTEM_PORT:-39017}:39017"
+    volumes:
+      - ./hana:/query:ro
+      - hana-data:/hana/mounts
+    tmpfs:
+      - /run/query:size=1m,mode=0700,uid=12000,gid=79
+    entrypoint: [/bin/bash, /query/start.sh]
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    sysctls:
+      kernel.shmmax: 1073741824
+      kernel.shmmni: 32768
+      kernel.shmall: 8388608
+      net.ipv4.ip_local_port_range: "40000 60999"
+    # Checked every 3 s so a ready HANA is noticed quickly; 300 retries keep the 15-minute ceiling.
+    healthcheck:
+      test: [CMD, /bin/bash, /query/health.sh]
+      interval: 3s
+      timeout: 5s
+      retries: 300
+      start_period: 2m
+
+volumes:
+  mysql-data:
+  postgres-data:
+  hana-data:
