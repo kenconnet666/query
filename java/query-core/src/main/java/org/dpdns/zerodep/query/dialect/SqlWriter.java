@@ -157,7 +157,7 @@ public final class SqlWriter {
         Map<CteDefinition, SqlWriter> bodies = new IdentityHashMap<>();
         Map<String, CteDefinition> names = new LinkedHashMap<>();
         for (CteDefinition c : ctes.values()) emit(c, order, bodies, names);
-        if (order.isEmpty()) return new Rendered(text(), bindings);
+        if (order.isEmpty()) return new Rendered(text(), bindings, dialect);
         StringBuilder out = new StringBuilder("WITH ");
         List<Binding> all = new ArrayList<>();
         for (int i = 0; i < order.size(); i++) {
@@ -169,7 +169,7 @@ public final class SqlWriter {
         }
         out.append('\n').append(sql);
         all.addAll(bindings);
-        return new Rendered(out.toString(), all);
+        return new Rendered(out.toString(), all, dialect);
     }
 
     /** 渲染一个 CTE 的主体并递归处理它依赖的 CTE，依赖先于它加入 {@code order}。 */

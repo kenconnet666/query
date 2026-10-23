@@ -45,6 +45,69 @@ export interface QueryEvent {
 /** 观察已执行的语句：日志、计时、慢查询报告。监听器抛出的异常会被忽略。 */
 export type QueryListener = (event: QueryEvent) => void;
 
+/**
+ * 把一条语句的执行结果格式化成 MyBatis 风格的几行，`printSql` 打印的就是它：
+ * ```
+ * ==> Preparing: SELECT ... WHERE LIPS.MATNR = ?
+ * ==> Parameters: M1(text)
+ * <== Total: 3, Time: 12 ms
+ * ```
+ * 命中缓存时最后一行标明 `(cached)`，失败时最后一行是错误信息。
+ */
+export function formatQueryEvent(event: QueryEvent): string {
+  let text = `==> Preparing: ${event.statement.sql}`;
+  if (event.statement.bindings.length > 0) text += `\n==> Parameters: ${event.statement.parameterText()}`;
+  if (event.error !== undefined && event.error !== null) {
+    text += `\n<== Error: ${event.error instanceof Error ? event.error.message : String(event.error)}`;
+  } else {
+    text += `\n<== Total: ${event.rows}, Time: ${event.elapsedMs} ms${event.cached ? " (cached)" : ""}`;
+  }
+  return text;
+}
+
+/**
+ * 空跑驱动：不连接任何数据库，每条查询都得到空结果（计数为 0），但照常渲染、打印和触发监听器。
+ * 配合 {@link Database.capture}，不用数据库也能测试代码发出的 SQL：`new HanaDatabase(dryRunDriver(), { printSql: true })`。
+ */
+export function dryRunDriver(): Driver {
+  return {
+    query: async () => ({ columns: [], rows: [] }),
+    stream: async function* () {},
+  };
+}
+
+/** 一次 {@link Database.capture}：只收集该数据库的语句；outer 是外层的捕获。 */
+interface Capture {
+  readonly database: Database;
+  readonly events: QueryEvent[];
+  readonly outer: Capture | undefined;
+}
+
+/** Node 的 AsyncLocalStorage，只取用到的部分；核心包不依赖 Node 的类型声明。 */
+interface AsyncStorage<T> {
+  run<R>(store: T, fn: () => R): R;
+  getStore(): T | undefined;
+}
+
+let activeCapture: AsyncStorage<Capture> | undefined;
+
+/** printSql: true 时的输出：console.info；核心包不依赖 DOM 或 Node 的类型声明。 */
+function printToConsole(text: string): void {
+  (globalThis as { console?: { info(text: string): void } }).console?.info(text);
+}
+
+/** 惰性创建跨异步调用传递捕获状态的存储；不在 Node 上时 capture 不可用。 */
+function captures(): AsyncStorage<Capture> {
+  if (activeCapture === undefined) {
+    const hooks = (globalThis as { process?: { getBuiltinModule?(id: string): unknown } }).process?.getBuiltinModule?.("node:async_hooks") as
+      | { AsyncLocalStorage: new () => AsyncStorage<Capture> }
+      | undefined;
+    if (hooks === undefined) throw new Error("capture() needs Node's AsyncLocalStorage (Node 22.3 or later)");
+    activeCapture = new hooks.AsyncLocalStorage();
+  }
+  return activeCapture;
+}
+
 /** 查询结果缓存的键：数据库名、SQL 文本和参数。 */
 export interface CacheKey {
   readonly database: string;
@@ -123,6 +186,11 @@ export interface DatabaseOptions {
   readonly filters?: readonly SourceFilter[];
   readonly cache?: QueryCache;
   readonly listener?: QueryListener;
+  /**
+   * 打印每条执行过的语句（SQL、带类型的参数、行数和耗时），格式见 {@link formatQueryEvent}。
+   * `true` 时用 `console.info`，也可以传入自己的输出函数，例如 `(text) => logger.info(text)`。
+   */
+  readonly printSql?: boolean | ((text: string) => void);
   /** 未显式指定列名的装饰字段所用的命名策略。 */
   readonly naming?: NamingStrategy;
   /** 仅在这个数据库上改写函数的渲染方式。 */
@@ -164,7 +232,13 @@ export abstract class Database {
       ...(options.functions === undefined ? {} : { functions: options.functions }),
     });
     this.#cache = options.cache;
-    this.#listener = options.listener;
+    const print = options.printSql === true ? printToConsole : options.printSql || undefined;
+    const listener = options.listener;
+    this.#listener =
+      print === undefined ? listener : (event) => {
+        print(formatQueryEvent(event));
+        listener?.(event);
+      };
     if (options.queryTimeoutMs !== undefined && !(options.queryTimeoutMs > 0)) throw new RangeError("queryTimeoutMs must be positive");
     this.#timeout = options.queryTimeoutMs;
   }
@@ -221,7 +295,21 @@ export abstract class Database {
   async count(q: Query<unknown>): Promise<number> {
     const statement = renderCount(this.#writer(), q);
     const result = await this.#execute(statement, timeoutOf(q));
-    return integer.decode(result.rows[0]?.[0]);
+    return result.rows.length === 0 ? 0 : integer.decode(result.rows[0]![0]); // 空跑时没有行
+  }
+
+  /**
+   * 运行 work，返回它（包括其中的异步调用）通过本数据库执行的全部语句，按执行顺序，含缓存命中，
+   * 便于在测试里断言 SQL 和参数：`const sqls = await db.capture(() => service.load(req))`。
+   * 配合 {@link dryRunDriver} 可以不连数据库。可以嵌套，内层捕获的语句不再计入外层。需要 Node 的 AsyncLocalStorage。
+   */
+  async capture(work: () => unknown): Promise<QueryEvent[]> {
+    const events: QueryEvent[] = [];
+    const storage = captures();
+    await storage.run({ database: this, events, outer: storage.getStore() }, async () => {
+      await work();
+    });
+    return events;
   }
 
   /** 页码从 1 开始；总数来自对同一查询的 COUNT(*)。 */
@@ -304,9 +392,14 @@ export abstract class Database {
 
   /** 把一次执行报告给监听器。 */
   #notify(statement: Rendered, start: number, rows: number, error: unknown, cached: boolean): void {
+    let capture = activeCapture?.getStore();
+    while (capture !== undefined && capture.database !== this) capture = capture.outer;
+    if (this.#listener === undefined && capture === undefined) return;
+    const event: QueryEvent = { database: this.name, statement, elapsedMs: Date.now() - start, rows, error, cached };
+    capture?.events.push(event);
     if (this.#listener === undefined) return;
     try {
-      this.#listener({ database: this.name, statement, elapsedMs: Date.now() - start, rows, error, cached });
+      this.#listener(event);
     } catch {
       // 监听器出错不能让查询失败。
     }

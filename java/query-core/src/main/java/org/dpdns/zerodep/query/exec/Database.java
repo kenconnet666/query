@@ -45,6 +45,9 @@ public abstract class Database {
     /** 执行 SQL 的 JDBC 执行器。 */
     private final JdbcExecutor executor;
 
+    /** 当前线程正在 {@link #capture} 里时，收集执行过的语句。 */
+    private final ThreadLocal<List<QueryListener.Event>> captured = new ThreadLocal<>();
+
     /**
      * 创建后不再变化的配置，从 {@link Config} 复制而来。functions 是本库专属的函数渲染覆盖，
      * attributes 是渲染时通过 SqlWriter 取用的共享对象（全局过滤器、命名策略）。
@@ -64,7 +67,10 @@ public abstract class Database {
         attributes.put(NamingStrategy.class, config.naming);
         this.settings = new Settings(filters, config.cache, config.naming, Map.copyOf(config.functions), Map.copyOf(attributes));
         TypeRegistry types = dialect.types().with(config.types);
-        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, config.listeners, config.fetchSize,
+        List<QueryListener> listeners = new ArrayList<>();
+        listeners.add(this::record);
+        listeners.addAll(config.listeners);
+        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, listeners, config.fetchSize,
             config.queryTimeout);
     }
 
@@ -113,7 +119,34 @@ public abstract class Database {
     public long count(Query<?> q) {
         Rendered statement = QueryRenderer.count(writer(), q);
         List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Long.class))), q.timeout());
-        return ((Number) rows.get(0)[0]).longValue();
+        return rows.isEmpty() ? 0 : ((Number) rows.get(0)[0]).longValue();  // 空跑时没有行
+    }
+
+    /**
+     * 运行 work，返回它在当前线程里通过本数据库执行的全部语句（按执行顺序，含缓存命中），便于在测试里断言 SQL 和参数：
+     * <pre>{@code
+     * List<QueryListener.Event> sqls = db.capture(() -> service.load(request));
+     * assertEquals("SELECT ...", sqls.get(0).statement().sql());
+     * }</pre>
+     * 配合 {@link ConnectionProvider#dryRun()} 可以不连数据库。可以嵌套，内层捕获的语句不再计入外层。
+     */
+    public List<QueryListener.Event> capture(Runnable work) {
+        List<QueryListener.Event> outer = captured.get();
+        List<QueryListener.Event> mine = new ArrayList<>();
+        captured.set(mine);
+        try {
+            work.run();
+        } finally {
+            if (outer == null) captured.remove();
+            else captured.set(outer);
+        }
+        return List.copyOf(mine);
+    }
+
+    /** 当前线程在捕获时，记下这条语句。 */
+    private void record(QueryListener.Event event) {
+        List<QueryListener.Event> sink = captured.get();
+        if (sink != null) sink.add(event);
     }
 
     /** 取第 page 页，每页 size 行，页码从 1 开始；总数来自对同一条查询的 COUNT(*)。 */
@@ -205,6 +238,15 @@ public abstract class Database {
             this.cache = cache;
             return this;
         }
+
+        /**
+         * 打印每条执行过的语句（SQL、带类型的参数、行数和耗时），输出到 JDK 的 {@link System.Logger}
+         * （名为 {@code org.dpdns.zerodep.query.sql}，级别 INFO）。格式见 {@link SqlPrinter}。
+         */
+        public Config printSql() { return listener(SqlPrinter.toSystemLogger()); }
+
+        /** 打印每条执行过的语句到 out，例如 {@code log::info} 或 {@code System.out::println}。 */
+        public Config printSql(Consumer<String> out) { return listener(new SqlPrinter(out)); }
 
         /** 添加查询监听器，接收每条语句的执行事件；可以添加多个。 */
         public Config listener(QueryListener listener) {

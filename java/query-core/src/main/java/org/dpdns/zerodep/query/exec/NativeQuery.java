@@ -136,7 +136,7 @@ public final class NativeQuery {
                 out.append(c);
             }
         }
-        return new Rendered(out.toString(), bindings);
+        return new Rendered(out.toString(), bindings, database.dialect());
     }
 
     /** 写出一个参数：普通值是一个 ?，集合是逗号分隔的多个 ?；空集合和含 null 的集合都会报错。 */

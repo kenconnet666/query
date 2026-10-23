@@ -21,6 +21,13 @@ public interface ConnectionProvider {
      */
     default void prepared(PreparedStatement statement) throws SQLException { }
 
+    /**
+     * 空跑：不连接任何数据库，每条查询都得到空结果（计数为 0），但照常渲染、打印和触发监听器。
+     * 配合 {@code Database.capture(...)}，不用数据库也能测试代码发出的 SQL：
+     * {@code Hana.database(ConnectionProvider.dryRun(), c -> c.printSql())}。
+     */
+    static ConnectionProvider dryRun() { return DryRun.provider(); }
+
     /** 普通 DataSource：每条语句取一个池化连接，用完关闭（即归还）。 */
     static ConnectionProvider of(DataSource dataSource) {
         return new ConnectionProvider() {

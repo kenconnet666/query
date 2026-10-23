@@ -19,7 +19,10 @@ export interface Binding {
   readonly type: SqlType<unknown>;
 }
 
-/** 最终的 SQL 文本，以及按占位符顺序排列的参数。 */
+/**
+ * 最终的 SQL 文本，以及按占位符顺序排列的参数。打印时用 {@link toString}（SQL 加一行带类型的参数），
+ * 排查问题时用 {@link debugSql}（参数写进 SQL，可以直接粘到数据库客户端执行）。
+ */
 export class Rendered {
   /** 数据库侧的值，已由类型和转换器编码。 */
   readonly parameters: readonly unknown[];
@@ -27,13 +30,52 @@ export class Rendered {
   constructor(
     readonly sql: string,
     readonly bindings: readonly Binding[],
+    readonly dialect: Dialect,
   ) {
     this.parameters = Object.freeze(bindings.map((b) => (b.value === null ? null : b.type.encode(b.value))));
   }
 
-  /** SQL 文本后附参数，便于日志。 */
+  /** 带类型的参数文本，形如 `M1(text), 20260115(text), 3(integer)`；值是编码后、实际发给数据库的值。 */
+  parameterText(): string {
+    return this.parameters.map((v, i) => (v === null ? "null" : `${String(v)}(${this.bindings[i]!.type.name})`)).join(", ");
+  }
+
+  /**
+   * 调试用的 SQL：把每个占位符换成参数的字面量，可以直接粘到数据库客户端里执行。写不成字面量的参数
+   * （例如字节）保留占位符。只用于排查问题；程序执行语句时仍然绑定参数。
+   */
+  debugSql(): string {
+    let out = "";
+    let next = 0;
+    for (let i = 0; i < this.sql.length; i++) {
+      const quoted = this.dialect.quotedEnd(this.sql, i);
+      if (quoted >= 0) {
+        out += this.sql.slice(i, quoted + 1);
+        i = quoted;
+        continue;
+      }
+      const marker = next < this.bindings.length ? this.dialect.placeholder(next + 1) : undefined;
+      // PostgreSQL 的 $1 不能匹配到 $10 的开头
+      if (marker !== undefined && this.sql.startsWith(marker, i) && !/\d/.test(this.sql[i + marker.length] ?? "")) {
+        const b = this.bindings[next++]!;
+        if (this.dialect.hasLiteral(b.value, b.type)) {
+          const w = new SqlWriter(this.dialect);
+          this.dialect.literal(w, b.value, b.type);
+          out += w.statement().sql;
+        } else {
+          out += marker;
+        }
+        i += marker.length - 1;
+        continue;
+      }
+      out += this.sql[i];
+    }
+    return out;
+  }
+
+  /** SQL 后附一行带类型的参数，便于打印和对照。 */
   toString(): string {
-    return `${this.sql}\n-- parameters ${JSON.stringify(this.parameters, (_, v: unknown) => (typeof v === "bigint" ? v.toString() : v))}`;
+    return this.bindings.length === 0 ? this.sql : `${this.sql}\n-- parameters: ${this.parameterText()}`;
   }
 }
 
@@ -200,7 +242,7 @@ export class SqlWriter {
     pushAll(bindings, this.#bindings);
     let n = 0;
     const sql = chunks.map((c) => (c === PARAMETER ? this.dialect.placeholder(++n) : c)).join("");
-    return new Rendered(sql, bindings);
+    return new Rendered(sql, bindings, this.dialect);
   }
 
   /** 渲染 CTE 主体，并先排入它依赖的 CTE，使 `order` 里被依赖的在前。 */
