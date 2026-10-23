@@ -349,6 +349,7 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
 
 - 比较方式 `eq`（默认）、`ne`、`gt`、`ge`、`lt`、`le`、`contains`、`startsWith`、`endsWith`；后三个转义 `%` 和 `_`。数组只能用 `eq`（IN）和 `ne`（NOT IN）。
 - 列写成字段名（作用域里恰好一张表有这一列）或沿 `@one` 关系的路径（`"mara.partNumber"`、`"mara.text.text"`）；同名列出现在多张表里时报错，要求写出关系路径。
+- 路径经过 `@many` 关系时写成 EXISTS，例如 `@where("eq", "deliveries.unit") unit` 和 `@where("ge", "deliveries.quantity") minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个子行同时满足；这些字段的值都为空时整个 EXISTS 省略。
 - 普通对象也可以：`from(Lips).where({ unit: ["EA", "KG"], salesOrder: "S1" })` 按同名列比较，并可与回调条件、其他 `where` 一起使用（AND）。
 - 字段名找不到列时无论有没有值都报错（写错的字段不会悄悄放过）；路径指向关系而不是列也报错。
 

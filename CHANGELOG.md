@@ -21,7 +21,7 @@
 - **导航关系**：Java 的 `one(...)` / `many(...)` 写在表接口的 default 方法里，或用 `@ManyToOne`、`@OneToMany` 按列名配对；TS 的 `@one` / `@many` 字段。多对一用到时才 LEFT JOIN，同一关系只连接一次，可以继续导航，全局过滤器进入 ON。一对多提供 `any`、`none`（EXISTS）、`count`、`sum`、`max`、`min`、`avg`（相关子查询）、`where`、`first(order)`（ROW_NUMBER 取每组第一行）。
 - **对象树**：`many.list(...)` 给每个父行一个子列表，父查询只多取连接键，子行用一条按键批量的 IN 查询加载（每 500 个键一批），可以逐层嵌套；`many.orderBy(...)` 决定子行顺序。Java 的 `selectAs(VO.class)` 按同名关系自动映射嵌套 VO 和 `List<X>` 属性。
 - **动态列与排序**：`exclude`、`excludeIf`、`only` 把不要的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉；`sortBy("total desc, material")` 只认结果列，可以直接传用户的排序参数。
-- **条件对象**：`where(search)` 把对象的每个非空字段变成条件，默认与同名列相等（集合用 IN），`@Where` / `@where` 指定比较方式和列，列可以走关系路径，多列为 OR，`@Ignore` 的字段跳过；字段名找不到列时报错。
+- **条件对象**：`where(search)` 把对象的每个非空字段变成条件，默认与同名列相等（集合用 IN），`@Where` / `@where` 指定比较方式和列，列可以走关系路径（经过一对多关系时写成 EXISTS，同一关系的字段合并进一个 EXISTS），多列为 OR，`@Ignore` 的字段跳过；字段名找不到列时报错。
 - **条件聚合**：`sum(x).filter(cond)`、`count().filter(cond)` 等只聚合满足条件的行，三个库都写成 `AGG(CASE WHEN cond THEN x END)`，多次调用按 AND 合并。
 - **日期函数**：`year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween` 在三个库上语义一致（月末对齐、可为负）。
 - **文本聚合与半开区间**：核心 `stringAgg(e, sep, order...)`；`e.range(from, until)` 写成 `>= from AND < until`，skipEmpty 下缺少的一端被忽略。

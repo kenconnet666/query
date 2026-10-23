@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { all, contains, endsWith, from, ignore, startsWith, where } from "@zerodep-dev/query-core";
-import { Lips } from "../fixtures/erp.js";
+import { Lips, Mara } from "../fixtures/erp.js";
 import { TestDialect } from "../fixtures/support.js";
 
 const DIALECT = new TestDialect();
@@ -45,6 +45,27 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
       .select((l) => l.delivery)
       .toSql(DIALECT).sql;
     assert.equal(sql, 'SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME IN (?, ?) AND LIPS.VGBEL = ? AND LIPS.LFIMG > ?');
+  });
+
+  it("经过一对多关系的字段写成 EXISTS，同一关系的字段合并", () => {
+    class Search {
+      @where("eq", "deliveries.unit") unit?: string;
+      @where("ge", "deliveries.quantity") min?: string;
+      @where("eq", "deliveries.delivery", "partNumber") code?: string;
+    }
+    const render = (s: Partial<Search>) => from(Mara).where(Object.assign(new Search(), s)).select((m) => m.material).toSql(DIALECT).sql;
+    assert.equal(
+      render({ unit: "EA", min: "10", code: "D1" }),
+      `SELECT MARA.MATNR AS "material"
+FROM QUERY_IT.MARA MARA
+WHERE ((EXISTS (SELECT 1
+FROM QUERY_IT.LIPS LIPS
+WHERE LIPS.MATNR = MARA.MATNR AND LIPS.MANDT = MARA.MANDT AND LIPS.VBELN = ?)) OR (MARA.MFRPN = ?)) AND EXISTS (SELECT 1
+FROM QUERY_IT.LIPS LIPS2
+WHERE LIPS2.MATNR = MARA.MATNR AND LIPS2.MANDT = MARA.MANDT AND LIPS2.VRKME = ? AND LIPS2.LFIMG >= ?)`,
+    );
+    assert.equal(render({ code: " " }), `SELECT MARA.MATNR AS "material"
+FROM QUERY_IT.MARA MARA`);
   });
 
   it("字段名找不到列时无论有没有值都报错", () => {

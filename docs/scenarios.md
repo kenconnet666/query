@@ -45,7 +45,7 @@
 | 半开区间 | `rangeClosedOpen(a, b)` | `e.range(from, until)`：`>= from AND < until`，skipEmpty 下缺少的一端被忽略 | 2.0 |
 | 按开关加条件 | `where(boolean, ...)` | `onlyIf(test, () -> cond)` 写在 `where` 里 | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件省略；不开启时与 null 比较报错 | 2.0 |
-| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR（见 0006） | 2.0 |
+| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR；经过一对多关系时写成 EXISTS，同一关系的字段合并（见 0006） | 2.0 |
 | 动态排序 | `orderByObject` | `sortBy("total desc, material")` 只认结果列；`orderBy` 也接收运行时生成的 `List<Order>` | 2.0 |
 | 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`ifPresent(v, x -> exists(...))`），或多对一关系（没用到时不连接） | 1 / 2.0 |
 | 按用户选择取列、选维度 | 动态 select | `only(columns)`、`exclude(...)`：没选的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉 | 2.0 |

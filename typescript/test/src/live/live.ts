@@ -26,7 +26,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { dateFunctions, DeliverySearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { dateFunctions, DeliverySearch, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -516,6 +516,14 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         rows.map((r) => `${r.material}:${r.deliveries.join(",")}`),
         ["M1:D5,D2", "M2:D3,D4", "M3:", "M4:"],
       );
+    });
+
+    it("条件对象经过一对多关系时同一个子行满足全部字段", async () => {
+      const { db } = live();
+      const search = (s: Partial<MaterialSearch>) => db.list(filterMany(Object.assign(new MaterialSearch(), s)));
+      assert.deepEqual(await search({ unit: "EA", minQuantity: "5" }), ["M2"]);
+      assert.deepEqual(await search({ unit: "EA" }), ["M1", "M2"]);
+      assert.deepEqual(await search({ materialType: " " }), ["M1", "M2", "M3", "M4"]);
     });
 
     it("条件对象在实库上筛选且通配符按普通字符匹配", async () => {

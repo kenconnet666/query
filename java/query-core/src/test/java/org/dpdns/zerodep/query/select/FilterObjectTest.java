@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.TestDialect;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,23 @@ class FilterObjectTest {
             .select(l -> l.delivery())
             .toSql(DIALECT).sql();
         assertEquals("SELECT LIPS.VBELN AS \"delivery\"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME <> ? AND LIPS.LFIMG > ?", sql);
+    }
+
+    @Test
+    void 经过一对多关系的字段写成EXISTS且同一关系的字段合并() {
+        record Search(@Where("deliveries.unit") String unit, @Where(value = "deliveries.quantity", op = Where.Op.GE) java.math.BigDecimal min,
+                      @Where({"deliveries.delivery", "partNumber"}) String code) { }
+        String sql = from(Mara.class).where(new Search("EA", java.math.BigDecimal.TEN, "D1")).select(m -> m.material()).toSql(DIALECT).sql();
+        assertEquals("""
+            SELECT MARA.MATNR AS "material"
+            FROM QUERY_IT.MARA MARA
+            WHERE ((EXISTS (SELECT 1
+            FROM QUERY_IT.LIPS LIPS
+            WHERE LIPS.MATNR = MARA.MATNR AND LIPS.MANDT = MARA.MANDT AND LIPS.VBELN = ?)) OR (MARA.MFRPN = ?)) AND EXISTS (SELECT 1
+            FROM QUERY_IT.LIPS LIPS2
+            WHERE LIPS2.MATNR = MARA.MATNR AND LIPS2.MANDT = MARA.MANDT AND LIPS2.VRKME = ? AND LIPS2.LFIMG >= ?)""", sql);
+        assertEquals("SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA",
+            from(Mara.class).where(new Search(null, null, " ")).select(m -> m.material()).toSql(DIALECT).sql());
     }
 
     @Test

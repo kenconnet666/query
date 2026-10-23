@@ -387,6 +387,7 @@ from(Lips.class).where(search).select(l -> l.delivery());
 
 - 没有 `@Where` 的字段与同名列比较相等，集合用 `IN`。`op` 取 `EQ`、`NE`、`GT`、`GE`、`LT`、`LE`、`CONTAINS`、`STARTS_WITH`、`ENDS_WITH`；集合值只能配 `EQ`（`IN`）和 `NE`（`NOT IN`）。
 - `value` 是列路径，默认是字段名；可以经过多对一关系（`"mara.partNumber"`）；写多个时任一满足即可（OR）。
+- 路径经过一对多关系时写成 EXISTS，例如物料查询里的 `@Where("deliveries.unit") String unit` 和 `@Where(value = "deliveries.quantity", op = Where.Op.GE) BigDecimal minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个交货行同时满足；这些字段的值都为空时整个 EXISTS 省略。
 - 值为 null、空白字符串或空集合的字段不产生条件，对应的关系也不会连接；所以可以直接传入请求参数。
 - 字段名在表里找不到、指向的是关系而不是列、或在多张表里重名时，无论有没有值都报错；不是条件的字段（分页、排序）标 `@Ignore`。
 - 条件对象可以与 lambda 条件混用：`from(Lips.class).where(search).where(l -> l.quantity().gt(BigDecimal.ONE))`，多次 `where` 之间是 AND。

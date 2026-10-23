@@ -244,6 +244,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "dynamic-columns": plain(() => dynamicColumns()),
   "filter-object": plain(() => filterObject(Object.assign(new DeliverySearch(), { material: ["M1", "M2"], from: "2026-01-01", keyword: "50%", unit: "KG" }))),
   "native-sql": plain(() => nativeSql()),
+  "filter-many": { filtered: true, query: () => filterMany(Object.assign(new MaterialSearch(), { unit: "EA", minQuantity: "5", materialType: "ZMAT" })) },
   navigation: {
     filtered: true,
     query: () =>
@@ -414,6 +415,21 @@ export class DeliverySearch {
   @where("lt", "createdOn") to?: string;
   @where("contains", "mara.partNumber", "text.text") keyword?: string;
   @where("ne") unit?: string;
+}
+
+/** 物料查询的请求参数：两个字段走同一个一对多关系，合并进同一个 EXISTS。 */
+export class MaterialSearch {
+  @where("eq", "deliveries.unit") unit?: string;
+  @where("ge", "deliveries.quantity") minQuantity?: string;
+  materialType?: string;
+}
+
+/** 按交货行的条件筛选物料。 */
+export function filterMany(search: MaterialSearch) {
+  return from(Mara)
+    .where(search)
+    .orderBy((m) => m.material)
+    .select((m) => m.material);
 }
 
 /** 按条件对象筛选交货单。 */

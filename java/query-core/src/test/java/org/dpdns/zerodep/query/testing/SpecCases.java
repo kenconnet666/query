@@ -125,6 +125,7 @@ public final class SpecCases {
         cases.put("dynamic-columns", SpecCase.plain(SpecCases::dynamicColumns));
         cases.put("filter-object", SpecCase.plain(() -> filterObject(new DeliverySearch(List.of("M1", "M2"), LocalDate.of(2026, 1, 1), null, "50%", "KG"))));
         cases.put("native-sql", SpecCase.plain(SpecCases::nativeSql));
+        cases.put("filter-many", SpecCase.filtered(() -> filterMany(new MaterialSearch("EA", new BigDecimal("5"), "ZMAT"))));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
@@ -271,6 +272,17 @@ public final class SpecCases {
     /** 按条件对象筛选交货单。 */
     public static Query<String> filterObject(DeliverySearch search) {
         return from(Lips.class).where(search).orderBy(l -> l.delivery()).select(l -> l.delivery());
+    }
+
+    /** 物料查询的请求参数：两个字段走同一个一对多关系，合并进同一个 EXISTS。 */
+    public record MaterialSearch(
+        @Where("deliveries.unit") String unit,
+        @Where(value = "deliveries.quantity", op = Where.Op.GE) BigDecimal minQuantity,
+        String materialType) { }
+
+    /** 按交货行的条件筛选物料。 */
+    public static Query<String> filterMany(MaterialSearch search) {
+        return from(Mara.class).where(search).orderBy(m -> m.material()).select(m -> m.material());
     }
 
     /** 原生 SQL 数据源的一行：物料和数量合计。 */

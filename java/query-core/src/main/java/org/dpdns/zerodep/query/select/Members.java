@@ -31,18 +31,6 @@ final class Members {
         return hits.isEmpty() ? null : hits.get(0);
     }
 
-    /**
-     * 沿 path 取值，例如 "mara.partNumber"：第一段在作用域的表里找，之后每段在上一段的结果（关系的目标表）上找。
-     * 找不到时报错，owner 用于报错信息。
-     */
-    static Object path(SelectSpec spec, String path, String owner) {
-        String[] steps = path.split("\\.");
-        Object value = find(spec, steps[0], owner);
-        for (int i = 1; i < steps.length && value != null; i++) value = value instanceof Entity e ? invoke(e, steps[i]) : null;
-        if (value == null) throw new IllegalArgumentException(owner + ": the query's tables have no " + path);
-        return value;
-    }
-
     /** 一次出现 ref 上名为 name 的列或关系：表接口调用同名方法，行类来源取同名属性的列；都没有时为 null。 */
     private static Object member(Ref<?> ref, String name) {
         if (ref.entity().isInterface()) return invoke(ref.param(), name);

@@ -443,6 +443,13 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 条件对象经过一对多关系时同一个子行满足全部字段() {
+        assertEquals(List.of("M2"), db.list(SpecCases.filterMany(new SpecCases.MaterialSearch("EA", new BigDecimal("5"), null))));
+        assertEquals(List.of("M1", "M2"), db.list(SpecCases.filterMany(new SpecCases.MaterialSearch("EA", null, null))));
+        assertEquals(List.of("M1", "M2", "M3", "M4"), db.list(SpecCases.filterMany(new SpecCases.MaterialSearch(null, null, " "))));
+    }
+
+    @Test
     void 条件对象在实库上筛选且通配符按普通字符匹配() {
         assertEquals(List.of("D1", "D2", "D3", "D5"),
             db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(null, LocalDate.of(2026, 1, 1), null, "P", null))));
