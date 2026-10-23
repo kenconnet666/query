@@ -129,6 +129,9 @@ public final class SpecCases {
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
+        cases.put("qualify", SpecCase.plain(SpecCases::qualify));
+        cases.put("window-values", SpecCase.plain(SpecCases::windowValues));
+        cases.put("many-text", SpecCase.filtered(SpecCases::manyText));
         return cases;
     }
 
@@ -311,6 +314,35 @@ public final class SpecCases {
             .select(e -> cols(e.id(), year(e.onDay()).as("y"), month(e.atTime()).as("m"), day(e.onDay()).as("d"),
                 addDays(e.onDay(), 3).as("plusDays"), addMonths(e.onDay(), -1).as("minusMonth"), addYears(e.onDay(), 1).as("plusYear"),
                 daysBetween(e.onDay(), lit(LocalDate.of(2024, 4, 30))).as("days")));
+    }
+
+    /** 每个物料最新的两张交货单：窗口条件包成派生表，不在结果里的排序列作为额外的列带出来。 */
+    public static Query<Map<String, Object>> qualify() {
+        return from(Lips.class)
+            .qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).le(2L))
+            .orderBy(l -> orders(l.material(), l.createdOn().desc()))
+            .select(l -> cols(l.material(), l.delivery()));
+    }
+
+    /** 窗口里的首行、末行（整个分区）、带默认值的上一行和分组号。 */
+    public static Query<Map<String, Object>> windowValues() {
+        return from(Lips.class)
+            .orderBy(l -> l.delivery())
+            .select(l -> cols(l.delivery(),
+                firstValue(l.quantity()).over(w -> w.partitionBy(l.material()).orderBy(l.delivery())).as("first"),
+                lastValue(l.quantity()).over(w -> w.partitionBy(l.material()).orderBy(l.delivery())
+                    .rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())).as("last"),
+                lag(l.quantity(), 1, BigDecimal.ZERO).over(w -> w.partitionBy(l.material()).orderBy(l.delivery())).as("previous"),
+                ntile(2).over(w -> w.orderBy(l.delivery())).as("half")));
+    }
+
+    /** 一对多上的去重计数和按顺序拼接的文本。 */
+    public static Query<Map<String, Object>> manyText() {
+        return from(Mara.class)
+            .orderBy(m -> m.material())
+            .select(m -> cols(m.material(),
+                m.deliveries().countDistinct(l -> l.salesOrder()).as("orders"),
+                m.deliveries().orderBy(l -> l.delivery()).stringAgg(l -> l.delivery(), ",").as("deliveries")));
     }
 
     /** 条件聚合与文本拼接：每个物料按单位分开合计。 */

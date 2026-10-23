@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.expr.Aggregate;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
@@ -13,9 +14,12 @@ import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 /** 写出 SELECT 语句。数据库实例级的过滤器通过写入器的 attributes 传给它。 */
 public final class QueryRenderer {
@@ -55,7 +59,7 @@ public final class QueryRenderer {
         for (int i = 0; i < arms.size(); i++) {
             if (i > 0) w.sql("\n").sql(c.operators().get(i - 1)).sql("\n");
             w.sql("(".repeat(c.opens(i)));
-            arm(w, arms.get(i), i == 0 && labeled ? q.labels() : null, ordered);
+            arm(w, arms.get(i), q.labels(), i == 0 && labeled, ordered);
             w.sql(")".repeat(c.closes(i)));
         }
         if (arms.size() > 1) w.dialect().limit(w, q.limitValue(), q.offsetValue());
@@ -63,10 +67,14 @@ public final class QueryRenderer {
 
     /**
      * 渲染一段 SELECT：提示、DISTINCT、列、FROM 与各 JOIN、WHERE、GROUP BY、HAVING、ORDER BY、LIMIT 以及方言子句。
-     * labels 为 null 时列不带名字。
+     * labeled 为 false 时列不带名字；有 QUALIFY 时交给 {@link #qualified}。
      */
-    private static void arm(SqlWriter w, Query.Arm arm, List<String> labels, boolean ordered) {
+    private static void arm(SqlWriter w, Query.Arm arm, List<String> labels, boolean labeled, boolean ordered) {
         SelectSpec s = arm.spec();
+        if (!Nodes.all(s.qualify).isEmpty()) {
+            qualified(w, arm, labels, labeled, ordered);
+            return;
+        }
         // 先按连接顺序分配别名，这样即使 SELECT 先提到了被连接的表，FROM 的表也能拿到不带序号的名字。
         for (SelectSpec.Join j : s.joins) j.ref().alias(w);
         for (Clause c : s.clauses) {
@@ -103,7 +111,7 @@ public final class QueryRenderer {
         for (int i = 0; i < items.size(); i++) {
             if (i > 0) w.sql(", ");
             w.render(items.get(i));
-            if (labels != null) w.sql(" AS ").identifier(labels.get(i));
+            if (labeled) w.sql(" AS ").identifier(labels.get(i));
         }
         w.inlining(false);
         if (s.joins.isEmpty()) w.dialect().fromNothing(w);
@@ -153,6 +161,75 @@ public final class QueryRenderer {
         for (Clause c : s.clauses) {
             if (c.position() == Clause.Position.END) w.sql("\n").render(c);
         }
+    }
+
+    /**
+     * 带 QUALIFY 的一段。HANA 没有 QUALIFY 子句，所以三个库都把这段查询包成派生表：条件里的窗口函数、
+     * 不在结果里的排序项作为额外的列放进去，外层按条件过滤，再排序和分页。条件只能用窗口函数，
+     * 其他条件应写在 where 或 having 里，否则外层引用不到原来的表。
+     */
+    private static void qualified(SqlWriter w, Query.Arm arm, List<String> labels, boolean labeled, boolean ordered) {
+        SelectSpec s = arm.spec();
+        List<Expr<?>> items = new ArrayList<>(arm.items());
+        List<String> names = new ArrayList<>(labels);
+        Map<Renderable, String> columns = new IdentityHashMap<>();
+        SqlWriter probe = w.probe();
+        UnaryOperator<Renderable> windows = node -> {
+            if (!Aggregate.isWindow(node)) return node;
+            columns.computeIfAbsent(node, n -> hidden((Expr<?>) n, items, names, "_q"));
+            return x -> { };
+        };
+        probe.substitution(windows);
+        for (Cond c : s.qualify) probe.render(c);
+        if (!probe.touched().isEmpty()) {
+            throw new IllegalArgumentException("qualify(...) may only compare window functions; put other conditions in where(...) or having(...)");
+        }
+        Set<String> excluded = excludedKeys(w, arm);
+        SqlWriter texts = w.probe();
+        List<Order> orderBy = new ArrayList<>();
+        for (Order o : s.orderBy) {
+            String text = text(texts, o.expr());
+            if (excluded.contains(text)) continue;
+            orderBy.add(o);
+            int at = -1;
+            for (int i = 0; i < arm.items().size() && at < 0; i++) {
+                Expr<?> item = arm.items().get(i);
+                if (!(item instanceof Omitted<?>) && text(texts, item).equals(text)) at = i;
+            }
+            if (at >= 0) columns.put(o.expr(), labels.get(at));
+            else if (s.distinct) throw new IllegalArgumentException("With distinct() and qualify(...), order by columns that are selected");
+            else columns.computeIfAbsent(o.expr(), e -> hidden((Expr<?>) e, items, names, "_o"));
+        }
+        String alias = w.aliasFor(new Object(), "q");
+        w.sql("SELECT ");
+        for (int i = 0; i < labels.size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.alias(alias).sql(".").identifier(labels.get(i));
+            if (labeled) w.sql(" AS ").identifier(labels.get(i));
+        }
+        w.sql("\nFROM (\n");
+        arm(w, new Query.Arm(s.inner(), items, arm.slots()), names, true, false);
+        w.sql("\n) ").alias(alias);
+        UnaryOperator<Renderable> previous = w.substitution(node -> {
+            String name = columns.get(node);
+            return name == null ? node : x -> x.alias(alias).sql(".").identifier(name);
+        });
+        w.sql("\nWHERE ").render(Nodes.all(s.qualify));
+        boolean limited = s.limit != null || s.offset != null;
+        if (!orderBy.isEmpty() && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
+        w.substitution(previous);
+        w.dialect().limit(w, s.limit, s.offset);
+        for (Clause c : s.clauses) {
+            if (c.position() == Clause.Position.END) w.sql("\n").render(c);
+        }
+    }
+
+    /** 把 e 作为派生表的一列追加到 items，列名是 prefix 加序号，返回列名。 */
+    private static String hidden(Expr<?> e, List<Expr<?>> items, List<String> names, String prefix) {
+        String name = prefix + (items.size() + 1);
+        items.add(e);
+        names.add(name);
+        return name;
     }
 
     /**

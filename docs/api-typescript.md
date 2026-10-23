@@ -31,6 +31,7 @@
 | `WITH x AS (...)` | `const x = cte("x", query)`，然后 `from(x)` |
 | `UNION ALL` | `q1.unionAll(q2)` |
 | `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.delivery.desc()))` |
+| 每组取前 N 行（`QUALIFY`） | `.qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(3))` |
 | 原生 SQL 片段 | `` sql(text)`LPAD(${l.material}, ${18}, '0')` ``、`` sqlCond`...` ``、`` sqlTable({ ... })`...` `` |
 | 执行 | `await db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
 
@@ -216,7 +217,8 @@ ORDER BY MARA.MFRPN ASC
 | 操作 | 结果 | SQL |
 | --- | --- | --- |
 | `any(cond?)`、`none(cond?)` | `Cond` | `EXISTS` / `NOT EXISTS` 子查询 |
-| `count()` | `Expr<number>` | 相关标量子查询 `(SELECT COUNT(*) ...)` |
+| `count()`、`countDistinct(f)` | `Expr<number>` | 相关标量子查询 `(SELECT COUNT(*) ...)` |
+| `stringAgg(f, sep)` | `Expr<string | null>` | 相关标量子查询拼接文本，顺序取 `orderBy(...)` |
 | `sum(f)`、`max(f)`、`min(f)`、`avg(f)` | 可空的值 | 相关标量子查询；没有行时为 null |
 | `where(cond)` | `Many` | 先筛选目标行，再用上面的操作 |
 | `orderBy(f)` | `Many` | 决定 `list` 的子行顺序 |
@@ -363,7 +365,8 @@ from(scope).join(Lips, (ms, l) => l.material.eq(ms.material))...   // ms 的字�
 - **CTE**：只有扁平对象投影的查询能作为 CTE。无论被引用多深，渲染时都只在语句开头的 `WITH` 里出现一次。
 - **派生表**：`from(query.asTable())`。
 - **UNION**：`q1.unionAll(q2)` 或 `union`。两段的行类型必须相同，否则编译失败。对象投影按键名对齐各段的列，键的书写顺序不同也不会错位。各段不能自带排序或分页，分页和排序加在合并之后（要排序先包成 CTE）。右侧是混用 UNION 与 UNION ALL 的组合时自动加括号，保持原来的分组。
-- **窗口**：`rowNumber().over((w) => w.partitionBy(a).orderBy(b.desc()))`。聚合也可以 `.over(...)`，ROWS 框架写作 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。
+- **窗口**：`rowNumber().over((w) => w.partitionBy(a).orderBy(b.desc()))`。聚合也可以 `.over(...)`，ROWS 框架写作 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。另有 `lag`、`lead`（第三个参数是越界时的默认值）、`firstValue`、`lastValue`（取整个分区的末行要写 ROWS 框架）、`ntile(n)`。
+- **窗口条件（QUALIFY）**：`qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(3))` 每组取前 3 行。HANA 没有 QUALIFY 子句，三个库都渲染成派生表：窗口函数和不在结果里的排序项作为额外的列，外层过滤、排序和分页。条件只能比较窗口函数，其他条件写在 `where` 或 `having` 里，否则报错。
 - **常量行**（码表）：`values([{ name: "未逾期", ord: 1 }, ...])` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。列类型按值推断（文本、整数、小数），日期或精确小数用第二个参数指定，例如 `values(rows, { day: date })`。可以用 `cte(...)` 包成 CTE，再参与连接。
 
 业务口径写成普通函数，用接口约束适用的表：
@@ -404,7 +407,7 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, ...order)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity).filter(l.unit.eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
-| 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
+| 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(type)` 与 `sqlCond`，见第 9 节 |
 
@@ -505,7 +508,7 @@ console.log(events[0]!.statement.debugSql());
 | `db.first(q)` | 第一行或 `undefined`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, fn)` | 在一个游标上逐行读取：HANA 用 ResultSet，PostgreSQL 用服务端游标（需要连接池），MySQL 用流式查询（需要连接池）；提前 `break` 会释放游标。带 `list(...)` 的查询先读完全部行再交付 |
 | `db.count(q)` | 外包 `COUNT(*)` |
-| `db.page(q, page, size)` | 页号从 1 开始，同时返回总数和总页数 |
+| `db.page(q, page, size, total?)` | 页号从 1 开始，同时返回总数和总页数；传入已知的 `total` 时不再执行 COUNT |
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列，另有 `first()`、`one()`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(60_000)` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的值；并发读取同一个键只查询一次 |
 | `q.timeout(10_000)`、`db.sql(...).timeout(...)` | 这条语句的时限（毫秒），覆盖选项 `queryTimeoutMs` |

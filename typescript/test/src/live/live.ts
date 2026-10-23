@@ -26,7 +26,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { dateFunctions, DeliverySearch, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { dateFunctions, DeliverySearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -555,6 +555,35 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         rows.map((r) => `${r.material}:${Number(r.recent)}:${r.big}:${r.deliveries}`),
         ["M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"],
       );
+    });
+
+    it("窗口条件取每组最新的两行", async () => {
+      const rows = await live().db.list(qualify());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.delivery}`),
+        ["M1:D5", "M1:D2", "M2:D3", "M2:D4"],
+      );
+    });
+
+    it("窗口里的首行、末行、上一行与分组号", async () => {
+      const rows = await live().db.list(windowValues());
+      assert.deepEqual(
+        rows.map((r) => `${r.delivery}:${Number(r.first)}:${Number(r.last)}:${Number(r.previous)}:${r.half}`),
+        ["D1:3:1:0:1", "D2:3:1:3:1", "D3:5:7:0:1", "D4:5:7:5:2", "D5:3:1:2:2"],
+      );
+    });
+
+    it("一对多上的去重计数与按顺序拼接", async () => {
+      const rows = await live().db.list(manyText());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.orders}:${r.deliveries}`),
+        ["M1:3:D1,D2,D5", "M2:1:D3,D4", "M3:0:null", "M4:0:null"],
+      );
+    });
+
+    it("已知总数的分页不再执行 COUNT", async () => {
+      const page = await live().db.page(from(Lips).orderBy((l) => l.delivery).select((l) => l.delivery), 2, 2, 5);
+      assert.deepEqual([page.rows, page.total, page.totalPages], [["D3", "D4"], 5, 3]);
     });
 
     it("右侧的 UNION 保持原有分组", async () => {

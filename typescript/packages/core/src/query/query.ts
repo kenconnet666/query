@@ -1,5 +1,5 @@
 import type { Clause, Dialect } from "../sql/dialect.js";
-import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import { all, Cond, Expr, isWindow, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
@@ -51,6 +51,8 @@ interface SelectSpec {
   /** 对全部键做 GROUP BY ROLLUP：按键的每个前缀小计，再加总计。 */
   readonly rollup: boolean;
   readonly having: readonly Cond[];
+  /** 窗口函数上的条件（QUALIFY）：渲染时整段查询包一层派生表，在外层按它过滤。 */
+  readonly qualify: readonly Cond[];
   readonly orderBy: readonly Order[];
   readonly distinct: boolean;
   readonly limit: number | undefined;
@@ -539,15 +541,20 @@ function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean)
   s.arms.forEach((arm, i) => {
     if (i > 0) w.sql(`\n${s.operators[i - 1]}\n`);
     w.sql("(".repeat(s.groups.filter(([first]) => first === i).length));
-    renderArm(w, arm, i === 0 && labeled ? s.labels : undefined, ordered);
+    renderArm(w, arm, s.labels, i === 0 && labeled, ordered);
     w.sql(")".repeat(s.groups.filter(([, last]) => last === i).length));
   });
   if (s.arms.length > 1) w.dialect.limit(w, s.limit, s.offset);
 }
 
-/** 渲染一个 SELECT 分支。@param ordered 为 false 时，对没有 LIMIT 或 OFFSET 的分支去掉 ORDER BY */
-function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined, ordered: boolean): void {
+/**
+ * 渲染一个 SELECT 分支；有 QUALIFY 时交给 {@link renderQualified}。
+ * @param labeled 为 false 时列不带名字
+ * @param ordered 为 false 时，对没有 LIMIT 或 OFFSET 的分支去掉 ORDER BY
+ */
+function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: boolean, ordered: boolean): void {
   const s = arm.spec;
+  if (!all(...s.qualify).isEmpty) return renderQualified(w, arm, labels, labeled, ordered);
   // 按连接顺序分配别名，这样即使 SELECT 先提到被连接的表，FROM 的表仍得到最简单的名字。
   for (const j of s.joins) ownerOf(j.ref).alias(w);
   const dialect: Dialect = w.dialect;
@@ -575,7 +582,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   arm.items.forEach((item, i) => {
     if (i > 0) w.sql(", ");
     w.render(item);
-    if (labels !== undefined) w.sql(" AS ").identifier(labels[i]!);
+    if (labeled) w.sql(" AS ").identifier(labels[i]!);
   });
   w.inline(false);
   if (s.joins.length === 0) w.dialect.fromNothing(w);
@@ -609,6 +616,66 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[] | undefined
   const limited = s.limit !== undefined || s.offset !== undefined;
   if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
   w.inline(outer);
+  w.dialect.limit(w, s.limit, s.offset);
+  for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
+}
+
+/**
+ * 带 QUALIFY 的一段。HANA 没有 QUALIFY 子句，所以三个库都把这段查询包成派生表：条件里的窗口函数、
+ * 不在结果里的排序项作为额外的列放进去，外层按条件过滤，再排序和分页。条件只能用窗口函数，
+ * 其他条件应写在 where 或 having 里，否则外层引用不到原来的表。
+ */
+function renderQualified(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: boolean, ordered: boolean): void {
+  const s = arm.spec;
+  const items = [...arm.items];
+  const names = [...labels];
+  const columns = new Map<Renderable, string>();
+  /** 把 e 作为派生表的一列追加进去，列名是 prefix 加序号。 */
+  const hidden = (e: Expr<unknown>, prefix: string): string => {
+    const name = prefix + (items.length + 1);
+    items.push(e);
+    names.push(name);
+    return name;
+  };
+  const probe = w.probe();
+  probe.substitute((node) => {
+    if (!isWindow(node)) return node;
+    if (!columns.has(node)) columns.set(node, hidden(node as Expr<unknown>, "_q"));
+    return { render: () => {} };
+  });
+  for (const c of s.qualify) probe.render(c);
+  if (probe.touched.size > 0) throw new Error("qualify(...) may only compare window functions; put other conditions in where(...) or having(...)");
+  const excluded = excludedKeys(w, arm);
+  const texts = w.probe();
+  const orderBy: Order[] = [];
+  for (const o of s.orderBy) {
+    const text = textOf(texts, o.expr);
+    if (excluded.has(text)) continue;
+    orderBy.push(o);
+    const at = arm.items.findIndex((item) => !(item instanceof Omitted) && textOf(texts, item) === text);
+    if (at >= 0) columns.set(o.expr, labels[at]!);
+    else if (s.distinct) throw new Error("With distinct() and qualify(...), order by columns that are selected");
+    else if (!columns.has(o.expr)) columns.set(o.expr, hidden(o.expr, "_o"));
+  }
+  const alias = w.aliasFor({}, "q");
+  w.sql("SELECT ");
+  labels.forEach((label, i) => {
+    if (i > 0) w.sql(", ");
+    w.alias(alias).sql(".").identifier(label);
+    if (labeled) w.sql(" AS ").identifier(label);
+  });
+  w.sql("\nFROM (\n");
+  const inner: SelectSpec = { ...s, qualify: [], orderBy: [], limit: undefined, offset: undefined, clauses: s.clauses.filter((c) => c.position !== "end") };
+  renderArm(w, { spec: inner, items, slots: arm.slots }, names, true, false);
+  w.sql("\n) ").alias(alias);
+  const previous = w.substitute((node) => {
+    const name = columns.get(node);
+    return name === undefined ? node : { render: (x: SqlWriter) => void x.alias(alias).sql(".").identifier(name) };
+  });
+  w.sql("\nWHERE ").render(all(...s.qualify));
+  const limited = s.limit !== undefined || s.offset !== undefined;
+  if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
+  w.substitute(previous);
   w.dialect.limit(w, s.limit, s.offset);
   for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
 }
@@ -774,6 +841,15 @@ export class From<T extends readonly unknown[]> {
     return this.#with({ having: [...this.#spec.having, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
   }
 
+  /**
+   * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+   * `qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).eq(1))`。
+   * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+   */
+  qualify(cond: (...refs: T) => Cond): From<T> {
+    return this.#with({ qualify: [...this.#spec.qualify, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
+  }
+
   /** 表达式默认升序；需要其他排序用 `.desc()`、`.nullsLast()` 等。 */
   orderBy(items: (...refs: T) => OrderItem | readonly OrderItem[]): From<T> {
     return this.#with({ orderBy: [...this.#spec.orderBy, ...list(items(...this.#refs)).map(toOrder)] });
@@ -921,6 +997,7 @@ function emptySpec(): SelectSpec {
     groupBy: [],
     rollup: false,
     having: [],
+    qualify: [],
     orderBy: [],
     distinct: false,
     limit: undefined,

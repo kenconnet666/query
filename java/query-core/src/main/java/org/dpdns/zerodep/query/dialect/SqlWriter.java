@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 /**
  * 累积一条语句的 SQL 文本和参数。每个节点都把自己渲染进一个写入器；
@@ -24,6 +25,8 @@ public final class SqlWriter {
     private final StringBuilder sql = new StringBuilder();
     private final List<Binding> bindings = new ArrayList<>();
     private boolean inlining;
+    /** 渲染每个节点前先经过它，可以把节点换成别的写法；null 表示原样渲染。 */
+    private UnaryOperator<Renderable> substitution;
 
     /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联查询不会出现别名遮蔽。 */
     private static final class Aliases {
@@ -128,23 +131,37 @@ public final class SqlWriter {
         return previous;
     }
 
-    /** 渲染一个节点。 */
+    /** 渲染一个节点；设置了替换时先经过替换。 */
     public SqlWriter render(Renderable node) {
-        node.render(this);
+        (substitution == null ? node : substitution.apply(node)).render(this);
         return this;
+    }
+
+    /**
+     * 设置节点替换并返回原来的设置（用完要还原）；渲染器用它把 QUALIFY 条件里的窗口函数换成派生表的列。
+     * 替换只看节点本身，被换掉的节点不会再往下渲染。
+     */
+    public UnaryOperator<Renderable> substitution(UnaryOperator<Renderable> next) {
+        UnaryOperator<Renderable> previous = substitution;
+        substitution = next;
+        return previous;
     }
 
     /** 依次渲染多个节点，中间用 {@code separator} 分隔。 */
     public SqlWriter join(List<? extends Renderable> nodes, String separator) {
         for (int i = 0; i < nodes.size(); i++) {
             if (i > 0) sql.append(separator);
-            nodes.get(i).render(this);
+            render(nodes.get(i));
         }
         return this;
     }
 
     /** 返回设置相同、缓冲区为空的新写入器，用来单独渲染某一部分；别名表与当前写入器共享。 */
-    public SqlWriter fork() { return new SqlWriter(dialect, functionOverrides, attributes, aliases); }
+    public SqlWriter fork() {
+        SqlWriter f = new SqlWriter(dialect, functionOverrides, attributes, aliases);
+        f.substitution = substitution;
+        return f;
+    }
 
     /** 追加另一个写入器的文本和参数，并接收它登记的 CTE。 */
     public SqlWriter append(SqlWriter other) {

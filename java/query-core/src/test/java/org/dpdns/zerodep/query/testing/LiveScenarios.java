@@ -480,6 +480,33 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 窗口条件取每组最新的两行() {
+        assertEquals(List.of("M1:D5", "M1:D2", "M2:D3", "M2:D4"),
+            db.list(SpecCases.qualify()).stream().map(r -> r.get("material") + ":" + r.get("delivery")).toList());
+    }
+
+    @Test
+    void 窗口里的首行末行上一行与分组号() {
+        assertEquals(List.of("D1:3:1:0:1", "D2:3:1:3:1", "D3:5:7:0:1", "D4:5:7:5:2", "D5:3:1:2:2"),
+            db.list(SpecCases.windowValues()).stream()
+                .map(r -> r.get("delivery") + ":" + plain(r.get("first")) + ":" + plain(r.get("last")) + ":" + plain(r.get("previous")) + ":" + r.get("half"))
+                .toList());
+    }
+
+    @Test
+    void 一对多上的去重计数与按顺序拼接() {
+        assertEquals(List.of("M1:3:D1,D2,D5", "M2:1:D3,D4", "M3:0:null", "M4:0:null"),
+            db.list(SpecCases.manyText()).stream().map(r -> r.get("material") + ":" + r.get("orders") + ":" + r.get("deliveries")).toList());
+    }
+
+    @Test
+    void 已知总数的分页不再执行COUNT() {
+        var page = db.page(from(Lips.class).orderBy(l -> l.delivery()).select(l -> l.delivery()), 2, 2, 5);
+        assertEquals(List.of("D3", "D4"), page.rows());
+        assertEquals(5, page.total());
+    }
+
+    @Test
     void 右侧的UNION保持原有分组() {
         assertEquals(List.of("M1", "M1", "M2"), db.list(SpecCases.unionGrouping()).stream().sorted().toList());
     }

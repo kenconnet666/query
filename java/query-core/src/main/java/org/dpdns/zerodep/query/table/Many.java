@@ -82,6 +82,9 @@ public final class Many<R extends Entity> {
     /** 行数，相关子查询 {@code (SELECT COUNT(*) ...)}。 */
     public Expr<Long> count() { return Sql.scalar(scope().select(r -> Sql.count())); }
 
+    /** 某个值去重后的个数，相关子查询 {@code (SELECT COUNT(DISTINCT x) ...)}。 */
+    public Expr<Long> countDistinct(Function<R, Expr<?>> value) { return Sql.scalar(scope().select(r -> Sql.countDistinct(value.apply(r)))); }
+
     /** 某个值的合计；没有行时为 NULL。 */
     public <N extends Number> Expr<N> sum(Function<R, Expr<N>> value) { return Sql.scalar(scope().select(r -> Sql.sum(value.apply(r)))); }
 
@@ -93,6 +96,15 @@ public final class Many<R extends Entity> {
 
     /** 某个值的平均值；没有行时为 NULL。 */
     public Expr<BigDecimal> avg(Function<R, Expr<? extends Number>> value) { return Sql.scalar(scope().select(r -> Sql.avg(value.apply(r)))); }
+
+    /**
+     * 把目标行的文本用 separator 拼成一个值，按 {@link #orderBy} 给的顺序：
+     * {@code m.deliveries().orderBy(l -> l.delivery()).stringAgg(l -> l.delivery(), ",")}；没有行时为 NULL。
+     */
+    public Expr<String> stringAgg(Function<R, Expr<String>> value, String separator) {
+        return Sql.scalar(scope().select(r -> order == null ? Sql.stringAgg(value.apply(r), separator)
+            : Sql.stringAgg(value.apply(r), separator, order.apply(r))));
+    }
 
     /**
      * 每组按 order 排序后的第一行，例如最新的一条记录：{@code m.purchases().first(p -> p.createdOn().desc()).vendor()}。

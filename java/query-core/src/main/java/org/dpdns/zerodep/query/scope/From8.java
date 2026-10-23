@@ -78,6 +78,13 @@ public final class From8<T1, T2, T3, T4, T5, T6, T7, T8> extends AbstractFrom<Fr
     /** HAVING 条件；多次调用之间是 AND。 */
     public From8<T1, T2, T3, T4, T5, T6, T7, T8> having(Fn.F8<T1, T2, T3, T4, T5, T6, T7, T8, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6, p7, p8)))); }
 
+    /**
+     * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+     * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
+     * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+     */
+    public From8<T1, T2, T3, T4, T5, T6, T7, T8> qualify(Fn.F8<T1, T2, T3, T4, T5, T6, T7, T8, Cond> cond) { return rebuild(spec.qualify(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6, p7, p8)))); }
+
     /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
     public From8<T1, T2, T3, T4, T5, T6, T7, T8> orderBy(Fn.F8<T1, T2, T3, T4, T5, T6, T7, T8, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(p1, p2, p3, p4, p5, p6, p7, p8)))); }
 

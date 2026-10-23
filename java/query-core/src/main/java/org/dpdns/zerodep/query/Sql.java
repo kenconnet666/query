@@ -443,6 +443,31 @@ public class Sql extends Rows {
     /** 后 offset 行的值，再加 .over(...)。 */
     public static <T> WindowFunction<T> lead(Expr<T> e, int offset) { return new WindowFunction<>(e.type(), "LEAD", List.of(e, lit(offset))); }
 
+    /** 前 offset 行的值，越过分区开头时取 fallback，再加 .over(...)。 */
+    public static <T> WindowFunction<T> lag(Expr<T> e, int offset, T fallback) {
+        return new WindowFunction<>(e.type(), "LAG", List.of(e, lit(offset), e.param(fallback)));
+    }
+
+    /** 后 offset 行的值，越过分区末尾时取 fallback，再加 .over(...)。 */
+    public static <T> WindowFunction<T> lead(Expr<T> e, int offset, T fallback) {
+        return new WindowFunction<>(e.type(), "LEAD", List.of(e, lit(offset), e.param(fallback)));
+    }
+
+    /** 窗口里第一行的值，再加 .over(...)。 */
+    public static <T> WindowFunction<T> firstValue(Expr<T> e) { return new WindowFunction<>(e.type(), "FIRST_VALUE", List.of(e)); }
+
+    /**
+     * 窗口里最后一行的值，再加 .over(...)。有 ORDER BY 时默认窗口只到当前行，要取整个分区的最后一行需写
+     * {@code w.rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())}。
+     */
+    public static <T> WindowFunction<T> lastValue(Expr<T> e) { return new WindowFunction<>(e.type(), "LAST_VALUE", List.of(e)); }
+
+    /** 按窗口的顺序把分区分成 buckets 组，给出组号（1 起），例如四分位；再加 .over(...)。 */
+    public static WindowFunction<Long> ntile(int buckets) {
+        if (buckets < 1) throw new IllegalArgumentException("ntile needs at least one bucket");
+        return new WindowFunction<>(SqlType.of(Long.class), "NTILE", List.of(lit(buckets)));
+    }
+
     // ---------- CASE、CAST、原生 SQL、函数、子查询 ----------
 
     /** CASE WHEN condition THEN result ...，再接 .when(...)，以 .otherwise(...) 或 .end() 结束。 */

@@ -114,6 +114,12 @@ function from(n) {
     public ${self} groupByRollup(${lam("? extends Keys")} keys) { return rebuild(spec.groupByRollup(KeyList.of(keys.apply(${call})))); }`);
   m.push(`    /** HAVING 条件；多次调用之间是 AND。 */
     public ${self} having(${lam("Cond")} cond) { return rebuild(spec.having(condition(() -> cond.apply(${call})))); }`);
+  m.push(`    /**
+     * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+     * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
+     * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+     */
+    public ${self} qualify(${lam("Cond")} cond) { return rebuild(spec.qualify(condition(() -> cond.apply(${call})))); }`);
   m.push(`    /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
     public ${self} orderBy(${lam("? extends OrderItem")} order) { return rebuild(spec.orderBy(OrderList.of(order.apply(${call})))); }`);
   m.push(`    /** 需要用到作用域的方言子句，例如 {@code Postgres.distinctOn(...)}。 */

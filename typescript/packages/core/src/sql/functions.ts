@@ -419,13 +419,38 @@ export function denseRank(): WindowFunction<number> {
 }
 
 /** LAG：往前第 `offset` 行的值，越界为 NULL。 */
-export function lag<T>(e: Expr<T>, offset = 1): WindowFunction<T | null> {
-  return new WindowFunction(e.type, "LAG", [e, lit(offset)]);
+export function lag<T>(e: Expr<T>, offset?: number): WindowFunction<T | null>;
+/** LAG：往前第 `offset` 行的值，越界时取 fallback。 */
+export function lag<T>(e: Expr<T>, offset: number, fallback: NonNullable<T>): WindowFunction<T>;
+export function lag<T>(e: Expr<T>, offset = 1, fallback?: NonNullable<T>): WindowFunction<T | null> {
+  return new WindowFunction(e.type, "LAG", fallback === undefined ? [e, lit(offset)] : [e, lit(offset), param(e.type, fallback)]);
 }
 
 /** LEAD：往后第 `offset` 行的值，越界为 NULL。 */
-export function lead<T>(e: Expr<T>, offset = 1): WindowFunction<T | null> {
-  return new WindowFunction(e.type, "LEAD", [e, lit(offset)]);
+export function lead<T>(e: Expr<T>, offset?: number): WindowFunction<T | null>;
+/** LEAD：往后第 `offset` 行的值，越界时取 fallback。 */
+export function lead<T>(e: Expr<T>, offset: number, fallback: NonNullable<T>): WindowFunction<T>;
+export function lead<T>(e: Expr<T>, offset = 1, fallback?: NonNullable<T>): WindowFunction<T | null> {
+  return new WindowFunction(e.type, "LEAD", fallback === undefined ? [e, lit(offset)] : [e, lit(offset), param(e.type, fallback)]);
+}
+
+/** FIRST_VALUE：窗口里第一行的值。 */
+export function firstValue<T>(e: Expr<T>): WindowFunction<T> {
+  return new WindowFunction(e.type, "FIRST_VALUE", [e]);
+}
+
+/**
+ * LAST_VALUE：窗口里最后一行的值。有 ORDER BY 时默认窗口只到当前行，要取整个分区的最后一行需写
+ * `w.rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())`。
+ */
+export function lastValue<T>(e: Expr<T>): WindowFunction<T> {
+  return new WindowFunction(e.type, "LAST_VALUE", [e]);
+}
+
+/** NTILE：按窗口的顺序把分区分成 buckets 组，给出组号（1 起），例如四分位。 */
+export function ntile(buckets: number): WindowFunction<number> {
+  if (!Number.isInteger(buckets) || buckets < 1) throw new RangeError("ntile needs a whole number of buckets, at least 1");
+  return new WindowFunction(integer, "NTILE", [lit(buckets)]);
 }
 
 // ---------- CASE、CAST、SQL 片段、函数、子查询 ----------

@@ -226,6 +226,21 @@ class RenderTest {
     }
 
     @Test
+    void 窗口条件只能比较窗口函数且空条件不包派生表() {
+        assertThrows(IllegalArgumentException.class, () -> from(Lips.class)
+            .qualify(l -> l.unit().eq("EA")).select(l -> l.delivery()).toSql(DIALECT));
+        assertEquals(from(Lips.class).select(l -> l.delivery()).toSql(DIALECT).sql(),
+            from(Lips.class).qualify(l -> onlyIf(false, () -> rowNumber().over(w -> w).eq(1L))).select(l -> l.delivery()).toSql(DIALECT).sql());
+    }
+
+    @Test
+    void 窗口条件与DISTINCT一起时排序列必须在结果里() {
+        assertThrows(IllegalArgumentException.class, () -> from(Lips.class).distinct()
+            .qualify(l -> rowNumber().over(w -> w.orderBy(l.delivery())).le(3L))
+            .orderBy(l -> l.createdOn()).select(l -> l.material()).toSql(DIALECT));
+    }
+
+    @Test
     void skipEmpty也作用于连接条件和子查询且不开启时与null比较报错() {
         String none = null;
         String sql = from(Lips.class).skipEmpty()

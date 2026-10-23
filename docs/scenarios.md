@@ -21,8 +21,8 @@
 | 条件聚合（行转列） | `count().filter(...)`、`sum().filter(...)` | 聚合加 `.filter(cond)`，三个库都写成 `SUM(CASE WHEN ... THEN x END)` | 2.0 |
 | 文本聚合 | `joining(",")` | `stringAgg(e, sep, order...)`，MySQL 写成 `GROUP_CONCAT` | 2.0 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包，`RANGE` 由方言包提供 | 1 |
-| `QUALIFY` / 分区取第一行 | `partitionBy` | HANA 不支持 `QUALIFY`；用 CTE 加 `rowNumber` 再过滤 | 1 |
-| 分页 | `toPageResult` | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)` | 1 |
+| `QUALIFY` / 每组取前 N 行 | `Select.PART` 加外层 `where` | `qualify(l -> rowNumber().over(...).le(n))`：HANA 不支持 `QUALIFY`，三个库都自动包成派生表；关系上取第一行用 `many.first(order)` | 2.0 |
+| 分页 | `toPageResult`，可传入已知总数 | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)`；已知总数时 `page(q, page, size, total)` 不计数 | 1 / 2.0 |
 | 分块遍历 | `OffsetChunk` | `db.stream(q)`、`db.forEach(q, ...)`，在一个游标上逐行读取 | 1 |
 | `FOR UPDATE` | `forUpdate` | 属于写入场景 | — |
 | 原生 SQL | `sqlNativeSegment`，以及原生查询 | 类型化模板 `sql(Type, "...{0}", args)`，参数混用表达式和值，`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 当作数据源；整条原生 SQL 用 `db.sql("... :name").bind(...)` | 1 / 2.0 |

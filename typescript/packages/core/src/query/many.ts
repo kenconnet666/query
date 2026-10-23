@@ -2,7 +2,7 @@ import { COLUMNS, NAMED } from "../internal.js";
 import { entityMeta, type Table } from "../schema/metadata.js";
 import { integer, type SqlType } from "../schema/types.js";
 import { all, any, Column, Comparison, compare, conjuncts, exists, expression, notExists, type Cond, type Expr, type OrderItem } from "../sql/expr.js";
-import { avg, count, lit, max, min, rowNumber, scalar, sum } from "../sql/functions.js";
+import { avg, count, countDistinct, lit, max, min, rowNumber, scalar, stringAgg, sum } from "../sql/functions.js";
 import type { Renderable, SqlWriter } from "../sql/writer.js";
 import { from, type Projection, type Query, type Shape } from "./query.js";
 import { createRef, ownerOf, type Ref, type RefOwner, type Related, type Source } from "./source.js";
@@ -65,6 +65,11 @@ export class Many<T> {
     return scalar(this.#scope().select(() => count())) as Expr<number>;
   }
 
+  /** 某个值去重后的个数，相关子查询 `(SELECT COUNT(DISTINCT x) ...)`。 */
+  countDistinct(value: (target: Ref<T>) => Expr<unknown>): Expr<number> {
+    return scalar(this.#scope().select((t) => countDistinct(value(t)))) as Expr<number>;
+  }
+
   /** 某个值的合计；没有行时为 null。 */
   sum<N extends number | bigint | string>(value: (target: Ref<T>) => Expr<N | null>): Expr<N | null> {
     return scalar(this.#scope().select((t) => sum(value(t) as Expr<N>))) as Expr<N | null>;
@@ -83,6 +88,15 @@ export class Many<T> {
   /** 某个值的平均值（精确小数的字符串）；没有行时为 null。 */
   avg(value: (target: Ref<T>) => Expr<number | bigint | string | null>): Expr<string | null> {
     return scalar(this.#scope().select((t) => avg(value(t) as Expr<number>)));
+  }
+
+  /**
+   * 把目标行的文本用 separator 拼成一个值，按 {@link orderBy} 给的顺序：
+   * `m.deliveries.orderBy((l) => l.delivery).stringAgg((l) => l.delivery, ",")`；没有行时为 null。
+   */
+  stringAgg(value: (target: Ref<T>) => Expr<string | null>, separator: string): Expr<string | null> {
+    const order = this.#order;
+    return scalar(this.#scope().select((t) => stringAgg(value(t), separator, ...(order === undefined ? [] : [order(t)].flat()))));
   }
 
   /**

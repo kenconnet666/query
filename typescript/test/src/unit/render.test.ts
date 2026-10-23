@@ -15,6 +15,7 @@ import {
   ifPresent,
   like,
   onlyIf,
+  rowNumber,
   scalar,
   sql,
   text,
@@ -315,5 +316,26 @@ FROM QUERY_IT.MARA MARA`,
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE SUBSTRING(MARA.MATNR, ?, ?) = ?"), r.sql);
     assert.deepEqual(r.parameters, [1, 2, "M1"]);
+  });
+
+  it("窗口条件只能比较窗口函数且空条件不包派生表", () => {
+    assert.throws(() => from(Lips).qualify((l) => l.unit.eq("EA")).select((l) => l.delivery).toSql(DIALECT), /only compare window functions/);
+    assert.equal(
+      from(Lips).qualify(() => onlyIf(false, () => rowNumber().over((w) => w).eq(1))).select((l) => l.delivery).toSql(DIALECT).sql,
+      from(Lips).select((l) => l.delivery).toSql(DIALECT).sql,
+    );
+  });
+
+  it("窗口条件与 DISTINCT 一起时排序列必须在结果里", () => {
+    assert.throws(
+      () =>
+        from(Lips)
+          .distinct()
+          .qualify((l) => rowNumber().over((w) => w.orderBy(l.delivery)).le(3))
+          .orderBy((l) => l.createdOn)
+          .select((l) => l.material)
+          .toSql(DIALECT),
+      /order by columns that are selected/,
+    );
   });
 });

@@ -23,6 +23,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | `WITH x AS (...)` | `Cte<X> x = cte("x", query.into(X.class))`，然后 `from(x)` |
 | `UNION ALL` | `q1.unionAll(q2)` |
 | `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))` |
+| 每组取前 N 行（`QUALIFY`） | `.qualify(l -> rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc())).le(3L))` |
 | 原生 SQL 片段 | `sql(String.class, "LPAD({0}, {1}, '0')", l.material(), 18)` |
 | 执行 | `db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
 
@@ -192,7 +193,8 @@ ORDER BY MARA.MFRPN ASC
 | --- | --- |
 | `m.deliveries().any()`、`any(l -> cond)` | `EXISTS (...)` |
 | `m.deliveries().none()`、`none(l -> cond)` | `NOT EXISTS (...)` |
-| `count()`、`sum(l -> l.quantity())`、`max`、`min`、`avg` | 相关标量子查询，没有行时 `sum` 等为 NULL |
+| `count()`、`countDistinct(l -> l.salesOrder())`、`sum(l -> l.quantity())`、`max`、`min`、`avg` | 相关标量子查询，没有行时 `sum` 等为 NULL |
+| `stringAgg(l -> l.delivery(), ",")` | 相关标量子查询拼接文本，顺序取 `orderBy(...)`：`m.deliveries().orderBy(l -> l.delivery()).stringAgg(...)` |
 | `where(l -> cond)` | 先筛选目标行，可接上面任一运算：`m.deliveries().where(l -> l.unit().eq("KG")).none()` |
 | `first(l -> l.createdOn().desc())` | 每组按顺序取第一行，返回那一行的表接口，可继续取列 |
 | `orderBy(l -> l.delivery())`、`list(projection)` | 子行列表，见第 6 节 |
@@ -426,7 +428,8 @@ from(open.asTable())
 ```
 
 - **UNION**：`q1.unionAll(q2)` 或 `union`。两段的结果类型必须相同，否则编译失败；按名的查询（`cols`、`into`、`selectAs`）按列名对齐，其余按位置。各段不能自带 `orderBy`、`limit`，分页加在合并之后；合并后要排序，先包成 CTE（见 [迁移指南](migration.md#union-之后排序)）。右侧是混用 UNION 与 UNION ALL 的组合时自动加括号，保持原来的分组。
-- **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`；聚合也可以 `.over(...)`；ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`（`Bound` 在 `Window` 里，还有 `preceding(n)`、`following(n)`）。窗口函数也有 `rank`、`denseRank`、`lag`、`lead`。
+- **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`；聚合也可以 `.over(...)`；ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`（`Bound` 在 `Window` 里，还有 `preceding(n)`、`following(n)`）。窗口函数也有 `rank`、`denseRank`、`lag`、`lead`（第三个参数是越界时的默认值）、`firstValue`、`lastValue`（取整个分区的末行要写 ROWS 框架）、`ntile(n)`。
+- **窗口条件（QUALIFY）**：`qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).le(3L))` 每组取前 3 行。HANA 没有 QUALIFY 子句，三个库都渲染成派生表：窗口函数和不在结果里的排序项作为额外的列，外层过滤、排序和分页。条件只能比较窗口函数，其他条件写在 `where` 或 `having` 里，否则报错。
 - **常量行**（码表）：`values(Shape.class, List.of(new Shape(...), ...))` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`，每个属性都要有值。用 `cte(...)` 包起来再参与连接。
 
 ```java
@@ -467,7 +470,7 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 | 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
 | 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, order...)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity()).filter(l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
-| 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`，再加 `.over(...)` |
+| 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
 
 **方言专属能力**只在对应门面里提供，放到别的方言上渲染时会明确报错：
@@ -524,7 +527,7 @@ from(totals)
 | `db.first(q)` | `Optional`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭。PostgreSQL 在自动提交的连接上自动开临时事务；MySQL 要配置 `fetchSize(Integer.MIN_VALUE)` 才逐行读取 |
 | `db.count(q)` | 外包 `COUNT(*)` |
-| `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`） |
+| `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
 | `db.sql("... :name IN (:ids)").bind("ids", ids).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射；另有 `first`、`one`、`bindNull`、`timeout`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、`::` 类型转换、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
 | `q.timeout(Duration.ofSeconds(10))`、`db.sql(...).timeout(...)` | 这条语句的时限，覆盖 `config.queryTimeout` |

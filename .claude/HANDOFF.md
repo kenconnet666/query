@@ -24,7 +24,7 @@
 四个子代理读完 EasyQuery 的测试（`sql-test`）和官方文档后结论一致，按三批推进：
 
 - **第 1 批 可移植函数（已完成）**：聚合的 `.filter(cond)`（CASE WHEN，取代 PG 专属的 FILTER）、核心 `stringAgg`（取代 MySQL `groupConcat` 和两个方言版本）、`year`/`month`/`day`/`addDays`/`addMonths`/`addYears`/`daysBetween`（取代 HANA、MySQL 的同类函数）、`e.range(from, until)` 半开区间；金样例 `date-functions`、`conditional-aggregates`。
-- **第 2 批 查询结构（待做）**：`qualify(窗口条件)` 自动包派生表（取每组前 N 行）；`Many` 的 `countDistinct`、`stringAgg`；`firstValue`/`lastValue`、`lag`/`lead` 默认值；`db.page` 传入已知总数。
+- **第 2 批 查询结构（已完成）**：`qualify(窗口条件)` 自动包派生表（写入器新增节点替换，窗口函数与不在结果里的排序项作为派生表的列）；`Many` 的 `countDistinct`、`stringAgg`；`firstValue`/`lastValue`/`ntile`、`lag`/`lead` 默认值；`db.page(q, page, size, total)`；金样例 `qualify`、`window-values`、`many-text`。
 - **第 3 批 性能（待做）**：`groupJoin(m -> m.deliveries())` 把同一关系的多个 count/sum/any 合成一个 GROUP BY 派生表；子列表每个父行限数；`@Where` 走一对多路径时生成 EXISTS。
 - **决定不做**：类型化元组（Java 局部 record 加 `row` 已够）、跨方言日期格式串翻译（易错，保留方言函数）、递归 CTE（HANA 不支持）、动态表名、多对多中间表、JSON。
 

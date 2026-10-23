@@ -313,11 +313,12 @@ export abstract class Database {
     return events;
   }
 
-  /** 页码从 1 开始；总数来自对同一查询的 COUNT(*)。 */
-  async page<R>(q: Query<R>, page: number, size: number): Promise<Page<R>> {
+  /** 页码从 1 开始；总数来自对同一查询的 COUNT(*)，已知总数（例如翻页时沿用第一页的）时传入 total，不再执行 COUNT。 */
+  async page<R>(q: Query<R>, page: number, size: number, total?: number): Promise<Page<R>> {
     if (!Number.isInteger(page) || !Number.isInteger(size) || page < 1 || size < 1) throw new RangeError("page and size are integers from 1");
-    const [rows, total] = await Promise.all([this.list(q.limit(size).offset((page - 1) * size)), this.count(q)]);
-    return Object.freeze({ rows, total, page, size, totalPages: Math.ceil(total / size) });
+    if (total !== undefined && (!Number.isSafeInteger(total) || total < 0)) throw new RangeError("total is a non-negative integer");
+    const [rows, counted] = await Promise.all([this.list(q.limit(size).offset((page - 1) * size)), total ?? this.count(q)]);
+    return Object.freeze({ rows, total: counted, page, size, totalPages: Math.ceil(counted / size) });
   }
 
   /** 手写 SQL，使用 :name 命名参数，按列标签映射。数组会为 IN (:list) 展开。 */

@@ -188,17 +188,30 @@ export class SqlWriter {
     return previous;
   }
 
-  /** 渲染一个节点。 */
+  /** 渲染每个节点前先经过它，可以把节点换成别的写法；没有时原样渲染。 */
+  #substitution: ((node: Renderable) => Renderable) | undefined;
+
+  /** 渲染一个节点；设置了替换时先经过替换。 */
   render(node: Renderable): this {
-    node.render(this);
+    (this.#substitution?.(node) ?? node).render(this);
     return this;
+  }
+
+  /**
+   * 设置节点替换并返回原来的设置（用完要还原）；渲染器用它把 QUALIFY 条件里的窗口函数换成派生表的列。
+   * 替换只看节点本身，被换掉的节点不会再往下渲染。
+   */
+  substitute(next: ((node: Renderable) => Renderable) | undefined): ((node: Renderable) => Renderable) | undefined {
+    const previous = this.#substitution;
+    this.#substitution = next;
+    return previous;
   }
 
   /** 用分隔符依次渲染多个节点。 */
   join(nodes: readonly Renderable[], separator: string): this {
     nodes.forEach((node, i) => {
       if (i > 0) this.sql(separator);
-      node.render(this);
+      this.render(node);
     });
     return this;
   }
@@ -227,6 +240,7 @@ export class SqlWriter {
   fork(): SqlWriter {
     const w = new SqlWriter(this.dialect, this.settings);
     w.#aliases = this.#aliases;
+    w.#substitution = this.#substitution;
     return w;
   }
 

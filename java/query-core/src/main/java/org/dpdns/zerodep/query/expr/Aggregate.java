@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.expr;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -62,6 +63,9 @@ public final class Aggregate<T> extends Expr<T> {
         else w.join(args, ", ");
         w.sql(")");
     }
+
+    /** node 是否是加了 OVER (...) 的窗口函数；QUALIFY 用它找出条件里的窗口函数。 */
+    public static boolean isWindow(Renderable node) { return node instanceof Over; }
 
     /** 只有一个参数的聚合沿用该列的列名：sum(l.quantity()) 在 cols(...) 里叫 quantity。 */
     @Override public String nameHint() { return args.size() == 1 ? args.get(0).nameHint() : null; }

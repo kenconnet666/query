@@ -67,6 +67,13 @@ public final class From1<T1> extends AbstractFrom<From1<T1>> {
     /** HAVING 条件；多次调用之间是 AND。 */
     public From1<T1> having(Fn.F1<T1, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1)))); }
 
+    /**
+     * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+     * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
+     * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+     */
+    public From1<T1> qualify(Fn.F1<T1, Cond> cond) { return rebuild(spec.qualify(condition(() -> cond.apply(p1)))); }
+
     /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
     public From1<T1> orderBy(Fn.F1<T1, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(p1)))); }
 

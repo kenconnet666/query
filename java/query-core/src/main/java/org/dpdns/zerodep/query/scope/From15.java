@@ -92,6 +92,13 @@ public final class From15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13
     /** HAVING 条件；多次调用之间是 AND。 */
     public From15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> having(Fn.F15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15)))); }
 
+    /**
+     * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+     * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
+     * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+     */
+    public From15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> qualify(Fn.F15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, Cond> cond) { return rebuild(spec.qualify(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15)))); }
+
     /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
     public From15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> orderBy(Fn.F15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15)))); }
 

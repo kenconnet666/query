@@ -59,7 +59,7 @@ import {
   type Query,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { addDays, addMonths, addYears, day, daysBetween, month, stringAgg, year } from "@zerodep-dev/query-core";
+import { addDays, addMonths, addYears, day, daysBetween, firstValue, lastValue, month, ntile, stringAgg, year } from "@zerodep-dev/query-core";
 import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
 import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
 import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg } from "@zerodep-dev/query-postgres";
@@ -267,6 +267,9 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   },
   "date-functions": plain(() => dateFunctions()),
   "conditional-aggregates": plain(() => conditionalAggregates()),
+  qualify: plain(() => qualify()),
+  "window-values": plain(() => windowValues()),
+  "many-text": { filtered: true, query: () => manyText() },
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -300,6 +303,38 @@ export function dateFunctions() {
       minusMonth: addMonths(e.onDay, -1),
       plusYear: addYears(e.onDay, 1),
       days: daysBetween(e.onDay, lit("2024-04-30", date)),
+    }));
+}
+
+/** 每个物料最新的两张交货单：窗口条件包成派生表，不在结果里的排序列作为额外的列带出来。 */
+export function qualify() {
+  return from(Lips)
+    .qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(2))
+    .orderBy((l) => [l.material, l.createdOn.desc()])
+    .select((l) => ({ material: l.material, delivery: l.delivery }));
+}
+
+/** 窗口里的首行、末行（整个分区）、带默认值的上一行和分组号。 */
+export function windowValues() {
+  return from(Lips)
+    .orderBy((l) => l.delivery)
+    .select((l) => ({
+      delivery: l.delivery,
+      first: firstValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
+      last: lastValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery).rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())),
+      previous: lag(l.quantity, 1, "0").over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
+      half: ntile(2).over((w) => w.orderBy(l.delivery)),
+    }));
+}
+
+/** 一对多上的去重计数和按顺序拼接的文本。 */
+export function manyText() {
+  return from(Mara)
+    .orderBy((m) => m.material)
+    .select((m) => ({
+      material: m.material,
+      orders: m.deliveries.countDistinct((l) => l.salesOrder),
+      deliveries: m.deliveries.orderBy((l) => l.delivery).stringAgg((l) => l.delivery, ","),
     }));
 }
 

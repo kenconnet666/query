@@ -1,0 +1,9 @@
+-- parameters: ["100","100","100"]
+SELECT mara."MATNR" AS material, (SELECT COUNT(DISTINCT lips."VGBEL")
+FROM "QUERY_IT"."LIPS" lips
+WHERE lips."MANDT" = ? AND lips."MATNR" = mara."MATNR" AND lips."MANDT" = mara."MANDT") AS orders, (SELECT STRING_AGG(lips2."VBELN", ',' ORDER BY lips2."VBELN" ASC)
+FROM "QUERY_IT"."LIPS" lips2
+WHERE lips2."MANDT" = ? AND lips2."MATNR" = mara."MATNR" AND lips2."MANDT" = mara."MANDT") AS deliveries
+FROM "QUERY_IT"."MARA" mara
+WHERE mara."MANDT" = ?
+ORDER BY mara."MATNR" ASC

@@ -74,6 +74,13 @@ public final class From6<T1, T2, T3, T4, T5, T6> extends AbstractFrom<From6<T1, 
     /** HAVING 条件；多次调用之间是 AND。 */
     public From6<T1, T2, T3, T4, T5, T6> having(Fn.F6<T1, T2, T3, T4, T5, T6, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6)))); }
 
+    /**
+     * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
+     * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
+     * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
+     */
+    public From6<T1, T2, T3, T4, T5, T6> qualify(Fn.F6<T1, T2, T3, T4, T5, T6, Cond> cond) { return rebuild(spec.qualify(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6)))); }
+
     /** 排序：一个表达式（升序）、asc()/desc()，多项写 orders(a, b.desc())。 */
     public From6<T1, T2, T3, T4, T5, T6> orderBy(Fn.F6<T1, T2, T3, T4, T5, T6, ? extends OrderItem> order) { return rebuild(spec.orderBy(OrderList.of(order.apply(p1, p2, p3, p4, p5, p6)))); }
 

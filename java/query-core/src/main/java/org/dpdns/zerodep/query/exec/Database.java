@@ -154,6 +154,13 @@ public abstract class Database {
         return new Page<>(rows, count(q), page, size);
     }
 
+    /** 同上，但总行数由调用方给出（例如翻页时沿用第一页查到的总数），不再执行 COUNT 查询。 */
+    public <R> Page<R> page(Query<R> q, int page, int size, long total) {
+        if (page < 1 || size < 1) throw new IllegalArgumentException("page and size start at 1");
+        if (total < 0) throw new IllegalArgumentException("total must not be negative");
+        return new Page<>(list(q.limit(size).offset((page - 1) * size)), total, page, size);
+    }
+
     /** 手写 SQL，用 :name 形式的命名参数，结果按列标签映射。集合参数会展开成 IN (:list)。 */
     public NativeQuery sql(String sql) { return new NativeQuery(this, sql); }
 

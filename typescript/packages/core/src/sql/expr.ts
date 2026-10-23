@@ -699,6 +699,11 @@ export class Window implements Renderable {
 }
 
 /** 带窗口的函数：`fn OVER (window)`。 */
+/** node 是否是加了 OVER (...) 的窗口函数；QUALIFY 用它找出条件里的窗口函数。 */
+export function isWindow(node: Renderable): boolean {
+  return node instanceof Over;
+}
+
 class Over<T> extends Expr<T> {
   constructor(
     readonly fn: Expr<T>,
