@@ -1,10 +1,10 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007）。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、级联、DDL 和迁移。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
@@ -73,7 +73,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
 ```
 
 - **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|spring`。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
-- **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`exec`，测试夹具在 `test/src/fixtures`。
+- **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`exec`，测试夹具在 `test/src/fixtures`。
 - **生成代码**：`scope/From1..From16`、`select/Rows` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：

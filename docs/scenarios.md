@@ -25,7 +25,7 @@
 | `QUALIFY` / 每组取前 N 行 | `Select.PART` 加外层 `where` | `qualify(l -> rowNumber().over(...).le(n))`：HANA 不支持 `QUALIFY`，三个库都自动包成派生表；关系上取第一行用 `many.first(order)` | 2.0 |
 | 分页 | `toPageResult`，可传入已知总数 | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)`；已知总数时 `page(q, page, size, total)` 不计数 | 1 / 2.0 |
 | 分块遍历 | `OffsetChunk` | `db.stream(q)`、`db.forEach(q, ...)`，在一个游标上逐行读取 | 1 |
-| `FOR UPDATE` | `forUpdate` | 属于写入场景 | — |
+| `FOR UPDATE` | `forUpdate` | `.with(forUpdate(Lock.SKIP_LOCKED))`，等待、`NOWAIT`、`SKIP LOCKED` 三种；HANA 写作 `IGNORE LOCKED` | 2.0 |
 | 原生 SQL | `sqlNativeSegment`，以及原生查询 | 类型化模板 `sql(Type, "...{0}", args)`，参数混用表达式和值，`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 当作数据源；整条原生 SQL 用 `db.sql("... :name").bind(...)` | 1 / 2.0 |
 
 ## 投影与映射
@@ -77,7 +77,14 @@
 | 结果缓存 | `sql-cache` 模块 | `QueryCache` SPI，自带进程内的 TTL 实现；缓存解码后的原始行 | 1 |
 | SQL 日志与测试 | `SQLParameterPrintFormat`、监听器 | `QueryListener`；`printSql` 按 MyBatis 格式打印；`debugSql()` 写回参数；`db.capture(...)` 收集语句；空跑连接 | 1 / 2.0 |
 | 分库分表 | sharding 模块 | — | — |
-| 写入、追踪、乐观锁、主键生成 | insert、update、track、`@Version` | 以后单独评估 | — |
+| 插入、更新、删除 | `insertable`、`updatable`、`deletable` | `insertInto(T).values(rows)` / `.from(query)`、`update(T).set(...).where(...)`、`deleteFrom(T).where(...)`；没有 WHERE 报错，`.all()` 放行；`expect(n)` 校验行数；见 [0007](decisions/0007-writes.md) | 2.0 |
+| 按主键写、乐观锁 | `@Version`、按实体更新 | `byId(rows)`：WHERE 主键加旧版本，SET 版本加一，冲突时抛异常；`skipEmpty().byId` 只更新非空属性 | 2.0 |
+| 主键生成 | `@Column(generatedKey)`、主键生成器 | `@Generated` 加 `db.insertKeys(insert)` 取回数据库生成的值；不做应用侧的主键生成器 | 2.0 |
+| 插入或更新 | `onConflictThen` | `.onConflict(keys).update(cols)` / `.doNothing()`：HANA `MERGE`、PostgreSQL `ON CONFLICT`、MySQL `ON DUPLICATE KEY UPDATE` | 2.0 |
+| 逻辑删除 | `@LogicDelete` 加策略 | `@LogicDelete(active, deleted)`，数值、文本或时间戳列；查询自动过滤，删除改成 UPDATE，`.physically()` 物理删除 | 2.0 |
+| 审计字段 | 拦截器 `EntityInterceptor` | 数据库实例的 `onInsert` / `onUpdate`，按父接口匹配，总是覆盖 | 2.0 |
+| 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
+| 实体追踪 | `track` | — | — |
 | DDL、迁移 | code first、migration | — | — |
 
 ## 流程引擎的读查询
@@ -94,4 +101,4 @@
 | 办理人工作量 | `GROUP BY ASSIGNEE_` 加 `SUM(CASE WHEN ...)` | `groupBy` 加 `count().filter(...)` | `workflow-workload` |
 | 读取时计算耗时 | Warm-Flow、SnakerFlow 不存耗时，按方言写日期差 | `secondsBetween(start, end)` | `workflow-elapsed` |
 
-写入能力（乐观锁的 `UPDATE ... WHERE REV_ = ?`、认领任务的 `FOR UPDATE SKIP LOCKED`、批量插入和逻辑删除）不在本库范围内，见交接文档里待用户决定的事项。
+写入一侧（乐观锁的 `UPDATE ... WHERE REV_ = ?`、认领任务的 `FOR UPDATE SKIP LOCKED`、批量插入和逻辑删除）由 2.0 的写入能力覆盖，见上表和 [0007](decisions/0007-writes.md)；认领任务的金样例是 `workflow-claim`。流程引擎本身暂不做。

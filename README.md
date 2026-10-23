@@ -1,12 +1,12 @@
 # query
 
-面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
+面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：把查询和写语句（插入、更新、删除、插入或更新）写成可组合、可复用、可校验的值，再按方言渲染并执行；不做实体跟踪、级联、DDL 和迁移。
 
 当前开发 2.0.0（`feat/v2` 分支；1.0.0 已发布）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
 - 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[迁移指南](docs/migration.md)（从手写 SQL 迁移、从 1.x 升级）
 - 版本：[变更记录](CHANGELOG.md)、[手动发布步骤](docs/release.md)
-- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)
+- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)
 - 场景覆盖计划：[场景对照](docs/scenarios.md)
 
 ## 快速上手

@@ -2,7 +2,7 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）和阶段 B（流程引擎读查询），尚未合并、尚未发布。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）和写入能力，尚未合并、尚未发布。
 
 ## 当前状态
 
@@ -34,17 +34,18 @@
 - 简化后的六张表（定义、实例、任务、身份链接、变量、历史任务）和查询放在测试夹具 `Workflow`（Java）与 `fixtures/workflow.ts`（TS）：待办（候选人或候选组，条件对象，分页计数）、变量过滤三种写法（EXISTS、groupJoin、多别名 JOIN）、最新版本两种写法（自关联的 `versions().max`、qualify）、已办、定义统计（groupJoin）、工作量（条件聚合）、读取时算耗时。金样例 `workflow-*` 共 9 个场景，三库实库全部通过。
 - 由此补上的能力：`secondsBetween(from, to)`（三库统一为整秒、舍去小数）。其余写法用现有能力即可，没有发现别扭到需要新 API 的地方。
 
-### 写入能力（进行中，用户 2026-10-24 确认：插入时全部列都写、逻辑删除和审计填充这一轮做、只拦没有 WHERE 的 DELETE）
+### 写入能力（已完成，设计见 [0007](../docs/decisions/0007-writes.md)；用户 2026-10-24 确认：插入时全部列都写、逻辑删除和审计填充这一轮做、只拦没有 WHERE 的 DELETE）
 
 - **第 1 步（已完成）**：`@Id`/`@Version`/`@Generated`/`@LogicDelete` 注解和 TS 装饰器（元数据就绪，后几步用）；`insertInto(T).values(rows)`、`.from(query)`，`update(T).set(...).where(...)`，`deleteFrom(T).where(...)`；没有 WHERE 报错（`.all()` 放行），全局过滤器进 WHERE，`expect(n)`，`skipEmpty` 省略空值的 SET；`db.execute`、`db.render(write)`、`db.transaction(...)`（Java 线程绑定连接，TS 用 AsyncLocalStorage；Spring 用 @Transactional）；多行写入自动在一个事务里，Java 用 JDBC 批量。金样例 `write-*`，三库实库通过。
 - **第 2 步（已完成）**：`update(T).byId(rows)`、`deleteFrom(T).byId(rows)`：按 `@Id` 定位，有 `@Version` 时 `SET version = version + 1 ... AND version = ?`，期望每行一行（乐观锁冲突抛 UnexpectedRowCount）；`skipEmpty().byId(row)` 只更新非空属性；`db.insertKeys(insert)` 取回 `@Generated` 的值（方言钩子：PG 由驱动或 RETURNING，MySQL 生成键或 insertId，HANA 在同一连接上查 CURRENT_IDENTITY_VALUE()）。
 - **第 3 步（已完成）**：`insertInto(T).values(row).onConflict(keys?).update(cols?)` / `.doNothing()`（方言钩子：HANA `MERGE ... USING (SELECT ? AS ... FROM DUMMY)`，PG `ON CONFLICT ... DO UPDATE SET c = EXCLUDED.c`，MySQL `... AS new ON DUPLICATE KEY UPDATE c = new.c`，什么也不做时 `k = k`）；加锁读 `.with(forUpdate(Lock))`（HANA 的 SKIP LOCKED 写作 IGNORE LOCKED）。
-- **待做**：第 4 步逻辑删除 + 审计填充；最后写 API 文档、决定记录 0007、CHANGELOG。设计草稿在会话 scratchpad 的 `write-design.md`。
+- **第 4 步（已完成）**：`@LogicDelete` 并入表的过滤条件（Java `SourceFilters`，TS `conditionsFor`），查询、连接、关系、UPDATE/DELETE 都带"未删除"条件，`unfiltered()` 一并关闭；删除改写成 UPDATE（`byId` 时版本加一），`.physically()` 物理删除；插入时补上未删除的值；时间戳列用 `IS NULL` / `CURRENT_TIMESTAMP`。审计填充：Java `Config.onInsert/onUpdate`（`write/Fills`），TS `DatabaseOptions.fills` 与 `onInsert`/`onUpdate`，作用于插入、更新、`byId`、插入或更新的更新部分和逻辑删除，总是覆盖。金样例 `write-logic-delete`、`logic-delete-query`。
+- **文档**：两份 API 说明的第 15 节、[0007](../docs/decisions/0007-writes.md)、场景对照的写入行、0001 第 4 条、CHANGELOG。
 
 ### 测试（本机三库全部通过）
 
-- **Java**：core 185，HANA 105，PostgreSQL 109，MySQL 102（含实库场景与金样例），Spring 5。
-- **TS**：单元、编译期与金样例 271，实库 142。
+- **Java**：core 200，HANA 125，PostgreSQL 129，MySQL 122（含实库场景与金样例），Spring 5。
+- **TS**：单元、编译期与金样例 322，实库 166。
 - 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
@@ -52,11 +53,11 @@
 - **合并 `feat/v2`**：需要用户同意后开 PR 合并进 `master`。
 - **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
-- **是否给本库加写入能力**（自研流程引擎需要）：流程引擎的写操作有乐观锁更新（`UPDATE ... SET REV_ = ? WHERE ID_ = ? AND REV_ = ?`，影响 0 行即并发冲突）、认领任务（Activiti 7 用 `FOR UPDATE SKIP LOCKED`，PG 和 MySQL 写法不同，HANA 未见等价写法）、批量插入、按编号批量删除、逻辑删除（更新 `del_flag`）和历史清理（按时间查编号再删除）。可选方向：本库加最小的 insert/update/delete 构建器（条件对象可复用于 update/delete 的 WHERE），或者写入交给 JDBC/MyBatis、本库只管查询。请用户决定。
+- **流程引擎本身**：用户 2026-10-24 说先不做；读查询（阶段 B）和写入（0007）已经为它备好。
 
 ## 下一步
 
-用户在 2026-10-23 定下的两个阶段（对照 EasyQuery、流程引擎读查询）都已完成。接下来等用户决定上面的待定事项：写入能力的方向、合并与发布 2.0。
+阶段 A、阶段 B 和写入能力都已完成并推送到 `feat/v2`。接下来等用户决定上面的待定事项：合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎。
 
 ## 换电脑后的准备
 

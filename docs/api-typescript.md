@@ -34,6 +34,7 @@
 | 每组取前 N 行（`QUALIFY`） | `.qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(3))` |
 | 原生 SQL 片段 | `` sql(text)`LPAD(${l.material}, ${18}, '0')` ``、`` sqlCond`...` ``、`` sqlTable({ ... })`...` `` |
 | 执行 | `await db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
+| `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T).values(rows))`、`update(T).set((t) => ({ x: v })).where(...)`、`deleteFrom(T).where(...)`；按主键 `.byId(row)`，见第 15 节 |
 
 ## 1. 依赖与数据库实例
 
@@ -582,7 +583,62 @@ const db = new HanaDatabase(driver, {
 4. 监听器事件和 `printSql` 的输出里有 SQL 和参数，参数可能含业务数据，记录日志时脱敏；生产环境不要无条件打开 `printSql`。
 5. 多实例部署时，实现 `QueryCache` 接到 Redis 一类的共享缓存。
 
-## 15. 与 Java 版的差异
+## 15. 写入
+
+写语句是不可变的值，用法与 Java 版第 15 节相同；`db.render(write)` 看 SQL，`await db.execute(write)` 执行并返回影响的行数。设计取舍见 [0007](decisions/0007-writes.md)。
+
+```ts
+abstract class Audited {
+  @column("CREATED_AT", timestamp) createdAt!: string | null;
+  @column("UPDATED_AT", timestamp) updatedAt!: string | null;
+  @column("UPDATED_BY") updatedBy!: string | null;
+}
+
+@table("DOC", { schema: "APP" })
+class Doc extends Audited {
+  @id @column("ID") id!: string;                          // 主键，可多列
+  @column("TITLE") title!: string | null;
+  @version @column("VERSION", integer) version!: number;  // 乐观锁版本，integer 或 bigint
+  @logicDelete() @column("DELETED", integer) deleted!: number; // 逻辑删除，默认 0 未删除、1 已删除；logicDelete("N", "Y") 改值
+}
+
+@table("SEQ")
+class Seq {
+  @id @generated @column("ID", integer) id!: number;     // 数据库生成的主键：插入时不写
+  @column("NAME") name!: string;
+}
+```
+
+| 写法 | 说明 |
+| --- | --- |
+| `insertInto(Doc).values({ id: "D1", title: "a", version: 1 }, ...)` | 行是普通对象，键对应字段；各行的键必须相同，值为 null 写 NULL。行在一个事务里逐行执行 |
+| `insertInto(Note).from(query)` | 查询的结果键对应字段 |
+| `update(Note).set((n) => ({ qty: plus(n.qty, val(10)), status: "closed" })).where(...).expect(1)` | SET 的值可以是值或表达式；`skipEmpty()` 省略空值；影响的行数不符时抛 `UnexpectedRowCountError` |
+| `deleteFrom(Note).where((n) => n.status.eq("closed"))` | 没有 where 的 UPDATE、DELETE 报错，`.all()` 放行；全局过滤器和逻辑删除的条件加进 WHERE，`unfiltered()` 关闭 |
+| `update(Doc).byId(row)`、`deleteFrom(Doc).byId(row)` | 按主键（和版本）定位一行，SET 其余字段、版本加一；版本不对时抛 `UnexpectedRowCountError` |
+| `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
+| `.onConflict().update((d) => d.title)`、`.onConflict((d) => d.id).doNothing()` | 插入或更新；不写键时用 `@id` 的列，`update()` 不写列时更新键以外的全部列 |
+| `.with(forUpdate("skipLocked"))` | 加锁读，另有 `"wait"`（默认）、`"nowait"`；HANA 写作 `IGNORE LOCKED` |
+| `await db.transaction(async () => { ... })` | 一个连接上的事务：正常返回提交，抛出时回滚；里面的 `db.*` 调用经 AsyncLocalStorage 用同一个连接，嵌套调用加入外层事务 |
+| `deleteFrom(Doc).where(...)` 在带 `@logicDelete` 的表上 | 改写成 `UPDATE ... SET DELETED = 1`，`.physically()` 才真正删除；查询、连接、关系都自动加"未删除"条件；插入时补上未删除的值；`timestamp` 列记录删除时间（`IS NULL` / `CURRENT_TIMESTAMP`） |
+
+**审计字段自动填充**：
+
+```ts
+const db = database(pool, {
+  fills: [
+    onInsert(Audited, (a) => a.createdAt, () => now()),
+    onUpdate(Audited, (a) => a.updatedAt, () => currentTimestamp()),  // 也可以返回表达式
+    onUpdate(Audited, (a) => a.updatedBy, () => currentUser()),
+  ],
+});
+```
+
+按实体的基类匹配。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列；值每条语句取一次，总是覆盖行里或 SET 里的同名项。`toSql(dialect)` 没有数据库实例，不带填充。
+
+自己实现的 `Driver` 要在 `DriverResult` 里返回 `affected`（MySQL 还有 `insertId`），并实现 `transaction(work)` 才能用 `db.transaction` 和多行写入。
+
+## 16. 与 Java 版的差异
 
 概念一一对应，两端渲染出的 SQL 完全相同，由 `spec/render/` 的金样例保证。
 

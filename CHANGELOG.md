@@ -30,6 +30,12 @@
 - **一对多与分页**：`many.orderBy(...).limit(n).list(...)` 每个父行只取前 n 个子行；`many.countDistinct(...)`、`many.stringAgg(...)`（顺序取 `orderBy`）；`db.page(q, page, size, total)` 沿用已知总数，不再执行 COUNT。
 - **文本匹配**：`contains`、`startsWith`、`endsWith`，用户输入里的 `%`、`_` 按普通字符匹配。
 - **原生 SQL 片段**：`sql`、`sqlCond` 的参数可以混用表达式和值，集合展开成多个参数；`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 把原生查询当作数据源；`identifier(name)` 按方言加引号。
+- **写入**（[0007](docs/decisions/0007-writes.md)）：不可变的 `insertInto(T).values(rows)` / `.from(query)`、`update(T).set(...).where(...)`、`deleteFrom(T).where(...)`，`db.execute` 返回影响的行数；没有 WHERE 的更新和删除报错（`.all()` 放行），全局过滤器进入 WHERE，`expect(n)` 校验行数；多行写入自动在一个事务里，Java 用 JDBC 批量。
+- **按主键写与乐观锁**：`@Id`、`@Version`（TS `@id`、`@version`），`update(T).byId(rows)`、`deleteFrom(T).byId(rows)`，版本不对时抛 `UnexpectedRowCountException`（TS `UnexpectedRowCountError`）。
+- **生成主键**：`@Generated` 加 `db.insertKeys(insert)`，按行的顺序返回数据库生成的值。
+- **插入或更新与加锁读**：`.onConflict(keys).update(cols)` / `.doNothing()`（HANA `MERGE`、PostgreSQL `ON CONFLICT`、MySQL `ON DUPLICATE KEY UPDATE`）；`.with(forUpdate(Lock.SKIP_LOCKED))`，HANA 写作 `IGNORE LOCKED`。
+- **事务**：`db.transaction(work)`（Java 线程绑定连接，TS 用 AsyncLocalStorage）；接入 Spring 时交给 `@Transactional`。TS 的 `DriverResult` 增加 `affected`、`insertId`，`Driver` 增加 `transaction`。
+- **逻辑删除与审计填充**：`@LogicDelete`（TS `@logicDelete()`）让查询、连接和关系自动只看未删除的行，删除改写成 UPDATE，`.physically()` 物理删除；数据库实例的 `onInsert` / `onUpdate`（TS `fills`）在插入、更新、插入或更新和逻辑删除时自动填充审计列。
 - **打印与测试 SQL**：`Rendered.debugSql()`（参数写回原处）、`parameterText()`；数据库实例的 `printSql` 选项按 MyBatis 的格式打印语句、参数、行数和耗时；`db.capture(...)` 收集一段代码执行的全部语句；`ConnectionProvider.dryRun()` / `dryRunDriver()` 不连数据库也能执行。
 
 ### 修复

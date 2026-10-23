@@ -26,6 +26,8 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | 每组取前 N 行（`QUALIFY`） | `.qualify(l -> rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc())).le(3L))` |
 | 原生 SQL 片段 | `sql(String.class, "LPAD({0}, {1}, '0')", l.material(), 18)` |
 | 执行 | `db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
+| `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T.class).values(rows))`、`update(T.class).set(t -> t.x().to(v)).where(...)`、`deleteFrom(T.class).where(...)`；按主键 `.byId(row)`，见第 15 节 |
+| 插入或更新、`FOR UPDATE` | `.onConflict().update(t -> t.x())`、`.with(forUpdate(Lock.SKIP_LOCKED))` |
 
 ## 1. 依赖与数据库实例
 
@@ -640,8 +642,131 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 5. **日志**：用 `printSql()` 或监听器记录慢查询和失败（示例见第 12 节）。事件里有 SQL 和参数，参数可能含业务数据，按日志规范脱敏。
 6. **缓存**：`cached(...)` 按 SQL 和参数缓存，适合多人同时看的大屏。内存缓存只在本进程有效，多实例部署时实现 `QueryCache` 接到 Redis。
 7. **方言实例**：每个数据源一个 `Database`，作为单例长期复用。元数据、渲染结果都缓存在里面，并发使用是安全的。
-8. **全局过滤器**：多租户、逻辑删除的条件配成 `filter(...)`，不要在每个查询里重复写；`unfiltered()` 只用于确实要跨租户的查询。
+8. **全局过滤器**：多租户的条件配成 `filter(...)`，逻辑删除用 `@LogicDelete`，不要在每个查询里重复写；`unfiltered()` 只用于确实要跨租户或看已删除行的查询。
+9. **写入**：多行写入和 `byId` 已自动放进一个事务；跨多条语句的业务操作放进 `db.transaction(...)` 或 `@Transactional`。
 
-**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`Fn`；`table`、`expr`、`scope`、`select`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`NativeQuery`、`Page`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`。
+**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`Fn`；`table`、`expr`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`。
 
 `dialect` 包是扩展点，方法签名可能在次版本中增加参数。`exec.JdbcExecutor`、`MappingPlan` 等其余公开类型只供库内部跨包使用，不在承诺范围内。
+
+## 15. 写入
+
+写语句和查询一样是不可变的值：可以先拼好、复用，`toSql(dialect)` 或 `db.render(write)` 看 SQL，`db.execute(write)` 执行并返回影响的行数。设计取舍见 [0007](decisions/0007-writes.md)。
+
+### 声明
+
+```java
+@Table(schema = "APP", value = "DOC")
+public interface Doc extends Audited {             // Audited 声明审计列，见下文
+    @Id @Column("ID") Col<String> id();            // 主键，可多列
+    @Column("TITLE") Col<String> title();
+    @Version @Column("VERSION") Col<Integer> version();      // 乐观锁版本，Integer 或 Long
+    @LogicDelete @Column("DELETED") Col<Integer> deleted();  // 逻辑删除，默认 0 未删除、1 已删除
+}
+
+@Table("SEQ")
+public interface Seq extends Entity {
+    @Id @Generated @Column("ID") Col<Long> id();   // 数据库生成的主键：插入时不写
+    @Column("NAME") Col<String> name();
+}
+```
+
+`@LogicDelete(active = "N", deleted = "Y")` 按列的类型解析两个值（Boolean、整数、文本）；列是 `LocalDateTime` 时记录删除时间，未删除是 `IS NULL`，删除写 `CURRENT_TIMESTAMP`。版本列、生成列、逻辑删除列每张表各至多一列。
+
+### 插入、更新、删除
+
+```java
+db.execute(insertInto(Doc.class).values(new DocRow("D1", "a", 1), new DocRow("D2", "b", 1)));
+db.execute(insertInto(Note.class).from(from(Note.class).where(...).select(n -> cols(lit("N9").as("id"), n.title()))));
+
+db.execute(update(Note.class)
+    .set(n -> n.qty().to(plus(n.qty(), val(10))))
+    .set(n -> n.status().to("closed"))
+    .where(n -> all(n.id().eq(id), n.status().eq("open")))
+    .expect(1));                                  // 影响的行数不是 1 时抛 UnexpectedRowCountException
+
+db.execute(deleteFrom(Note.class).where(n -> n.status().eq("closed")));
+```
+
+- **行**：record 或 POJO，按属性名对应表的列，属性名找不到列时报错；所有属性都写，null 写成 NULL。多行插入按 JDBC 批量执行（每批 500 行），并自动放在一个事务里。
+- **从查询插入**：查询的列名（`cols` 的名字或 `as(...)`）对应表的属性名。
+- **SET**：`col.to(值)` 或 `col.to(表达式)`；`skipEmpty()` 下值为空的 SET 项省略，全部省略时不执行。
+- **WHERE**：lambda 条件或条件对象（同第 7 节）。没有条件的 UPDATE、DELETE 直接报错，确实要改整张表时写 `.all()`。全局过滤器和逻辑删除的条件照常加进 WHERE，`unfiltered()` 关闭。
+
+### 按主键更新与删除、乐观锁
+
+```java
+db.execute(update(Doc.class).byId(new DocRow("D1", "b", 1)));
+// UPDATE APP.DOC DOC SET TITLE = ?, VERSION = VERSION + 1 WHERE DOC.ID = ? AND DOC.VERSION = ?
+db.execute(update(Doc.class).skipEmpty().byId(row));   // 只 SET 行里非空的属性
+db.execute(deleteFrom(Doc.class).byId(row));           // WHERE 主键（和版本）
+```
+
+`byId` 的行必须带主键（有版本列时还要带版本），每行一条语句，每条期望改到 1 行，否则抛 `UnexpectedRowCountException`：版本不对就是被别人改过（乐观锁冲突）。
+
+### 取回生成的主键
+
+```java
+List<Long> ids = db.insertKeys(insertInto(Seq.class).values(new SeqRow("a"), new SeqRow("b")));
+```
+
+按行的顺序返回 `@Generated` 列的值。PostgreSQL、MySQL 用 `getGeneratedKeys`；HANA 在同一连接上执行 `SELECT CURRENT_IDENTITY_VALUE() FROM DUMMY`，所以逐行执行。
+
+### 插入或更新
+
+```java
+insertInto(Doc.class).values(row).onConflict().update(d -> d.title());   // 主键冲突时只更新标题
+insertInto(Doc.class).values(row).onConflict().update();                 // 更新键以外的全部列
+insertInto(Doc.class).values(row).onConflict(d -> d.id()).doNothing();   // 冲突时保留原来的行
+```
+
+`onConflict()` 不写键时用 `@Id` 的列，键必须是插入的列。HANA 写成 `MERGE INTO ... USING (SELECT ? AS ... FROM DUMMY)`，PostgreSQL 写成 `ON CONFLICT (...) DO UPDATE SET c = EXCLUDED.c`（键上要有主键或唯一约束），MySQL 写成 `... AS new ON DUPLICATE KEY UPDATE c = new.c`。
+
+### 加锁读
+
+```java
+from(Task.class).where(t -> t.assignee().isNull()).orderBy(t -> t.createTime()).limit(1)
+    .with(forUpdate(Lock.SKIP_LOCKED))     // 或 forUpdate()、forUpdate(Lock.NOWAIT)
+```
+
+写在语句末尾；HANA 的 `SKIP_LOCKED` 写作 `IGNORE LOCKED`。锁只在事务里有意义，放进 `db.transaction(...)` 或 `@Transactional`。
+
+### 事务
+
+```java
+db.transaction(() -> {
+    db.execute(...);
+    db.list(...);              // 同一个连接，看得到自己的写入
+});                            // 正常返回时提交，抛出异常时回滚
+```
+
+不用 Spring 时 `db.transaction(work)` 把一个连接绑定到当前线程，嵌套调用加入外层事务。用 `SpringConnections` 时 `transaction(...)` 报错，事务交给 `@Transactional`。
+
+### 逻辑删除
+
+带 `@LogicDelete` 的表：
+
+- 查询、连接、关系、子查询和 UPDATE 里都自动加上"未删除"的条件（`DOC.DELETED = 0`），与全局过滤器一样由 `unfiltered()` 关闭；
+- `deleteFrom(Doc.class).where(...)` 改写成 `UPDATE ... SET DELETED = 1 WHERE DELETED = 0 AND ...`，`byId` 删除时版本同时加一；`.physically()` 才真正删除；
+- 插入时行里没有这一列，就写入未删除的值。
+
+### 审计字段自动填充
+
+```java
+public interface Audited extends Entity {
+    @Column("CREATED_AT") Col<LocalDateTime> createdAt();
+    @Column("UPDATED_AT") Col<LocalDateTime> updatedAt();
+    @Column("UPDATED_BY") Col<String> updatedBy();
+}
+
+Hana.database(dataSource, c -> c
+    .onInsert(Audited.class, a -> a.createdAt(), LocalDateTime::now)
+    .onUpdate(Audited.class, a -> a.updatedAt(), currentTimestamp())     // 也可以是表达式
+    .onUpdate(Audited.class, a -> a.updatedBy(), currentUser::name));
+```
+
+按表接口的父接口匹配（同全局过滤器）。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列。填充的值每条语句取一次，总是覆盖行里或 SET 里的同名项。`toSql(dialect)` 没有数据库实例，所以不带填充；要看实际执行的 SQL 用 `db.render(write)`。
+
+### 执行与测试
+
+监听器、`printSql`、`db.capture(...)` 和空跑连接都覆盖写语句；空跑时影响的行数为 0，不检查 `expect`。
