@@ -29,6 +29,8 @@ public final class SqlWriter {
     private static final class Aliases {
         final Map<Object, String> byOwner = new IdentityHashMap<>();
         final Set<String> used = new HashSet<>();
+        /** 探查用的写入器记下渲染过程中引用到的数据源；普通写入器为 null。 */
+        Set<Object> touched;
     }
 
     /** 使用方言的默认设置，没有函数覆盖和渲染属性。 */
@@ -53,6 +55,7 @@ public final class SqlWriter {
 
     /** 数据源在整条语句中的别名；首选名已被占用时加数字后缀。 */
     public String aliasFor(Object owner, String preferred) {
+        if (aliases.touched != null) aliases.touched.add(owner);
         String known = aliases.byOwner.get(owner);
         if (known != null) return known;
         String base = dialect.foldCase(preferred);
@@ -61,6 +64,19 @@ public final class SqlWriter {
         aliases.byOwner.put(owner, alias);
         return alias;
     }
+
+    /**
+     * 探查用的写入器：设置与本写入器相同，别名独立，并记下渲染过程中引用到的每个数据源，见 {@link #touched()}。
+     * 渲染器用它先试渲染一遍，找出哪些隐式连接真正被用到。
+     */
+    public SqlWriter probe() {
+        Aliases fresh = new Aliases();
+        fresh.touched = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        return new SqlWriter(dialect, functionOverrides, attributes, fresh);
+    }
+
+    /** 探查写入器记下的数据源；普通写入器返回空集合。 */
+    public Set<Object> touched() { return aliases.touched == null ? Set.of() : aliases.touched; }
 
     /** 当前语句使用的方言。 */
     public Dialect dialect() { return dialect; }

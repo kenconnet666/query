@@ -156,7 +156,7 @@ class ProjectionTest {
 
     @Test
     void 表接口的default方法可以是计算列且不公开的接口也能用() {
-        String sql = from(Lips.class).select(l -> cols(l.all(), times(l.quantity(), lit(2)).as("doubled"))).toSql(DIALECT).sql();
+        String sql = from(Lips.class).select(l -> cols(l.columns(), times(l.quantity(), lit(2)).as("doubled"))).toSql(DIALECT).sql();
         assertTrue(sql.startsWith("SELECT LIPS.MANDT AS \"client\", LIPS.ERDAT AS \"createdOn\", LIPS.VBELN AS \"delivery\""), sql);
         assertTrue(sql.contains("(LIPS.LFIMG * 2) AS \"doubled\""), sql);
         assertTrue(PrivateTables.render(DIALECT).startsWith("SELECT UPPER(HIDDEN.MATNR) AS \"value\""));

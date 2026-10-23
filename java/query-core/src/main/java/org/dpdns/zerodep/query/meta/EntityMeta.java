@@ -16,15 +16,20 @@ public final class EntityMeta<E> {
     private final String schema;
     private final List<PropertyMeta> properties;
     private final Map<String, PropertyMeta> byName;
+    private final Map<String, RelationMeta> relations;
 
     /** 仅由 {@link Metadata} 构造；属性名在同一类型内必须唯一。 */
-    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties) {
+    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties, Map<String, RelationMeta> relations) {
         this.type = type;
         this.table = table;
         this.schema = schema;
         this.properties = List.copyOf(properties);
         this.byName = properties.stream().collect(Collectors.toUnmodifiableMap(PropertyMeta::name, Function.identity()));
+        this.relations = Map.copyOf(relations);
     }
+
+    /** 用注解声明的关系；name 不是关系时返回 null。 */
+    public RelationMeta relation(String name) { return relations.get(name); }
 
     /** 被描述的类型。 */
     public Class<E> type() { return type; }

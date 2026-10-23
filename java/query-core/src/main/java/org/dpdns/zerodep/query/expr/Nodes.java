@@ -212,8 +212,42 @@ public final class Nodes {
     public static Cond of(java.util.function.Consumer<SqlWriter> body) { return new Of(body); }
 
     /** 二元比较：{@code left operator right}。 */
-    public static Cond compare(Expr<?> left, String operator, Expr<?> right) {
-        return of(w -> w.render(left).sql(" " + operator + " ").render(right));
+    public static Cond compare(Expr<?> left, String operator, Expr<?> right) { return new Comparison(left, operator, right); }
+
+    /** 比较条件 {@code left op right}；保留两侧，一对多关系的 {@code first(...)} 从中找出连接两张表的等值键。 */
+    public static final class Comparison extends Cond {
+        /** 左侧表达式。 */
+        public final Expr<?> left;
+        /** 运算符，例如 {@code =}。 */
+        public final String operator;
+        /** 右侧表达式。 */
+        public final Expr<?> right;
+
+        Comparison(Expr<?> left, String operator, Expr<?> right) {
+            this.left = left;
+            this.operator = operator;
+            this.right = right;
+        }
+
+        /** 写出 {@code left op right}。 */
+        @Override public void render(SqlWriter w) { w.render(left).sql(" " + operator + " ").render(right); }
+    }
+
+    /** 用 AND 连接的多个条件；保留各项，供 {@code first(...)} 拆开连接条件。 */
+    public static final class Conjunction extends Cond {
+        /** 各项条件，都不是空条件。 */
+        public final List<Cond> parts;
+
+        Conjunction(List<Cond> parts) { this.parts = List.copyOf(parts); }
+
+        /** 写出 {@code a AND b AND ...}。 */
+        @Override public void render(SqlWriter w) { w.join(parts, " AND "); }
+    }
+
+    /** 把条件拆成用 AND 连接的各项；不是 AND 的条件就是它自己。 */
+    public static List<Cond> conjuncts(Cond c) {
+        if (c.isEmpty()) return List.of();
+        return c instanceof Conjunction and ? and.parts : List.of(c);
     }
 
     /** {@code e BETWEEN low AND high}。 */
@@ -286,7 +320,9 @@ public final class Nodes {
         }
         if (kept.isEmpty()) return Cond.EMPTY;
         if (kept.size() == 1) return kept.get(0);
-        return of(w -> w.join(kept, " AND "));
+        List<Cond> flat = new ArrayList<>();
+        for (Cond c : kept) flat.addAll(conjuncts(c));
+        return new Conjunction(flat);
     }
 
     /** 任一成立（OR）。空条件的处理同 {@link #all}；每个操作数单独加括号。 */

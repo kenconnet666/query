@@ -7,10 +7,13 @@ import org.dpdns.zerodep.query.annotation.BlankAsNull;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
+import org.dpdns.zerodep.query.annotation.ManyToOne;
+import org.dpdns.zerodep.query.annotation.OneToMany;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.type.Converter;
 
 import java.lang.annotation.ElementType;
@@ -21,6 +24,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+
+import static org.dpdns.zerodep.query.Sql.all;
 
 /** SAP 风格的测试表与结果类，单元测试和各方言的实库场景共用。 */
 public final class Erp {
@@ -70,6 +75,12 @@ public final class Erp {
 
         /** 物料类型。 */
         @Column("MTART") Col<String> materialType();
+
+        /** 一对多：这个物料的交货行（同一集团）。 */
+        default Many<Lips> deliveries() { return many(Lips.class, l -> all(l.material().eq(material()), l.client().eq(client()))); }
+
+        /** 多对一：语言 1 的物料描述。 */
+        default Makt text() { return one(Makt.class, t -> all(t.material().eq(material()), t.client().eq(client()), t.language().eq("1"))); }
     }
 
     /** 按 SAP 数据的实际用法读 MARA：零件号去空格、空制造商读作 NULL，同时保留原值列。 */
@@ -108,6 +119,18 @@ public final class Erp {
 
         /** 参考的销售订单号。 */
         @Column("VGBEL") Col<String> salesOrder();
+
+        /** 多对一：物料主数据（同一集团）。 */
+        default Mara mara() { return one(Mara.class, m -> all(m.material().eq(material()), m.client().eq(client()))); }
+
+        /** 多对一：语言 1 的物料描述。 */
+        default Makt text() { return one(Makt.class, t -> all(t.material().eq(material()), t.client().eq(client()), t.language().eq("1"))); }
+
+        /** 一对多（注解写法）：参考的销售订单的业务数据。 */
+        @OneToMany(self = "salesOrder", target = "salesOrder") Many<Vbkd> salesData();
+
+        /** 多对一（注解写法）：任意语言的物料描述，只用于渲染测试。 */
+        @ManyToOne(self = {"client", "material"}, target = {"client", "material"}) Makt anyText();
     }
 
     /** 物料描述。 */

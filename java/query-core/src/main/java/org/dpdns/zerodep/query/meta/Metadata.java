@@ -3,10 +3,13 @@ package org.dpdns.zerodep.query.meta;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
+import org.dpdns.zerodep.query.annotation.ManyToOne;
+import org.dpdns.zerodep.query.annotation.OneToMany;
 import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.type.Converter;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -86,12 +89,18 @@ public final class Metadata {
             throw new IllegalArgumentException(type.getSimpleName() + " is an interface but does not extend Entity");
         }
         Map<String, PropertyMeta> columns = new TreeMap<>();
+        Map<String, RelationMeta> relations = new TreeMap<>();
         for (Method m : type.getMethods()) {
             if (m.isDefault() || Modifier.isStatic(m.getModifiers()) || m.getDeclaringClass() == Entity.class) continue;
-            if (columns.containsKey(m.getName())) continue;
+            if (columns.containsKey(m.getName()) || relations.containsKey(m.getName())) continue;
             List<Method> declarations = declarations(type, m.getName());
             if (declarations.isEmpty() || declarations.get(0).isDefault()) continue;   // 已被 default 方法覆盖
             Method first = declarations.get(0);
+            RelationMeta relation = relation(type, first);
+            if (relation != null) {
+                relations.put(m.getName(), relation);
+                continue;
+            }
             if (first.getReturnType() != Col.class || first.getParameterCount() != 0) {
                 throw new IllegalArgumentException(type.getSimpleName() + "." + m.getName()
                     + "() is neither a column (Col<T> name()) nor a default method");
@@ -100,7 +109,28 @@ public final class Metadata {
         }
         Table table = type.getAnnotation(Table.class);
         return new EntityMeta<>(type, table == null ? null : table.value(),
-            table == null || table.schema().isEmpty() ? null : table.schema(), List.copyOf(columns.values()));
+            table == null || table.schema().isEmpty() ? null : table.schema(), List.copyOf(columns.values()), relations);
+    }
+
+    /** 用 {@code @ManyToOne} 或 {@code @OneToMany} 声明的关系方法；不是关系时返回 null。 */
+    private static RelationMeta relation(Class<?> owner, Method m) {
+        ManyToOne one = m.getAnnotation(ManyToOne.class);
+        OneToMany many = m.getAnnotation(OneToMany.class);
+        if (one == null && many == null) return null;
+        String where = owner.getSimpleName() + "." + m.getName() + "()";
+        if (one != null && many != null) throw new IllegalArgumentException(where + " is declared both @ManyToOne and @OneToMany");
+        if (m.getParameterCount() != 0) throw new IllegalArgumentException(where + ": a relation method takes no arguments");
+        if (one != null) {
+            if (!m.getReturnType().isInterface() || !Entity.class.isAssignableFrom(m.getReturnType())) {
+                throw new IllegalArgumentException(where + ": @ManyToOne must return a table interface");
+            }
+            return new RelationMeta(m.getName(), false, m.getReturnType(), List.of(one.self()), List.of(one.target()));
+        }
+        if (m.getReturnType() != Many.class || !(m.getGenericReturnType() instanceof ParameterizedType p)
+            || !(p.getActualTypeArguments()[0] instanceof Class<?> target)) {
+            throw new IllegalArgumentException(where + ": @OneToMany must return Many<Table>");
+        }
+        return new RelationMeta(m.getName(), true, target, List.of(many.self()), List.of(many.target()));
     }
 
     /** 同名的无参方法声明，最具体的在前，这样子接口可以重新指定列的注解。 */
@@ -156,7 +186,7 @@ public final class Metadata {
             // 字段上的组合转换器注解，用于原生 SQL 映射进该类时解码列。
             properties.add(new PropertyMeta(type, f.getName(), null, sqlType(type, f.getName(), f, f.getType(), null), f, null));
         }
-        return new EntityMeta<>(type, null, null, properties);
+        return new EntityMeta<>(type, null, null, properties, Map.of());
     }
 
     /** 类的属性字段：record 按组件顺序，其余类父类在前，跳过静态、transient、合成和 {@code @Ignore} 字段。 */

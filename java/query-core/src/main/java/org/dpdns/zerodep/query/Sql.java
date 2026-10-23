@@ -80,7 +80,7 @@ public class Sql extends Rows {
      */
     public static Cols cols(Expr<?>... columns) { return new Cols(List.of(columns)); }
 
-    /** 在一组列（例如 {@code l.all()}）后面再加几列。 */
+    /** 在一组列（例如 {@code l.columns()}）后面再加几列。 */
     public static Cols cols(Cols first, Expr<?>... more) {
         List<Expr<?>> all = new ArrayList<>(first.items());
         all.addAll(List.of(more));

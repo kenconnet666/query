@@ -386,6 +386,26 @@ public abstract class LiveScenarios {
 
     protected static String plain(Object decimal) { return ((BigDecimal) decimal).stripTrailingZeros().toPlainString(); }
 
+    /** 导航场景的一行：物料、交货行数、数量合计、最新的交货、语言 1 的描述。 */
+    public record MaterialSummary(String material, Long lines, BigDecimal total, String latest, String text) { }
+
+    @Test
+    void 导航关系在实库上按需连接并给出正确结果() {
+        List<MaterialSummary> rows = db.list(from(Mara.class)
+            .orderBy(m -> m.material())
+            .select(m -> row(MaterialSummary::new, m.material(), m.deliveries().count(), m.deliveries().sum(l -> l.quantity()),
+                m.deliveries().first(l -> l.createdOn().desc()).delivery(), m.text().text())));
+        assertEquals(List.of("M1:3:6:D5:Pump", "M2:2:12:D3:null", "M3:0:null:null:null", "M4:0:null:null:null"), rows.stream()
+            .map(r -> r.material() + ":" + r.lines() + ":" + (r.total() == null ? null : plain(r.total())) + ":" + r.latest() + ":" + r.text())
+            .toList());
+        assertEquals(List.of("D1", "D2", "D3", "D4", "D5"), db.list(from(Lips.class)
+            .where(l -> l.mara().materialType().eq("ZMAT")).orderBy(l -> l.delivery()).select(l -> l.delivery())));
+        assertEquals(List.of("D5"), db.list(from(Lips.class).where(l -> l.salesData().none()).select(l -> l.delivery())));
+        assertEquals(List.of("M1"), db.list(from(Mara.class)
+            .where(m -> m.deliveries().any(l -> l.quantity().gt(new BigDecimal("2.5"))).and(m.deliveries().count().ge(3L)))
+            .select(m -> m.material())));
+    }
+
     @Test
     void 右侧的UNION保持原有分组() {
         assertEquals(List.of("M1", "M1", "M2"), db.list(SpecCases.unionGrouping()).stream().sorted().toList());

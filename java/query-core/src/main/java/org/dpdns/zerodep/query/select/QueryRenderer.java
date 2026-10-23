@@ -6,10 +6,14 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.Order;
+import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /** 写出 SELECT 语句。数据库实例级的过滤器通过写入器的 attributes 传给它。 */
 public final class QueryRenderer {
@@ -96,6 +100,7 @@ public final class QueryRenderer {
         SourceFilters filters = s.filtered ? (SourceFilters) w.attribute(SourceFilters.class) : null;
         if (filters == null) filters = SourceFilters.NONE;
         List<Cond> where = new ArrayList<>();
+        Set<Ref.Relation> implicit = usedRelations(w, arm);
         for (SelectSpec.Join j : s.joins) {
             List<Cond> extra = filters.conditionsFor(j.ref());
             switch (j.kind()) {
@@ -119,6 +124,7 @@ public final class QueryRenderer {
                     w.sql(" ON ").render(Nodes.all(on));
                 }
             }
+            emitRelations(w, j.ref(), implicit, filters);
         }
         where.addAll(s.where);
         Cond whereAll = Nodes.all(where);
@@ -136,6 +142,65 @@ public final class QueryRenderer {
         w.dialect().limit(w, s.limit, s.offset);
         for (Clause c : s.clauses) {
             if (c.position() == Clause.Position.END) w.sql("\n").render(c);
+        }
+    }
+
+    /**
+     * 这一段真正用到的隐式连接（导航关系）。先用探查写入器把 SELECT、条件、分组、排序试渲染一遍，记下引用到的数据源；
+     * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。没有关系时不做探查。
+     */
+    private static Set<Ref.Relation> usedRelations(SqlWriter w, Query.Arm arm) {
+        SelectSpec s = arm.spec();
+        if (s.joins.stream().allMatch(j -> j.ref().relations().isEmpty())) return Set.of();
+        SqlWriter probe = w.probe();
+        for (Expr<?> e : arm.items()) probe.render(e);
+        for (SelectSpec.Join j : s.joins) if (!j.on().isEmpty()) probe.render(j.on());
+        for (Cond c : s.where) if (!c.isEmpty()) probe.render(c);
+        for (Expr<?> g : s.groupBy) probe.render(g);
+        for (Cond c : s.having) if (!c.isEmpty()) probe.render(c);
+        for (Order o : s.orderBy) probe.render(o);
+        for (Clause c : s.clauses) probe.render(c);
+        Set<Ref.Relation> used = new LinkedHashSet<>();
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (SelectSpec.Join j : s.joins) grew |= collect(j.ref(), probe, used);
+        }
+        return used;
+    }
+
+    /** 把 ref 出发的、用到了的关系加入 used，并试渲染它们的连接条件；有新增时返回 true。 */
+    private static boolean collect(Ref<?> ref, SqlWriter probe, Set<Ref.Relation> used) {
+        boolean grew = false;
+        for (Ref.Relation r : ref.relations()) {
+            if (!used.contains(r) && reaches(r.target(), probe.touched())) {
+                used.add(r);
+                probe.render(r.on());
+                grew = true;
+            }
+            if (used.contains(r)) grew |= collect(r.target(), probe, used);
+        }
+        return grew;
+    }
+
+    /** ref 或从它出发的某个关系的目标是否被引用到。 */
+    private static boolean reaches(Ref<?> ref, Set<Object> touched) {
+        if (touched.contains(ref)) return true;
+        for (Ref.Relation r : ref.relations()) if (reaches(r.target(), touched)) return true;
+        return false;
+    }
+
+    /** 紧跟在 ref 的 FROM 或 JOIN 之后写出它用到的隐式连接（LEFT JOIN），再写更深的关系；全局过滤器放进 ON。 */
+    private static void emitRelations(SqlWriter w, Ref<?> ref, Set<Ref.Relation> used, SourceFilters filters) {
+        for (Ref.Relation r : ref.relations()) {
+            if (!used.contains(r)) continue;
+            w.sql("\nLEFT JOIN ");
+            r.target().renderSource(w);
+            List<Cond> on = new ArrayList<>();
+            on.add(r.on());
+            on.addAll(filters.conditionsFor(r.target()));
+            w.sql(" ON ").render(Nodes.all(on));
+            emitRelations(w, r.target(), used, filters);
         }
     }
 }

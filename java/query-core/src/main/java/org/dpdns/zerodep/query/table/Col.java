@@ -21,6 +21,12 @@ public final class Col<T> extends Expr<T> {
         this.property = property;
     }
 
+    /** 这一列所属的来源出现。 */
+    Ref<?> ref() { return ref; }
+
+    /** 对应的属性元数据。 */
+    PropertyMeta property() { return property; }
+
     /** 写出带别名的列，必要时套用属性的 {@code @ReadAs} 模板。 */
     @Override public void render(SqlWriter w) { ref.renderColumn(w, property); }
 
