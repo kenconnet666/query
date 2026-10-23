@@ -7,7 +7,7 @@
 - **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
-  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
+  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），也不在使用方生成代码。
 - **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@zerodep-dev/query-*`）和私有测试包 `test`。
@@ -24,7 +24,7 @@
 
 ### 前身：EasyQuery Pro
 
-路径 `C:\Users\Administrator\IdeaProjects\easy_query_pro`（GitHub `kenconnet666/easy_query_pro`，分支 `codex/bootstrap-easyquery-pro`）。它是基于 EasyQuery 3.2.17 的 Java 8 增强包，外加一个 TS ORM 子项目。可以借鉴的部分：
+路径 `C:\Users\lionheart\IdeaProjects\easy_query_pro`（GitHub `kenconnet666/easy_query_pro`，分支 `codex/bootstrap-easyquery-pro`）。它是基于 EasyQuery 3.2.17 的 Java 8 增强包，外加一个 TS ORM 子项目。可以借鉴的部分：
 
 - **HANA 的实测知识**：`docs/hana-*.md`，包括类型、函数和函数审计、字符类型、LOB、JSON、层级、全文检索、参数化视图、生成键、写入、HDI 与迁移。
 - **三库差异清单与报表能力**：`docs/dsl-design.md` 列出三库的类型和操作清单；`docs/reporting-*.md`、`dsl-windows.md`、`dsl-statistics.md`、`dsl-groups.md`、`dsl-temporal.md`、`dsl-comparison.md` 覆盖报表、窗口、统计、分组、时间与比较；`native-numeric.md` 和 `mysql-*.md`、`pgsql-*.md` 覆盖原生数值与各库专属类型。
@@ -35,17 +35,20 @@
 
 ### 上游 EasyQuery
 
-路径 `C:\Users\Administrator\IdeaProjects\easy-query`（`dromara/easy-query`，基线 tag `3.2.17`，工作区比 tag 多几个提交，比较时以 tag 为准）。可以参考：
+路径 `C:\Users\lionheart\IdeaProjects\easy-query`（`dromara/easy-query`，基线为提交 `2b25e9510 build: 3.2.17`，本机没有 `3.2.17` tag）。它是重要参考，Claude 会话需要把这个目录加入工作目录才能读取。可以参考：
 
 - 函数目录：`sql-core/.../func/SQLFunc.java` 及其子接口；
 - 各数据库的差异实现：`sql-db-support/`（含 `sql-duckdb`）；
-- CTE、分页和窗口的生成方式。
+- CTE、分页和窗口的生成方式；
+- 导航属性（`@Navigate`）与隐式连接、隐式子查询；
+- 按 DTO 生成条件（`whereObject`、`@EasyWhereCondition`）；
+- VO 对象树映射（`selectAutoInclude`、`@NavigateFlat`）。
 
 本项目不依赖它。
 
 ### 其他 ORM
 
-路径 `C:\Users\Administrator\IdeaProjects\orm-references\`，都是 `--depth 1` 的浅克隆，用 `git pull --depth 1` 更新；需要时可以继续克隆其他 ORM 或驱动仓库到这里。
+路径 `C:\Users\lionheart\IdeaProjects\orm-references\`（本机尚未克隆，按需创建），都是 `--depth 1` 的浅克隆，用 `git pull --depth 1` 更新；需要时可以继续克隆其他 ORM 或驱动仓库到这里。
 
 | 仓库 | 主要参考点 |
 | --- | --- |
@@ -59,7 +62,7 @@
 ## 构建与验证
 
 ```powershell
-$env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
+$env:JAVA_HOME = 'C:\Users\lionheart\.jdks\jbr-17.0.14'
 .\mvnw.cmd --batch-mode verify          # Maven 3.9.16 由 wrapper 固定
 
 cd typescript
