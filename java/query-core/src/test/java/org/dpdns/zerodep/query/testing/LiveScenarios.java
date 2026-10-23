@@ -434,6 +434,16 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 条件对象在实库上筛选且通配符按普通字符匹配() {
+        assertEquals(List.of("D1", "D2", "D3", "D5"),
+            db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(null, LocalDate.of(2026, 1, 1), null, "P", null))));
+        assertEquals(List.of("D5"), db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(List.of("M1"), LocalDate.of(2026, 3, 1), null, null, null))));
+        for (String wildcard : List.of("%", "_", "P%", "!")) {
+            assertEquals(List.of(), db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(null, null, null, wildcard, null))), wildcard);
+        }
+    }
+
+    @Test
     void 排除分组维度后按排序串汇总() {
         assertEquals(List.of("M2:null:null:12", "M1:null:null:6"), db.list(SpecCases.dynamicColumns()).stream()
             .map(r -> r.get("material") + ":" + r.get("unit") + ":" + r.get("partNumber") + ":" + plain(r.get("total")))

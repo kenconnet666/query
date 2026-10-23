@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Window.Bound;
 import org.dpdns.zerodep.query.select.Query;
@@ -121,6 +122,7 @@ public final class SpecCases {
         cases.put("reserved-alias", SpecCase.plain(SpecCases::reservedAlias));
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         cases.put("dynamic-columns", SpecCase.plain(SpecCases::dynamicColumns));
+        cases.put("filter-object", SpecCase.plain(() -> filterObject(new DeliverySearch(List.of("M1", "M2"), LocalDate.of(2026, 1, 1), null, "50%", "KG"))));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         return cases;
@@ -249,6 +251,19 @@ public final class SpecCases {
             .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), sum(l.quantity()).as("total")))
             .exclude("unit", "partNumber")
             .sortBy("total desc, material");
+    }
+
+    /** 交货查询的请求参数：每个非空字段是一个条件。 */
+    public record DeliverySearch(
+        List<String> material,
+        @Where(value = "createdOn", op = Where.Op.GE) LocalDate from,
+        @Where(value = "createdOn", op = Where.Op.LT) LocalDate to,
+        @Where(value = {"mara.partNumber", "text.text"}, op = Where.Op.CONTAINS) String keyword,
+        @Where(op = Where.Op.NE) String unit) { }
+
+    /** 按条件对象筛选交货单。 */
+    public static Query<String> filterObject(DeliverySearch search) {
+        return from(Lips.class).where(search).orderBy(l -> l.delivery()).select(l -> l.delivery());
     }
 
     /** 多对一导航：按需 LEFT JOIN，可以继续导航，全局过滤器进入 ON。 */

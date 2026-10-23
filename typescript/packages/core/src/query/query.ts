@@ -2,6 +2,7 @@ import type { Clause, Dialect } from "../sql/dialect.js";
 import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
+import { filterCondition, type FilterObject } from "./filter.js";
 import { Children, Many } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
@@ -742,8 +743,16 @@ export class From<T extends readonly unknown[]> {
   }
 
   /** WHERE 条件；多次调用之间是 AND，空条件（Cond.EMPTY）被丢弃。 */
-  where(cond: (...refs: T) => Cond): From<T> {
-    return this.#with({ where: [...this.#spec.where, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
+  where(cond: (...refs: T) => Cond): From<T>;
+  /**
+   * 按条件对象筛选：对象的每个字段变成一个条件，默认与同名列比较相等（数组用 IN），用 `@where` 指定比较方式和列；
+   * 值为空的字段不产生条件，所以可以直接传入请求参数：`from(Lips).where(search)`。字段名找不到对应的列时报错，
+   * 不作为条件的字段（分页、排序）标上 `@ignore`。
+   */
+  where<F extends FilterObject>(filter: F): From<T>;
+  where(arg: ((...refs: T) => Cond) | FilterObject): From<T> {
+    const cond = typeof arg === "function" ? nonNull(withSkipEmpty(this.#spec.skipEmpty, () => arg(...this.#refs))) : filterCondition(this.#refs as readonly object[], arg);
+    return this.#with({ where: [...this.#spec.where, cond] });
   }
 
   /** GROUP BY；多次调用的键依次追加。 */

@@ -38,6 +38,16 @@ interface FieldMeta {
   readonly ignore?: true;
   readonly read?: string;
   readonly relation?: Omit<RelationMeta, "name">;
+  readonly where?: WhereMeta;
+}
+
+/** 条件对象字段的比较方式。 */
+export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith";
+
+/** 条件对象里一个字段的比较方式和要比较的列（关系路径）。 */
+export interface WhereMeta {
+  readonly op: WhereOp;
+  readonly columns: readonly string[];
 }
 
 /** 关系字段的声明：目标表（延迟取得，表之间可以互相引用）和连接条件。 */
@@ -85,6 +95,8 @@ export interface EntityMeta {
   ignored(name: string): boolean;
   /** 用 `@one`、`@many` 声明的关系。 */
   readonly relations: readonly RelationMeta[];
+  /** 条件对象字段的 `@where` 声明，没有时为 undefined。 */
+  where(name: string): WhereMeta | undefined;
 }
 
 /** 类的元数据对象。 */
@@ -168,7 +180,16 @@ export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Re
     record(context, { relation: { many: true, target, on: on as RelationMeta["on"] } });
 }
 
-/** 不由任何查询填充的 DTO 字段。 */
+/**
+ * 条件对象（`from(...).where(filter)`）里一个字段怎样变成条件：op 是比较方式，columns 是比较的列，默认是字段名；
+ * 列可以经过多对一关系（`"mara.partNumber"`），写多个时任一满足即可（OR）。没有这个装饰器的字段与同名列比较相等
+ * （数组用 IN）。例如 `@where("ge", "createdOn") from?: string;`。
+ */
+export function where(op: WhereOp, ...columns: string[]) {
+  return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });
+}
+
+/** 不由任何查询填充的 DTO 字段；在条件对象里表示不作为条件（如分页、排序参数）。 */
 export function ignore(_value: undefined, context: ClassFieldDecoratorContext): void {
   record(context, { ignore: true });
 }
@@ -206,6 +227,7 @@ function describe(type: Ctor<unknown>): EntityMeta {
     property: (name: string) => byName.get(name),
     ignored: (name: string) => fieldsByName.get(name)?.ignore === true || fieldsByName.get(name)?.relation !== undefined,
     relations: fields.filter((f) => f.relation !== undefined).map((f) => Object.freeze({ ...f.relation!, name: f.name })),
+    where: (name: string) => fieldsByName.get(name)?.where,
   });
 }
 

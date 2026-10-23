@@ -17,7 +17,6 @@ import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.type.SqlType;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -173,9 +172,8 @@ public final class Query<R> {
             for (PropertyMeta p : properties) items.add(sameNamed(spec, type, p.name()));
             return named(spec, type, items);
         }
-        List<Object> rows = new ArrayList<>();
-        for (SelectSpec.Join j : spec.joins) rows.add(j.ref().param());
-        return select(spec, tree(type, rows, p -> sameNamed(spec, type, p.name())));
+        String owner = type.getSimpleName();
+        return select(spec, tree(type, name -> Members.find(spec, name, owner + "." + name), p -> sameNamed(spec, type, p.name())));
     }
 
     /** 属性是否是对象树的分支：列表，或者不是单个值的类。 */
@@ -185,9 +183,10 @@ public final class Query<R> {
     }
 
     /**
-     * 把 VO 映射成一个按位置构造的选取：值属性用 column 取列，分支属性在 rows（各表的接口实例）里找同名的关系方法。
+     * 把 VO 映射成一个按位置构造的选取：值属性用 column 取列，分支属性用 lookup 找同名的关系，
+     * 多对一的目标表和一对多的子行再按同样的规则逐层映射。
      */
-    private static <V> RowSelection<V> tree(Class<V> type, List<Object> rows, Function<PropertyMeta, Expr<?>> column) {
+    private static <V> RowSelection<V> tree(Class<V> type, Function<String, Object> lookup, Function<PropertyMeta, Expr<?>> column) {
         List<PropertyMeta> properties = Metadata.entity(type).properties();
         Selection<?>[] parts = new Selection<?>[properties.size()];
         for (int i = 0; i < parts.length; i++) {
@@ -196,16 +195,17 @@ public final class Query<R> {
                 parts[i] = column.apply(p);
                 continue;
             }
-            Object related = relation(type, rows, p.name());
-            if (List.class.isAssignableFrom(p.field().getType()) && related instanceof Many<?> many) {
+            boolean many = List.class.isAssignableFrom(p.field().getType());
+            Object related = lookup.apply(p.name());
+            if (many && related instanceof Many<?> m) {
                 Class<?> element = elementType(type, p);
-                parts[i] = many.list(r -> tree(element, List.of(r), q -> member(element, r, q.name())));
-            } else if (related instanceof Entity target) {
-                Class<?> nested = p.field().getType();
-                parts[i] = tree(nested, List.of(target), q -> member(nested, target, q.name()));
+                parts[i] = m.list(r -> nested(element, r));
+            } else if (!many && related instanceof Entity target) {
+                parts[i] = nested(p.field().getType(), target);
             } else {
-                throw new IllegalArgumentException(type.getSimpleName() + "." + p.name() + " needs a relation named " + p.name()
-                    + (List.class.isAssignableFrom(p.field().getType()) ? " returning Many" : " returning a table"));
+                throw new IllegalArgumentException(type.getSimpleName() + "." + p.name() + (related == null
+                    ? " has no relation of the same name in the query's tables"
+                    : " needs a relation " + (many ? "returning Many" : "returning a table")));
             }
         }
         List<String> names = properties.stream().map(PropertyMeta::name).toList();
@@ -213,41 +213,13 @@ public final class Query<R> {
         return new RowSelection<>(plan::map, parts);
     }
 
-    /** rows 里恰好一张表上名为 name 的无参方法的结果（关系）；没有或多于一张表有时报错。 */
-    private static Object relation(Class<?> type, List<Object> rows, String name) {
-        List<Object> hits = new ArrayList<>();
-        for (Object row : rows) {
-            if (!(row instanceof Entity)) continue;
-            Object value = invoke(row, name);
-            if (value != null) hits.add(value);
-        }
-        if (hits.size() == 1) return hits.get(0);
-        throw new IllegalArgumentException(type.getSimpleName() + "." + name + (hits.isEmpty()
-            ? " has no relation of the same name in the query's tables"
-            : " matches relations of " + hits.size() + " tables"));
-    }
-
-    /** 嵌套 VO 的值属性：row 上同名方法返回的列或表达式。 */
-    private static Expr<?> member(Class<?> type, Object row, String name) {
-        if (invoke(row, name) instanceof Expr<?> e) return e;
-        throw new IllegalArgumentException(type.getSimpleName() + "." + name + " has no same-named column in "
-            + row.getClass().getInterfaces()[0].getSimpleName() + "; select it with row(...)");
-    }
-
-    /** 调用表接口实例上名为 name 的公开无参方法；没有这个方法时为 null。 */
-    private static Object invoke(Object row, String name) {
-        Method method;
-        try {
-            method = row.getClass().getMethod(name);
-        } catch (NoSuchMethodException e) {
-            return null;
-        }
-        method.trySetAccessible();
-        try {
-            return method.invoke(row);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("Cannot call " + name + "() on " + row.getClass().getInterfaces()[0].getSimpleName(), e);
-        }
+    /** 关系目标表 row 上的嵌套 VO：每个属性取 row 上同名的列、计算列或更深的关系。 */
+    private static <V> RowSelection<V> nested(Class<V> type, Object row) {
+        return tree(type, name -> Members.invoke(row, name), p -> {
+            if (Members.invoke(row, p.name()) instanceof Expr<?> e) return e;
+            throw new IllegalArgumentException(type.getSimpleName() + "." + p.name() + " has no same-named column in "
+                + row.getClass().getInterfaces()[0].getSimpleName() + "; select it with row(...)");
+        });
     }
 
     /** {@code List<X>} 属性的 X。 */

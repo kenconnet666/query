@@ -21,6 +21,7 @@ export {
   column,
   entityMeta,
   ignore,
+  where,
   many,
   NamingStrategy,
   one,
@@ -33,6 +34,8 @@ export {
   type One,
   type PropertyMeta,
   type RelationMeta,
+  type WhereMeta,
+  type WhereOp,
   type Table,
 } from "./schema/metadata.js";
 export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./sql/writer.js";
@@ -64,6 +67,7 @@ export {
   type SourceColumn,
   type TemplateArg,
 } from "./sql/expr.js";
+export { type FilterObject } from "./query/filter.js";
 export { Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
 export { Children, Many } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Excluded, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
@@ -79,10 +83,12 @@ export {
   concat,
   count,
   countDistinct,
+  contains,
   currentDate,
   currentTimestamp,
   denseRank,
   divide,
+  endsWith,
   floor,
   grouping,
   ifPresent,
@@ -110,6 +116,7 @@ export {
   scalar,
   sql,
   sqlCond,
+  startsWith,
   substring,
   sum,
   times,

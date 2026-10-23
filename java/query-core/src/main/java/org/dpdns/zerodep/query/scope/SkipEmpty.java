@@ -15,7 +15,7 @@ public final class SkipEmpty {
     private SkipEmpty() { }
 
     /** on 为 true 时在 skipEmpty 模式下执行 body 并在结束后退出；已经在模式内（例如子查询）或 on 为 false 时直接执行。 */
-    static <T> T within(boolean on, Supplier<T> body) {
+    public static <T> T within(boolean on, Supplier<T> body) {
         if (!on || active()) return body.get();
         ACTIVE.set(Boolean.TRUE);
         try {

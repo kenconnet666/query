@@ -156,6 +156,23 @@ public class Sql extends Rows {
         return Nodes.compare(e, "NOT LIKE", e.param(pattern));
     }
 
+    /** 文本包含 text：{@code LIKE '%text%'}，text 里的 % 和 _ 按普通字符匹配。skipEmpty 下 text 为空时没有条件。 */
+    public static Cond contains(Expr<String> e, String text) { return likeLiteral(e, "%", text, "%"); }
+
+    /** 文本以 text 开头，规则同 {@link #contains}。 */
+    public static Cond startsWith(Expr<String> e, String text) { return likeLiteral(e, "", text, "%"); }
+
+    /** 文本以 text 结尾，规则同 {@link #contains}。 */
+    public static Cond endsWith(Expr<String> e, String text) { return likeLiteral(e, "%", text, ""); }
+
+    /** prefix + 转义后的 text + suffix 作为 LIKE 模式；用 ! 作转义符，三个库的写法相同。 */
+    private static Cond likeLiteral(Expr<String> e, String prefix, String text, String suffix) {
+        if (skipped(text)) return Cond.EMPTY;
+        if (text == null) e.param(null);  // 与其他比较一样报错：与 NULL 比较永远不成立
+        String escaped = text.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return Nodes.template("{0} LIKE {1} ESCAPE '!'", List.of(e, e.param(prefix + escaped + suffix)));
+    }
+
     /** 兜底的条件模板：{0}、{1} 是渲染后的参数。 */
     public static Cond sqlCond(String template, Expr<?>... args) { return Nodes.template(template, List.of(args)); }
 

@@ -95,6 +95,29 @@ export function notLike(e: Expr<string | null>, pattern: string | null | undefin
   return compare(e, "NOT LIKE", param(e.type, pattern as string));
 }
 
+/** 文本包含 text：`LIKE '%text%'`，text 里的 % 和 _ 按普通字符匹配。skipEmpty 下 text 为空时没有条件。 */
+export function contains(e: Expr<string | null>, text: string | null | undefined): Cond {
+  return likeLiteral(e, "%", text, "%");
+}
+
+/** 文本以 text 开头，规则同 {@link contains}。 */
+export function startsWith(e: Expr<string | null>, text: string | null | undefined): Cond {
+  return likeLiteral(e, "", text, "%");
+}
+
+/** 文本以 text 结尾，规则同 {@link contains}。 */
+export function endsWith(e: Expr<string | null>, text: string | null | undefined): Cond {
+  return likeLiteral(e, "%", text, "");
+}
+
+/** prefix + 转义后的 text + suffix 作为 LIKE 模式；用 ! 作转义符，三个库的写法相同。 */
+function likeLiteral(e: Expr<string | null>, prefix: string, text: string | null | undefined, suffix: string): Cond {
+  if (skips(text)) return Cond.EMPTY;
+  param(e.type, text as string); // text 为 null 时与其他比较一样报错
+  const pattern = prefix + (text as string).replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_") + suffix;
+  return condition((w) => w.render(e).sql(" LIKE ").render(param(e.type, pattern)).sql(" ESCAPE '!'"));
+}
+
 /** 用 SQL 模板写成的条件；表达式原位渲染，其他值成为绑定参数。 */
 export function sqlCond(parts: TemplateStringsArray, ...args: TemplateArg[]): Cond {
   return condition((w) => renderTemplate(w, parts, args));

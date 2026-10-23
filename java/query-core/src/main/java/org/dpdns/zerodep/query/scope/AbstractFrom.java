@@ -3,6 +3,8 @@ package org.dpdns.zerodep.query.scope;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.annotation.Where;
+import org.dpdns.zerodep.query.select.FilterObject;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;
 
@@ -37,6 +39,13 @@ public abstract class AbstractFrom<S extends AbstractFrom<S>> {
      * 不开启时与 null 比较会报错，以免漏写条件导致查出全部数据。
      */
     public final S skipEmpty() { return rebuild(spec.skipEmpty()); }
+
+    /**
+     * 按条件对象筛选：对象的每个字段变成一个条件，默认与同名列比较相等（集合用 IN），用 {@link Where} 指定列和比较方式；
+     * 值为 null、空白字符串或空集合的字段不产生条件，所以可以直接传入请求参数：{@code from(Lips.class).where(search)}。
+     * 字段名找不到对应的列时报错；不作为条件的字段（分页、排序）标上 {@code @Ignore}。
+     */
+    public final S where(Object filter) { return rebuild(spec.where(FilterObject.condition(spec, filter))); }
 
     /** 追加方言子句，例如 {@code Hana.hint("NO_CS_JOIN")}。 */
     public final S with(Clause clause) { return rebuild(spec.clause(clause)); }

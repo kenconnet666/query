@@ -25,7 +25,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { dynamicColumns, floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { DeliverySearch, dynamicColumns, filterObject, floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -503,6 +503,14 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         trees.map((t) => `${t.material}:${t.text.text}:${t.deliveries.map((l) => `${l.delivery}/${Number(l.quantity)}`).sort().join(",")}`),
         ["M1:Pump:D1/3,D2/2,D5/1", "M2:null:D3/5,D4/7", "M3:null:", "M4:null:"],
       );
+    });
+
+    it("条件对象在实库上筛选且通配符按普通字符匹配", async () => {
+      const { db } = live();
+      const find = (values: Partial<DeliverySearch>) => db.list(filterObject(Object.assign(new DeliverySearch(), values)));
+      assert.deepEqual(await find({ from: "2026-01-01", keyword: "P" }), ["D1", "D2", "D3", "D5"]);
+      assert.deepEqual(await find({ material: ["M1"], from: "2026-03-01" }), ["D5"]);
+      for (const wildcard of ["%", "_", "P%", "!"]) assert.deepEqual(await find({ keyword: wildcard }), [], wildcard);
     });
 
     it("排除分组维度后按排序串汇总", async () => {

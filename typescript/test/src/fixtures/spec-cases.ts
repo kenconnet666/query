@@ -51,6 +51,7 @@ import {
   trim,
   upper,
   val,
+  where,
   values,
   type Query,
   type Ref,
@@ -237,6 +238,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "floor-ceil": plain(() => floorCeil()),
   "reserved-alias": plain(() => reservedAlias()),
   "dynamic-columns": plain(() => dynamicColumns()),
+  "filter-object": plain(() => filterObject(Object.assign(new DeliverySearch(), { material: ["M1", "M2"], from: "2026-01-01", keyword: "50%", unit: "KG" }))),
   navigation: {
     filtered: true,
     query: () =>
@@ -322,6 +324,23 @@ export function floorCeil() {
 }
 
 /** An entity named Order: its alias is a reserved word and must be quoted. */
+/** 交货查询的请求参数：每个非空字段是一个条件。 */
+export class DeliverySearch {
+  material?: string[];
+  @where("ge", "createdOn") from?: string;
+  @where("lt", "createdOn") to?: string;
+  @where("contains", "mara.partNumber", "text.text") keyword?: string;
+  @where("ne") unit?: string;
+}
+
+/** 按条件对象筛选交货单。 */
+export function filterObject(search: DeliverySearch) {
+  return from(Lips)
+    .where(search)
+    .orderBy((l) => l.delivery)
+    .select((l) => l.delivery);
+}
+
 /** 排除分组维度和导航列后按用户的排序串排序：分组键、排序和连接都随之去掉。 */
 export function dynamicColumns() {
   return from(Lips)
