@@ -12,6 +12,7 @@ import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.meta.WriteMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.table.Col;
@@ -22,6 +23,7 @@ import org.dpdns.zerodep.query.type.SqlType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -191,39 +193,70 @@ public final class Insert<T extends Entity> implements Write {
             return List.of(w.statement());
         }
         List<Rendered> out = new ArrayList<>();
-        List<PropertyMeta> written = columns.stream().map(RowColumns.Column::column).toList();
         for (Object row : rows) {
             SqlWriter w = writers.get();
+            Values v = values(w, row);
             if (conflict != null) {
-                w.dialect().upsert(w, upsert(w, written, row));
+                w.dialect().upsert(w, upsert(w, v));
                 out.add(w.statement());
                 continue;
             }
-            head(w, written);
-            w.sql(" VALUES (");
-            for (int i = 0; i < columns.size(); i++) {
-                if (i > 0) w.sql(", ");
-                w.render(value(columns.get(i), row));
-            }
-            w.sql(")");
+            head(w, v.columns());
+            w.sql(" VALUES (").join(v.values(), ", ").sql(")");
             out.add(w.statement());
         }
         return out;
     }
 
-    /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列。 */
-    private Upsert upsert(SqlWriter w, List<PropertyMeta> written, Object row) {
+    /** 一行要写的列和值，一一对应。 */
+    private record Values(List<PropertyMeta> columns, List<Renderable> values) { }
+
+    /**
+     * 一行要写的列和值：行里的属性，加上数据库实例的插入时填充（覆盖同名的属性），以及行里没有逻辑删除列时它的"未删除"值
+     * （记录删除时间的列未删除就是 NULL，不用写）。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Values values(SqlWriter w, Object row) {
+        List<PropertyMeta> cols = new ArrayList<>();
+        List<Renderable> vals = new ArrayList<>();
+        for (RowColumns.Column c : columns) {
+            cols.add(c.column());
+            vals.add(value(c, row));
+        }
+        for (Assignment a : Fills.of(w).onInsert(Ref.table(table.type()))) put(cols, vals, a.column().property(), a.value());
+        WriteMeta.LogicDeleteMeta logic = table.writes().logicDelete();
+        if (logic != null && !logic.timestamp() && cols.stream().noneMatch(p -> p.name().equals(logic.property()))) {
+            PropertyMeta column = table.property(logic.property());
+            put(cols, vals, column, new Nodes.Param<>((SqlType) column.type(), logic.active()));
+        }
+        return new Values(cols, vals);
+    }
+
+    /** 把 column 的值设为 value：已有这一列时替换，没有时追加。 */
+    private static void put(List<PropertyMeta> cols, List<Renderable> vals, PropertyMeta column, Renderable value) {
+        for (int i = 0; i < cols.size(); i++) {
+            if (cols.get(i).name().equals(column.name())) {
+                vals.set(i, value);
+                return;
+            }
+        }
+        cols.add(column);
+        vals.add(value);
+    }
+
+    /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列；更新时的填充作为另外更新的列。 */
+    private Upsert upsert(SqlWriter w, Values v) {
         NamingStrategy naming = naming(w);
-        List<String> names = written.stream().map(PropertyMeta::name).toList();
+        List<String> names = v.columns().stream().map(PropertyMeta::name).toList();
         for (String k : conflict.keys()) {
             if (!names.contains(k)) throw new IllegalArgumentException("onConflict(...) key '" + k + "' must be one of the inserted columns " + names);
         }
-        List<String> updates = conflict.updates() != null ? conflict.updates() : names.stream().filter(n -> !conflict.keys().contains(n)).toList();
-        List<Renderable> values = new ArrayList<>();
-        for (RowColumns.Column c : columns) values.add(value(c, row));
-        return new Upsert(this::tableName, written.stream().map(p -> p.columnName(naming)).toList(), values,
-            conflict.keys().stream().map(k -> table.property(k).columnName(naming)).toList(),
-            updates.stream().map(u -> table.property(u).columnName(naming)).toList(), Map.of());
+        Map<String, Renderable> assignments = new LinkedHashMap<>();
+        for (Assignment a : Fills.of(w).onUpdate(Ref.table(table.type()))) assignments.put(a.column().property().columnName(naming), a.value());
+        List<String> updates = (conflict.updates() != null ? conflict.updates() : names.stream().filter(n -> !conflict.keys().contains(n)).toList())
+            .stream().map(u -> table.property(u).columnName(naming)).filter(c -> !assignments.containsKey(c)).toList();
+        return new Upsert(this::tableName, v.columns().stream().map(p -> p.columnName(naming)).toList(), v.values(),
+            conflict.keys().stream().map(k -> table.property(k).columnName(naming)).toList(), updates, assignments);
     }
 
     /** 写出 {@code schema.表名}。 */

@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Generated;
 import org.dpdns.zerodep.query.annotation.Id;
+import org.dpdns.zerodep.query.annotation.LogicDelete;
 import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.table.Col;
@@ -11,6 +12,7 @@ import org.dpdns.zerodep.query.write.Delete;
 import org.dpdns.zerodep.query.write.Insert;
 import org.dpdns.zerodep.query.write.Update;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.dpdns.zerodep.query.Sql.*;
@@ -79,6 +81,60 @@ public final class Writes {
 
     /** 按主键和版本删除文档。 */
     public static Delete<Doc> deleteDoc(DocRow row) { return deleteFrom(Doc.class).byId(row); }
+
+    /** 带审计列的表：创建时间、修改时间和修改人由数据库实例的 onInsert、onUpdate 自动填。 */
+    public interface Audited extends Entity {
+        /** 创建时间。 */
+        @Column("CREATED_AT") Col<LocalDateTime> createdAt();
+
+        /** 修改时间。 */
+        @Column("UPDATED_AT") Col<LocalDateTime> updatedAt();
+
+        /** 修改人。 */
+        @Column("UPDATED_BY") Col<String> updatedBy();
+    }
+
+    /** 工单：逻辑删除（DELETED 为 1 表示已删除）加审计列。 */
+    @Table(schema = SCHEMA, value = "W_TICKET")
+    public interface Ticket extends Audited {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 标题。 */
+        @Column("TITLE") Col<String> title();
+
+        /** 是否已删除。 */
+        @LogicDelete @Column("DELETED") Col<Integer> deleted();
+    }
+
+    /** 工单的一行：删除标记和审计列不用写。 */
+    public record TicketRow(String id, String title) { }
+
+    /** 归档：逻辑删除列记录删除时间。 */
+    @Table(schema = SCHEMA, value = "W_ARCHIVE")
+    public interface Archive extends Entity {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 删除时间，未删除为 NULL。 */
+        @LogicDelete @Column("DELETED_AT") Col<LocalDateTime> deletedAt();
+    }
+
+    /** 审计填充用的固定时间，便于核对。 */
+    public static final LocalDateTime CREATED = LocalDateTime.of(2026, 1, 1, 8, 0);
+
+    /** 同上，修改时间。 */
+    public static final LocalDateTime UPDATED = LocalDateTime.of(2026, 1, 2, 9, 30);
+
+    /** 给数据库实例加上审计填充：插入时填创建时间，更新时填修改时间和修改人。 */
+    public static void audit(org.dpdns.zerodep.query.exec.Database.Config c) {
+        c.onInsert(Audited.class, a -> a.createdAt(), () -> CREATED)
+            .onUpdate(Audited.class, a -> a.updatedAt(), () -> UPDATED)
+            .onUpdate(Audited.class, a -> a.updatedBy(), () -> "bob");
+    }
+
+    /** 删除工单：表上有逻辑删除列，所以是把 DELETED 设为 1 的 UPDATE。 */
+    public static Delete<Ticket> deleteTicket(String id) { return deleteFrom(Ticket.class).where(t -> t.id().eq(id)); }
 
     /** 插入文档，主键已有时只更新标题。 */
     public static Insert<Doc> upsertDoc(DocRow row) { return insertInto(Doc.class).values(row).onConflict().update(d -> d.title()); }

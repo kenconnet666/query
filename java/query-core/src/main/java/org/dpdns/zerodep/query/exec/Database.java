@@ -10,6 +10,7 @@ import org.dpdns.zerodep.query.exec.JdbcExecutor;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryListener;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
@@ -17,6 +18,8 @@ import org.dpdns.zerodep.query.table.SourceFilters;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.write.Fills;
 import org.dpdns.zerodep.query.write.Insert;
 import org.dpdns.zerodep.query.write.Write;
 
@@ -69,6 +72,7 @@ public abstract class Database {
         SourceFilters filters = new SourceFilters(config.filters);
         attributes.put(SourceFilters.class, filters);
         attributes.put(NamingStrategy.class, config.naming);
+        attributes.put(Fills.class, new Fills(config.fills));
         this.settings = new Settings(filters, config.cache, config.naming, Map.copyOf(config.functions), Map.copyOf(attributes));
         TypeRegistry types = dialect.types().with(config.types);
         List<QueryListener> listeners = new ArrayList<>();
@@ -265,6 +269,9 @@ public abstract class Database {
         /** 全局过滤器，按添加顺序生效。 */
         private final List<SourceFilters.Filter> filters = new ArrayList<>();
 
+        /** 写入时自动填充的列。 */
+        private final List<Fills.Fill> fills = new ArrayList<>();
+
         /** 查询监听器。 */
         private final List<QueryListener> listeners = new ArrayList<>();
 
@@ -303,6 +310,40 @@ public abstract class Database {
         }
 
         /** 配置查询结果缓存；只有设置了 {@code .cached(...)} 的查询才会使用，例如 {@code QueryCache.inMemory()}。 */
+        /**
+         * 插入 type（表接口或它继承的接口）的表时自动填充一列，例如创建时间：
+         * {@code c.onInsert(Audited.class, a -> a.createdAt(), LocalDateTime::now)}；每条语句取一次值，覆盖行里的值。
+         */
+        @SuppressWarnings("unchecked")
+        public <T, V> Config onInsert(Class<T> type, Function<? super T, Col<V>> column, Supplier<? extends V> value) {
+            fills.add(new Fills.Fill(type, table -> column.apply((T) table), value, true));
+            return this;
+        }
+
+        /** 同上，值是一个表达式，例如 {@code currentTimestamp()}。 */
+        @SuppressWarnings("unchecked")
+        public <T, V> Config onInsert(Class<T> type, Function<? super T, Col<V>> column, Expr<V> value) {
+            fills.add(new Fills.Fill(type, table -> column.apply((T) table), () -> value, true));
+            return this;
+        }
+
+        /**
+         * 更新 type 的表时自动填充一列，例如修改人：{@code c.onUpdate(Audited.class, a -> a.updatedBy(), currentUser::name)}；
+         * 按主键更新、插入或更新的更新部分、逻辑删除也会填。
+         */
+        @SuppressWarnings("unchecked")
+        public <T, V> Config onUpdate(Class<T> type, Function<? super T, Col<V>> column, Supplier<? extends V> value) {
+            fills.add(new Fills.Fill(type, table -> column.apply((T) table), value, false));
+            return this;
+        }
+
+        /** 同上，值是一个表达式，例如 {@code currentTimestamp()}。 */
+        @SuppressWarnings("unchecked")
+        public <T, V> Config onUpdate(Class<T> type, Function<? super T, Col<V>> column, Expr<V> value) {
+            fills.add(new Fills.Fill(type, table -> column.apply((T) table), () -> value, false));
+            return this;
+        }
+
         public Config cache(QueryCache cache) {
             this.cache = cache;
             return this;

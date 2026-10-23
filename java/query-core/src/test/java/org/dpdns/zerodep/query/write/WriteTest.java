@@ -146,6 +146,35 @@ class WriteTest {
     }
 
     @Test
+    void 逻辑删除的表查询时只看未删除的行且删除改写成UPDATE() {
+        assertTrue(from(Writes.Ticket.class).select(t -> t.id()).toSql(DIALECT).sql().endsWith("WHERE TICKET.DELETED = ?"));
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            Writes.deleteTicket("T1").toSql(DIALECT).get(0).sql());
+        assertEquals(List.of(1, 0, "T1"), Writes.deleteTicket("T1").toSql(DIALECT).get(0).parameters());
+        assertEquals("DELETE FROM QUERY_IT.W_TICKET TICKET\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            Writes.deleteTicket("T1").physically().toSql(DIALECT).get(0).sql());
+        assertEquals("DELETE FROM QUERY_IT.W_TICKET TICKET\nWHERE TICKET.ID = ?", Writes.deleteTicket("T1").physically().unfiltered().toSql(DIALECT).get(0).sql());
+        assertTrue(from(Writes.Ticket.class).unfiltered().select(t -> t.id()).toSql(DIALECT).sql().endsWith("FROM QUERY_IT.W_TICKET TICKET"));
+        assertEquals("UPDATE QUERY_IT.W_ARCHIVE ARCHIVE\nSET DELETED_AT = CURRENT_TIMESTAMP\nWHERE ARCHIVE.DELETED_AT IS NULL AND ARCHIVE.ID = ?",
+            deleteFrom(Writes.Archive.class).where(a -> a.id().eq("A1")).toSql(DIALECT).get(0).sql());
+    }
+
+    @Test
+    void 审计填充在插入和更新时写入且插入时补上未删除的标记() {
+        Database db = new TestDatabase(Writes::audit);
+        Rendered insert = db.render(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("T1", "a"))).get(0);
+        assertEquals("INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, CREATED_AT, DELETED) VALUES (?, ?, ?, ?)", insert.sql());
+        assertEquals(List.of("T1", "a", Writes.CREATED, 0), insert.parameters());
+        Rendered update = db.render(update(Writes.Ticket.class).set(t -> t.title().to("b")).set(t -> t.updatedBy().to("me")).where(t -> t.id().eq("T1"))).get(0);
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?", update.sql());
+        assertEquals(List.of("b", Writes.UPDATED, "bob", 0, "T1"), update.parameters(), "the fill wins over the statement's own value");
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            db.render(Writes.deleteTicket("T1")).get(0).sql());
+        assertEquals("INSERT INTO QUERY_IT.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)", db.render(Writes.insertNotes()).get(0).sql(),
+            "tables outside Audited get no fill");
+    }
+
+    @Test
     void 空跑执行写语句时按批通知监听器且不检查期望的行数() {
         Database db = TestDatabase.dryRun(null);
         List<QueryListener.Event> events = db.capture(() -> {

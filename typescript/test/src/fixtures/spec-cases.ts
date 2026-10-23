@@ -294,6 +294,12 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "write-upsert": plain(() => writes.upsertDoc({ id: "D1", title: "new", version: 1 })),
   "write-upsert-nothing": plain(() => writes.insertDocIfAbsent({ id: "D1", title: "new", version: 1 })),
   "workflow-claim": plain(() => wf.claimable()),
+  "write-logic-delete": plain(() => writes.deleteTicket("T1")),
+  "logic-delete-query": plain(() =>
+    from(writes.Ticket)
+      .orderBy((t) => t.id)
+      .select((t) => t.id),
+  ),
   "write-insert-generated": plain(() => insertInto(writes.Seq).values({ name: "a" })),
   subqueries: plain(() => {
     const parts = from(Mara)

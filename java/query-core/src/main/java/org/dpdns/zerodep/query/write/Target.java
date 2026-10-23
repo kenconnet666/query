@@ -77,10 +77,8 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
                 + "; add .all() if that is intended");
         }
         List<Cond> conds = new ArrayList<>();
-        if (filtered) {
-            SourceFilters filters = (SourceFilters) w.attribute(SourceFilters.class);
-            if (filters != null) conds.addAll(filters.conditionsFor(ref));
-        }
+        SourceFilters filters = filtered ? (SourceFilters) w.attribute(SourceFilters.class) : SourceFilters.OFF;
+        conds.addAll((filters == null ? SourceFilters.NONE : filters).conditionsFor(ref));
         conds.add(own);
         Cond whereAll = Nodes.all(conds);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);

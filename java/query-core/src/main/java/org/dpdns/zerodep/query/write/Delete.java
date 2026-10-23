@@ -2,10 +2,16 @@ package org.dpdns.zerodep.query.write;
 
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
+import org.dpdns.zerodep.query.meta.WriteMeta;
+import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -25,14 +31,21 @@ public final class Delete<T extends Entity> implements Write {
     /** {@link #byId} 的行；没有时为 null。 */
     private final ById byId;
 
+    /** 是否真正删除；false 时有 {@code @LogicDelete} 列的表改写成 UPDATE。 */
+    private final boolean physical;
+
     /** 由 {@link #of} 和各修改方法调用。 */
-    private Delete(Target<T> target, ById byId) {
+    private Delete(Target<T> target, ById byId, boolean physical) {
         this.target = target;
         this.byId = byId;
+        this.physical = physical;
     }
 
     /** 从 table 删除；通常写作 {@code Sql.deleteFrom(Lips.class)}。 */
-    public static <T extends Entity> Delete<T> of(Class<T> table) { return new Delete<>(Target.of(table), null); }
+    public static <T extends Entity> Delete<T> of(Class<T> table) { return new Delete<>(Target.of(table), null, false); }
+
+    /** 表上有 {@code @LogicDelete} 列时仍然真正删除，而不是把它设为已删除。 */
+    public Delete<T> physically() { return new Delete<>(target, byId, true); }
 
     /**
      * 按主键删除这些行：每行一条 {@code DELETE ... WHERE 主键 = ?}，表上有 {@code @Version} 时加上 {@code AND version = ?}；
@@ -42,41 +55,55 @@ public final class Delete<T extends Entity> implements Write {
 
     /** 同上，行在集合里。 */
     public Delete<T> byId(Collection<?> rows) {
-        return new Delete<>(target, ById.of(Metadata.entity(target.ref().entity()), List.copyOf(rows), "deleteFrom(...).byId(...)"));
+        return new Delete<>(target, ById.of(Metadata.entity(target.ref().entity()), List.copyOf(rows), "deleteFrom(...).byId(...)"), physical);
     }
 
     /** 追加 WHERE 条件；多次调用之间是 AND。 */
-    public Delete<T> where(Function<T, Cond> condition) { return new Delete<>(target.where(condition), byId); }
+    public Delete<T> where(Function<T, Cond> condition) { return new Delete<>(target.where(condition), byId, physical); }
 
     /** 条件对象：每个非空字段一个条件，规则同查询的 {@code where(filter)}。 */
-    public Delete<T> where(Object filter) { return new Delete<>(target.where(filter), byId); }
+    public Delete<T> where(Object filter) { return new Delete<>(target.where(filter), byId, physical); }
 
     /** 之后的 where 里，与空值比较的条件被省略；要写在 where 之前。 */
-    public Delete<T> skipEmpty() { return new Delete<>(target.skipEmpty(), byId); }
+    public Delete<T> skipEmpty() { return new Delete<>(target.skipEmpty(), byId, physical); }
 
     /** 不套用数据库实例的全局过滤器。 */
-    public Delete<T> unfiltered() { return new Delete<>(target.unfiltered(), byId); }
+    public Delete<T> unfiltered() { return new Delete<>(target.unfiltered(), byId, physical); }
 
     /** 允许没有 where 条件，即删除全表。 */
-    public Delete<T> all() { return new Delete<>(target.all(), byId); }
+    public Delete<T> all() { return new Delete<>(target.all(), byId, physical); }
 
     /** 期望影响 rows 行，不符时 {@code db.execute} 抛出 {@code UnexpectedRowCountException}。 */
-    public Delete<T> expect(long rows) { return new Delete<>(target.expect(rows), byId); }
+    public Delete<T> expect(long rows) { return new Delete<>(target.expect(rows), byId, physical); }
 
     /** {@code expect(n)} 写明的行数；没有写而用了 byId 时是行数。 */
     @Override public Long expected() { return target.expected() != null || byId == null ? target.expected() : byId.expected(); }
 
-    /** {@code DELETE FROM 表 别名 WHERE ...}，byId 时每行一条。 */
+    /** {@code DELETE FROM 表 别名 WHERE ...}，byId 时每行一条；有逻辑删除列时改写成把它设为已删除的 UPDATE。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
         if (byId == null) return List.of(statement(writers.get(), Cond.EMPTY));
         return byId.rows().stream().map(row -> statement(writers.get(), byId.locate(target.ref(), row))).toList();
     }
 
-    /** 写出一条 DELETE；located 是 byId 定位一行的条件。 */
+    /** 写出一条 DELETE 或逻辑删除的 UPDATE；located 是 byId 定位一行的条件。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private Rendered statement(SqlWriter w, Cond located) {
-        w.sql("DELETE FROM ");
-        target.ref().renderSource(w);
-        target.renderWhere(w, "deleteFrom(...)", located);
-        return w.statement();
+        EntityMeta<?> meta = Metadata.entity(target.ref().entity());
+        WriteMeta.LogicDeleteMeta logic = meta.writes().logicDelete();
+        if (logic == null || physical) {
+            w.sql("DELETE FROM ");
+            target.ref().renderSource(w);
+            target.renderWhere(w, "deleteFrom(...)", located);
+            return w.statement();
+        }
+        Col column = new Col<>(target.ref(), meta.property(logic.property()));
+        List<Assignment> sets = new ArrayList<>();
+        sets.add(logic.timestamp() ? column.to((Expr) Sql.currentTimestamp()) : column.to(logic.deleted()));
+        String version = meta.writes().version();
+        if (byId != null && version != null) {
+            Col v = new Col<>(target.ref(), meta.property(version));
+            sets.add(v.to((Expr) Sql.plus(v, Sql.lit(1))));
+        }
+        return Update.set(w, target, sets, located, "deleteFrom(...)");
     }
 }

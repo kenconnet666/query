@@ -147,6 +147,8 @@ public final class SpecCases {
         cases.put("write-upsert", SpecCase.plain(() -> Writes.upsertDoc(new Writes.DocRow("D1", "new", 1))));
         cases.put("write-upsert-nothing", SpecCase.plain(() -> Writes.insertDocIfAbsent(new Writes.DocRow("D1", "new", 1))));
         cases.put("workflow-claim", SpecCase.plain(Workflow::claimable));
+        cases.put("write-logic-delete", SpecCase.plain(() -> Writes.deleteTicket("T1")));
+        cases.put("logic-delete-query", SpecCase.plain(() -> from(Writes.Ticket.class).orderBy(t -> t.id()).select(t -> t.id())));
         cases.put("write-insert-generated", SpecCase.plain(() -> insertInto(Writes.Seq.class).values(new Writes.SeqRow("a"))));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));

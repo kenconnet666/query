@@ -3,12 +3,42 @@ import { describe, it } from "node:test";
 import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
 import { claimable } from "../fixtures/workflow.js";
-import { closeOpenNote, copyNote, deleteClosed, deleteDoc, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, upsertDoc } from "../fixtures/writes.js";
+import { Archive, audit, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
 
 describe("写入", () => {
+  it("逻辑删除的表查询时只看未删除的行且删除改写成 UPDATE", () => {
+    assert.ok(db.render(from(Ticket).select((t) => t.id)).sql.endsWith("WHERE TICKET.DELETED = ?"));
+    const [del] = db.render(deleteTicket("T1"));
+    assert.equal(del!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
+    assert.deepEqual(del!.parameters, [1, 0, "T1"]);
+    assert.equal(db.render(deleteTicket("T1").physically())[0]!.sql, "DELETE FROM QUERY_IT.W_TICKET TICKET\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
+    assert.equal(db.render(deleteTicket("T1").physically().unfiltered())[0]!.sql, "DELETE FROM QUERY_IT.W_TICKET TICKET\nWHERE TICKET.ID = ?");
+    assert.ok(db.render(from(Ticket).unfiltered().select((t) => t.id)).sql.endsWith("FROM QUERY_IT.W_TICKET TICKET"));
+    assert.equal(
+      db.render(deleteFrom(Archive).where((a) => a.id.eq("A1")))[0]!.sql,
+      "UPDATE QUERY_IT.W_ARCHIVE ARCHIVE\nSET DELETED_AT = CURRENT_TIMESTAMP\nWHERE ARCHIVE.DELETED_AT IS NULL AND ARCHIVE.ID = ?",
+    );
+  });
+
+  it("审计填充在插入和更新时写入且插入时补上未删除的标记", () => {
+    const audited = new TestDatabase({ fills: audit });
+    const [insert] = audited.render(insertInto(Ticket).values({ id: "T1", title: "a" }));
+    assert.equal(insert!.sql, "INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, CREATED_AT, DELETED) VALUES (?, ?, ?, ?)");
+    assert.deepEqual(insert!.parameters, ["T1", "a", CREATED, 0]);
+    const [changed] = audited.render(
+      update(Ticket)
+        .set(() => ({ title: "b", updatedBy: "me" }))
+        .where((t) => t.id.eq("T1")),
+    );
+    assert.equal(changed!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
+    assert.deepEqual(changed!.parameters, ["b", UPDATED, "bob", 0, "T1"], "the fill wins over the statement's own value");
+    assert.equal(audited.render(deleteTicket("T1"))[0]!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
+    assert.equal(audited.render(insertNotes())[0]!.sql, "INSERT INTO QUERY_IT.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)", "tables outside Audited get no fill");
+  });
+
   it("插入每行一条语句，null 写成 NULL 参数", () => {
     const r = db.render(insertNotes());
     assert.equal(r.length, 2);

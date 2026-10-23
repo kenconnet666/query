@@ -85,6 +85,8 @@ export interface RenderSettings {
   readonly functions?: ReadonlyMap<FunctionDef, FunctionRenderer>;
   /** 数据库级的过滤器；写入器不解读，由查询渲染器读取。 */
   readonly filters?: unknown;
+  /** 数据库级的写入填充；写入器不解读，由写语句读取。 */
+  readonly fills?: unknown;
 }
 
 /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联引用不会被遮蔽。 */

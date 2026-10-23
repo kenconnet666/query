@@ -2,7 +2,7 @@ import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
 import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata.js";
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, untyped, type SqlType } from "../schema/types.js";
-import { Write, type Insert } from "../write/write.js";
+import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 
 // ---------- 驱动 ----------
@@ -236,6 +236,8 @@ export class QueryExecutionError extends Error {
 export interface DatabaseOptions {
   /** 作用于某实体类型所有表的条件，例如当前租户：`filter(ClientEntity, r => ...)`。 */
   readonly filters?: readonly SourceFilter[];
+  /** 写入时自动填充的列（审计字段）：`[onInsert(Audited, (a) => a.createdAt, now), onUpdate(Audited, (a) => a.updatedBy, user)]`。 */
+  readonly fills?: readonly Fill[];
   readonly cache?: QueryCache;
   readonly listener?: QueryListener;
   /**
@@ -280,6 +282,7 @@ export abstract class Database {
     this.name = options.name ?? `${dialect.name}#${++instances}`;
     this.#settings = Object.freeze({
       filters: options.filters ?? [],
+      fills: options.fills ?? [],
       ...(options.naming === undefined ? {} : { naming: options.naming }),
       ...(options.functions === undefined ? {} : { functions: options.functions }),
     });

@@ -105,15 +105,28 @@ public final class Update<T extends Entity> implements Write {
 
     /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
     private Rendered statement(SqlWriter w, List<Assignment> assignments, Cond located) {
+        return set(w, target, assignments, located, "update(...)");
+    }
+
+    /**
+     * 写出 {@code UPDATE 表 别名 SET ... WHERE ...}，SET 里再加上数据库实例的更新时填充（覆盖同名的项）；
+     * 逻辑删除也用它。statement 用于没有 WHERE 时的报错。
+     */
+    static Rendered set(SqlWriter w, Target<?> target, List<Assignment> assignments, Cond located, String statement) {
+        List<Assignment> all = new ArrayList<>(assignments);
+        for (Assignment fill : Fills.of(w).onUpdate(target.ref())) {
+            all.removeIf(a -> a.column().property().name().equals(fill.column().property().name()));
+            all.add(fill);
+        }
         w.sql("UPDATE ");
         target.ref().renderSource(w);
         w.sql("\nSET ");
-        for (int i = 0; i < assignments.size(); i++) {
+        for (int i = 0; i < all.size(); i++) {
             if (i > 0) w.sql(", ");
-            assignments.get(i).column().renderName(w);
-            w.sql(" = ").render(assignments.get(i).value());
+            all.get(i).column().renderName(w);
+            w.sql(" = ").render(all.get(i).value());
         }
-        target.renderWhere(w, "update(...)", located);
+        target.renderWhere(w, statement, located);
         return w.statement();
     }
 }

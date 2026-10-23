@@ -1,7 +1,7 @@
 import type { Clause, Dialect } from "../sql/dialect.js";
 import { all, Cond, Expr, isWindow, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
-import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
+import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
 import { Children, isGrouped, Many, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
@@ -24,11 +24,27 @@ export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => Cond): Sour
   return Object.freeze({ type, condition: condition as (ref: Ref<never>) => Cond });
 }
 
-/** 取适用于该数据源引用的全局过滤条件。 */
-export function conditionsFor(filters: readonly SourceFilter[], ref: object): Cond[] {
+/**
+ * 这张表要追加的条件：全局过滤器，再加 `@logicDelete` 列的"未删除"条件；filters 为 undefined 表示 `unfiltered()`，两者都不加。
+ * 派生表、CTE 等不是表的来源没有。
+ */
+export function conditionsFor(filters: readonly SourceFilter[] | undefined, ref: object): Cond[] {
+  const owner = ownerOf(ref);
+  const entity = owner.source.entity;
+  if (filters === undefined || entity === undefined || !owner.source.filtered) return [];
+  const out = filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
+  const active = activeCondition(ref);
+  if (active !== undefined) out.push(active);
+  return out;
+}
+
+/** 表上有逻辑删除列时"未删除"的条件：时间戳列为 IS NULL，其余等于未删除的值；没有时为 undefined。 */
+export function activeCondition(ref: object): Cond | undefined {
   const entity = ownerOf(ref).source.entity;
-  if (filters.length === 0 || entity === undefined || !ownerOf(ref).source.filtered) return [];
-  return filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
+  const logic = entity === undefined ? undefined : entityMeta(entity).writes.logicDelete;
+  if (logic === undefined) return undefined;
+  const column = (ref as Record<string, Expr<never>>)[logic.property]!;
+  return logic.timestamp ? column.isNull() : column.eq(logic.active as never);
 }
 
 // ---------- 不含投影的一个 SELECT ----------
@@ -608,7 +624,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   });
   w.inline(false);
   if (s.joins.length === 0) w.dialect.fromNothing(w);
-  const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : [];
+  const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined;
   const where: Cond[] = [];
   const implicit = usedRelations(w, arm, groupBy, orderBy);
   for (const j of s.joins) {
@@ -822,7 +838,7 @@ function reaches(owner: RefOwner, touched: ReadonlySet<object>): boolean {
 }
 
 /** 紧跟在 owner 的 FROM 或 JOIN 之后写出它用到的隐式连接（LEFT JOIN），再写更深的关系；全局过滤器放进 ON。 */
-function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[]): void {
+function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[] | undefined): void {
   for (const r of owner.relations) {
     if (!used.has(r)) continue;
     w.sql("\nLEFT JOIN ");

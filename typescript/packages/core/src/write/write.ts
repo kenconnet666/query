@@ -1,7 +1,7 @@
 import { columnName, entityMeta, type EntityMeta, type One, type PropertyMeta, type Table } from "../schema/metadata.js";
 import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
 import type { Rendered, SqlWriter } from "../sql/writer.js";
-import { lit, plus } from "../sql/functions.js";
+import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
 import { conditionsFor, renderNamed, type Query, type SourceFilter } from "../query/query.js";
@@ -42,6 +42,42 @@ export function update<T>(table: Table<T>): Update<T> {
 /** 从 table 删除：`deleteFrom(Lips).where(...)`，见 {@link Delete}。 */
 export function deleteFrom<T>(table: Table<T>): Delete<T> {
   return new Delete(Target.of(table));
+}
+
+/**
+ * 写入时自动填充的一列（审计字段），放进 `DatabaseOptions.fills`：插入时填 onInsert 的列，更新（包括按主键更新、
+ * 插入或更新的更新部分、逻辑删除）时填 onUpdate 的列。按表实体的父类匹配，值总是覆盖行里的值。
+ */
+export interface Fill {
+  readonly type: abstract new (...args: never[]) => unknown;
+  readonly column: (ref: never) => Expr<unknown>;
+  /** 每条语句取一次值；返回表达式时原样写出（例如 `currentTimestamp()`），否则按列的类型绑定。 */
+  readonly value: () => unknown;
+  readonly onInsert: boolean;
+}
+
+/** 插入 type（或它的子类）的表时自动填充一列，例如创建时间：`onInsert(Audited, (a) => a.createdAt, () => now())`。 */
+export function onInsert<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
+  return Object.freeze({ type, column: column as Fill["column"], value, onInsert: true });
+}
+
+/** 更新 type（或它的子类）的表时自动填充一列，例如修改人：`onUpdate(Audited, (a) => a.updatedBy, () => user())`。 */
+export function onUpdate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
+  return Object.freeze({ type, column: column as Fill["column"], value, onInsert: false });
+}
+
+/** 写入器上的数据库实例里，对 ref 这张表生效的一类填充：列和值。 */
+function fillsFor(w: SqlWriter, ref: object, insert: boolean): (readonly [Column<unknown>, Expr<unknown>])[] {
+  const entity = ownerOf(ref).source.entity;
+  const fills = (w.settings.fills as readonly Fill[] | undefined) ?? [];
+  return fills
+    .filter((f) => f.onInsert === insert && entity !== undefined && (entity === f.type || entity.prototype instanceof f.type))
+    .map((f) => {
+      const column = f.column(ref as never);
+      if (!(column instanceof Column) || column.owner !== ownerOf(ref)) throw new Error(`A fill for ${f.type.name} must return one of its columns`);
+      const value = f.value();
+      return [column as Column<unknown>, value instanceof Expr ? value : bindValue(column.type, value)] as const;
+    });
 }
 
 /** 写出 `schema.表名`。 */
@@ -155,35 +191,53 @@ export class Insert<T> extends Write {
     }
     return this.#rows.map((row) => {
       const w = writer();
+      const values = this.#values(w, row);
       if (this.#conflict !== undefined) {
-        w.dialect.upsert(w, this.#upsert(w, row, this.#conflict));
+        w.dialect.upsert(w, this.#upsert(w, values, this.#conflict));
         return w.statement();
       }
-      this.#head(w, this.#columns);
-      w.sql(" VALUES (");
-      this.#columns.forEach((c, i) => {
-        if (i > 0) w.sql(", ");
-        w.render(bindValue(c.type, (row as Record<string, unknown>)[c.name] ?? null));
-      });
-      w.sql(")");
+      this.#head(w, values.map(([c]) => c));
+      w.sql(" VALUES (").join(values.map(([, v]) => v), ", ").sql(")");
       return w.statement();
     });
   }
 
-  /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列。 */
-  #upsert(w: SqlWriter, row: object, conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined }): Upsert {
-    const names = this.#columns.map((c) => c.name);
+  /**
+   * 一行要写的列和值：行里的字段，加上数据库实例的插入时填充（覆盖同名的字段），以及行里没有逻辑删除列时它的"未删除"值
+   * （记录删除时间的列未删除就是 NULL，不用写）。
+   */
+  #values(w: SqlWriter, row: object): [PropertyMeta, Expr<unknown>][] {
+    const out: [PropertyMeta, Expr<unknown>][] = this.#columns.map((c) => [c, bindValue(c.type, (row as Record<string, unknown>)[c.name] ?? null)]);
+    const put = (column: PropertyMeta, value: Expr<unknown>) => {
+      const i = out.findIndex(([c]) => c.name === column.name);
+      if (i >= 0) out[i] = [column, value];
+      else out.push([column, value]);
+    };
+    for (const [column, value] of fillsFor(w, createRef(tableSource(this.#table)) as object, true)) put(column.column as PropertyMeta, value);
+    const meta = entityMeta(this.#table);
+    const logic = meta.writes.logicDelete;
+    if (logic !== undefined && !logic.timestamp && !out.some(([c]) => c.name === logic.property)) {
+      const column = meta.property(logic.property)!;
+      put(column, bindValue(column.type, logic.active));
+    }
+    return out;
+  }
+
+  /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列；更新时的填充作为另外更新的列。 */
+  #upsert(w: SqlWriter, values: readonly (readonly [PropertyMeta, Expr<unknown>])[], conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined }): Upsert {
+    const names = values.map(([c]) => c.name);
     for (const k of conflict.keys) if (!names.includes(k)) throw new Error(`onConflict(...) key '${k}' must be one of the inserted columns ${names.join(", ")}`);
-    const updates = conflict.updates ?? names.filter((n) => !conflict.keys.includes(n));
     const meta = entityMeta(this.#table);
     const name = (field: string) => columnName(meta.property(field)!, w.naming);
+    const assignments = fillsFor(w, createRef(tableSource(this.#table)) as object, false).map(([c, v]) => [columnName(c.column as PropertyMeta, w.naming), v] as const);
+    const assigned = new Set(assignments.map(([c]) => c));
     return {
       table: { render: (x: SqlWriter) => tableName(x, meta) },
-      columns: this.#columns.map((c) => columnName(c, w.naming)),
-      values: this.#columns.map((c) => bindValue(c.type, (row as Record<string, unknown>)[c.name] ?? null)),
+      columns: values.map(([c]) => columnName(c, w.naming)),
+      values: values.map(([, v]) => v),
       keys: conflict.keys.map(name),
-      updates: updates.map(name),
-      assignments: [],
+      updates: (conflict.updates ?? names.filter((n) => !conflict.keys.includes(n))).map(name).filter((c) => !assigned.has(c)),
+      assignments,
     };
   }
 
@@ -214,6 +268,28 @@ export class Insert<T> extends Write {
     if (column === undefined) throw new Error(`${what} '${name}' has no column in ${this.#table.name}; known: ${meta.properties.map((p) => p.name).join(", ")}`);
     return column;
   }
+}
+
+/**
+ * 写出 `UPDATE 表 别名 SET ... WHERE ...`，SET 里再加上数据库实例的更新时填充（覆盖同名的项）；逻辑删除也用它。
+ * statement 用于没有 WHERE 时的报错。
+ */
+function renderSet(w: SqlWriter, target: Target<unknown>, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[], located: Cond, statement: string): Rendered {
+  const all = [...sets];
+  for (const fill of fillsFor(w, target.ref as object, false)) {
+    const i = all.findIndex(([c]) => c.column.name === fill[0].column.name);
+    if (i >= 0) all.splice(i, 1);
+    all.push(fill);
+  }
+  w.sql("UPDATE ");
+  ownerOf(target.ref as object).renderSource(w);
+  w.sql("\nSET ");
+  all.forEach(([column, value], i) => {
+    if (i > 0) w.sql(", ");
+    w.identifier(columnName(column.column as PropertyMeta, w.naming)).sql(" = ").render(value);
+  });
+  target.renderWhere(w, statement, located);
+  return w.statement();
 }
 
 /** {@link Insert.onConflict} 之后选择冲突时做什么。 */
@@ -286,7 +362,7 @@ export class Target<T> {
   renderWhere(w: SqlWriter, statement: string, located: Cond = Cond.EMPTY): void {
     const own = all(...this.conditions, located);
     if (own.isEmpty && !this.everyRow) throw new Error(`${statement} without where(...) would touch every row of ${this.table.name}; add .all() if that is intended`);
-    const filters = this.filtered ? conditionsFor((w.settings.filters as readonly SourceFilter[] | undefined) ?? [], this.ref as object) : [];
+    const filters = conditionsFor(this.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined, this.ref as object);
     const where = all(...filters, own);
     if (!where.isEmpty) w.sql("\nWHERE ").render(where);
   }
@@ -376,15 +452,7 @@ export class Update<T> extends Write {
 
   /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
   #statement(w: SqlWriter, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[], located: Cond): Rendered {
-    w.sql("UPDATE ");
-    ownerOf(this.#target.ref as object).renderSource(w);
-    w.sql("\nSET ");
-    sets.forEach(([column, value], i) => {
-      if (i > 0) w.sql(", ");
-      w.identifier(columnName(column.column as PropertyMeta, w.naming)).sql(" = ").render(value);
-    });
-    this.#target.renderWhere(w, "update(...)", located);
-    return w.statement();
+    return renderSet(w, this.#target, sets, located, "update(...)");
   }
 }
 
@@ -395,12 +463,20 @@ export class Update<T> extends Write {
 export class Delete<T> extends Write {
   readonly #target: Target<T>;
   readonly #byId: ById | undefined;
+  /** 是否真正删除；false 时有 `@logicDelete` 列的表改写成 UPDATE。 */
+  readonly #physical: boolean;
 
   /** 由 {@link deleteFrom} 和各修改方法调用。 */
-  constructor(target: Target<T>, byId?: ById) {
+  constructor(target: Target<T>, byId?: ById, physical = false) {
     super();
     this.#target = target;
     this.#byId = byId;
+    this.#physical = physical;
+  }
+
+  /** 表上有 `@logicDelete` 列时仍然真正删除，而不是把它设为已删除。 */
+  physically(): Delete<T> {
+    return new Delete(this.#target, this.#byId, true);
   }
 
   /**
@@ -408,7 +484,7 @@ export class Delete<T> extends Write {
    * 期望每行影响一行，否则 `db.execute` 抛出 UnexpectedRowCountError。行必须带主键字段（和版本字段）。
    */
   byId(...rows: readonly InsertRow<T>[]): Delete<T> {
-    return new Delete(this.#target, ById.of(this.#target.table, rows as readonly object[], "deleteFrom(...).byId(...)"));
+    return new Delete(this.#target, ById.of(this.#target.table, rows as readonly object[], "deleteFrom(...).byId(...)"), this.#physical);
   }
 
   /** 追加 WHERE 条件；多次调用之间是 AND。 */
@@ -416,27 +492,27 @@ export class Delete<T> extends Write {
   /** 条件对象：每个非空字段一个条件，规则同查询的 `where(filter)`。 */
   where<F extends FilterObject>(filter: F): Delete<T>;
   where(cond: ((t: Ref<T>) => Cond) | FilterObject): Delete<T> {
-    return new Delete(this.#target.where(cond), this.#byId);
+    return new Delete(this.#target.where(cond), this.#byId, this.#physical);
   }
 
   /** 之后的 where 里，与空值比较的条件被省略；要写在 where 之前。 */
   skipEmpty(): Delete<T> {
-    return new Delete(this.#target.with({ skipping: true }), this.#byId);
+    return new Delete(this.#target.with({ skipping: true }), this.#byId, this.#physical);
   }
 
   /** 不套用数据库实例的全局过滤器。 */
   unfiltered(): Delete<T> {
-    return new Delete(this.#target.with({ filtered: false }), this.#byId);
+    return new Delete(this.#target.with({ filtered: false }), this.#byId, this.#physical);
   }
 
   /** 允许没有 where 条件，即删除全表。 */
   all(): Delete<T> {
-    return new Delete(this.#target.with({ everyRow: true }), this.#byId);
+    return new Delete(this.#target.with({ everyRow: true }), this.#byId, this.#physical);
   }
 
   /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError。 */
   expect(rows: number): Delete<T> {
-    return new Delete(this.#target.expect(rows), this.#byId);
+    return new Delete(this.#target.expect(rows), this.#byId, this.#physical);
   }
 
   /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数。 */
@@ -451,12 +527,22 @@ export class Delete<T> extends Write {
     return byId.rows.map((row) => this.#statement(writer(), byId.locate(this.#target.ref, row)));
   }
 
-  /** 写出一条 DELETE；located 是 byId 定位一行的条件。 */
+  /** 写出一条 DELETE 或逻辑删除的 UPDATE；located 是 byId 定位一行的条件。 */
   #statement(w: SqlWriter, located: Cond): Rendered {
-    w.sql("DELETE FROM ");
-    ownerOf(this.#target.ref as object).renderSource(w);
-    this.#target.renderWhere(w, "deleteFrom(...)", located);
-    return w.statement();
+    const meta = entityMeta(this.#target.table);
+    const logic = meta.writes.logicDelete;
+    if (logic === undefined || this.#physical) {
+      w.sql("DELETE FROM ");
+      ownerOf(this.#target.ref as object).renderSource(w);
+      this.#target.renderWhere(w, "deleteFrom(...)", located);
+      return w.statement();
+    }
+    const ref = this.#target.ref as unknown as Record<string, Column<unknown>>;
+    const column = ref[logic.property]!;
+    const sets: (readonly [Column<unknown>, Expr<unknown>])[] = [[column, logic.timestamp ? (currentTimestamp() as Expr<unknown>) : bindValue(column.type, logic.deleted)]];
+    const version = meta.writes.version;
+    if (this.#byId !== undefined && version !== undefined) sets.push([ref[version]!, plus(ref[version] as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
+    return renderSet(w, this.#target as Target<unknown>, sets, located, "deleteFrom(...)");
   }
 }
 

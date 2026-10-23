@@ -60,6 +60,7 @@ import static org.dpdns.zerodep.query.Sql.replace;
 import static org.dpdns.zerodep.query.Sql.right;
 import static org.dpdns.zerodep.query.Sql.row;
 import static org.dpdns.zerodep.query.Sql.substring;
+import static org.dpdns.zerodep.query.Sql.update;
 import static org.dpdns.zerodep.query.Sql.stringAgg;
 import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.val;
@@ -103,7 +104,7 @@ public abstract class LiveScenarios {
         List<String> sql = new ArrayList<>();
         sql.add("-CREATE SCHEMA " + q("QUERY_IT"));
         for (String t : List.of("MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK",
-            "WF_VARIABLE", "WF_HI_TASK", "W_NOTE", "W_DOC", "W_SEQ")) {
+            "WF_VARIABLE", "WF_HI_TASK", "W_NOTE", "W_DOC", "W_SEQ", "W_TICKET")) {
             sql.add("-DROP TABLE " + t(t));
         }
         sql.add(table("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)));
@@ -142,6 +143,8 @@ public abstract class LiveScenarios {
         sql.add(table("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), q("QTY") + " INTEGER", c("STATUS", 10)));
         sql.add(table("W_DOC", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("VERSION") + " INTEGER"));
         sql.add(table("W_SEQ", q("ID") + " " + identity(), c("NAME", 20)));
+        sql.add(table("W_TICKET", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("DELETED") + " INTEGER", q("CREATED_AT") + " " + timestamp(),
+            q("UPDATED_AT") + " " + timestamp(), c("UPDATED_BY", 20)));
         live.execute(sql);
         db = database(live.connections(), c -> c.filter(Client.class, r -> r.client().eq("100")));
     }
@@ -684,6 +687,24 @@ public abstract class LiveScenarios {
         assertEquals(List.of("T1"), db.transaction(() -> db.list(Workflow.claimable())));
         assertEquals(List.of("T1", "T3"), db.transaction(() -> db.list(from(Workflow.Task.class).where(t -> t.assignee().isNull())
             .orderBy(t -> t.id()).with(forUpdate(Lock.NOWAIT)).select(t -> t.id()))));
+    }
+
+    @Test
+    void 逻辑删除与审计填充在实库上按预期写入和过滤() {
+        Database audited = database(live.connections(), Writes::audit);
+        audited.execute(deleteFrom(Writes.Ticket.class).physically().unfiltered().all());
+        audited.execute(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("T1", "a"), new Writes.TicketRow("T2", "b")));
+        audited.execute(update(Writes.Ticket.class).set(t -> t.title().to("b2")).where(t -> t.id().eq("T2")));
+        assertEquals(1, audited.execute(Writes.deleteTicket("T1")));
+        assertEquals(0, audited.execute(Writes.deleteTicket("T1")), "a deleted row is no longer visible");
+        audited.execute(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("T3", "c")).onConflict().update());
+        audited.execute(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("T3", "c2")).onConflict().update());
+        assertEquals(List.of("T2", "T3"), audited.list(from(Writes.Ticket.class).orderBy(t -> t.id()).select(t -> t.id())));
+        assertEquals(List.of("T1:a:1:2026-01-01T08:00:bob", "T2:b2:0:2026-01-01T08:00:bob", "T3:c2:0:2026-01-01T08:00:bob"),
+            audited.list(from(Writes.Ticket.class).unfiltered().orderBy(t -> t.id())
+                .select(t -> cols(t.id(), t.title(), t.deleted(), t.createdAt(), t.updatedBy()))).stream()
+                .map(r -> r.get("id") + ":" + r.get("title") + ":" + r.get("deleted") + ":" + r.get("createdAt") + ":" + r.get("updatedBy")).toList());
+        assertEquals(1, audited.execute(deleteFrom(Writes.Ticket.class).physically().unfiltered().where(t -> t.id().eq("T1"))));
     }
 
     @Test

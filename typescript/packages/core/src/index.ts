@@ -183,4 +183,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
-export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, update, Update, Write, type Assignments, type InsertRow } from "./write/write.js";
+export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";
