@@ -24,7 +24,7 @@ liveScenarios(
       try {
         const legacy = new PostgresDatabase(pgDriver(client));
         for (const text of ["back\\slash", "\\'; SELECT 1; --", "ends with \\"]) {
-          assert.equal(await legacy.one(from(Lips).limit(1).selectValue(() => lit(text))), text);
+          assert.equal(await legacy.one(from(Lips).limit(1).select(() => lit(text))), text);
         }
       } finally {
         await client.end();
@@ -36,19 +36,19 @@ liveScenarios(
         from(Lips)
           .with((l) => distinctOn(l.material))
           .orderBy((l) => [l.material.asc(), l.createdOn.desc()])
-          .selectValue((l) => l.delivery),
+          .select((l) => l.delivery),
       );
       assert.deepEqual(rows, ["D5", "D3"]);
     });
 
     it("聚合 FILTER 与 ILIKE 以及 IS DISTINCT FROM", async () => {
       const { db } = live();
-      assert.equal(Number(await db.one(from(Lips).selectValue((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))))), 6);
+      assert.equal(Number(await db.one(from(Lips).select((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))))), 6);
       assert.equal(
         await db.one(
           from(Lips)
             .where((l) => ilike(l.unit, "ea"))
-            .selectValue(() => count()),
+            .select(() => count()),
         ),
         5,
       );
@@ -56,7 +56,7 @@ liveScenarios(
         await db.one(
           from(Lips)
             .where((l) => pgOps(l.material).isDistinctFrom("M1"))
-            .selectValue(() => count()),
+            .select(() => count()),
         ),
         2,
       );
@@ -88,7 +88,7 @@ liveScenarios(
       const cells = await db.list(
         from(Lips)
           .groupBy((l) => cube(l.material, l.unit))
-          .selectValue(() => count()),
+          .select(() => count()),
       );
       assert.equal(cells.length, 6, "material x unit, material, unit and the grand total");
     });
@@ -112,7 +112,7 @@ liveScenarios(
       const withNull = await db.one(
         from(Lips)
           .where((l) => l.delivery.eq("D1"))
-          .selectValue((l) => greatest(l.quantity, nullOf(decimal))),
+          .select((l) => greatest(l.quantity, nullOf(decimal))),
       );
       assert.equal(Number(withNull), 3);
     });

@@ -29,106 +29,96 @@ export abstract class Expr<T> implements Renderable {
     return undefined;
   }
 
-  // ---------- comparison ----------
+  // ---------- 比较 ----------
 
-  eq(value: NonNullable<T>): Cond;
+  /** 等于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  eq(value: NonNullable<T> | null | undefined): Cond;
   eq(other: Expr<NonNullable<T> | null>): Cond;
-  eq(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  eq(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, "=", this.#operand(arg));
   }
 
-  ne(value: NonNullable<T>): Cond;
+  /** 不等于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  ne(value: NonNullable<T> | null | undefined): Cond;
   ne(other: Expr<NonNullable<T> | null>): Cond;
-  ne(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  ne(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, "<>", this.#operand(arg));
   }
 
-  gt(value: NonNullable<T>): Cond;
+  /** 大于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  gt(value: NonNullable<T> | null | undefined): Cond;
   gt(other: Expr<NonNullable<T> | null>): Cond;
-  gt(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  gt(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, ">", this.#operand(arg));
   }
 
-  ge(value: NonNullable<T>): Cond;
+  /** 大于等于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  ge(value: NonNullable<T> | null | undefined): Cond;
   ge(other: Expr<NonNullable<T> | null>): Cond;
-  ge(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  ge(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, ">=", this.#operand(arg));
   }
 
-  lt(value: NonNullable<T>): Cond;
+  /** 小于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  lt(value: NonNullable<T> | null | undefined): Cond;
   lt(other: Expr<NonNullable<T> | null>): Cond;
-  lt(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  lt(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, "<", this.#operand(arg));
   }
 
-  le(value: NonNullable<T>): Cond;
+  /** 小于等于：参数是值或另一个表达式；skipEmpty 下值为空时没有条件。 */
+  le(value: NonNullable<T> | null | undefined): Cond;
   le(other: Expr<NonNullable<T> | null>): Cond;
-  le(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  le(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Cond {
+    if (!(arg instanceof Expr) && skips(arg)) return Cond.EMPTY;
     return compare(this, "<=", this.#operand(arg));
   }
 
-  between(low: NonNullable<T>, high: NonNullable<T>): Cond;
+  /** BETWEEN low AND high；skipEmpty 下缺一边时只留下另一边，两边都缺时没有条件。 */
+  between(low: NonNullable<T> | null | undefined, high: NonNullable<T> | null | undefined): Cond;
   between(low: Expr<NonNullable<T> | null>, high: Expr<NonNullable<T> | null>): Cond;
-  between(low: NonNullable<T> | Expr<NonNullable<T> | null>, high: NonNullable<T> | Expr<NonNullable<T> | null>): Cond {
+  between(
+    low: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined,
+    high: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined,
+  ): Cond {
+    if (!(low instanceof Expr) && !(high instanceof Expr) && (skips(low) || skips(high))) {
+      return all(this.ge(low as NonNullable<T> | null | undefined), this.le(high as NonNullable<T> | null | undefined));
+    }
     const [lo, hi] = [this.#operand(low), this.#operand(high)];
     return condition((w) => w.render(this).sql(" BETWEEN ").render(lo).sql(" AND ").render(hi));
   }
 
-  /** An empty list is always false; long lists are split by the dialect's IN limit. */
-  in(values: readonly NonNullable<T>[]): Cond;
+  /** IN 列表或子查询；空列表恒假（skipEmpty 下没有条件），很长的列表按方言上限拆开。 */
+  in(values: readonly NonNullable<T>[] | null | undefined): Cond;
   in(subquery: Query<NonNullable<T> | null>): Cond;
-  in(arg: readonly NonNullable<T>[] | Query<NonNullable<T> | null>): Cond {
+  in(arg: readonly NonNullable<T>[] | Query<NonNullable<T> | null> | null | undefined): Cond {
+    if (!Array.isArray(arg) && !(arg instanceof Object)) return skipsOrThrow(arg);
+    if (Array.isArray(arg) && skips(arg)) return Cond.EMPTY;
     return Array.isArray(arg) ? inList(this, arg.map((v) => this.#param(v)), false) : inQuery(this, arg as Query<unknown>, false);
   }
 
-  /** An empty list is always true. */
-  notIn(values: readonly NonNullable<T>[]): Cond;
+  /** NOT IN 列表或子查询；空列表恒真（skipEmpty 下没有条件）。 */
+  notIn(values: readonly NonNullable<T>[] | null | undefined): Cond;
   notIn(subquery: Query<NonNullable<T> | null>): Cond;
-  notIn(arg: readonly NonNullable<T>[] | Query<NonNullable<T> | null>): Cond {
+  notIn(arg: readonly NonNullable<T>[] | Query<NonNullable<T> | null> | null | undefined): Cond {
+    if (!Array.isArray(arg) && !(arg instanceof Object)) return skipsOrThrow(arg);
+    if (Array.isArray(arg) && skips(arg)) return Cond.EMPTY;
     return Array.isArray(arg) ? inList(this, arg.map((v) => this.#param(v)), true) : inQuery(this, arg as Query<unknown>, true);
   }
 
+  /** IS NULL。 */
   isNull(): Cond {
     return condition((w) => w.render(this).sql(" IS NULL"));
   }
 
+  /** IS NOT NULL。 */
   isNotNull(): Cond {
     return condition((w) => w.render(this).sql(" IS NOT NULL"));
-  }
-
-  // ---------- optional filters: null or undefined (an empty list) means "no condition" ----------
-
-  eqIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.eq(value);
-  }
-
-  neIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.ne(value);
-  }
-
-  gtIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.gt(value);
-  }
-
-  geIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.ge(value);
-  }
-
-  ltIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.lt(value);
-  }
-
-  leIfPresent(value: NonNullable<T> | null | undefined): Cond {
-    return value == null ? Cond.EMPTY : this.le(value);
-  }
-
-  /** Each bound applies only when present. */
-  betweenIfPresent(low: NonNullable<T> | null | undefined, high: NonNullable<T> | null | undefined): Cond {
-    return all(this.geIfPresent(low), this.leIfPresent(high));
-  }
-
-  inIfPresent(values: readonly NonNullable<T>[] | null | undefined): Cond {
-    return values == null || values.length === 0 ? Cond.EMPTY : this.in(values);
   }
 
   // ---------- same-type functions ----------
@@ -169,14 +159,43 @@ export abstract class Expr<T> implements Renderable {
     return param(this.type, value);
   }
 
-  #operand(arg: NonNullable<T> | Expr<NonNullable<T> | null>): Expr<unknown> {
-    return arg instanceof Expr ? arg : this.#param(arg);
+  #operand(arg: NonNullable<T> | Expr<NonNullable<T> | null> | null | undefined): Expr<unknown> {
+    return arg instanceof Expr ? arg : this.#param(arg as NonNullable<T>);
   }
 }
 
-/** A bound parameter of a type, so a mounted converter applies to the value. */
+// ---------- skipEmpty ----------
+
+let skipping = false;
+
+/**
+ * 在 skipEmpty 模式下运行 body：其中与 null、undefined、空白字符串或空数组比较的条件直接省略。
+ * 回调都是同步执行的，所以用模块级的开关即可；嵌套的子查询沿用外层的模式。
+ */
+export function withSkipEmpty<R>(on: boolean, body: () => R): R {
+  if (!on || skipping) return body();
+  skipping = true;
+  try {
+    return body();
+  } finally {
+    skipping = false;
+  }
+}
+
+/** skipEmpty 模式下，这个值上的条件是否应当省略。 */
+export function skips(value: unknown): boolean {
+  return skipping && (value == null || (typeof value === "string" && value.trim() === "") || (Array.isArray(value) && value.length === 0));
+}
+
+/** IN 的参数是 null 或 undefined：skipEmpty 下没有条件，否则报错。 */
+function skipsOrThrow(value: unknown): Cond {
+  if (skips(value)) return Cond.EMPTY;
+  throw new TypeError("IN needs a list or a subquery; use skipEmpty() on the query to drop conditions on empty values");
+}
+
+/** 绑定参数，按表达式的类型绑定，挂载的转换器作用于这个值。 */
 export function param<T>(type: SqlType<T>, value: T): Expr<T> {
-  if (value == null) throw new TypeError("Comparing with NULL never matches; use isNull() or an ...IfPresent method");
+  if (value == null) throw new TypeError("Comparing with NULL never matches; use isNull(), or skipEmpty() on the query to drop conditions on empty values");
   return new Param(type as SqlType<NonNullable<T>>, value);
 }
 

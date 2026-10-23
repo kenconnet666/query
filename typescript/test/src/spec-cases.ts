@@ -25,7 +25,6 @@ import {
   lead,
   left,
   like,
-  likeIfPresent,
   lit,
   locate,
   lower,
@@ -86,23 +85,24 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
     from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))
       .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material))))
-      .selectValue((a) => a.material),
+      .select((a) => a.material),
   ),
   paging: plain(() =>
     from(Mara)
       .orderBy((m) => [m.material.asc().nullsLast(), m.partNumber.desc().nullsFirst()])
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .limit(10)
       .offset(20),
   ),
   "offset-only": plain(() =>
     from(Mara)
       .orderBy((m) => m.material.asc())
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .offset(5),
   ),
   conditions: plain(() =>
     from(Mara)
+      .skipEmpty()
       .where((m) =>
         all(
           any(m.material.eq("A"), m.partNumber.ne("B").and(m.manufacturer.isNull())),
@@ -113,15 +113,15 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
           m.material.between("A", "Z"),
           m.manufacturer.isNotNull(),
           m.material.gt("0").and(m.material.ge("1")).and(m.material.lt("9")).and(m.material.le("8")),
-          m.material.eqIfPresent(null),
-          likeIfPresent(m.material, null),
-          m.material.betweenIfPresent("A", null),
+          m.material.eq(null),
+          like(m.material, null),
+          m.material.between("A", null),
         ),
       )
-      .selectValue((m) => m.material),
+      .select((m) => m.material),
   ),
   "case-template": plain(() =>
-    from(Mara).selectValue((m) =>
+    from(Mara).select((m) =>
       caseWhen(m.materialType.eq("ZMAT"), "material")
         .when(m.materialType.eq("ZOTH"), "other")
         .otherwise(sql(text)`LOWER(${m.materialType})`),
@@ -239,7 +239,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
-      .selectValue((m) => m.material);
+      .select((m) => m.material);
     const open = from(Lips).select((l) => ({ delivery: l.delivery, material: l.material }));
     return from(open.asTable())
       .where((o) => all(o.material.in(parts), notExists(from(Vbkd).where((v) => v.salesOrder.eq(o.delivery)))))
@@ -248,7 +248,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
         text: scalar(
           from(Makt)
             .where((mk) => mk.material.eq(o.material))
-            .selectValue((mk) => max(mk.text)),
+            .select((mk) => max(mk.text)),
         ),
       }));
   }),
@@ -304,14 +304,14 @@ export function reservedAlias() {
   return from(Order)
     .where((o) => o.material.eq("M1"))
     .orderBy((o) => o.delivery)
-    .selectValue((o) => o.delivery);
+    .select((o) => o.delivery);
 }
 
 export function unionGrouping() {
   const materialOf = (delivery: string) =>
     from(Lips)
       .where((l) => l.delivery.eq(delivery))
-      .selectValue((l) => l.material);
+      .select((l) => l.material);
   return materialOf("D1").unionAll(materialOf("D3").union(materialOf("D2")));
 }
 

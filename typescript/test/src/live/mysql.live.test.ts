@@ -35,7 +35,7 @@ liveScenarios(
       const days = await db.one(
         from(Lips)
           .limit(1)
-          .selectValue(() => dateDiff(lit("2026-02-01", date), lit("2026-01-01", date))),
+          .select(() => dateDiff(lit("2026-02-01", date), lit("2026-01-01", date))),
       );
       assert.equal(days, 31);
       const rows = await db.list(
@@ -68,7 +68,7 @@ liveScenarios(
       const withNull = await db.one(
         from(Lips)
           .where((l) => l.delivery.eq("D1"))
-          .selectValue((l) => greatest(l.quantity, nullOf(decimal))),
+          .select((l) => greatest(l.quantity, nullOf(decimal))),
       );
       assert.equal(withNull, null);
     });

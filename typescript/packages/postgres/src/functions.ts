@@ -1,4 +1,4 @@
-import { call, condition, Expr, expression, FunctionDef, lit, param, text, toOrder, untyped, type Aggregate, type Clause, type Cond, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { call, Cond, condition, Expr, expression, FunctionDef, lit, param, skips, text, toOrder, untyped, type Aggregate, type Clause, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { PostgresDialect } from "./dialect.js";
 
 /** PostgreSQL-only functions and clauses; they refuse to render on another dialect. */
@@ -54,8 +54,9 @@ export function pg<T>(expr: Expr<T>): PgOps<T> {
   return new PgOps(expr);
 }
 
-export function ilike(e: Expr<string | null>, pattern: string): Cond {
-  const p = param(e.type, pattern);
+export function ilike(e: Expr<string | null>, pattern: string | null | undefined): Cond {
+  if (skips(pattern)) return Cond.EMPTY;
+  const p = param(e.type, pattern as string);
   return pgCond((w) => w.render(e).sql(" ILIKE ").render(p));
 }
 

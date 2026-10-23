@@ -1,7 +1,7 @@
 import type { Clause, Dialect } from "./dialect.js";
-import { all, Cond, Expr, Literal, toOrder, type Order, type OrderItem, type SourceColumn } from "./expr.js";
+import { all, Cond, Expr, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "./expr.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "./internal.js";
-import { entityMeta, shapeFields, type Ctor, type Table } from "./metadata.js";
+import { shapeFields, type Ctor, type Table } from "./metadata.js";
 import { createRef, Cte, Derived, ownerOf, tableSource, type NullableRef, type Ref, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "./types.js";
 import { SqlWriter, type Rendered } from "./writer.js";
@@ -49,6 +49,8 @@ interface SelectSpec {
   readonly limit: number | undefined;
   readonly offset: number | undefined;
   readonly filtered: boolean;
+  /** 是否开启 skipEmpty：与空值比较的条件直接省略。 */
+  readonly skipEmpty: boolean;
   readonly clauses: readonly Clause[];
 }
 
@@ -206,10 +208,9 @@ export class Query<R> {
   }
 
   /**
-   * Same SQL, every row copied into a new instance of the class by field name. The row type must
-   * provide the class's fields; extra columns are ignored.
+   * 同一条 SQL，每行按字段名复制到类的新实例里。行类型必须提供类的全部字段（编译期检查），多出来的列被忽略。
    */
-  mapTo<C extends object>(type: new () => C, ..._check: [R] extends [Fields<C>] ? [] : [error: { "the row type does not provide the fields of": C }]): Query<C> {
+  into<C extends object>(type: new () => C, ..._check: [R] extends [Fields<C>] ? [] : [error: { "the row type does not provide the fields of": C }]): Query<C> {
     const inner = this.#s.assemble;
     let fields: readonly string[] | undefined;
     return makeQuery({
@@ -287,8 +288,8 @@ export class Query<R> {
 type IfEquals<X, Y, A, B> = (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? A : B;
 type WritableKeys<C> = { [K in keyof C]-?: IfEquals<{ [Q in K]: C[K] }, { -readonly [Q in K]: C[K] }, K, never> }[keyof C];
 
-/** The fields of a class that `mapTo` fills: not methods, and not getters (they look readonly). */
-export type Fields<C> = { [K in WritableKeys<C> as C[K] extends (...args: never[]) => unknown ? never : K]: C[K] };
+/** `into` 填充的类字段：不含方法，也不含 getter（它们在类型上是只读的）。 */
+export type Fields<C> = { [K in keyof C as K extends WritableKeys<C> ? (C[K] extends (...args: never[]) => unknown ? never : K) : never]: C[K] };
 
 function hasOrderOrLimit(s: SelectSpec): boolean {
   return s.orderBy.length > 0 || s.limit !== undefined || s.offset !== undefined;
@@ -451,13 +452,14 @@ export class From<T extends readonly unknown[]> {
   #join<U extends readonly unknown[], E>(kind: JoinKind, target: Target<E>, on: ((...refs: [...T, Ref<E>]) => Cond) | undefined): From<U> {
     const ref = refTo(target);
     const refs = [...this.#refs, ref] as unknown as [...T, Ref<E>];
-    const condition = on === undefined ? Cond.EMPTY : nonNull(on(...refs));
+    const condition = on === undefined ? Cond.EMPTY : nonNull(withSkipEmpty(this.#spec.skipEmpty, () => on(...refs)));
     if (kind !== "CROSS JOIN" && condition.isEmpty) throw new Error(`${kind} needs a condition; use crossJoin for a cartesian product`);
     return makeFrom({ ...this.#spec, joins: [...this.#spec.joins, { kind, ref, on: condition }] }, refs as unknown as U);
   }
 
+  /** WHERE 条件；多次调用之间是 AND，空条件（Cond.EMPTY）被丢弃。 */
   where(cond: (...refs: T) => Cond): From<T> {
-    return this.#with({ where: [...this.#spec.where, nonNull(cond(...this.#refs))] });
+    return this.#with({ where: [...this.#spec.where, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
   }
 
   groupBy(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
@@ -473,8 +475,9 @@ export class From<T extends readonly unknown[]> {
     return this.#with({ groupBy: all, rollup: true });
   }
 
+  /** HAVING 条件；多次调用之间是 AND。 */
   having(cond: (...refs: T) => Cond): From<T> {
-    return this.#with({ having: [...this.#spec.having, nonNull(cond(...this.#refs))] });
+    return this.#with({ having: [...this.#spec.having, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
   }
 
   /** An expression sorts ascending; use `.desc()`, `.nullsLast()` and friends for more. */
@@ -494,9 +497,18 @@ export class From<T extends readonly unknown[]> {
     return this.#with({ offset: rows(n, "offset") });
   }
 
-  /** Skips the database instance's global filters for this SELECT. */
+  /** 本查询不套用数据库实例的全局过滤器。 */
   unfiltered(): From<T> {
     return this.#with({ filtered: false });
+  }
+
+  /**
+   * 之后写的 WHERE、HAVING、连接条件里，与 null、undefined、空白字符串或空数组比较的条件直接省略，
+   * 适合按请求参数筛选：`from(Likp).skipEmpty().where((h) => h.customer.eq(req.customer))`。
+   * 不开启时与 null 比较会报错，以免漏写条件导致查出全部数据。
+   */
+  skipEmpty(): From<T> {
+    return this.#with({ skipEmpty: true });
   }
 
   /** Adds a dialect clause, e.g. `hint("NO_CS_JOIN")` from the HANA package. */
@@ -511,13 +523,17 @@ export class From<T extends readonly unknown[]> {
   }
 
   /**
-   * An object projection: keys are column labels, nested objects give nested results. A flat one
-   * can serve as a CTE or derived table.
+   * 投影。回调返回一个表达式时是单列查询（标量、IN 子查询或值列表）；返回对象时键就是列名，
+   * 嵌套的对象得到嵌套的结果，扁平的对象投影可以做 CTE 或派生表。
    */
-  select<P extends Projection>(projection: (...refs: T) => P): Query<Shape<P>> {
+  select<V>(projection: (...refs: T) => Expr<V>): Query<V>;
+  select<P extends Projection>(projection: (...refs: T) => P): Query<Shape<P>>;
+  select(projection: (...refs: T) => Expr<unknown> | Projection): Query<unknown> {
+    const selected = projection(...this.#refs);
+    if (selected instanceof Expr) return this.#single(selected as Expr<unknown>, selected.label ?? "value");
     const items: Expr<unknown>[] = [];
     const paths: string[][] = [];
-    flatten(projection(...this.#refs), [], items, paths);
+    flatten(selected, [], items, paths);
     if (items.length === 0) throw new Error("The projection selects no column");
     return makeQuery({
       arms: [{ spec: this.#spec, items }],
@@ -534,21 +550,12 @@ export class From<T extends readonly unknown[]> {
     });
   }
 
-  /** One column: a list of values, a scalar subquery or an IN subquery. */
-  selectValue<V>(value: (...refs: T) => Expr<V>): Query<V> {
-    const item = value(...this.#refs);
-    return this.#single(item as Expr<unknown>, item.label ?? "value");
-  }
-
   /** SELECT 1 over this scope, as `exists(from(...).where(...))` renders it. */
   [SUBQUERY](w: SqlWriter): void {
     this.#single(new Literal(integer, 1) as Expr<unknown>, "value")[SUBQUERY](w);
   }
 
-  /**
-   * Every field of the class taken from the same-named column of exactly one source, or from the
-   * source its `@mapFrom` names; rows are instances of the class.
-   */
+  /** 类的每个字段取自作用域里恰好一个来源的同名列，结果是这个类的实例。 */
   selectAs<C extends object>(type: new () => C): Query<C> {
     const fields = shapeFields(type);
     const items = fields.map((f) => this.#autoColumn(type, f).as(f));
@@ -573,23 +580,13 @@ export class From<T extends readonly unknown[]> {
 
   #autoColumn(type: Ctor<unknown>, field: string): Expr<unknown> {
     const refs = this.#spec.joins.map((j) => j.ref as Record<string, Expr<unknown>>);
-    const from = entityMeta(type).mapFrom(field);
-    if (from !== undefined) {
-      const hits = refs.filter((r) => ownerOf(r).source.entity === from.entity);
-      if (hits.length !== 1) {
-        throw new Error(`${type.name}.${field}: @mapFrom(${from.entity.name}) needs exactly one ${from.entity.name} in the query, found ${hits.length}`);
-      }
-      const column = hits[0]![from.property];
-      if (column === undefined) throw new Error(`${from.entity.name} has no column '${from.property}'`);
-      return column;
-    }
     const hits = refs.map((r) => r[field]).filter((c) => c !== undefined);
     if (hits.length === 1) return hits[0]!;
     throw new Error(
       `${type.name}.${field} ` +
         (hits.length === 0
-          ? `has no same-named column in the joined sources; use select(...) with mapTo or @mapFrom`
-          : `matches ${hits.length} sources; pick one with @mapFrom or select(...) with mapTo`),
+          ? `has no same-named column in the joined sources; select it with select((...) => ({ ... })).into(...)`
+          : `matches ${hits.length} sources; select it with select((...) => ({ ... })).into(...)`),
     );
   }
 
@@ -626,6 +623,7 @@ function emptySpec(): SelectSpec {
     limit: undefined,
     offset: undefined,
     filtered: true,
+    skipEmpty: false,
     clauses: [],
   };
 }

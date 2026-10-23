@@ -10,7 +10,6 @@ import {
   inMemoryCache,
   left,
   negate,
-  nest,
   plus,
   replace,
   right,
@@ -173,12 +172,12 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     it("全局过滤器只读当前客户端且可以关闭", async () => {
       const { db } = live();
-      assert.equal(await db.one(from(Lips).selectValue(() => count())), 5);
+      assert.equal(await db.one(from(Lips).select(() => count())), 5);
       assert.equal(
         await db.one(
           from(Lips)
             .unfiltered()
-            .selectValue(() => count()),
+            .select(() => count()),
         ),
         6,
       );
@@ -211,7 +210,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const rows = await live().db.list(
         from(Lips)
           .where((l) => l.createdOn.eq("2026-01-15"))
-          .selectValue((l) => l.delivery),
+          .select((l) => l.delivery),
       );
       assert.deepEqual(rows, ["D1"]);
     });
@@ -260,7 +259,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const events: QueryEvent[] = [];
       const cached = target.database(driver, { cache: inMemoryCache(), listener: (e) => void events.push(e) });
       const q = from(Lips)
-        .selectValue(() => count())
+        .select(() => count())
         .cached(60_000);
       assert.equal(await cached.one(q), 6);
       assert.equal(await cached.one(q), 6);
@@ -286,11 +285,11 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
           assert.equal(events[1]!.onDay, "2011-12-30", zone);
           const byDay = from(Event)
             .where((e) => e.onDay.eq("2011-12-30"))
-            .selectValue((e) => e.id);
+            .select((e) => e.id);
           assert.deepEqual(await db.list(byDay), [2], zone);
           const byTime = from(Event)
             .where((e) => e.atTime.eq("2024-03-31 02:30:00"))
-            .selectValue((e) => e.id);
+            .select((e) => e.id);
           assert.deepEqual(await db.list(byTime), [1], zone);
         }
       } finally {
@@ -374,7 +373,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const blank = await db.list(
         from(MaraView)
           .where((m) => m.maker.isNull())
-          .selectValue((m) => m.material),
+          .select((m) => m.material),
       );
       assert.deepEqual(blank, ["M4"]);
     });
@@ -391,7 +390,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const { db } = live();
       const deliveries = from(Lips)
         .orderBy((l) => l.delivery)
-        .selectValue((l) => l.delivery);
+        .select((l) => l.delivery);
       const failsOnD3 = deliveries.map((d) => {
         if (d === "D3") throw new Error("mapping failed");
         return d;
@@ -414,19 +413,6 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     it("类名是保留字的实体也能查询", async () => {
       assert.deepEqual(await live().db.list(reservedAlias()), ["D1", "D2", "D5", "D6"]);
-    });
-
-    it("扁平结果按键分组为父项与子项", async () => {
-      const rows = await live().db.list(
-        from(Mara)
-          .leftJoin(Lips, (m, l) => l.material.eq(m.material))
-          .orderBy((m, l) => [m.material, l.delivery])
-          .select((m, l) => ({ material: m.material, delivery: l.delivery })),
-      );
-      assert.deepEqual(
-        nest(rows, (r) => r.material, (r) => r.delivery, (first, deliveries) => `${first.material}=${deliveries.join(",")}`),
-        ["M1=D1,D2,D5", "M2=D3,D4", "M3=", "M4="],
-      );
     });
 
     it("按 LOCATE 找到的位置截取文本", async () => {
@@ -460,10 +446,10 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
     it("带引号、反斜杠和注释符的文本作为字面量和参数都原样往返", async () => {
       const { db } = live();
       const texts = cte("texts", values(HOSTILE.map((value, ord) => ({ value, ord }))));
-      assert.deepEqual(await db.list(from(texts).orderBy((t) => t.ord).selectValue((t) => t.value)), HOSTILE, "values(...) writes every row as literals");
+      assert.deepEqual(await db.list(from(texts).orderBy((t) => t.ord).select((t) => t.value)), HOSTILE, "values(...) writes every row as literals");
       for (const text of HOSTILE) {
-        assert.equal(await db.one(from(Lips).limit(1).selectValue(() => val(text))), text, "a SELECT-list constant is written as a literal");
-        assert.deepEqual(await db.list(from(texts).where((t) => t.value.eq(text)).selectValue((t) => t.value)), [text], "a WHERE value is bound as a parameter");
+        assert.equal(await db.one(from(Lips).limit(1).select(() => val(text))), text, "a SELECT-list constant is written as a literal");
+        assert.deepEqual(await db.list(from(texts).where((t) => t.value.eq(text)).select((t) => t.value)), [text], "a WHERE value is bound as a parameter");
       }
     });
 
@@ -477,9 +463,9 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await assert.rejects(db.sql(`SELECT * FROM ${live().table("NO_SUCH_TABLE")}`).list(), (e: unknown) => e instanceof QueryExecutionError && !e.timedOut);
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 5000, `both statements were cancelled after about a second instead of running to the end: ${elapsed} ms`);
-      assert.equal(await limited.one(from(Lips).where((l) => l.client.eq("100")).selectValue(() => count())), 5);
+      assert.equal(await limited.one(from(Lips).where((l) => l.client.eq("100")).select(() => count())), 5);
       const streamed: string[] = [];
-      for await (const d of limited.stream(from(Lips).where((l) => l.client.eq("100")).selectValue((l) => l.delivery).timeout(5000))) streamed.push(d);
+      for await (const d of limited.stream(from(Lips).where((l) => l.client.eq("100")).select((l) => l.delivery).timeout(5000))) streamed.push(d);
       assert.equal(streamed.length, 5, "a stream applies its timeout and still reads every row");
     });
 

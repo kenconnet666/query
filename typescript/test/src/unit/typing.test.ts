@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, decimal, from, integer, lit, mapFrom, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
+import { column, decimal, from, integer, lit, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
 import { DeliveryVO, Event, Lips, Makt, Mara } from "../erp.js";
 import { stockArm } from "../scenarios.js";
 
@@ -31,13 +31,13 @@ export function typeChecks(): unknown[] {
   from(Lips).join(Event, (l, e) => e.id.eq(l.material));
 
   // @ts-expect-error COALESCE with a value of another type
-  from(Lips).selectValue((l) => l.unit.coalesce(1));
+  from(Lips).select((l) => l.unit.coalesce(1));
 
   // @ts-expect-error IN with values of another type
   from(Event).where((e) => e.id.in(["1"]));
 
   // @ts-expect-error an IN subquery of another type
-  from(Event).where((e) => e.id.in(from(Lips).selectValue((l) => l.delivery)));
+  from(Event).where((e) => e.id.in(from(Lips).select((l) => l.delivery)));
 
   // ---------- results ----------
 
@@ -56,12 +56,12 @@ export function typeChecks(): unknown[] {
   from(Lips).select((l) => ({ a: l.delivery })).unionAll(from(Lips).select((l) => ({ b: l.delivery })));
 
   // @ts-expect-error mapTo needs the row to provide every field of the class
-  from(Lips).select((l) => ({ partNumber: l.material })).mapTo(DeliveryVO);
+  from(Lips).select((l) => ({ partNumber: l.material })).into(DeliveryVO);
 
   from(Lips)
     .groupBy((l) => l.material)
     .select((l) => ({ partNumber: l.material, name: max(l.unit), quantity: sum(l.quantity) }))
-    .mapTo(DeliveryVO);
+    .into(DeliveryVO);
 
   // @ts-expect-error a generic template applied to a table without the shared fields
   stockArm(Lips, (h) => h.quantity, "2026");
@@ -76,13 +76,6 @@ export function typeChecks(): unknown[] {
     @column("C", decimal) c!: string | null;
   }
 
-  class BadMapping {
-    // @ts-expect-error a key the entity does not have
-    @mapFrom(Lips, "nothing") a!: string;
-    // @ts-expect-error a field that cannot hold the entity's value
-    @mapFrom(Lips, "delivery") b!: number;
-  }
-
   // ---------- generic code over a shared shape ----------
 
   const quantityOf = (q: Expr<string | null>): Expr<string> => q.coalesce("0");
@@ -93,7 +86,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, BadMapping, quantityOf, expectType, codes];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes];
 }
 
 describe("编译期类型检查", () => {

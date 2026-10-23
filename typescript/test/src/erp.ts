@@ -1,4 +1,4 @@
-import { blankAsNull, column, converted, date, decimal, ignore, integer, mapFrom, table, text, timestamp, trimmed } from "@zerodep-dev/query-core";
+import { blankAsNull, column, converted, date, decimal, ignore, integer, table, text, timestamp, trimmed } from "@zerodep-dev/query-core";
 
 /** SAP-style entities shared by the unit tests and the live scenarios of every dialect, as in the Java tests. */
 export const SCHEMA = "QUERY_IT";
@@ -101,7 +101,7 @@ export class Event {
 /** Same-named columns map automatically; a renamed one names its source. */
 export class LineVO {
   delivery!: string;
-  @mapFrom(Lips, "material") materialNo!: string;
+  materialNo!: string;
   createdOn!: string | null;
   text!: string | null;
   @ignore computedLater?: string;

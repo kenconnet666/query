@@ -22,9 +22,9 @@ describe("方言", () => {
   });
 
   it("PostgreSQL 含反斜杠的字面量写成 E 字符串，以免受 standard_conforming_strings 影响", () => {
-    const escaped = postgres.render(from(Lips).selectValue(() => lit("a\\'; --"))).sql;
+    const escaped = postgres.render(from(Lips).select(() => lit("a\\'; --"))).sql;
     assert.ok(escaped.startsWith("SELECT E'a\\\\''; --' AS "), escaped);
-    const plain = postgres.render(from(Lips).selectValue(() => lit("O'Brien"))).sql;
+    const plain = postgres.render(from(Lips).select(() => lit("O'Brien"))).sql;
     assert.ok(plain.startsWith("SELECT 'O''Brien' AS "), plain);
   });
 
@@ -39,49 +39,49 @@ describe("方言", () => {
         .with((l) => distinctOn(l.material))
         .distinct()
         .orderBy((l) => [l.material.asc(), l.createdOn.desc()])
-        .selectValue((l) => l.delivery),
+        .select((l) => l.delivery),
     ).sql;
     assert.ok(s.startsWith('SELECT DISTINCT ON (lips."MATNR") lips."VBELN" AS delivery'), s);
   });
 
   it("MySQL 没有到 BOOLEAN 的类型转换", () => {
-    assert.throws(() => mysql.render(from(Lips).selectValue((l) => cast(l.quantity, CastType.boolean()))), /no CAST to BOOLEAN/);
+    assert.throws(() => mysql.render(from(Lips).select((l) => cast(l.quantity, CastType.boolean()))), /no CAST to BOOLEAN/);
   });
 
   it("方言专属函数和子句不能在别的方言上渲染", () => {
     const day = lit("2026-01-01", date);
     const cases = [
-      from(Lips).selectValue(() => daysBetween(day, addDays(day, 1))),
+      from(Lips).select(() => daysBetween(day, addDays(day, 1))),
       from(Lips)
         .with(hint("NO_CS_JOIN"))
-        .selectValue((l) => l.delivery),
-      from(Lips).selectValue((l) => groupConcat(l.delivery, ",")),
+        .select((l) => l.delivery),
+      from(Lips).select((l) => groupConcat(l.delivery, ",")),
       from(Lips)
         .with(maxExecutionTime(10))
-        .selectValue((l) => l.delivery),
+        .select((l) => l.delivery),
       from(Lips)
         .where((l) => ilike(l.unit, "ea"))
-        .selectValue((l) => l.delivery),
-      from(Lips).selectValue((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))),
+        .select((l) => l.delivery),
+      from(Lips).select((l) => filterWhere(sum(l.quantity), l.material.eq("M1"))),
       from(Lips)
         .with((l) => distinctOn(l.material))
-        .selectValue((l) => l.delivery),
+        .select((l) => l.delivery),
       from(Lips)
         .groupBy((l) => cube(l.material))
-        .selectValue(() => sum(lit(1))),
+        .select(() => sum(lit(1))),
       from(Lips)
         .groupBy((l) => groupingSets([l.material], []))
-        .selectValue(() => sum(lit(1))),
+        .select(() => sum(lit(1))),
       from(Lips)
         .groupBy((l) => pgCube(l.material))
-        .selectValue(() => sum(lit(1))),
+        .select(() => sum(lit(1))),
       from(Lips)
         .groupBy((l) => pgGroupingSets([l.material], []))
-        .selectValue(() => sum(lit(1))),
-      from(Lips).selectValue((l) => greatest(l.quantity, "4")),
-      from(Lips).selectValue((l) => toInteger(l.delivery)),
-      from(Lips).selectValue((l) => pgLeast(l.quantity, "4")),
-      from(Lips).selectValue((l) => mysqlGreatest(l.quantity, "4")),
+        .select(() => sum(lit(1))),
+      from(Lips).select((l) => greatest(l.quantity, "4")),
+      from(Lips).select((l) => toInteger(l.delivery)),
+      from(Lips).select((l) => pgLeast(l.quantity, "4")),
+      from(Lips).select((l) => mysqlGreatest(l.quantity, "4")),
     ];
     for (const q of cases) assert.throws(() => q.toSql(other), /HanaDialect|MysqlDialect|PostgreSQL|PostgresDialect/);
     assert.throws(() => postgres.render(cases[0]!), /DAYS_BETWEEN is a HanaDialect function; this database uses PostgreSQL/);
@@ -90,8 +90,8 @@ describe("方言", () => {
   });
 
   it("HANA 的非 ASCII 字面量带 N 前缀，类型转换用 NVARCHAR", () => {
-    const s = hana.render(from(Lips).selectValue((l) => cast(l.unit, CastType.text(10)))).sql;
+    const s = hana.render(from(Lips).select((l) => cast(l.unit, CastType.text(10)))).sql;
     assert.ok(s.startsWith("SELECT CAST(LIPS.VRKME AS NVARCHAR(10))"), s);
-    assert.ok(hana.render(from(Lips).selectValue(() => lit("件"))).sql.startsWith("SELECT N'件'"));
+    assert.ok(hana.render(from(Lips).select(() => lit("件"))).sql.startsWith("SELECT N'件'"));
   });
 });

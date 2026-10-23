@@ -28,7 +28,6 @@ interface FieldMeta {
   readonly name: string;
   readonly column?: string;
   readonly type?: SqlType<unknown>;
-  readonly mapFrom?: { readonly entity: Ctor<unknown>; readonly property: string };
   readonly ignore?: true;
   readonly read?: string;
 }
@@ -49,11 +48,9 @@ export interface EntityMeta {
   readonly table: { readonly name: string; readonly schema: string | undefined } | undefined;
   /** Decorated columns, base class first. */
   readonly properties: readonly PropertyMeta[];
-  /** Every decorated field that is not ignored, columns or `@mapFrom` alike. */
+  /** 没有被 ignore 的全部字段。 */
   readonly fields: readonly string[];
   property(name: string): PropertyMeta | undefined;
-  /** Where a DTO field takes its value from, if it says so. */
-  mapFrom(name: string): { readonly entity: Ctor<unknown>; readonly property: string } | undefined;
   ignored(name: string): boolean;
 }
 
@@ -99,12 +96,6 @@ export function column(nameOrType?: string | SqlType<unknown>, type?: SqlType<un
   const name = typeof nameOrType === "string" ? nameOrType : undefined;
   const sqlType = typeof nameOrType === "object" ? nameOrType : (type ?? (text as SqlType<unknown>));
   return (_value, context) => record(context, name === undefined ? { type: sqlType } : { column: name, type: sqlType });
-}
-
-/** On a DTO field: the value comes from `entity[property]`. The key and the field type are checked. */
-export function mapFrom<E, K extends keyof E & string>(entity: Ctor<E>, property: K) {
-  return <F>(_value: undefined, context: ClassFieldDecoratorContext<unknown, F> & ([E[K]] extends [F] ? unknown : { "field type must accept": E[K] })): void =>
-    record(context, { mapFrom: { entity: entity as Ctor<unknown>, property } });
 }
 
 /**
@@ -157,7 +148,6 @@ function describe(type: Ctor<unknown>): EntityMeta {
     properties,
     fields: fields.filter((f) => !f.ignore).map((f) => f.name),
     property: (name: string) => byName.get(name),
-    mapFrom: (name: string) => fieldsByName.get(name)?.mapFrom,
     ignored: (name: string) => fieldsByName.get(name)?.ignore === true,
   });
 }

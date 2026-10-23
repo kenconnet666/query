@@ -14,6 +14,7 @@ import {
   param,
   raw,
   renderTemplate,
+  skips,
   Scalar,
   WindowFunction,
   type KeepNull,
@@ -70,26 +71,26 @@ export function nullOf<T>(type: SqlType<T>): Expr<T | null> {
 
 // ---------- conditions ----------
 
-/** The condition only when test holds; otherwise no condition. */
+/** test 成立时才加这个条件，否则没有条件。 */
 export function onlyIf(test: boolean, cond: () => Cond): Cond {
   return test ? cond() : Cond.EMPTY;
 }
 
-/** The condition built from value only when value is present. */
+/** value 有值时用它构造条件，否则没有条件。 */
 export function ifPresent<T>(value: T | null | undefined, cond: (value: T) => Cond): Cond {
   return value == null ? Cond.EMPTY : cond(value);
 }
 
-export function like(e: Expr<string | null>, pattern: string): Cond {
-  return compare(e, "LIKE", param(e.type, pattern));
+/** LIKE；模式原样使用，% 和 _ 是通配符。skipEmpty 下模式为空时没有条件。 */
+export function like(e: Expr<string | null>, pattern: string | null | undefined): Cond {
+  if (skips(pattern)) return Cond.EMPTY;
+  return compare(e, "LIKE", param(e.type, pattern as string));
 }
 
-export function notLike(e: Expr<string | null>, pattern: string): Cond {
-  return compare(e, "NOT LIKE", param(e.type, pattern));
-}
-
-export function likeIfPresent(e: Expr<string | null>, pattern: string | null | undefined): Cond {
-  return pattern == null ? Cond.EMPTY : like(e, pattern);
+/** NOT LIKE；skipEmpty 下模式为空时没有条件。 */
+export function notLike(e: Expr<string | null>, pattern: string | null | undefined): Cond {
+  if (skips(pattern)) return Cond.EMPTY;
+  return compare(e, "NOT LIKE", param(e.type, pattern as string));
 }
 
 /** A condition written as SQL; expressions render in place, other values become parameters. */

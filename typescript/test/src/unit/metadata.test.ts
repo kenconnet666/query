@@ -43,7 +43,6 @@ describe("元数据", () => {
 
   it("DTO 的字段来自类字段和装饰器，跳过 ignore", () => {
     assert.deepEqual(shapeFields(LineVO), ["delivery", "materialNo", "createdOn", "text"]);
-    assert.deepEqual(entityMeta(LineVO).mapFrom("materialNo"), { entity: Lips, property: "material" });
   });
 
   it("装饰器只用于公开的实例字段", () => {

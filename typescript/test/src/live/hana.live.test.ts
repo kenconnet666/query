@@ -33,8 +33,8 @@ liveScenarios(
       const { db } = live();
       const day = lit("2026-01-01", date);
       const one = from(Lips).limit(1);
-      assert.equal(await db.one(one.selectValue(() => daysBetween(day, addMonths(day, 1)))), 31);
-      assert.equal(await db.one(one.selectValue(() => toVarchar(addDays(day, 4), "YYYYMMDD"))), "20260105");
+      assert.equal(await db.one(one.select(() => daysBetween(day, addMonths(day, 1)))), 31);
+      assert.equal(await db.one(one.select(() => toVarchar(addDays(day, 4), "YYYYMMDD"))), "20260105");
     });
 
     it("带排序的 STRING_AGG 与提示子句", async () => {
@@ -64,7 +64,7 @@ liveScenarios(
       const cells = await db.list(
         from(Lips)
           .groupBy((l) => cube(l.material, l.unit))
-          .selectValue(() => count()),
+          .select(() => count()),
       );
       assert.equal(cells.length, 6, "material x unit, material, unit and the grand total");
     });
@@ -83,7 +83,7 @@ liveScenarios(
       const withNull = await db.one(
         from(Lips)
           .where((l) => l.delivery.eq("D1"))
-          .selectValue((l) => greatest(l.quantity, nullOf(decimal))),
+          .select((l) => greatest(l.quantity, nullOf(decimal))),
       );
       assert.equal(withNull, null);
     });
@@ -92,7 +92,7 @@ liveScenarios(
       const numbers = await live().db.list(
         from(Lips)
           .orderBy((l) => l.delivery)
-          .selectValue((l) => toInteger(substring(l.delivery, 2))),
+          .select((l) => toInteger(substring(l.delivery, 2))),
       );
       assert.deepEqual(numbers, [1, 2, 3, 4, 5]);
     });

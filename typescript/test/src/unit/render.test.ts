@@ -13,6 +13,7 @@ import {
   FunctionDef,
   grouping,
   ifPresent,
+  like,
   onlyIf,
   scalar,
   sql,
@@ -45,7 +46,7 @@ class OtherDialect extends Dialect {
 const where = (cond: (m: Ref<Mara>) => Cond) =>
   from(Mara)
     .where(cond)
-    .selectValue((m) => m.material)
+    .select((m) => m.material)
     .toSql(DIALECT).sql;
 
 describe("渲染", () => {
@@ -94,7 +95,7 @@ ORDER BY LIPS.VBELN ASC`,
     const r = new TestDatabase({ filters: [clientFilter] }).render(
       from(Lips)
         .unfiltered()
-        .selectValue(() => count()),
+        .select(() => count()),
     );
     assert.equal(r.sql, 'SELECT COUNT(*) AS "value"\nFROM QUERY_IT.LIPS LIPS');
   });
@@ -119,7 +120,7 @@ WHERE MCHBH.LFGJA = ?`,
   });
 
   it("只有混用 UNION 与 UNION ALL 的右侧组合才加括号", () => {
-    const arm = () => from(Mara).selectValue((m) => m.material);
+    const arm = () => from(Mara).select((m) => m.material);
     const skeleton = (q: ReturnType<typeof arm>) => q.toSql(DIALECT).sql.replace(/SELECT[^\n]*\nFROM[^\n)]*/g, "S");
     assert.equal(skeleton(arm().union(arm().unionAll(arm().union(arm())))), "S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))");
     assert.equal(skeleton(arm().unionAll(arm().unionAll(arm()))), "S\nUNION ALL\nS\nUNION ALL\nS");
@@ -130,7 +131,7 @@ WHERE MCHBH.LFGJA = ?`,
     const r = from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))
       .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material))))
-      .selectValue((a) => a.material)
+      .select((a) => a.material)
       .toSql(DIALECT);
     assert.equal(
       r.sql,
@@ -153,12 +154,12 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     const small = new TestDialect(3);
     const inSql = from(Mara)
       .where((m) => m.material.in(["1", "2", "3", "4", "5", "6", "7"]))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(small).sql;
     assert.ok(inSql.endsWith("WHERE (MARA.MATNR IN (?, ?, ?) OR MARA.MATNR IN (?, ?, ?) OR MARA.MATNR IN (?))"), inSql);
     const notInSql = from(Mara)
       .where((m) => m.material.notIn(["1", "2", "3", "4"]))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(small).sql;
     assert.ok(notInSql.endsWith("WHERE (MARA.MATNR NOT IN (?, ?, ?) AND MARA.MATNR NOT IN (?))"), notInSql);
   });
@@ -168,15 +169,22 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     assert.ok(where((m) => m.material.notIn([])).endsWith("WHERE 1 = 1"));
   });
 
-  it("可选条件为空时整体省略", () => {
-    const s = where((m) =>
-      all(
-        m.material.eqIfPresent(null),
-        m.material.inIfPresent([]),
-        onlyIf(false, () => m.material.eq("x")),
-        ifPresent(undefined, () => m.material.eq("x")),
-      ),
-    );
+  it("skipEmpty 省略与空值比较的条件", () => {
+    const s = from(Mara)
+      .skipEmpty()
+      .where((m) =>
+        all(
+          m.material.eq(null),
+          m.material.ne("  "),
+          m.material.in([]),
+          m.material.notIn(undefined),
+          like(m.partNumber, undefined),
+          onlyIf(false, () => m.material.eq("x")),
+          ifPresent(undefined, () => m.material.eq("x")),
+        ),
+      )
+      .select((m) => m.material)
+      .toSql(DIALECT).sql;
     assert.equal(s, 'SELECT MARA.MATNR AS "material"\nFROM QUERY_IT.MARA MARA');
   });
 
@@ -188,7 +196,7 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
   it("分页的 LIMIT 和 OFFSET", () => {
     const s = from(Mara)
       .orderBy((m) => m.material.asc().nullsLast())
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .limit(10)
       .offset(20)
       .toSql(DIALECT).sql;
@@ -209,26 +217,26 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     const other: Clause = { position: "end", dialect: OtherDialect, render: (w) => void w.sql("OTHER") };
     const q = from(Mara)
       .with(other)
-      .selectValue((m) => m.material);
+      .select((m) => m.material);
     assert.throws(() => q.toSql(DIALECT), /OtherDialect/);
   });
 
   it("方言专属函数在别的方言上拒绝渲染", () => {
     const onlyOther = FunctionDef.only(OtherDialect, "OTHER_FN");
-    const q = from(Mara).selectValue((m) => call(onlyOther, text, m.material));
+    const q = from(Mara).select((m) => call(onlyOther, text, m.material));
     assert.throws(() => q.toSql(DIALECT), /OTHER_FN is a OtherDialect function/);
   });
 
   it("数据库实例可以覆盖函数渲染", () => {
     const onlyOther = FunctionDef.only(OtherDialect, "OTHER_FN");
     const db = new TestDatabase({ functions: new Map([[onlyOther, (w, args) => void w.sql("MINE(").join(args, ", ").sql(")")]]) });
-    const s = db.render(from(Mara).selectValue((m) => call(onlyOther, text, m.material))).sql;
+    const s = db.render(from(Mara).select((m) => call(onlyOther, text, m.material))).sql;
     assert.ok(s.startsWith("SELECT MINE(MARA.MATNR)"), s);
   });
 
   it("同一个查询在同一个数据库实例上只渲染一次", () => {
     const db = new TestDatabase();
-    const q = from(Mara).selectValue((m) => m.material);
+    const q = from(Mara).select((m) => m.material);
     assert.equal(db.render(q), db.render(q));
     assert.notEqual(db.render(q), new TestDatabase().render(q));
   });
@@ -239,7 +247,7 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
         n: scalar(
           from(Lips)
             .where((l) => l.material.eq("M1"))
-            .selectValue(() => count()),
+            .select(() => count()),
         ),
         material: m.material.coalesce("none"),
       }))
@@ -258,7 +266,7 @@ FROM QUERY_IT.MARA MARA`,
     const r = from(Mara)
       .distinct()
       .orderBy((m) => m.material.coalesce("~"))
-      .selectValue((m) => m.material.coalesce("~"))
+      .select((m) => m.material.coalesce("~"))
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("ORDER BY COALESCE(MARA.MATNR, '~') ASC"), r.sql);
     assert.deepEqual(r.parameters, []);
@@ -277,7 +285,7 @@ FROM QUERY_IT.MARA MARA`,
 
   it("CASE 与类型化原生片段，SELECT 列表里的常量写成字面量", () => {
     const s = from(Mara)
-      .selectValue((m) =>
+      .select((m) =>
         caseWhen(m.materialType.eq("ZMAT"), "material")
           .when(m.materialType.eq("ZOTH"), "other")
           .otherwise(sql(text)`LOWER(${m.materialType})`),
@@ -294,7 +302,7 @@ FROM QUERY_IT.MARA MARA`,
     const r = from(Lips)
       .join(Mara, (l, ma) => ma.material.eq(l.material))
       .pipe(ofClient("100"))
-      .selectValue((l, ma) => ma.partNumber)
+      .select((l, ma) => ma.partNumber)
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE LIPS.MANDT = ?"), r.sql);
     assert.deepEqual(r.parameters, ["100"]);
@@ -303,7 +311,7 @@ FROM QUERY_IT.MARA MARA`,
   it("SQL 片段里的普通值成为参数", () => {
     const r = from(Mara)
       .where((m) => sql(text)`SUBSTRING(${m.material}, ${1}, ${2})`.eq("M1"))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE SUBSTRING(MARA.MATNR, ?, ?) = ?"), r.sql);
     assert.deepEqual(r.parameters, [1, 2, "M1"]);

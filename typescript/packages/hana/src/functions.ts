@@ -1,4 +1,4 @@
-import { call, condition, date, Expr, expression, FunctionDef, integer, lit, param, text, toOrder, untyped, type Clause, type Cond, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { call, Cond, condition, date, Expr, expression, FunctionDef, integer, lit, param, skips, text, toOrder, untyped, type Clause, type KeepNull, type OrderItem, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA-only functions and clauses; they refuse to render on another dialect. */
@@ -50,8 +50,9 @@ export function toNvarchar<T>(value: Expr<T>, format?: string): Expr<KeepNull<T,
 }
 
 /** `e LIKE_REGEXPR pattern`, HANA's regular-expression predicate. */
-export function likeRegexpr(e: Expr<string | null>, pattern: string): Cond {
-  const p = param(text, pattern);
+export function likeRegexpr(e: Expr<string | null>, pattern: string | null | undefined): Cond {
+  if (skips(pattern)) return Cond.EMPTY;
+  const p = param(text, pattern as string);
   return condition((w) => {
     if (!(w.dialect instanceof HanaDialect)) throw new Error(`LIKE_REGEXPR is a HanaDialect predicate; this database uses ${w.dialect.name}`);
     w.render(e).sql(" LIKE_REGEXPR ").render(p);

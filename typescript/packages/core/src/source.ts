@@ -23,7 +23,7 @@ export type NullableRef<E> = { readonly [K in keyof E]-?: Expr<E[K] | null> };
  */
 export interface Source<E> {
   readonly [rowType]?: E;
-  /** The entity class of a table, for global filters and `@mapFrom`; absent for CTEs. */
+  /** 表的实体类，供全局过滤器使用；CTE 等来源没有。 */
   readonly entity: Ctor<unknown> | undefined;
   readonly preferredAlias: string;
   /** Whether database-wide filters apply; true for tables. */

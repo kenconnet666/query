@@ -14,7 +14,8 @@ export function deliveries(start: string, end: string, maker: string | null) {
   const scope = cte(
     "material_scope",
     from(Mara)
-      .where((ma) => all(activeMaterial(ma), ma.manufacturer.eqIfPresent(maker)))
+      .skipEmpty()
+      .where((ma) => all(activeMaterial(ma), ma.manufacturer.eq(maker)))
       .distinct()
       .select((ma) => ({ client: ma.client, material: ma.material, partNumber: normalizedPart(ma.partNumber) })),
   );
@@ -55,15 +56,16 @@ export function latestDeliveries() {
   return from(ranked)
     .where((x) => x.rank.eq(1))
     .orderBy((x) => x.material.asc())
-    .selectValue((x) => x.delivery);
+    .select((x) => x.delivery);
 }
 
-/** Same-named fields picked automatically, a renamed one through @mapFrom. */
+/** 按名映射：改名的列写成对象的键。 */
 export function lines() {
   return from(Lips)
     .leftJoin(Makt, (l, mk) => mk.material.eq(l.material).and(mk.language.eq("1")))
     .orderBy((l) => l.delivery.asc())
-    .selectAs(LineVO);
+    .select((l, mk) => ({ delivery: l.delivery, materialNo: l.material, createdOn: l.createdOn, text: mk.text }))
+    .into(LineVO);
 }
 
 /** A nested result computed in JavaScript from the selected values. */
