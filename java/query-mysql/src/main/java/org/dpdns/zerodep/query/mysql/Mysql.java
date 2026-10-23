@@ -1,8 +1,5 @@
 package org.dpdns.zerodep.query.mysql;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.OrderItem;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
@@ -10,12 +7,15 @@ import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.OrderItem;
 
-import javax.sql.DataSource;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import javax.sql.DataSource;
 
 /**
  * MySQL 门面：包含 {@link Sql} 的全部能力，外加 MySQL 专属的函数和子句。一次静态导入即可使用全部词汇：

@@ -1,7 +1,7 @@
 package org.dpdns.zerodep.query.hana;
 
-import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;

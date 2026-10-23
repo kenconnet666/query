@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.exec;
 
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import javax.sql.DataSource;
 
 /**
  * 语句从哪里取得连接。核心自己从不开启或提交事务；例如 Spring 适配器通过 {@code DataSourceUtils}

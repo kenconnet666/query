@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Client;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;

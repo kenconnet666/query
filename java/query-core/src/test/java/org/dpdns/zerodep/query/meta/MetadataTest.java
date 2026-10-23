@@ -1,19 +1,19 @@
 package org.dpdns.zerodep.query.meta;
 
-import org.dpdns.zerodep.query.Col;
-import org.dpdns.zerodep.query.Entity;
 import org.dpdns.zerodep.query.annotation.BlankAsNull;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
-import org.dpdns.zerodep.query.testing.Erp;
+import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
 import org.dpdns.zerodep.query.testing.Erp.Mardh;
 import org.dpdns.zerodep.query.testing.Erp.MaterialScope;
 import org.dpdns.zerodep.query.testing.Erp.Mchbh;
+import org.dpdns.zerodep.query.testing.Erp;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

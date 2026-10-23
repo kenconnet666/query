@@ -1,7 +1,7 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
 
 import java.sql.Connection;
 import java.sql.SQLException;

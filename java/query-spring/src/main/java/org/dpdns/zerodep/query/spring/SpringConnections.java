@@ -3,11 +3,11 @@ package org.dpdns.zerodep.query.spring;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.springframework.jdbc.datasource.DataSourceUtils;
 
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Objects;
+import javax.sql.DataSource;
 
 /**
  * 通过 Spring 的 {@link DataSourceUtils} 取连接。在 {@code @Transactional} 方法内，查询使用事务的连接，

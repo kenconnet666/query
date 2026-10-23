@@ -1,7 +1,7 @@
 package org.dpdns.zerodep.query.postgres;
 
-import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
 
 import java.util.function.Consumer;
 

@@ -1,11 +1,11 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.Col;
-import org.dpdns.zerodep.query.Entity;
-import org.dpdns.zerodep.query.Expr;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.table.Entity;
 
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.upper;

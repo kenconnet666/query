@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.Cond;
-import org.dpdns.zerodep.query.Cte;
-import org.dpdns.zerodep.query.Expr;
-import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Delivery;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;

@@ -1,12 +1,12 @@
 package org.dpdns.zerodep.query.meta;
 
-import org.dpdns.zerodep.query.Col;
-import org.dpdns.zerodep.query.Entity;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.type.Converter;
 import org.dpdns.zerodep.query.type.SqlType;
 

@@ -1,6 +1,6 @@
 package org.dpdns.zerodep.query.mysql;
 
-import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Scenarios;
 import org.dpdns.zerodep.query.testing.TestDialect;

@@ -3,14 +3,14 @@ package org.dpdns.zerodep.query.testing;
 import lombok.Builder;
 import lombok.Data;
 import lombok.experimental.Accessors;
-import org.dpdns.zerodep.query.Col;
-import org.dpdns.zerodep.query.Entity;
 import org.dpdns.zerodep.query.annotation.BlankAsNull;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ConvertWith;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
+import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.type.Converter;
 
 import java.lang.annotation.ElementType;

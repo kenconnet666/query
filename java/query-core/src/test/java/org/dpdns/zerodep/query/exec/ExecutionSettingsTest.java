@@ -1,7 +1,6 @@
 package org.dpdns.zerodep.query.exec;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;

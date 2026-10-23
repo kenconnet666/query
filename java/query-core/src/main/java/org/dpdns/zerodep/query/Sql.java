@@ -1,6 +1,25 @@
 package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.expr.Aggregate;
+import org.dpdns.zerodep.query.expr.Case;
+import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.KeyList;
+import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.OrderItem;
+import org.dpdns.zerodep.query.expr.OrderList;
+import org.dpdns.zerodep.query.expr.WindowFunction;
+import org.dpdns.zerodep.query.scope.AbstractFrom;
+import org.dpdns.zerodep.query.scope.From1;
+import org.dpdns.zerodep.query.scope.SkipEmpty;
+import org.dpdns.zerodep.query.select.Cols;
+import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.select.Rows;
+import org.dpdns.zerodep.query.table.Cte;
+import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -62,7 +81,11 @@ public class Sql extends Rows {
     public static Cols cols(Expr<?>... columns) { return new Cols(List.of(columns)); }
 
     /** 在一组列（例如 {@code l.all()}）后面再加几列。 */
-    public static Cols cols(Cols first, Expr<?>... more) { return first.and(more); }
+    public static Cols cols(Cols first, Expr<?>... more) {
+        List<Expr<?>> all = new ArrayList<>(first.items());
+        all.addAll(List.of(more));
+        return new Cols(all);
+    }
 
     // ---------- 值 ----------
 
@@ -336,7 +359,7 @@ public class Sql extends Rows {
     }
 
     /** 简单 CASE：{@code caseOf(code).when("1", "自有").when("2", "供应商").otherwise("其他")}，适合内联的码表。 */
-    public static <V> SimpleCase.Start<V> caseOf(Expr<V> subject) { return new SimpleCase.Start<>(subject); }
+    public static <V> Case.Simple.Start<V> caseOf(Expr<V> subject) { return new Case.Simple.Start<>(subject); }
 
     /** CAST(e AS type)。 */
     public static <U> Expr<U> cast(Expr<?> e, CastType<U> type) { return new Nodes.Cast<>(e, type); }

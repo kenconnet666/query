@@ -1,8 +1,8 @@
 package org.dpdns.zerodep.query.exec;
 
 import org.dpdns.zerodep.query.dialect.Binding;
-import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.Dialect.CursorCleanup;
+import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
