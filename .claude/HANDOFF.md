@@ -69,20 +69,14 @@
 
 ## 待用户决定或执行
 
-- **发布到中央仓库**：按 [docs/release.md](../docs/release.md) 手动执行。
-  - 命名空间 `org.dpdns.zerodep` 已在 Central Portal 验证通过（`zerodep.dpdns.org` 的根域名有一条 TXT 记录，保留不要删）。
-  - 还缺：本机 GPG 密钥（上传到公钥服务器）和 Portal 发布令牌（`CENTRAL_TOKEN_USERNAME`、`CENTRAL_TOKEN_PASSWORD`）。
+- **1.0.0 已发布**（2026-10-22）：Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向实际发布的提交 `966a236`。之后发版按 [docs/release.md](../docs/release.md)；命名空间的 TXT 记录保留，不要删。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
-- **TS 包**：`@zerodep-dev/query-core|postgres|mysql|hana` 1.0.0 已发布到 npm（组织 `zerodep-dev`）。之后发版的步骤见 [docs/release.md](../docs/release.md)；npm 对 Bypass 2FA 的令牌限制直接发包，被拒时改用 `npm stage publish` 再用 2FA 批准。
 - **文档站**：用户说之后会用前端组件库另行安排，1.0 只提供仓库里的 Markdown。
 
 ## 下一步（建议）
 
 1. 合并后看 `master` 上的 CI 是否全绿。
-2. 用户发布 1.0.0 后：
-   - 打 `v1.0.0` 标签；
-   - 用 `versions:set` 进入 `1.1.0-SNAPSHOT`；
-   - `CHANGELOG.md` 顶部加"未发布"。
+2. 用 `versions:set` 进入 `1.1.0-SNAPSHOT`，`CHANGELOG.md` 顶部加"未发布"，并决定要不要建 GitHub Release（正文取 CHANGELOG 的 1.0.0 一节）。
 3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。影子试点已证明技术栈兼容。
 4. 0003 列出的延后项，等有使用证据再做：
    - DuckDB；
