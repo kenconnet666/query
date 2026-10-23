@@ -7,6 +7,11 @@ export class HanaDialect extends Dialect {
 
   readonly name = "SAP HANA";
 
+  /** 插入后在同一个连接上查这个连接最近一次生成的 IDENTITY 值；表上有会插入别的 IDENTITY 表的触发器时取到的是触发器那一次的。 */
+  override get identityQuery(): string {
+    return "SELECT CURRENT_IDENTITY_VALUE() FROM DUMMY";
+  }
+
   protected constructor() {
     super();
   }

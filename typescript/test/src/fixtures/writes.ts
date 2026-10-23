@@ -1,4 +1,4 @@
-import { all, column, deleteFrom, from, id, insertInto, integer, plus, table, update, val, type Database } from "@zerodep-dev/query-core";
+import { all, column, deleteFrom, from, generated, id, insertInto, integer, plus, table, update, val, version, type Database, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
 /** 写入场景的表和语句：单元测试、金样例和三库实库场景共用，与 Java 的 Writes 一一对应。 */
@@ -15,6 +15,31 @@ export class Note extends Tenanted {
   @column("TITLE") title!: string | null;
   @column("QTY", integer) qty!: number;
   @column("STATUS") status!: string;
+}
+
+/** 文档：带乐观锁的版本列。 */
+@table("W_DOC", { schema: SCHEMA })
+export class Doc {
+  @id @column("ID") id!: string;
+  @column("TITLE") title!: string | null;
+  @version @column("VERSION", integer) version!: number;
+}
+
+/** 编号由数据库生成的表（IDENTITY / AUTO_INCREMENT）。 */
+@table("W_SEQ", { schema: SCHEMA })
+export class Seq {
+  @id @generated @column("ID", integer) id!: number;
+  @column("NAME") name!: string;
+}
+
+/** 按主键改标题：版本号加一，版本不对时没有改到行。 */
+export function renameDoc(row: InsertRow<Doc>) {
+  return update(Doc).byId(row);
+}
+
+/** 按主键和版本删除文档。 */
+export function deleteDoc(row: InsertRow<Doc>) {
+  return deleteFrom(Doc).byId(row);
 }
 
 /** 插入两行，第二行的标题为 NULL。 */

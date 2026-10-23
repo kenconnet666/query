@@ -97,6 +97,39 @@ class WriteTest {
     }
 
     @Test
+    void 按主键更新时SET其余属性且带版本时检查并递增版本() {
+        List<Rendered> r = Writes.renameDoc(new Writes.DocRow("D1", "new", 3)).toSql(DIALECT);
+        assertEquals("""
+            UPDATE QUERY_IT.W_DOC DOC
+            SET TITLE = ?, VERSION = (DOC.VERSION + 1)
+            WHERE DOC.ID = ? AND DOC.VERSION = ?""", r.get(0).sql());
+        assertEquals(List.of("new", "D1", 3), r.get(0).parameters());
+        assertEquals(2L, update(Writes.Doc.class).byId(new Writes.DocRow("D1", "a", 1), new Writes.DocRow("D2", "b", 1)).expected());
+        String none = null;
+        assertEquals("UPDATE QUERY_IT.W_DOC DOC\nSET VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?",
+            update(Writes.Doc.class).skipEmpty().byId(new Writes.DocRow("D1", none, 3)).toSql(DIALECT).get(0).sql(), "skipEmpty leaves null properties alone");
+    }
+
+    @Test
+    void 按主键删除时带上版本且行缺主键或主键为null时报错() {
+        assertEquals("DELETE FROM QUERY_IT.W_DOC DOC\nWHERE DOC.ID = ? AND DOC.VERSION = ?",
+            Writes.deleteDoc(new Writes.DocRow("D1", null, 2)).toSql(DIALECT).get(0).sql());
+        assertEquals("DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.ID = ?",
+            deleteFrom(Note.class).byId(new NoteRow("N1", "T1", "a", 1, "open")).toSql(DIALECT).get(0).sql(), "without @Version only the key locates the row");
+        record NoVersion(String id) { }
+        assertThrows(IllegalArgumentException.class, () -> deleteFrom(Writes.Doc.class).byId(new NoVersion("D1")));
+        assertThrows(IllegalArgumentException.class, () -> deleteFrom(Writes.Doc.class).byId(new Writes.DocRow(null, "x", 1)).toSql(DIALECT));
+    }
+
+    @Test
+    void 生成主键的列不插入且只有带生成列的表能取回生成的值() {
+        assertEquals("INSERT INTO QUERY_IT.W_SEQ (NAME) VALUES (?)", insertInto(Writes.Seq.class).values(new Writes.SeqRow("a")).toSql(DIALECT).get(0).sql());
+        Database db = TestDatabase.dryRun(null);
+        assertEquals(Arrays.asList((Object) null), db.insertKeys(insertInto(Writes.Seq.class).values(new Writes.SeqRow("a"))));
+        assertThrows(IllegalStateException.class, () -> db.insertKeys(Writes.insertNotes()));
+    }
+
+    @Test
     void 空跑执行写语句时按批通知监听器且不检查期望的行数() {
         Database db = TestDatabase.dryRun(null);
         List<QueryListener.Event> events = db.capture(() -> {

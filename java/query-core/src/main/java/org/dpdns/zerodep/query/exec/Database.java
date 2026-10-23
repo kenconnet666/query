@@ -16,6 +16,8 @@ import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.table.SourceFilters;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
+import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.write.Insert;
 import org.dpdns.zerodep.query.write.Write;
 
 import java.time.Duration;
@@ -180,7 +182,7 @@ public abstract class Database {
     public long execute(Write write) {
         List<Rendered> statements = render(write);
         if (statements.isEmpty()) return 0;
-        long rows = executor.update(statements, null);
+        long rows = atomically(statements, () -> executor.update(statements, null));
         clearCache();
         Long expected = write.expected();
         if (expected == null || executor.dryRun()) return rows;
@@ -190,6 +192,26 @@ public abstract class Database {
         }
         if (rows != expected) throw new UnexpectedRowCountException(name, statements.get(0), expected, rows);
         return rows;
+    }
+
+    /**
+     * 插入并按行的顺序取回 {@code @Generated} 列生成的值：PostgreSQL 由驱动加上 RETURNING，MySQL 取 AUTO_INCREMENT，
+     * HANA 在同一个连接上查 {@code CURRENT_IDENTITY_VALUE()}。多行在一个事务里逐行执行（不按批）。
+     */
+    @SuppressWarnings("unchecked")
+    public <K> List<K> insertKeys(Insert<?> insert) {
+        PropertyMeta generated = insert.generated();
+        List<Rendered> statements = render(insert);
+        if (statements.isEmpty()) return List.of();
+        String column = generated.columnName(settings.naming());
+        List<Object> keys = atomically(statements, () -> executor.insertKeys(statements, column, generated.type()));
+        clearCache();
+        return (List<K>) keys;
+    }
+
+    /** 多条语句时在一个事务里执行（已经在事务里、或连接来源自己管理事务时直接执行），免得失败时只写了一部分。 */
+    private <T> T atomically(List<Rendered> statements, Supplier<T> work) {
+        return statements.size() > 1 && executor.canStartTransaction() ? executor.transaction(work) : work.get();
     }
 
     /** 本数据库会为这条写语句执行的语句与参数，已套用全局过滤器；多行插入每行一条。 */

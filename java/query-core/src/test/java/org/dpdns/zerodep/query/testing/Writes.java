@@ -1,7 +1,9 @@
 package org.dpdns.zerodep.query.testing;
 
 import org.dpdns.zerodep.query.annotation.Column;
+import org.dpdns.zerodep.query.annotation.Generated;
 import org.dpdns.zerodep.query.annotation.Id;
+import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
@@ -42,6 +44,41 @@ public final class Writes {
         /** 状态。 */
         @Column("STATUS") Col<String> status();
     }
+
+    /** 文档：带乐观锁的版本列。 */
+    @Table(schema = SCHEMA, value = "W_DOC")
+    public interface Doc extends Entity {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 标题。 */
+        @Column("TITLE") Col<String> title();
+
+        /** 版本号。 */
+        @Version @Column("VERSION") Col<Integer> version();
+    }
+
+    /** 文档的一行。 */
+    public record DocRow(String id, String title, Integer version) { }
+
+    /** 编号由数据库生成的表（IDENTITY / AUTO_INCREMENT）。 */
+    @Table(schema = SCHEMA, value = "W_SEQ")
+    public interface Seq extends Entity {
+        /** 生成的编号。 */
+        @Id @Generated @Column("ID") Col<Integer> id();
+
+        /** 名称。 */
+        @Column("NAME") Col<String> name();
+    }
+
+    /** 插入 {@link Seq} 的一行：不带编号。 */
+    public record SeqRow(String name) { }
+
+    /** 按主键改标题：版本号加一，版本不对时没有改到行。 */
+    public static Update<Doc> renameDoc(DocRow row) { return update(Doc.class).byId(row); }
+
+    /** 按主键和版本删除文档。 */
+    public static Delete<Doc> deleteDoc(DocRow row) { return deleteFrom(Doc.class).byId(row); }
 
     /** 插入便签的一行：属性按名字对应 {@link Note} 的列。 */
     public record NoteRow(String id, String tenant, String title, Integer qty, String status) { }

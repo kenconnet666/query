@@ -28,6 +28,7 @@ liveScenarios(
     q: (identifier) => `\`${identifier}\``,
     // TIMESTAMP converts through the session time zone and ends in 2038; DATETIME is a plain local value.
     timestamp: "DATETIME(6)",
+    identity: "INT AUTO_INCREMENT PRIMARY KEY",
   },
   (live) => {
     it("DATEDIFF 与 GROUP_CONCAT", async () => {

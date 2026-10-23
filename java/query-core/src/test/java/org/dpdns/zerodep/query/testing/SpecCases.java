@@ -142,6 +142,9 @@ public final class SpecCases {
         cases.put("write-insert-select", SpecCase.plain(Writes::copyNote));
         cases.put("write-update", SpecCase.plain(() -> Writes.closeOpenNote("N1")));
         cases.put("write-delete", SpecCase.plain(Writes::deleteClosed));
+        cases.put("write-update-by-id", SpecCase.plain(() -> Writes.renameDoc(new Writes.DocRow("D1", "new", 3))));
+        cases.put("write-delete-by-id", SpecCase.plain(() -> Writes.deleteDoc(new Writes.DocRow("D1", null, 3))));
+        cases.put("write-insert-generated", SpecCase.plain(() -> insertInto(Writes.Seq.class).values(new Writes.SeqRow("a"))));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));

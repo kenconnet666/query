@@ -24,7 +24,10 @@ function driverFor(source: Pool | PoolConnection | Connection, inTransaction: bo
   const run = async (connection: Pool | PoolConnection | Connection, sql: string, parameters: readonly unknown[]): Promise<DriverResult> => {
     const [rows, fields] = (await connection.execute({ sql, ...OPTIONS }, parameters.map(parameter) as never)) as unknown as [unknown, FieldPacket[] | undefined];
     // 没有结果集的语句（DDL、DML）返回的是一个头信息对象而不是行。
-    if (!Array.isArray(rows)) return { columns: [], rows: [], affected: (rows as { affectedRows?: number }).affectedRows ?? 0 };
+    if (!Array.isArray(rows)) {
+      const header = rows as { affectedRows?: number; insertId?: number };
+      return { columns: [], rows: [], affected: header.affectedRows ?? 0, insertId: header.insertId };
+    }
     return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
   };
   const driver: Driver = {

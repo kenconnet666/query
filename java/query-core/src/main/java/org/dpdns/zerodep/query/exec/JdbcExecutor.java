@@ -221,6 +221,60 @@ public final class JdbcExecutor {
         }
     }
 
+    /**
+     * 逐行执行插入并取回每行生成的值，全部用同一个连接（HANA 在这个连接上查 IDENTITY）；column 是生成值的列名，
+     * type 是它的类型。每行通知一次监听器。
+     */
+    public List<Object> insertKeys(List<Rendered> statements, String column, SqlType<?> type) {
+        statements.forEach(this::checkParameterCount);
+        Connection connection = null;
+        try {
+            connection = acquire();
+            List<Object> keys = new ArrayList<>();
+            for (Rendered s : statements) keys.add(insertKey(connection, s, column, type));
+            return keys;
+        } catch (SQLException e) {
+            throw new QueryExecutionException(database, statements.get(0), e, timedOut(e));
+        } finally {
+            release(connection);
+        }
+    }
+
+    /** 插入一行并读出生成的值；驱动没有给出时为 null。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Object insertKey(Connection connection, Rendered statement, String column, SqlType<?> type) throws SQLException {
+        long start = System.nanoTime();
+        try (PreparedStatement ps = dialect.prepareInsert(connection, statement.sql(), column)) {
+            configure(ps, statement, null);
+            long rows = ps.executeUpdate();
+            ResultSet rs = dialect.generatedKey(connection, ps);
+            try {
+                Object key = rs != null && rs.next() ? ((SqlType) type).fromDatabase(types.read(rs, 1, type.storageType())) : null;
+                notify(statement, start, rows, null, false);
+                return key;
+            } finally {
+                closeWithStatement(rs, ps);
+            }
+        } catch (SQLException | RuntimeException e) {
+            notify(statement, start, 0, e, false);
+            throw e;
+        }
+    }
+
+    /** 关闭取生成值的结果集；它来自另一条语句（HANA 的查询）时一并关闭那条语句。 */
+    private static void closeWithStatement(ResultSet rs, PreparedStatement insert) throws SQLException {
+        if (rs == null) return;
+        java.sql.Statement owner = rs.getStatement();
+        rs.close();
+        if (owner != null && owner != insert) owner.close();
+    }
+
+    /** 当前线程是否在 {@link #transaction} 里。 */
+    public boolean inTransaction() { return bound.get() != null; }
+
+    /** 能否开启 {@link #transaction}：还不在事务里，连接来源也不自己管理事务。 */
+    public boolean canStartTransaction() { return bound.get() == null && !connections.managesTransactions(); }
+
     /** 累加行数；任一方未知（负数）时结果未知。 */
     private static long add(long total, long rows) { return total < 0 || rows < 0 ? -1 : total + rows; }
 
@@ -305,16 +359,21 @@ public final class JdbcExecutor {
     private PreparedStatement prepare(Connection connection, Rendered statement, Duration timeout) throws SQLException {
         PreparedStatement ps = connection.prepareStatement(statement.sql());
         try {
-            if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL 传 Integer.MIN_VALUE 表示逐行流式读取
-            Duration limit = timeout != null ? timeout : defaultTimeout;
-            if (limit != null) ps.setQueryTimeout(seconds(limit));
-            connections.prepared(ps);
-            bind(ps, statement);
+            configure(ps, statement, timeout);
             return ps;
         } catch (SQLException | RuntimeException e) {
             ps.close();
             throw e;
         }
+    }
+
+    /** 设置提取行数、超时和参数。 */
+    private void configure(PreparedStatement ps, Rendered statement, Duration timeout) throws SQLException {
+        if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL 传 Integer.MIN_VALUE 表示逐行流式读取
+        Duration limit = timeout != null ? timeout : defaultTimeout;
+        if (limit != null) ps.setQueryTimeout(seconds(limit));
+        connections.prepared(ps);
+        bind(ps, statement);
     }
 
     /** 按语句的绑定依次设置参数。 */

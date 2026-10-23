@@ -42,7 +42,7 @@ final class DryRun {
     private static PreparedStatement statement() {
         int[] batched = {0};
         return proxy(PreparedStatement.class, (method, args) -> switch (method) {
-            case "executeQuery" -> resultSet();
+            case "executeQuery", "getGeneratedKeys" -> resultSet();
             case "addBatch" -> {
                 batched[0]++;
                 yield null;

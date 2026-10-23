@@ -1,9 +1,9 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
-import { shapeFields, type NamingStrategy } from "../schema/metadata.js";
+import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata.js";
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, untyped, type SqlType } from "../schema/types.js";
-import { Write } from "../write/write.js";
-import { SqlWriter, type Rendered, type RenderSettings } from "../sql/writer.js";
+import { Write, type Insert } from "../write/write.js";
+import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 
 // ---------- 驱动 ----------
 
@@ -13,6 +13,8 @@ export interface DriverResult {
   readonly rows: readonly (readonly unknown[])[];
   /** 写语句影响的行数；查询不用填。 */
   readonly affected?: number;
+  /** 插入一行后数据库生成的值（MySQL 的 AUTO_INCREMENT）；没有时不填。 */
+  readonly insertId?: unknown;
 }
 
 /**
@@ -404,6 +406,30 @@ export abstract class Database {
     const expected = write.expected;
     if (expected !== undefined && !DRY_RUN.has(this.#driver) && rows !== expected) throw new UnexpectedRowCountError(this.name, statements[0]!, expected, rows);
     return rows;
+  }
+
+  /**
+   * 插入并按行的顺序取回 `@generated` 列生成的值：PostgreSQL 在语句后加 RETURNING，MySQL 读驱动返回的 insertId，
+   * HANA 在同一个连接上查 `CURRENT_IDENTITY_VALUE()`。在一个事务里逐行执行。
+   */
+  async insertKeys<K = unknown>(insert: Insert<any>): Promise<K[]> {
+    const column = insert.generated();
+    const statements = this.render(insert);
+    if (statements.length === 0) return [];
+    const returning = this.dialect.returning(columnName(column, this.#writer().naming));
+    const identity = this.dialect.identityQuery;
+    const keys = await this.transaction(async () => {
+      const out: unknown[] = [];
+      for (const s of statements) {
+        const result = await this.#execute(returning === undefined ? s : new Rendered(s.sql + returning, s.bindings, s.dialect), undefined);
+        const raw =
+          returning !== undefined ? result.rows[0]?.[0] : identity !== undefined ? (await this.#execute(new Rendered(identity, [], this.dialect), undefined)).rows[0]?.[0] : result.insertId;
+        out.push(raw == null ? null : column.type.decode(raw));
+      }
+      return out;
+    });
+    this.#cache?.clear();
+    return keys as K[];
   }
 
   /**

@@ -66,9 +66,12 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
     /**
      * 写出 WHERE：全局过滤器的条件加 where 的条件。where 的条件全部为空（没写，或都被 skipEmpty 省略）又没有 all() 时报错，
      * 免得一条语句改掉或删掉整张表；全局过滤器的条件不算，因为它们只是把范围限定在当前租户等。
+     * located 是 byId 按主键（和版本）定位一行的条件，没有时为空条件。
      */
-    void renderWhere(SqlWriter w, String statement) {
-        Cond own = Nodes.all(where);
+    void renderWhere(SqlWriter w, String statement, Cond located) {
+        List<Cond> mine = new ArrayList<>(where);
+        mine.add(located);
+        Cond own = Nodes.all(mine);
         if (own.isEmpty() && !everyRow) {
             throw new IllegalStateException(statement + " without where(...) would touch every row of " + ref.entity().getSimpleName()
                 + "; add .all() if that is intended");

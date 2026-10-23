@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { deleteFrom, dryRunDriver, filter, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
 import { FakeDriver, TestDatabase } from "../fixtures/support.js";
-import { closeOpenNote, copyNote, deleteClosed, insertNotes, Note, Tenanted } from "../fixtures/writes.js";
+import { closeOpenNote, copyNote, deleteClosed, deleteDoc, Doc, insertNotes, Note, renameDoc, Seq, Tenanted } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
@@ -63,6 +63,32 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
   it("删除可以用条件对象，全局过滤器可以关闭", () => {
     assert.equal(tenant.render(deleteFrom(Note).where({ status: "closed" }))[0]!.sql, "DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.TENANT = ? AND NOTE.STATUS = ?");
     assert.equal(tenant.render(deleteFrom(Note).unfiltered().where({ status: "closed" }))[0]!.sql, "DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.STATUS = ?");
+  });
+
+  it("按主键更新时 SET 其余字段，带版本时检查并递增版本", () => {
+    const r = db.render(renameDoc({ id: "D1", title: "new", version: 3 }))[0]!;
+    assert.equal(r.sql, "UPDATE QUERY_IT.W_DOC DOC\nSET TITLE = ?, VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?");
+    assert.deepEqual(r.parameters, ["new", "D1", 3]);
+    assert.equal(update(Doc).byId({ id: "D1", title: "a", version: 1 }, { id: "D2", title: "b", version: 1 }).expected, 2);
+    assert.equal(
+      db.render(update(Doc).skipEmpty().byId({ id: "D1", title: null, version: 3 }))[0]!.sql,
+      "UPDATE QUERY_IT.W_DOC DOC\nSET VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?",
+      "skipEmpty leaves null fields alone",
+    );
+  });
+
+  it("按主键删除时带上版本，行缺主键或版本时报错", () => {
+    assert.equal(db.render(deleteDoc({ id: "D1", version: 2 }))[0]!.sql, "DELETE FROM QUERY_IT.W_DOC DOC\nWHERE DOC.ID = ? AND DOC.VERSION = ?");
+    assert.equal(db.render(deleteFrom(Note).byId({ id: "N1" }))[0]!.sql, "DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.ID = ?", "without @version only the key locates the row");
+    assert.throws(() => deleteFrom(Doc).byId({ id: "D1" }), /needs the version of every row/);
+    assert.throws(() => deleteFrom(Doc).byId({ title: "x", version: 1 }), /needs the id of every row/);
+  });
+
+  it("生成主键的列不插入，只有带生成列的表能取回生成的值", async () => {
+    assert.equal(db.render(insertInto(Seq).values({ name: "a" }))[0]!.sql, "INSERT INTO QUERY_IT.W_SEQ (NAME) VALUES (?)");
+    const dry = new TestDatabase({}, dryRunDriver());
+    assert.deepEqual(await dry.insertKeys(insertInto(Seq).values({ name: "a" })), [null]);
+    await assert.rejects(dry.insertKeys(insertNotes()), /has no @generated column/);
   });
 
   it("执行时影响的行数与期望不符则报错，空跑不检查", async () => {

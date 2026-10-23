@@ -122,6 +122,19 @@ export abstract class Dialect {
   fromNothing(_w: SqlWriter): void {}
 
   /** 第 n 个参数的占位符，n 从 1 开始计数。 */
+  /**
+   * 插入一行并取回生成值时追加在语句后面的子句，例如 PostgreSQL 的 `RETURNING "ID"`；不支持时为 undefined，
+   * 这时用驱动返回的 insertId（MySQL）或 {@link identityQuery}（HANA）。column 是未加引号的列名。
+   */
+  returning(_column: string): string | undefined {
+    return undefined;
+  }
+
+  /** 在同一个连接上查最近一次插入生成的值的语句（HANA 的 CURRENT_IDENTITY_VALUE()）；不需要时为 undefined。 */
+  get identityQuery(): string | undefined {
+    return undefined;
+  }
+
   placeholder(_index: number): string {
     return "?";
   }

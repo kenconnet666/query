@@ -25,6 +25,11 @@ export class PostgresDialect extends Dialect {
     this.register(SECONDS_BETWEEN, (w, args) => void w.sql("CAST(TRUNC(EXTRACT(EPOCH FROM (").render(args[1]!).sql(" - ").render(args[0]!).sql("))) AS BIGINT)"));
   }
 
+  /** 插入后用 RETURNING 取回生成的值。 */
+  override returning(column: string): string {
+    return ` RETURNING ${this.quote(column)}`;
+  }
+
   /** 只有小写字母、数字、下划线和 $ 构成的名称可以不加引号。 */
   protected isBare(identifier: string): boolean {
     return /^[a-z_][a-z0-9_$]*$/.test(identifier);

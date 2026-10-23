@@ -3,10 +3,13 @@ package org.dpdns.zerodep.query.write;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.table.Entity;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -30,14 +33,31 @@ public final class Update<T extends Entity> implements Write {
     /** SET 项，按调用顺序；被 skipEmpty 省略的不在其中。 */
     private final List<Assignment> sets;
 
+    /** {@link #byId} 的行；没有时为 null。 */
+    private final ById byId;
+
     /** 由 {@link #of} 和各修改方法调用。 */
-    private Update(Target<T> target, List<Assignment> sets) {
+    private Update(Target<T> target, List<Assignment> sets, ById byId) {
         this.target = target;
         this.sets = sets;
+        this.byId = byId;
     }
 
     /** 更新 table；通常写作 {@code Sql.update(Lips.class)}。 */
-    public static <T extends Entity> Update<T> of(Class<T> table) { return new Update<>(Target.of(table), List.of()); }
+    public static <T extends Entity> Update<T> of(Class<T> table) { return new Update<>(Target.of(table), List.of(), null); }
+
+    /**
+     * 按主键更新这些行：每行一条 {@code UPDATE ... SET 其余属性 WHERE 主键 = ?}，表上有 {@code @Version} 时加上
+     * {@code SET version = version + 1} 和 {@code AND version = ?}；期望每行影响一行，否则 {@code db.execute} 抛出
+     * {@code UnexpectedRowCountException}（乐观锁冲突）。行是 record 或普通类，必须带主键属性（和版本属性）；
+     * 开启 skipEmpty 时值为 null 的属性不更新。可以再加 set 和 where。
+     */
+    public Update<T> byId(Object... rows) { return byId(Arrays.asList(rows)); }
+
+    /** 同上，行在集合里。 */
+    public Update<T> byId(Collection<?> rows) {
+        return new Update<>(target, sets, ById.of(Metadata.entity(target.ref().entity()), List.copyOf(rows), "update(...).byId(...)"));
+    }
 
     /** 追加一个 SET 项：{@code set(l -> l.unit().to("KG"))}；skipEmpty 下值为空的项被省略。 */
     public Update<T> set(Function<T, Assignment> assignment) {
@@ -47,42 +67,53 @@ public final class Update<T extends Entity> implements Write {
         if (a.column().ref() != target.ref()) throw new IllegalArgumentException("set(...) must assign a column of the updated table");
         List<Assignment> all = new ArrayList<>(sets);
         all.add(a);
-        return new Update<>(target, List.copyOf(all));
+        return new Update<>(target, List.copyOf(all), byId);
     }
 
     /** 追加 WHERE 条件；多次调用之间是 AND。 */
-    public Update<T> where(Function<T, Cond> condition) { return new Update<>(target.where(condition), sets); }
+    public Update<T> where(Function<T, Cond> condition) { return new Update<>(target.where(condition), sets, byId); }
 
     /** 条件对象：每个非空字段一个条件，规则同查询的 {@code where(filter)}。 */
-    public Update<T> where(Object filter) { return new Update<>(target.where(filter), sets); }
+    public Update<T> where(Object filter) { return new Update<>(target.where(filter), sets, byId); }
 
     /** 之后的 set 与 where 里，值为空的 SET 项和与空值比较的条件被省略；要写在它们之前。 */
-    public Update<T> skipEmpty() { return new Update<>(target.skipEmpty(), sets); }
+    public Update<T> skipEmpty() { return new Update<>(target.skipEmpty(), sets, byId); }
 
     /** 不套用数据库实例的全局过滤器。 */
-    public Update<T> unfiltered() { return new Update<>(target.unfiltered(), sets); }
+    public Update<T> unfiltered() { return new Update<>(target.unfiltered(), sets, byId); }
 
     /** 允许没有 where 条件，即更新全表。 */
-    public Update<T> all() { return new Update<>(target.all(), sets); }
+    public Update<T> all() { return new Update<>(target.all(), sets, byId); }
 
     /** 期望影响 rows 行，不符时 {@code db.execute} 抛出 {@code UnexpectedRowCountException}；用于"比较后更新"的状态流转。 */
-    public Update<T> expect(long rows) { return new Update<>(target.expect(rows), sets); }
+    public Update<T> expect(long rows) { return new Update<>(target.expect(rows), sets, byId); }
 
-    @Override public Long expected() { return target.expected(); }
+    /** {@code expect(n)} 写明的行数；没有写而用了 byId 时是行数。 */
+    @Override public Long expected() { return target.expected() != null || byId == null ? target.expected() : byId.expected(); }
 
-    /** {@code UPDATE 表 别名 SET 列 = 值, ... WHERE ...}；没有 SET 项时没有语句。 */
+    /** {@code UPDATE 表 别名 SET 列 = 值, ... WHERE ...}，byId 时每行一条；没有 SET 项时没有语句。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
-        if (sets.isEmpty()) return List.of();
-        SqlWriter w = writers.get();
+        if (byId == null) return sets.isEmpty() ? List.of() : List.of(statement(writers.get(), sets, Cond.EMPTY));
+        List<Rendered> out = new ArrayList<>();
+        for (Object row : byId.rows()) {
+            List<Assignment> all = new ArrayList<>(sets);
+            all.addAll(SkipEmpty.within(target.skipping(), () -> byId.sets(target.ref(), row)).stream().filter(a -> !a.skipped()).toList());
+            out.add(statement(writers.get(), all, byId.locate(target.ref(), row)));
+        }
+        return out;
+    }
+
+    /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
+    private Rendered statement(SqlWriter w, List<Assignment> assignments, Cond located) {
         w.sql("UPDATE ");
         target.ref().renderSource(w);
         w.sql("\nSET ");
-        for (int i = 0; i < sets.size(); i++) {
+        for (int i = 0; i < assignments.size(); i++) {
             if (i > 0) w.sql(", ");
-            sets.get(i).column().renderName(w);
-            w.sql(" = ").render(sets.get(i).value());
+            assignments.get(i).column().renderName(w);
+            w.sql(" = ").render(assignments.get(i).value());
         }
-        target.renderWhere(w, "update(...)");
-        return List.of(w.statement());
+        target.renderWhere(w, "update(...)", located);
+        return w.statement();
     }
 }

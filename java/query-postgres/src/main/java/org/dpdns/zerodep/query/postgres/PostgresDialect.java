@@ -56,6 +56,11 @@ public class PostgresDialect extends Dialect {
         w.sql("CAST(").render(args.get(0)).sql(" + ").render(args.get(1)).sql(" * INTERVAL '1 " + unit + "' AS DATE)");
     }
 
+    /** 按列名请求生成键：驱动在语句后加上 {@code RETURNING "列"}。 */
+    @Override public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {
+        return connection.prepareStatement(sql, new String[] {column});
+    }
+
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "PostgreSQL"; }
 

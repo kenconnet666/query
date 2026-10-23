@@ -6,6 +6,7 @@ import org.dpdns.zerodep.query.type.TypeRegistry;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -179,6 +180,19 @@ public abstract class Dialect {
      */
     public CursorCleanup openCursor(Connection connection, PreparedStatement statement) throws SQLException {
         return CursorCleanup.NONE;
+    }
+
+    /**
+     * 为插入一行并取回生成值准备语句：默认请求 JDBC 的生成键（MySQL 取 AUTO_INCREMENT）。
+     * column 是生成值的列名（未加引号）。
+     */
+    public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {
+        return connection.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS);
+    }
+
+    /** 执行完 {@link #prepareInsert} 的语句后，取回这一行生成的值所在的结果集，光标停在那一行之前。 */
+    public ResultSet generatedKey(Connection connection, PreparedStatement statement) throws SQLException {
+        return statement.getGeneratedKeys();
     }
 
     /** 登记本方言对某个函数的渲染，供子类在构造函数中调用。 */

@@ -40,6 +40,9 @@ class MysqlLiveTest extends LiveScenarios {
     /** TIMESTAMP converts through the session time zone and ends in 2038; DATETIME is a plain local value. */
     @Override protected String timestamp() { return "DATETIME(6)"; }
 
+    /** MySQL 没有 IDENTITY，用 AUTO_INCREMENT，它要求是一个键。 */
+    @Override protected String identity() { return "INT AUTO_INCREMENT PRIMARY KEY"; }
+
     @Test
     void MySQL日期函数与GROUP_CONCAT() {
         LocalDate day = LocalDate.of(2026, 1, 1);

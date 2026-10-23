@@ -1,6 +1,7 @@
 import { columnName, entityMeta, type EntityMeta, type One, type PropertyMeta, type Table } from "../schema/metadata.js";
 import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
 import type { Rendered, SqlWriter } from "../sql/writer.js";
+import { lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
 import { conditionsFor, renderNamed, type Query, type SourceFilter } from "../query/query.js";
@@ -96,6 +97,14 @@ export class Insert<T> extends Write {
     return undefined;
   }
 
+  /** `@generated` 的列，`db.insertKeys` 取回它的值；表上没有、或用的是 {@link from} 时报错。 */
+  generated(): PropertyMeta {
+    const name = entityMeta(this.#table).writes.generated;
+    if (name === undefined) throw new Error(`${this.#table.name} has no @generated column; use db.execute(insert) instead`);
+    if (this.#source !== undefined) throw new Error("insertKeys(...) needs values(...), not from(query)");
+    return entityMeta(this.#table).property(name)!;
+  }
+
   /** 每行一条 `INSERT INTO 表 (列, ...) VALUES (?, ...)`；INSERT ... SELECT 是一条。 */
   render(writer: () => SqlWriter): Rendered[] {
     const source = this.#source;
@@ -187,9 +196,10 @@ export class Target<T> {
   /**
    * 写出 WHERE：全局过滤器的条件加 where 的条件。where 的条件全部为空（没写，或都被 skipEmpty 省略）又没有 all() 时报错，
    * 免得一条语句改掉或删掉整张表；全局过滤器的条件不算，因为它们只是把范围限定在当前租户等。
+   * located 是 byId 按主键（和版本）定位一行的条件。
    */
-  renderWhere(w: SqlWriter, statement: string): void {
-    const own = all(...this.conditions);
+  renderWhere(w: SqlWriter, statement: string, located: Cond = Cond.EMPTY): void {
+    const own = all(...this.conditions, located);
     if (own.isEmpty && !this.everyRow) throw new Error(`${statement} without where(...) would touch every row of ${this.table.name}; add .all() if that is intended`);
     const filters = this.filtered ? conditionsFor((w.settings.filters as readonly SourceFilter[] | undefined) ?? [], this.ref as object) : [];
     const where = all(...filters, own);
@@ -204,12 +214,23 @@ export class Target<T> {
 export class Update<T> extends Write {
   readonly #target: Target<T>;
   readonly #sets: readonly (readonly [Column<unknown>, Expr<unknown>])[];
+  readonly #byId: ById | undefined;
 
   /** 由 {@link update} 和各修改方法调用。 */
-  constructor(target: Target<T>, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[]) {
+  constructor(target: Target<T>, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[], byId?: ById) {
     super();
     this.#target = target;
     this.#sets = sets;
+    this.#byId = byId;
+  }
+
+  /**
+   * 按主键更新这些行：每行一条 `UPDATE ... SET 其余字段 WHERE 主键 = ?`，表上有 `@version` 时加上
+   * `SET version = version + 1` 和 `AND version = ?`；期望每行影响一行，否则 `db.execute` 抛出 UnexpectedRowCountError（乐观锁冲突）。
+   * 行必须带主键字段（和版本字段）；开启 skipEmpty 时值为 null 的字段不更新。可以再加 set 和 where。
+   */
+  byId(...rows: readonly InsertRow<T>[]): Update<T> {
+    return new Update(this.#target, this.#sets, ById.of(this.#target.table, rows as readonly object[], "update(...).byId(...)"));
   }
 
   /** 追加 SET 项：回调返回列字段到新值的对象；skipEmpty 下值为空的项被省略，否则 null 设为 NULL。 */
@@ -224,7 +245,7 @@ export class Update<T> extends Write {
         else if (value !== undefined && !skips(value)) sets.push([column, bindValue(column.type, value)]);
       }
     });
-    return new Update(target, sets);
+    return new Update(target, sets, this.#byId);
   }
 
   /** 追加 WHERE 条件；多次调用之间是 AND。 */
@@ -232,46 +253,53 @@ export class Update<T> extends Write {
   /** 条件对象：每个非空字段一个条件，规则同查询的 `where(filter)`。 */
   where<F extends FilterObject>(filter: F): Update<T>;
   where(cond: ((t: Ref<T>) => Cond) | FilterObject): Update<T> {
-    return new Update(this.#target.where(cond), this.#sets);
+    return new Update(this.#target.where(cond), this.#sets, this.#byId);
   }
 
   /** 之后的 set 与 where 里，值为空的 SET 项和与空值比较的条件被省略；要写在它们之前。 */
   skipEmpty(): Update<T> {
-    return new Update(this.#target.with({ skipping: true }), this.#sets);
+    return new Update(this.#target.with({ skipping: true }), this.#sets, this.#byId);
   }
 
   /** 不套用数据库实例的全局过滤器。 */
   unfiltered(): Update<T> {
-    return new Update(this.#target.with({ filtered: false }), this.#sets);
+    return new Update(this.#target.with({ filtered: false }), this.#sets, this.#byId);
   }
 
   /** 允许没有 where 条件，即更新全表。 */
   all(): Update<T> {
-    return new Update(this.#target.with({ everyRow: true }), this.#sets);
+    return new Update(this.#target.with({ everyRow: true }), this.#sets, this.#byId);
   }
 
   /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError；用于"比较后更新"的状态流转。 */
   expect(rows: number): Update<T> {
-    return new Update(this.#target.expect(rows), this.#sets);
+    return new Update(this.#target.expect(rows), this.#sets, this.#byId);
   }
 
+  /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数。 */
   get expected(): number | undefined {
-    return this.#target.expected;
+    return this.#target.expected ?? this.#byId?.rows.length;
   }
 
-  /** `UPDATE 表 别名 SET 列 = 值, ... WHERE ...`；没有 SET 项时没有语句。 */
+  /** `UPDATE 表 别名 SET 列 = 值, ... WHERE ...`，byId 时每行一条；没有 SET 项时没有语句。 */
   render(writer: () => SqlWriter): Rendered[] {
-    if (this.#sets.length === 0) return [];
-    const w = writer();
+    const byId = this.#byId;
+    if (byId === undefined) return this.#sets.length === 0 ? [] : [this.#statement(writer(), this.#sets, Cond.EMPTY)];
+    const t = this.#target;
+    return byId.rows.map((row) => this.#statement(writer(), [...this.#sets, ...withSkipEmpty(t.skipping, () => byId.sets(t.ref, row))], byId.locate(t.ref, row)));
+  }
+
+  /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
+  #statement(w: SqlWriter, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[], located: Cond): Rendered {
     w.sql("UPDATE ");
     ownerOf(this.#target.ref as object).renderSource(w);
     w.sql("\nSET ");
-    this.#sets.forEach(([column, value], i) => {
+    sets.forEach(([column, value], i) => {
       if (i > 0) w.sql(", ");
       w.identifier(columnName(column.column as PropertyMeta, w.naming)).sql(" = ").render(value);
     });
-    this.#target.renderWhere(w, "update(...)");
-    return [w.statement()];
+    this.#target.renderWhere(w, "update(...)", located);
+    return w.statement();
   }
 }
 
@@ -281,11 +309,21 @@ export class Update<T> extends Write {
  */
 export class Delete<T> extends Write {
   readonly #target: Target<T>;
+  readonly #byId: ById | undefined;
 
   /** 由 {@link deleteFrom} 和各修改方法调用。 */
-  constructor(target: Target<T>) {
+  constructor(target: Target<T>, byId?: ById) {
     super();
     this.#target = target;
+    this.#byId = byId;
+  }
+
+  /**
+   * 按主键删除这些行：每行一条 `DELETE ... WHERE 主键 = ?`，表上有 `@version` 时加上 `AND version = ?`；
+   * 期望每行影响一行，否则 `db.execute` 抛出 UnexpectedRowCountError。行必须带主键字段（和版本字段）。
+   */
+  byId(...rows: readonly InsertRow<T>[]): Delete<T> {
+    return new Delete(this.#target, ById.of(this.#target.table, rows as readonly object[], "deleteFrom(...).byId(...)"));
   }
 
   /** 追加 WHERE 条件；多次调用之间是 AND。 */
@@ -293,39 +331,89 @@ export class Delete<T> extends Write {
   /** 条件对象：每个非空字段一个条件，规则同查询的 `where(filter)`。 */
   where<F extends FilterObject>(filter: F): Delete<T>;
   where(cond: ((t: Ref<T>) => Cond) | FilterObject): Delete<T> {
-    return new Delete(this.#target.where(cond));
+    return new Delete(this.#target.where(cond), this.#byId);
   }
 
   /** 之后的 where 里，与空值比较的条件被省略；要写在 where 之前。 */
   skipEmpty(): Delete<T> {
-    return new Delete(this.#target.with({ skipping: true }));
+    return new Delete(this.#target.with({ skipping: true }), this.#byId);
   }
 
   /** 不套用数据库实例的全局过滤器。 */
   unfiltered(): Delete<T> {
-    return new Delete(this.#target.with({ filtered: false }));
+    return new Delete(this.#target.with({ filtered: false }), this.#byId);
   }
 
   /** 允许没有 where 条件，即删除全表。 */
   all(): Delete<T> {
-    return new Delete(this.#target.with({ everyRow: true }));
+    return new Delete(this.#target.with({ everyRow: true }), this.#byId);
   }
 
   /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError。 */
   expect(rows: number): Delete<T> {
-    return new Delete(this.#target.expect(rows));
+    return new Delete(this.#target.expect(rows), this.#byId);
   }
 
+  /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数。 */
   get expected(): number | undefined {
-    return this.#target.expected;
+    return this.#target.expected ?? this.#byId?.rows.length;
   }
 
-  /** `DELETE FROM 表 别名 WHERE ...`。 */
+  /** `DELETE FROM 表 别名 WHERE ...`，byId 时每行一条。 */
   render(writer: () => SqlWriter): Rendered[] {
-    const w = writer();
+    const byId = this.#byId;
+    if (byId === undefined) return [this.#statement(writer(), Cond.EMPTY)];
+    return byId.rows.map((row) => this.#statement(writer(), byId.locate(this.#target.ref, row)));
+  }
+
+  /** 写出一条 DELETE；located 是 byId 定位一行的条件。 */
+  #statement(w: SqlWriter, located: Cond): Rendered {
     w.sql("DELETE FROM ");
     ownerOf(this.#target.ref as object).renderSource(w);
-    this.#target.renderWhere(w, "deleteFrom(...)");
-    return [w.statement()];
+    this.#target.renderWhere(w, "deleteFrom(...)", located);
+    return w.statement();
+  }
+}
+
+/** `byId(row)` 的行：按 `@id` 的列（有 `@version` 时加上版本）定位每一行，更新时 SET 其余的字段。不对外导出。 */
+export class ById {
+  constructor(
+    readonly rows: readonly object[],
+    readonly ids: readonly string[],
+    readonly version: string | undefined,
+    readonly generated: string | undefined,
+  ) {}
+
+  /** 检查表有主键、每行带有每个主键字段（和版本字段）、字段都是表的列；statement 用于报错。 */
+  static of(table: Table<unknown>, rows: readonly object[], statement: string): ById {
+    const meta = entityMeta(table);
+    const { ids, version, generated } = meta.writes;
+    if (ids.length === 0) throw new Error(`${statement} needs @id columns on ${table.name}`);
+    if (rows.length === 0) throw new Error(`${statement} needs at least one row`);
+    for (const row of rows) {
+      for (const name of Object.keys(row)) if (meta.property(name) === undefined) throw new Error(`${statement}: ${name} has no column in ${table.name}`);
+      for (const key of version === undefined ? ids : [...ids, version]) {
+        if ((row as Record<string, unknown>)[key] == null) throw new Error(`${statement} needs the ${key} of every row`);
+      }
+    }
+    return new ById(rows, ids, version, generated);
+  }
+
+  /** 一行的定位条件：主键相等，有版本列时版本也相等。 */
+  locate(ref: object, row: object): Cond {
+    const keys = this.version === undefined ? this.ids : [...this.ids, this.version];
+    return all(...keys.map((k) => ((ref as Record<string, Expr<unknown>>)[k] as Expr<never>).eq((row as Record<string, never>)[k])));
+  }
+
+  /** 一行的 SET 项：主键、版本和生成列以外的字段（skipEmpty 下值为空的省略）；有版本列时加上 `version = version + 1`。 */
+  sets(ref: object, row: object): (readonly [Column<unknown>, Expr<unknown>])[] {
+    const out: (readonly [Column<unknown>, Expr<unknown>])[] = [];
+    const column = (name: string) => (ref as Record<string, Column<unknown>>)[name]!;
+    for (const [name, value] of Object.entries(row)) {
+      if (this.ids.includes(name) || name === this.version || name === this.generated || value === undefined || skips(value)) continue;
+      out.push([column(name), bindValue(column(name).type, value)]);
+    }
+    if (this.version !== undefined) out.push([column(this.version), plus(column(this.version) as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
+    return out;
   }
 }

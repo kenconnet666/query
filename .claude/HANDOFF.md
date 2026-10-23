@@ -37,7 +37,8 @@
 ### 写入能力（进行中，用户 2026-10-24 确认：插入时全部列都写、逻辑删除和审计填充这一轮做、只拦没有 WHERE 的 DELETE）
 
 - **第 1 步（已完成）**：`@Id`/`@Version`/`@Generated`/`@LogicDelete` 注解和 TS 装饰器（元数据就绪，后几步用）；`insertInto(T).values(rows)`、`.from(query)`，`update(T).set(...).where(...)`，`deleteFrom(T).where(...)`；没有 WHERE 报错（`.all()` 放行），全局过滤器进 WHERE，`expect(n)`，`skipEmpty` 省略空值的 SET；`db.execute`、`db.render(write)`、`db.transaction(...)`（Java 线程绑定连接，TS 用 AsyncLocalStorage；Spring 用 @Transactional）；多行写入自动在一个事务里，Java 用 JDBC 批量。金样例 `write-*`，三库实库通过。
-- **待做**：第 2 步 `byId(row)` + 版本 + 生成主键；第 3 步插入或更新（MERGE / ON CONFLICT / ON DUPLICATE KEY）+ 加锁读；第 4 步逻辑删除 + 审计填充；最后写 API 文档、决定记录 0007、CHANGELOG。设计草稿在会话 scratchpad 的 `write-design.md`。
+- **第 2 步（已完成）**：`update(T).byId(rows)`、`deleteFrom(T).byId(rows)`：按 `@Id` 定位，有 `@Version` 时 `SET version = version + 1 ... AND version = ?`，期望每行一行（乐观锁冲突抛 UnexpectedRowCount）；`skipEmpty().byId(row)` 只更新非空属性；`db.insertKeys(insert)` 取回 `@Generated` 的值（方言钩子：PG 由驱动或 RETURNING，MySQL 生成键或 insertId，HANA 在同一连接上查 CURRENT_IDENTITY_VALUE()）。
+- **待做**：第 3 步插入或更新（MERGE / ON CONFLICT / ON DUPLICATE KEY）+ 加锁读；第 4 步逻辑删除 + 审计填充；最后写 API 文档、决定记录 0007、CHANGELOG。设计草稿在会话 scratchpad 的 `write-design.md`。
 
 ### 测试（本机三库全部通过）
 

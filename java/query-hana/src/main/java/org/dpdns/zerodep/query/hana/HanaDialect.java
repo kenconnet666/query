@@ -5,6 +5,10 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -49,6 +53,19 @@ public class HanaDialect extends Dialect {
 
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "SAP HANA"; }
+
+    /** ngdbc 不支持 JDBC 的生成键，所以按普通语句准备，插入后再查。 */
+    @Override public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {
+        return connection.prepareStatement(sql);
+    }
+
+    /**
+     * 在同一个连接上查 {@code CURRENT_IDENTITY_VALUE()}：这个连接最近一次插入生成的 IDENTITY 值。
+     * 表上有会插入别的 IDENTITY 表的触发器时，取到的是触发器那一次的值。
+     */
+    @Override public ResultSet generatedKey(Connection connection, PreparedStatement statement) throws SQLException {
+        return connection.createStatement().executeQuery("SELECT CURRENT_IDENTITY_VALUE() FROM DUMMY");
+    }
 
     /** 只含大写字母、数字、下划线、{@code #} 和 {@code $} 的名字无需加引号。 */
     @Override protected boolean isBare(String identifier) { return BARE.matcher(identifier).matches(); }
