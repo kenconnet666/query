@@ -52,7 +52,7 @@ import ${ROOT}.Fn;
 /**
  * 按位置投影：{@code row(Delivery::new, l.material(), sum(l.quantity()))}。每个参数是一列、嵌套的
  * {@code row(...)} 或 {@code cols(...)}，javac 逐位检查它的类型与构造器参数是否一致。
- * 通过 {@link Sql} 和各方言门面使用，不必直接引用本类。
+ * 通过 {@link ${ROOT}.Sql} 和各方言门面使用，不必直接引用本类。
  */
 public abstract class Rows {
     /** 只供 {@link ${ROOT}.Sql} 继承。 */

@@ -6,7 +6,7 @@ import org.dpdns.zerodep.query.Fn;
 /**
  * 按位置投影：{@code row(Delivery::new, l.material(), sum(l.quantity()))}。每个参数是一列、嵌套的
  * {@code row(...)} 或 {@code cols(...)}，javac 逐位检查它的类型与构造器参数是否一致。
- * 通过 {@link Sql} 和各方言门面使用，不必直接引用本类。
+ * 通过 {@link org.dpdns.zerodep.query.Sql} 和各方言门面使用，不必直接引用本类。
  */
 public abstract class Rows {
     /** 只供 {@link org.dpdns.zerodep.query.Sql} 继承。 */
