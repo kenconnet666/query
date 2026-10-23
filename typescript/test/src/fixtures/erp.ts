@@ -116,7 +116,7 @@ export class Event {
 
 // ---------- shapes and results ----------
 
-/** Same-named columns map automatically; a renamed one names its source. */
+/** A line result mapped with into(...): the projection keys match the field names. */
 export class LineVO {
   delivery!: string;
   materialNo!: string;

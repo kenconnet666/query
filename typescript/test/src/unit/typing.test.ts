@@ -55,7 +55,7 @@ export function typeChecks(): unknown[] {
   // @ts-expect-error UNION arms of different row types
   from(Lips).select((l) => ({ a: l.delivery })).unionAll(from(Lips).select((l) => ({ b: l.delivery })));
 
-  // @ts-expect-error mapTo needs the row to provide every field of the class
+  // @ts-expect-error into needs the row to provide every field of the class
   from(Lips).select((l) => ({ partNumber: l.material })).into(DeliveryVO);
 
   from(Lips)

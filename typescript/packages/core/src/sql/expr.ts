@@ -535,7 +535,6 @@ export function functionCall<T>(type: SqlType<NonNullable<T>>, fn: FunctionDef |
   return new Call(type, fn, args);
 }
 
-/** SQL 模板的参数：表达式原位渲染，其他值成为绑定参数。 */
 /** 原生 SQL 模板的参数：节点原位渲染，其他值绑定（内联时写成字面量），数组展开成逗号分隔的多个参数。 */
 export type TemplateArg = Renderable | TemplateValue | readonly TemplateValue[];
 

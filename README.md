@@ -2,34 +2,33 @@
 
 面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：只负责把查询写成可组合、可复用、可校验的值，再按方言渲染并执行。
 
-当前版本 1.0.0（尚未发布到 Maven 中央仓库）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
+当前开发 2.0.0（`feat/v2` 分支；1.0.0 已发布）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL 三个方言；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
-- 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[从手写 SQL 迁移](docs/migration.md)
+- 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[迁移指南](docs/migration.md)（从手写 SQL 迁移、从 1.x 升级）
 - 版本：[变更记录](CHANGELOG.md)、[手动发布步骤](docs/release.md)
-- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)
+- 决定与取舍：[0001 独立的分析查询库](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)
 - 场景覆盖计划：[场景对照](docs/scenarios.md)
 
 ## 快速上手
 
-**Java**：引入所用方言的包，JDBC 驱动由项目自己提供。发布到中央仓库之前，先在本仓库执行 `.\mvnw.cmd install -DskipTests` 装到本地仓库。
+**Java**：引入所用方言的包，JDBC 驱动由项目自己提供。2.0 发布到中央仓库之前，先在本仓库执行 `.\mvnw.cmd install -DskipTests` 装到本地仓库。
 
 ```xml
 <dependency>
     <groupId>org.dpdns.zerodep</groupId>
     <artifactId>query-postgres</artifactId>   <!-- 或 query-hana、query-mysql；Spring 项目再加 query-spring -->
-    <version>1.0.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
 ```java
 import static org.dpdns.zerodep.query.postgres.Postgres.*;   // 核心函数加 PostgreSQL 函数
 
-@Data
 @Table(schema = "erp", value = "lips")
-public class Lips {
-    @Column("matnr") private String material;
-    @Column("erdat") private LocalDate createdOn;
-    @Column("lfimg") private BigDecimal quantity;
+public interface Lips extends Entity {                              // 表是接口，列是方法
+    @Column("matnr") Col<String> material();
+    @Column("erdat") Col<LocalDate> createdOn();
+    @Column("lfimg") Col<BigDecimal> quantity();
 }
 
 public record MaterialTotal(String material, BigDecimal quantity) { }
@@ -37,10 +36,10 @@ public record MaterialTotal(String material, BigDecimal quantity) { }
 PostgresDatabase db = Postgres.database(dataSource);              // 每个数据源一个，长期复用
 
 List<MaterialTotal> rows = db.list(from(Lips.class)
-    .where(l -> l.col(Lips::getCreatedOn).ge(start))
-    .groupBy(l -> l.col(Lips::getMaterial))
-    .orderBy(l -> l.col(Lips::getMaterial))
-    .select((r, l) -> new MaterialTotal(r.get(l, Lips::getMaterial), r.get(sum(l.col(Lips::getQuantity))))));
+    .where(l -> l.createdOn().ge(start))
+    .groupBy(l -> l.material())
+    .orderBy(l -> l.material())
+    .select(l -> row(MaterialTotal::new, l.material(), sum(l.quantity()))));
 ```
 
 **TypeScript**：按方言安装 `@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql` 或 `@zerodep-dev/query-hana`，核心包会随之安装，数据库驱动（`pg`、`mysql2`、`@sap/hana-client`）由项目自己提供：
@@ -67,13 +66,13 @@ const rows = await db.list(
 );   // { material: string; quantity: string | null }[]
 ```
 
-`db.render(q)` 可以查看将要执行的 SQL 和参数。完整用法见上面的 API 使用说明。
+`db.render(q)` 可以查看将要执行的 SQL 和参数，`.debugSql()` 把参数写回原处便于复制执行。完整用法见上面的 API 使用说明。
 
 ## 基线
 
 | 项 | 要求 |
 | --- | --- |
-| Java | 17 及以上，`maven.compiler.release=17`；实体用注解声明，支持 Lombok |
+| Java | 17 及以上，`maven.compiler.release=17`；表用注解接口声明，结果类支持 record 与 Lombok |
 | TypeScript | 以 7 为基准，使用标准装饰器 |
 | 代码生成 | 不使用注解处理器（APT），也不在使用方生成代码 |
 | 方言 | SAP HANA、PostgreSQL、MySQL 同步推进；DuckDB 延后 |

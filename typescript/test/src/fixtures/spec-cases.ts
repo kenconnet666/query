@@ -290,7 +290,6 @@ export function rollup() {
     .select((l) => ({ material: l.material, unit: l.unit, total: sum(l.quantity), level: grouping(l.material) }));
 }
 
-/** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
 /** Cuts each comma-separated code where LOCATE finds the comma: computed SUBSTRING positions. */
 export function textPositions() {
   const codes = cte("codes", values([{ text: "21,32" }, { text: "05" }]));
@@ -318,6 +317,7 @@ export function simpleCase() {
     }));
 }
 
+/** FLOOR and CEIL of half the delivered quantity. */
 export function floorCeil() {
   return from(Lips)
     .orderBy((l) => l.delivery)
@@ -327,7 +327,6 @@ export function floorCeil() {
     });
 }
 
-/** An entity named Order: its alias is a reserved word and must be quoted. */
 /** 原生 SQL：标识符按方言加引号的 sqlTable、数组参数展开、混用表达式和值的 sql 与 sqlCond。 */
 export function nativeSql() {
   const id = identifier;
@@ -366,6 +365,7 @@ export function dynamicColumns() {
     .sortBy("total desc, material");
 }
 
+/** An entity named Order: its alias is a reserved word and must be quoted. */
 export function reservedAlias() {
   return from(Order)
     .where((o) => o.material.eq("M1"))
@@ -373,6 +373,7 @@ export function reservedAlias() {
     .select((o) => o.delivery);
 }
 
+/** a UNION ALL (b UNION c): the right-hand UNION keeps its parentheses, so a row shared by a and c stays twice. */
 export function unionGrouping() {
   const materialOf = (delivery: string) =>
     from(Lips)

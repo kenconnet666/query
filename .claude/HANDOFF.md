@@ -1,91 +1,43 @@
-# 交接（2026-10-21）
+# 交接（2026-10-23）
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-[0003](../docs/decisions/0003-road-to-1.0.md) 的 M1 到 M6、[0004 生产就绪](../docs/decisions/0004-production-readiness.md)和 [0005 API 简化审查](../docs/decisions/0005-api-simplification.md)都已完成，版本号是 1.0.0。只差维护者手动发布到 Maven 中央仓库。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部六期和文档，尚未合并、尚未发布。
 
 ## 当前状态
 
-### 分支
+### 2.0 完成了什么（`feat/v2`，设计见 [0006](../docs/decisions/0006-query-model-direction.md)）
 
-- 第一到第三期在 [PR #1](https://github.com/kenconnet666/query/pull/1) 合并进了 `master`。
-- M1 到 M6 在 `feat/v1` 上，已通过 [PR #2](https://github.com/kenconnet666/query/pull/2) 合并进 `master`。
-- 生产就绪已通过 [PR #3](https://github.com/kenconnet666/query/pull/3) 合并进 `master`。
-- API 简化在 `feat/api-simplify` 上，通过 PR #4 合并进 `master`。
-- 用户已授权在 CI 全绿后自行合并 PR，不必再问。新的工作从 `master` 开分支。
+- **第一期 骨架与删减**：Java 的表改为继承 `Entity` 的接口（每次表出现一个动态代理），投影只留单个表达式、`cols`、`row`、`selectAs`、`into`；`skipEmpty()` 代替 `IfPresent` 系列；作用域 16 张表、`row` 22 个参数由 `tools/generate-java-scopes.mjs` 生成。TS 同步删除重复写法。
+- **整理**：Java 核心包按职责分子包（`table`、`expr`、`scope`、`select`、`exec` 等），TS 源码分 `schema`、`sql`、`query`、`exec` 文件夹；全部注释改为中文。
+- **打印与测试 SQL**：`debugSql()`、`printSql`、`db.capture(...)`、空跑连接与驱动。
+- **第二期 关系与导航**：`one`/`many`（Java 的 default 方法与 `@ManyToOne`/`@OneToMany`，TS 的 `@one`/`@many`）；多对一按需 LEFT JOIN，一对多的 EXISTS、相关子查询和 `first`。
+- **第三期 动态列与排序**：`exclude`/`excludeIf`/`only`（列写成 NULL，相同的分组键和连接一起去掉）、`sortBy`。
+- **第四期 对象树**：`many.list(...)` 按键批量加载子列表，Java 的 `selectAs` 自动映射嵌套 VO 和 `List<X>`。
+- **第五期 条件对象**：`where(search)` 加 `@Where`/`@where`；`contains`、`startsWith`、`endsWith`。
+- **第六期 原生 SQL**：`sql`、`sqlCond` 混用参数、`.on(方言类, ...)`、`sqlTable`、`identifier`。
+- **第七期 文档**：两份 API 说明、[迁移指南](../docs/migration.md)（含从 1.x 升级）、[CHANGELOG](../CHANGELOG.md) 的 2.0.0、0006 改为已采纳、场景对照、README。
+- 1.x 已有场景的金样例全部不变；新增 `navigation`、`one-to-many`、`dynamic-columns`、`filter-object`、`native-sql` 五个场景。
 
-### 1.0 完成了什么
+### 测试（本机三库与 CI 全部通过）
 
-- **M1 表达力审计**：读了使用方的 121 段 HANA SQL，列出 8 个缺口。不需要新 API 的写法整理进了[迁移指南](../docs/migration.md)。
-- **M2 补缺口**：两端、三库同时补齐，都有金样例和实库测试：
-  - `locate`；起止位置是表达式的 `substring`、`left`、`right`；
-  - `floor`、`ceil`；
-  - 简单 CASE `caseOf`；多参数 `coalesce`；
-  - 方言包里的 `greatest`、`least`，HANA 的 `toInteger`；
-  - Java 命名投影自动补齐没有列出的属性。
-- **M3 结果分组**：`Nest.into`（TS 为 `nest`）。
-- **M4 扩大对照**：8 条代表性查询、36 组参数，原 SQL、Java 改写、TS 改写三者的结果逐行一致。顺带修了 TS 的 `lit`/`val` 字面量类型问题。
-- **M5 1.0 准备**：
-  - 补齐公开 API 的测试；
-  - 修了保留字作别名的 bug；
-  - 连接泄漏与并发测试；
-  - 性能粗测，并让函数式投影的结构核对每个查询只算一次；
-  - 日志监听器示例。
-- **M6 发布准备**：
-  - 中央仓库要求的 POM 元数据、`LICENSE`、`release` profile（源码包、javadoc 包、签名、central-publishing）；
-  - `Automatic-Module-Name`；
-  - CI 带 release profile 构建；
-  - [CHANGELOG](../CHANGELOG.md)、README 快速上手、[迁移指南](../docs/migration.md)、[手动发布步骤](../docs/release.md)。
-- 各项的证据与取舍记在 0003 的"验证证据"一节。
-
-### 生产就绪完成了什么（0004）
-
-- **查询超时**：数据库实例的默认值，查询和原生 SQL 可以覆盖。三库都在服务端取消语句，异常能用 `isTimeout()` / `timedOut` 区分。
-- **Spring 事务超时**：`ConnectionProvider.prepared` 钩子，行为与 JdbcTemplate 一致。
-- **参数个数上限**：超过时在连接数据库之前报出可读的错误。
-- **字面量加固**：
-  - PostgreSQL 的值含反斜杠时写成 `E'...'`；
-  - `NaN`、`Infinity` 不写成字面量；
-  - 三库都做了恶意文本的往返测试。
-- **CI**：增加 JDK 21 与 25。
-- **文档**：API 说明第 10 节（安全、上线前检查、兼容性承诺）。
-- **影子试点**：在使用方同款技术栈上验证通过（Spring Boot 2.7.11、Druid、dynamic-datasource、ngdbc 2.29.7）。
-- **顺带修复**：Java 分页遇到 NULL 行时抛 NPE；TS 约 7 万个参数时渲染栈溢出。
-
-### API 简化完成了什么（0005）
-
-- **Java 去掉包装**：只有一个分组键、排序键或命名列时直接写表达式，裸表达式按升序；靠 sealed 标记接口 `Keys`、`OrderItem` 实现。
-- **EXISTS**：`exists` / `notExists` 直接接收作用域，两端删除 `selectOne()`。
-- **删除 `whereIf`**：两端都删，它与 `onlyIf` 重复。
-- **比较简写**：Java 的 `gt`/`ge`/`lt`/`le` 也支持 `(表, getter)` 简写。
-- **文档**：用法说明开头加了速查表，讲清 `val` 与 `lit` 的区别；示例全部换成新写法。金样例不变。
-
-### 测试（本机三库全部通过）
-
-- **Java**：`-P release -Dgpg.skip verify` 通过。
-  - 各模块的测试数：core 88，HANA 67，PostgreSQL 71，MySQL 64，Spring 5；
-  - 金样例 88 个文件，覆盖 38 个场景。
-- **TS**：单元、编译期与金样例 169 个，实库 91 个。
+- **Java**：core 130，HANA 76，PostgreSQL 80，MySQL 73，Spring 5（含实库场景与金样例）。
+- **TS**：单元、编译期与金样例 218，实库 103。
+- 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
 
-- **1.0.0 已发布**（2026-10-22）：Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向实际发布的提交 `966a236`。之后发版按 [docs/release.md](../docs/release.md)；命名空间的 TXT 记录保留，不要删。
+- **合并 `feat/v2`**：需要用户同意后开 PR 合并进 `master`。
+- **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
-- **文档站**：用户说之后会用前端组件库另行安排，1.0 只提供仓库里的 Markdown。
 
-## 讨论中
+## 下一步
 
-- **下一代查询写法**（2026-10-23）：[0006 讨论稿](../docs/decisions/0006-query-model-direction.md) 比较了手写元模型的五种形态，以及导航关系、VO 对象树、条件对象、CTE 类的设计，目标 2.0。文末列了待用户决定的 8 个问题，决定之前不动代码。
+用户在 2026-10-23 定下的后续阶段，2.0 完成后依次进行：
 
-## 下一步（建议）
-
-1. 合并后看 `master` 上的 CI 是否全绿。
-2. 用 `versions:set` 进入 `1.1.0-SNAPSHOT`，`CHANGELOG.md` 顶部加"未发布"，并决定要不要建 GitHub Release（正文取 CHANGELOG 的 1.0.0 一节）。
-3. 在使用方仓库挑一个服务试点迁移，按迁移指南改写，并逐条对照结果。0003 把试点放在 1.0 之后，需要用户同意；使用方代码目前只读。影子试点已证明技术栈兼容。
-4. 0003 列出的延后项，等有使用证据再做：
-   - DuckDB；
-   - HANA 计算视图与表函数、JSON、层级查询；
-   - 两次查询的批量加载。
+1. **研读 EasyQuery 的文档和测试场景**（`C:UserslionheartIdeaProjectseasy-query`，以 tag `3.2.17` 为准），对照本库逐项简化和补全写法。
+2. **调研成熟的流程引擎**（Flowable、Camunda 7、Activiti、jBPM、Warm-Flow、SnakerFlow 等）：收集它们的查询 SQL（待办与候选人、流程实例加变量过滤、历史、分页与计数），用本库在三库上多种写法测试，把别扭的写法简化优化。之后会自研流程引擎，这一步只做准备。
+   - 流程引擎需要写入（insert、update、delete、乐观锁），本库目前只做查询，涉及写入时先请用户决定。
 
 ## 换电脑后的准备
 
@@ -93,7 +45,7 @@
 
 | 东西 | 在旧电脑上的位置 | 新电脑上怎么办 |
 | --- | --- | --- |
-| 本仓库 | `C:\Users\Administrator\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，在 `master` 上新开分支 |
+| 本仓库 | `C:\Users\lionheart\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，在 `master` 上新开分支 |
 | 参考仓库（只读） | `IdeaProjects\easy_query_pro`、`IdeaProjects\easy-query`、`IdeaProjects\orm-references\*` | 按 CLAUDE.md 的说明重新克隆；不影响构建，只用于设计参考 |
 | 使用方代码（只读） | 旧电脑的本地目录 | 只在 Claude 项目记忆里有路径和说明，不进公开仓库 |
 | Claude 项目记忆 | `C:\Users\Administrator\.claude\projects\C--Users-Administrator-IdeaProjects-query\memory\` | 含使用方说明和设计证据，按需手动拷贝到新电脑对应目录；没有它也能继续，只是缺少使用方背景 |
@@ -140,10 +92,10 @@
 - **pnpm 11**：依赖的安装脚本要在 `pnpm-workspace.yaml` 的 `allowBuilds` 里放行，`@sap/hana-client` 已放行。
 - **PowerShell 传 Maven 参数**：带点的 `-D` 参数要加引号，例如 `'-Dtest=HanaLiveTest'`。
 - **金样例**：改了渲染以后，用 `$env:QUERY_SPEC_WRITE = '1'` 运行 `*SpecTest` 重写 `spec/render/`，审查 diff，再跑 TS 的 `spec.test.js` 确认两端一致。
-- **Java 泛型**：形如 `Getter<?, ?>` 的通配符参数接收不了方法引用，公共 API 要写成泛型 `<E> Getter<? super E, ?>`；同类型的多参数运算要做成实例方法（理由见 0002 第 4 条）。
+- **Java 泛型**：行类来源的 `col(Getter)` 公共 API 要写成泛型 `<E> Getter<? super E, ?>`，通配符参数接收不了方法引用；同类型的多参数运算要做成实例方法（理由见 0002 第 4 条）。
 - **TS 类型**：
   - `instanceof` 取反会把 `w.dialect` 收窄成 `never`，先存到 `const dialect: Dialect` 再判断；
-  - getter 在类型上像只读字段，`mapTo` 的字段检查已排除只读属性；
+  - getter 在类型上像只读字段，`into` 的字段检查已排除只读属性；
   - 只为编译期检查写的错误代码要放进不会被调用的函数里，否则测试运行时会真的执行它。
 - **Bash 工具里的转义**：在 heredoc 或 `python -` 里写入文本时，反斜杠转义（例如 Java 字符串里的换行符转义）会被提前展开成真正的换行，字符串因此断开。含反斜杠的改动用编辑工具写。
 - **Bash 工具里的大段 heredoc**：内容很长且引号很多时会报 "unexpected EOF"。先用写文件工具把脚本写到临时目录，再执行它。
