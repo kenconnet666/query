@@ -536,16 +536,27 @@ export function functionCall<T>(type: SqlType<NonNullable<T>>, fn: FunctionDef |
 }
 
 /** SQL 模板的参数：表达式原位渲染，其他值成为绑定参数。 */
-export type TemplateArg = Renderable | string | number | bigint | boolean | Uint8Array;
+/** 原生 SQL 模板的参数：节点原位渲染，其他值绑定（内联时写成字面量），数组展开成逗号分隔的多个参数。 */
+export type TemplateArg = Renderable | TemplateValue | readonly TemplateValue[];
+
+/** 原生 SQL 模板里绑定的值。 */
+export type TemplateValue = string | number | bigint | boolean | Uint8Array;
 
 /** 渲染 SQL 模板：交错写出文本片段和参数。 */
 export function renderTemplate(w: SqlWriter, parts: readonly string[], args: readonly TemplateArg[]): void {
   parts.forEach((part, i) => {
     w.sql(part);
     if (i < args.length) {
-      const arg = args[i]!;
-      if (typeof arg === "object" && !(arg instanceof Uint8Array)) w.render(arg);
-      else w.bind(arg, typeOf(arg));
+      const arg = args[i];
+      if (arg == null) throw new TypeError(`Template argument ${i} is ${arg}; write NULL in the template instead`);
+      if (Array.isArray(arg)) {
+        if (arg.length === 0) throw new TypeError(`Template argument ${i} is an empty array`);
+        (arg as readonly TemplateValue[]).forEach((v, j) => {
+          if (j > 0) w.sql(", ");
+          w.render(param(typeOf(v), v));
+        });
+      } else if (typeof arg === "object" && !(arg instanceof Uint8Array)) w.render(arg as Renderable);
+      else w.render(param(typeOf(arg), arg as TemplateValue));
     }
   });
 }

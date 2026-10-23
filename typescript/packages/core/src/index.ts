@@ -38,6 +38,8 @@ export {
   type WhereOp,
   type Table,
 } from "./schema/metadata.js";
+export { identifier, SqlCond, SqlExpr, type SqlVariant, type VariantTag } from "./sql/template.js";
+export { SqlTable, sqlTable } from "./query/sql-table.js";
 export { Rendered, SqlWriter, type Binding, type CteDefinition, type Renderable, type RenderSettings } from "./sql/writer.js";
 export { Dialect, FunctionDef, type Clause, type DialectClass, type FunctionRenderer } from "./sql/dialect.js";
 export {
@@ -66,6 +68,7 @@ export {
   type OrderItem,
   type SourceColumn,
   type TemplateArg,
+  type TemplateValue,
 } from "./sql/expr.js";
 export { type FilterObject } from "./query/filter.js";
 export { Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";

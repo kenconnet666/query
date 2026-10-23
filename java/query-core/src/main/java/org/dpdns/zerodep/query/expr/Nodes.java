@@ -13,6 +13,7 @@ import java.util.List;
 
 /** 内置的表达式节点和条件节点。包内可见：用户通过公开 API 构造它们，不直接使用本类。 */
 public final class Nodes {
+    /** 工具类，不能实例化。 */
     private Nodes() { }
 
     // ---------- expressions ----------
@@ -21,6 +22,7 @@ public final class Nodes {
     public static final class Param<T> extends Expr<T> {
         private final T value;
 
+        /** 按 type 绑定的值。 */
         public Param(SqlType<T> type, T value) {
             super(type);
             this.value = value;
@@ -38,6 +40,7 @@ public final class Nodes {
     public static final class Literal<T> extends Expr<T> {
         private final T value;
 
+        /** 按 type 写成字面量的值。 */
         public Literal(SqlType<T> type, T value) {
             super(type);
             this.value = value;
@@ -92,26 +95,12 @@ public final class Nodes {
         }
     }
 
-    /** 兜底的表达式模板：模板里的 {@code {0}}、{@code {1}} 被替换为渲染后的参数。 */
-    public static final class Template<T> extends Expr<T> {
-        private final String template;
-        private final List<? extends Expr<?>> args;
-
-        public Template(SqlType<T> type, String template, List<? extends Expr<?>> args) {
-            super(type);
-            this.template = template;
-            this.args = List.copyOf(args);
-        }
-
-        /** 按模板写出，占位符处渲染对应的参数。 */
-        @Override public void render(SqlWriter w) { renderTemplate(w, template, args); }
-    }
-
     /** 算术运算：用 {@code operator} 连接各操作数，整体加括号，结果类型由调用方指定。 */
     public static final class Arithmetic<T> extends Expr<T> {
         private final String operator;
         private final List<? extends Expr<?>> operands;
 
+        /** 用 operator 连接 operands，结果类型为 type。 */
         public Arithmetic(SqlType<T> type, String operator, List<? extends Expr<?>> operands) {
             super(type);
             this.operator = operator;
@@ -126,6 +115,7 @@ public final class Nodes {
     public static final class Negated<T> extends Expr<T> {
         private final Expr<T> operand;
 
+        /** 对 operand 取负，类型不变。 */
         public Negated(Expr<T> operand) {
             super(operand.type());
             this.operand = operand;
@@ -143,6 +133,7 @@ public final class Nodes {
         private final Expr<?> inner;
         private final CastType<T> target;
 
+        /** 把 inner 转换成 target。 */
         public Cast(Expr<?> inner, CastType<T> target) {
             super(SqlType.of(target.javaType()));
             this.inner = inner;
@@ -162,6 +153,7 @@ public final class Nodes {
     public static final class Scalar<T> extends Expr<T> {
         private final Query<T> query;
 
+        /** 只选一列的子查询，类型取自那一列。 */
         public Scalar(Query<T> query) {
             super(query.singleColumnType());
             this.query = query;
@@ -179,6 +171,7 @@ public final class Nodes {
     public static final class Raw<T> extends Expr<T> {
         private final String sql;
 
+        /** 原样写出的 SQL 文本，类型为 type。 */
         public Raw(SqlType<T> type, String sql) {
             super(type);
             this.sql = sql;

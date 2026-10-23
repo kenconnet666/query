@@ -15,6 +15,7 @@ import {
   cte,
   date,
   decimal,
+  identifier,
   denseRank,
   divide,
   exists,
@@ -43,6 +44,8 @@ import {
   rowNumber,
   scalar,
   sql,
+  sqlCond,
+  sqlTable,
   substring,
   sum,
   text,
@@ -239,6 +242,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "reserved-alias": plain(() => reservedAlias()),
   "dynamic-columns": plain(() => dynamicColumns()),
   "filter-object": plain(() => filterObject(Object.assign(new DeliverySearch(), { material: ["M1", "M2"], from: "2026-01-01", keyword: "50%", unit: "KG" }))),
+  "native-sql": plain(() => nativeSql()),
   navigation: {
     filtered: true,
     query: () =>
@@ -324,6 +328,17 @@ export function floorCeil() {
 }
 
 /** An entity named Order: its alias is a reserved word and must be quoted. */
+/** 原生 SQL：标识符按方言加引号的 sqlTable、数组参数展开、混用表达式和值的 sql 与 sqlCond。 */
+export function nativeSql() {
+  const id = identifier;
+  const totals = sqlTable({ material: text, total: decimal })`SELECT ${id("MATNR")} AS ${id("material")}, SUM(${id("LFIMG")}) AS ${id("total")} FROM ${id("QUERY_IT")}.${id("LIPS")} WHERE ${id("VRKME")} IN (${["EA", "KG"]}) GROUP BY ${id("MATNR")}`;
+  return from(totals)
+    .join(Mara, (t, m) => m.material.eq(t.material))
+    .where((_t, m) => sqlCond`${m.materialType} <> ${"ZOTH"}`)
+    .orderBy((t) => t.material)
+    .select((t, m) => ({ material: t.material, padded: sql(text)`LPAD(${m.material}, ${10}, '0')`, total: t.total }));
+}
+
 /** 交货查询的请求参数：每个非空字段是一个条件。 */
 export class DeliverySearch {
   material?: string[];

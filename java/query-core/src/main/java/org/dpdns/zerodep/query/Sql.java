@@ -1,12 +1,16 @@
 package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.expr.Aggregate;
 import org.dpdns.zerodep.query.expr.Case;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.KeyList;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.SqlCond;
+import org.dpdns.zerodep.query.expr.SqlExpr;
+import org.dpdns.zerodep.query.expr.SqlTemplate;
 import org.dpdns.zerodep.query.expr.OrderItem;
 import org.dpdns.zerodep.query.expr.OrderList;
 import org.dpdns.zerodep.query.expr.WindowFunction;
@@ -20,6 +24,7 @@ import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.Source;
+import org.dpdns.zerodep.query.table.SqlTable;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -173,8 +178,11 @@ public class Sql extends Rows {
         return Nodes.template("{0} LIKE {1} ESCAPE '!'", List.of(e, e.param(prefix + escaped + suffix)));
     }
 
-    /** 兜底的条件模板：{0}、{1} 是渲染后的参数。 */
-    public static Cond sqlCond(String template, Expr<?>... args) { return Nodes.template(template, List.of(args)); }
+    /**
+     * 原生 SQL 写成的条件：{0}、{1} 是参数，表达式原位渲染，其他值绑定，集合展开成多个参数，
+     * 例如 {@code sqlCond("{0} IN ({1})", l.unit(), units)}；用 {@code .on(方言类, 模板)} 给某个方言另一种写法。
+     */
+    public static SqlCond sqlCond(String template, Object... args) { return new SqlCond(SqlTemplate.of(template, args)); }
 
     /** 供方言门面的比较函数使用：在 skipEmpty 模式下，这个值上的条件是否应当省略。 */
     protected static boolean skipped(Object value) { return SkipEmpty.skips(value); }
@@ -391,9 +399,27 @@ public class Sql extends Rows {
         return all;
     }
 
-    /** 兜底的表达式模板：{0}、{1} 是渲染后的参数，结果类型由 type 声明。 */
-    public static <T> Expr<T> sql(Class<T> type, String template, Expr<?>... args) {
-        return new Nodes.Template<>(SqlType.of(type), template, List.of(args));
+    /**
+     * 原生 SQL 写成的表达式，结果类型由 type 声明：{0}、{1} 是参数，表达式原位渲染，其他值绑定（SELECT 列表里写成字面量），
+     * 集合展开成多个参数，例如 {@code sql(String.class, "LPAD({0}, {1}, '0')", l.material(), 18)}；
+     * 用 {@code .on(方言类, 模板)} 给某个方言另一种写法。
+     */
+    public static <T> SqlExpr<T> sql(Class<T> type, String template, Object... args) {
+        return new SqlExpr<>(SqlType.of(type), SqlTemplate.of(template, args));
+    }
+
+    /** 按方言加引号的标识符（列名、表名、别名），放进原生 SQL 的参数，让同一段模板在三个库上都能用。 */
+    public static Renderable identifier(String name) {
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("identifier needs a name");
+        return w -> w.identifier(name);
+    }
+
+    /**
+     * 原生 SQL 写成的数据源，放进 FROM 或 JOIN：{@code from(sqlTable(StockRow.class, "SELECT ... WHERE WERKS = {0}", plant))}。
+     * 每一列用 rows 的属性名作别名并按方言加引号，参数规则同 {@link #sql}。
+     */
+    public static <E> SqlTable<E> sqlTable(Class<E> rows, String template, Object... args) {
+        return new SqlTable<>(rows, SqlTemplate.of(template, args));
     }
 
     /** 调用一个函数定义；内置函数与自定义函数都这样实现。 */

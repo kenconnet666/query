@@ -21,6 +21,7 @@ import {
   type TemplateArg,
 } from "./expr.js";
 import type { Query } from "../query/query.js";
+import { SqlCond, SqlExpr } from "./template.js";
 import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "../schema/types.js";
 
 /**
@@ -119,8 +120,8 @@ function likeLiteral(e: Expr<string | null>, prefix: string, text: string | null
 }
 
 /** 用 SQL 模板写成的条件；表达式原位渲染，其他值成为绑定参数。 */
-export function sqlCond(parts: TemplateStringsArray, ...args: TemplateArg[]): Cond {
-  return condition((w) => renderTemplate(w, parts, args));
+export function sqlCond(parts: TemplateStringsArray, ...args: TemplateArg[]): SqlCond {
+  return new SqlCond([{ dialect: undefined, parts, args }]);
 }
 
 // ---------- 文本 ----------
@@ -354,11 +355,11 @@ export function cast<T, U>(e: Expr<T>, target: CastType<U>): Expr<KeepNull<T, U>
  * 带类型的 SQL 片段：`sql(integer)\`DAYS_BETWEEN(${a}, ${b})\``。表达式原位渲染，
  * 其他值成为绑定参数。不指定类型时，值按驱动返回的样子读取。
  */
-export function sql<T>(type: SqlType<T>): (parts: TemplateStringsArray, ...args: TemplateArg[]) => Expr<T>;
-export function sql(parts: TemplateStringsArray, ...args: TemplateArg[]): Expr<unknown>;
+export function sql<T>(type: SqlType<T>): (parts: TemplateStringsArray, ...args: TemplateArg[]) => SqlExpr<T>;
+export function sql(parts: TemplateStringsArray, ...args: TemplateArg[]): SqlExpr<unknown>;
 export function sql(first: SqlType<unknown> | TemplateStringsArray, ...rest: TemplateArg[]): unknown {
   const build = (type: SqlType<unknown>, parts: TemplateStringsArray, args: readonly TemplateArg[]) =>
-    expression(type as SqlType<{}>, (w) => renderTemplate(w, parts, args));
+    new SqlExpr(type as SqlType<{}>, [{ dialect: undefined, parts, args }]);
   if (Array.isArray(first)) return build(untyped, first as TemplateStringsArray, rest);
   return (parts: TemplateStringsArray, ...args: TemplateArg[]) => build(first as SqlType<unknown>, parts, args);
 }

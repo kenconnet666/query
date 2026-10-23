@@ -444,6 +444,12 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 原生SQL片段在实库上可执行() {
+        assertEquals(List.of("M1:00000000M1:106", "M2:00000000M2:12"), db.list(SpecCases.nativeSql()).stream()
+            .map(r -> r.get("material") + ":" + r.get("padded") + ":" + plain(r.get("total"))).toList());
+    }
+
+    @Test
     void 排除分组维度后按排序串汇总() {
         assertEquals(List.of("M2:null:null:12", "M1:null:null:6"), db.list(SpecCases.dynamicColumns()).stream()
             .map(r -> r.get("material") + ":" + r.get("unit") + ":" + r.get("partNumber") + ":" + plain(r.get("total")))

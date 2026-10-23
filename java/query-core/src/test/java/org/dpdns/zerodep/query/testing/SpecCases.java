@@ -123,6 +123,7 @@ public final class SpecCases {
         cases.put("subqueries", SpecCase.plain(SpecCases::subqueries));
         cases.put("dynamic-columns", SpecCase.plain(SpecCases::dynamicColumns));
         cases.put("filter-object", SpecCase.plain(() -> filterObject(new DeliverySearch(List.of("M1", "M2"), LocalDate.of(2026, 1, 1), null, "50%", "KG"))));
+        cases.put("native-sql", SpecCase.plain(SpecCases::nativeSql));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         return cases;
@@ -264,6 +265,22 @@ public final class SpecCases {
     /** 按条件对象筛选交货单。 */
     public static Query<String> filterObject(DeliverySearch search) {
         return from(Lips.class).where(search).orderBy(l -> l.delivery()).select(l -> l.delivery());
+    }
+
+    /** 原生 SQL 数据源的一行：物料和数量合计。 */
+    public record MaterialTotal(String material, BigDecimal total) { }
+
+    /** 原生 SQL：标识符按方言加引号的 sqlTable、集合参数展开、混用表达式和值的 sql(...) 与 sqlCond(...)。 */
+    public static Query<Map<String, Object>> nativeSql() {
+        var totals = sqlTable(MaterialTotal.class, "SELECT {0} AS {1}, SUM({2}) AS {3} FROM {4}.{5} WHERE {6} IN ({7}) GROUP BY {0}",
+            identifier("MATNR"), identifier("material"), identifier("LFIMG"), identifier("total"), identifier("QUERY_IT"), identifier("LIPS"),
+            identifier("VRKME"), List.of("EA", "KG"));
+        return from(totals)
+            .join(Mara.class, (t, m) -> m.material().eq(t.col(MaterialTotal::material)))
+            .where((t, m) -> sqlCond("{0} <> {1}", m.materialType(), "ZOTH"))
+            .orderBy((t, m) -> t.col(MaterialTotal::material))
+            .select((t, m) -> cols(t.col(MaterialTotal::material), sql(String.class, "LPAD({0}, {1}, '0')", m.material(), 10).as("padded"),
+                t.col(MaterialTotal::total)));
     }
 
     /** 多对一导航：按需 LEFT JOIN，可以继续导航，全局过滤器进入 ON。 */

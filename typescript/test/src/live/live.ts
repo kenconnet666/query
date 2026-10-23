@@ -25,7 +25,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { DeliverySearch, dynamicColumns, filterObject, floorCeil, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { DeliverySearch, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 
 /**
@@ -511,6 +511,14 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.deepEqual(await find({ from: "2026-01-01", keyword: "P" }), ["D1", "D2", "D3", "D5"]);
       assert.deepEqual(await find({ material: ["M1"], from: "2026-03-01" }), ["D5"]);
       for (const wildcard of ["%", "_", "P%", "!"]) assert.deepEqual(await find({ keyword: wildcard }), [], wildcard);
+    });
+
+    it("原生 SQL 片段在实库上可执行", async () => {
+      const rows = await live().db.list(nativeSql());
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${r.padded}:${Number(r.total)}`),
+        ["M1:00000000M1:106", "M2:00000000M2:12"],
+      );
     });
 
     it("排除分组维度后按排序串汇总", async () => {

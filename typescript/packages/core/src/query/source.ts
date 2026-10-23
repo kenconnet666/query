@@ -6,7 +6,7 @@ import type { Query } from "./query.js";
 import type { CteDefinition, SqlWriter } from "../sql/writer.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
-declare const rowType: unique symbol;
+export declare const rowType: unique symbol;
 
 /**
  * 数据源在查询中的一次出现，传给各个回调：E 的每个字段都是列表达式，
