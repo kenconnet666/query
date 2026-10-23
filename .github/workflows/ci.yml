@@ -68,8 +68,7 @@ jobs:
     timeout-minutes: 15
     env:
       COMPOSE_PROJECT_NAME: query-ci-${{ matrix.database }}-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
-      COMPOSE_FILE: infra/compose.yaml
-      COMPOSE_PROFILES: ${{ matrix.database }}
+      COMPOSE_FILE: infra/${{ matrix.database }}/compose.yaml
       TEST_DATABASE: ${{ matrix.database }}
       QUERY_REQUIRE_LIVE: '1'
     steps:
@@ -161,7 +160,7 @@ jobs:
     timeout-minutes: 35
     env:
       COMPOSE_PROJECT_NAME: query-ci-hana-${{ github.run_id }}-${{ github.run_attempt }}
-      COMPOSE_FILE: infra/hana.compose.yaml
+      COMPOSE_FILE: infra/hana/compose.yaml
       QUERY_REQUIRE_LIVE: '1'
       QUERY_HANA_URL: jdbc:sap://127.0.0.1:39041
       QUERY_HANA_USER: SYSTEM

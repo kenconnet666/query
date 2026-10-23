@@ -104,15 +104,16 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
   - 共享场景：Java 在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；TS 在 `test/src/live/live.ts`，各方言一个 `*.live.test.ts`；
   - 两端读取同一组 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
   - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
-  - 本机从容器里取密码，不打印也不落盘：
+  - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`，不入库），按需读进环境变量，不打印也不落盘：
 
     ```powershell
-    $env:QUERY_PG_URL = 'jdbc:postgresql://localhost:55432/eqp'; $env:QUERY_PG_USER = 'eqp'
-    $env:QUERY_PG_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-postgres-1 printenv POSTGRES_PASSWORD).Trim()
-    $env:QUERY_MYSQL_URL = 'jdbc:mysql://localhost:53306/eqp?sslMode=DISABLED&allowPublicKeyRetrieval=true'; $env:QUERY_MYSQL_USER = 'root'
-    $env:QUERY_MYSQL_PASSWORD = (wsl -d Debian --exec docker exec eqp-dev-mysql-1 printenv MYSQL_ROOT_PASSWORD).Trim()
-    $env:QUERY_HANA_URL = 'jdbc:sap://localhost:39041'; $env:QUERY_HANA_USER = 'SYSTEM'
-    $env:QUERY_HANA_PASSWORD = (wsl -d Debian --exec docker exec eqp-hana-hana-1 printenv EQP_HANA_PASSWORD).Trim()
+    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL address; changes after a WSL restart
+    $mysql = (Get-Content infra/mysql/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
+    $pg = (Get-Content infra/postgres/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
+    $hana = (Get-Content infra/hana/.env | ConvertFrom-StringData).QUERY_HANA_PASSWORD
+    $env:QUERY_PG_URL = "jdbc:postgresql://${ip}:55432/query"; $env:QUERY_PG_USER = 'query'; $env:QUERY_PG_PASSWORD = $pg
+    $env:QUERY_MYSQL_URL = "jdbc:mysql://${ip}:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"; $env:QUERY_MYSQL_USER = 'root'; $env:QUERY_MYSQL_PASSWORD = $mysql
+    $env:QUERY_HANA_URL = "jdbc:sap://${ip}:39041"; $env:QUERY_HANA_USER = 'SYSTEM'; $env:QUERY_HANA_PASSWORD = $hana
     ```
 
   - 测试会在各库的 `QUERY_IT` schema 里重建测试表。
@@ -121,28 +122,30 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
 
 WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"一节：NAT 模式，双方用各自的地址直接访问，不配 portproxy。本项目的具体情况如下：
 
-- **定义位置**：数据库目前仍由前身仓库定义并启动，在 `C:\Users\Administrator\IdeaProjects\easy_query_pro` 下用 PowerShell 7 运行：
-  - `tools/databases.ps1 -Action start|stop|status`：MySQL 和 PostgreSQL，Compose project `eqp-dev`；
-  - `tools/hana.ps1 -Action start|test|stop|status`：HANA，Compose project `eqp-hana`；
-  - `stop` 保留数据。
+- **定义位置**：`infra/mysql/`、`infra/postgres/`、`infra/hana/` 各是一个自包含的目录（`compose.yaml`、`Dockerfile`、`.env.example`），开发和 CI 共用，可以单独复制到别的机器部署。每个 `compose.yaml` 开头的注释写了完整的部署和使用步骤，在对应目录下执行 `docker compose up -d --build` 即可。
+- **镜像**：
+  - PostgreSQL 用官方 Debian（bookworm）镜像，MySQL 8.4 官方没有 Debian 变体，用官方 Oracle Linux 镜像；两者都由 `infra/Dockerfile` 加装 ping、curl、ss、nano 等运维工具，并把时区设为 `Asia/Singapore`。
+  - HANA 是 SAP 的 SUSE 镜像，没有软件源，不能加装工具；它的 `Dockerfile` 只把启动、健康检查和配置脚本打进镜像，目录因此不依赖绑定挂载。
+  - PostgreSQL 目录的 `.env` 里可设 `APT_MIRROR=mirrors.aliyun.com`，国内网络慢时用。
 - **端口与内存**：
 
   | 数据库 | 镜像 | 端口 | 库 / 用户 | 内存上限 |
   | --- | --- | --- | --- | --- |
-  | MySQL | `mysql:8.4.11` | 53306 | `eqp` / `eqp`，管理员 `root` | 1 GiB |
-  | PostgreSQL | `postgres:17.11-bookworm` | 55432 | `eqp` / `eqp`（超级用户） | 512 MiB |
+  | MySQL | `mysql:8.4.11` | 53306 | `query` / `query`，管理员 `root` | 1 GiB |
+  | PostgreSQL | `postgres:17.11-bookworm` | 55432 | `query` / `query` | 512 MiB |
   | HANA Express | `saplabs/hanaexpress:2.00.088.00.20251110.1` | 租户 HXE `39041`，SYSTEMDB `39017` | `SYSTEM` | 8 GiB |
 
-- **访问地址**：宿主机访问 WSL 用 WSL 的 `eth0` 地址（目前是 `172.19.1.143`，WSL 重启后可能变化，用 `wsl -d Debian hostname -I` 查）或 `localhost`；WSL 内访问宿主机用 `172.19.0.1`。
-- **密码**：首次启动时随机生成，只保存在容器环境变量中。需要时用 `tools/database-password.ps1 -Database mysql|postgres|hana` 复制到剪贴板。用户要连接信息时，可以在对话中明文给出，但绝不写进仓库文件或提交。
+- **访问地址**：宿主机访问数据库统一用 WSL 的 `172.x` 地址（`wsl -d Debian hostname -I` 的第一项，目前是 `172.19.1.143`，WSL 重启后可能变化），不用 `localhost`；WSL 内访问宿主机用 `172.19.0.1`。
+- **密码**：写在各目录自己的 `.env`（已加入 `.gitignore`），首次部署时用 `compose.yaml` 开头注释里的命令随机生成，模板是同目录的 `.env.example`。MySQL 和 PostgreSQL 用 `QUERY_DB_PASSWORD`，HANA 用 `QUERY_HANA_PASSWORD`。用户要连接信息时，可以在对话中明文给出，但绝不写进仓库文件或提交。
+- **数据**：用命名卷保存，`stop` 和 `down` 保留数据，`down -v` 才删除。
 - **HANA**：
   - 业务数据只放在租户 HXE。SYSTEMDB 只用于管理，SAP 不支持在系统库存放业务数据或部署 HDI，所以"只用系统库"的方案不可行。
-  - web dispatcher 已关闭，以节省内存。
+  - 首次启动后要在 `infra/hana/` 里执行一次 `docker compose exec hana /bin/bash /query/configure.sh`（关闭 web dispatcher，以节省内存）。
   - `global_allocation_limit` 设为 80% 时，查询编译阶段会内存不足，所以保持默认值。
   - IDEA 连接 HANA 必须用 ngdbc 2.30.11。
-- **内存限制**：只在 Compose 文件里写一处，`mem_limit` 和 `memswap_limit` 相同，脚本通过 `docker compose config` 读回并核对。不要用调大限制来掩盖失败。
-- **本仓库的 `infra/`**：CI 用的容器定义，沿用相同的内存限制和规则，端口默认值与前身相同。本机开发仍使用前身仓库启动的实例，不要同时跑两套占用相同端口的实例。
-- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的数据库工具查询。2026-10-21 的实测结论如下：
+- **内存限制**：只在各自的 `compose.yaml` 里写一处，`mem_limit` 和 `memswap_limit` 相同，CI 通过 `docker compose config` 读回并核对容器实际生效。不要用调大限制来掩盖失败。
+- **前身仓库的旧实例**：`easy_query_pro` 里的脚本启动的是库名 `eqp` 的旧容器（项目 `eqp-dev`、`eqp-hana`），端口与本仓库相同，不要同时运行；切换时先 stop 旧容器。
+- **IDEA 数据源**：IDEA 已为 MySQL、PostgreSQL、HANA SYSTEMDB 和 HANA HXE 配好四个数据源，可以用 `idea` MCP 的数据库工具查询；它们仍指向前身仓库的旧实例（库名 `eqp`），切到本仓库的容器后要把库名和用户改成 `query`。2026-10-21 的实测结论如下：
   - **连接 ID**：
     - PostgreSQL `7d39150c-eb7e-44db-b0e5-2aa784f1714f`（databaseName `eqp`，schema `public`）；
     - HANA HXE `30a1b705-a891-4d16-a137-d57e09706aab`（databaseName 留空，schema `SYSTEM`）；

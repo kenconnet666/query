@@ -115,9 +115,9 @@
 
 **需要本机实库时**：
 
-- 可以照前身仓库的 `tools/databases.ps1`、`tools/hana.ps1` 启动，也可以用本仓库的 `infra/compose.yaml`、`infra/hana.compose.yaml`（CI 用的就是它们，内存限制相同）。
+- 启动本仓库 `infra/` 下对应数据库目录里的 `compose.yaml`（命令见文件开头的注释，CI 用的也是它们，内存限制相同）；前身仓库 `tools/*.ps1` 启动的是库名 `eqp` 的旧实例，端口相同，不要同时运行。
 - 然后按 CLAUDE.md 的"实库测试的变量"设置 `QUERY_*`。
-- CLAUDE.md 里的容器名（`eqp-dev-*`、`eqp-hana-hana-1`）和 WSL 地址都是旧电脑的，在新电脑上要换成实际值。
+- CLAUDE.md 里的 WSL 地址是旧电脑的，在新电脑上要换成实际值；数据库密码在各数据库目录的 `.env`，按 `compose.yaml` 开头的注释生成。
 - 用本仓库的 compose 文件启动时，密码来自自己设置的 `QUERY_DB_PASSWORD` / `QUERY_HANA_PASSWORD`。
 
 **新电脑上要核对的 CLAUDE.md 内容**：

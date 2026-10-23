@@ -1,0 +1,60 @@
+# MySQL 8.4 for local development and CI live tests, self-contained: this folder is all you need.
+# The memory limit lives only here; CI reads it back and checks that Docker enforced it.
+#
+# HOW TO DEPLOY AND USE (WSL Debian; a plain Debian/Ubuntu server works the same way)
+#
+# 1. Open WSL from Windows (skip on a server):
+#      wsl -d Debian
+# 2. Install Docker Engine with the compose plugin (skip when `docker compose version` already works):
+#      curl -fsSL https://get.docker.com | sh
+# 3. Go to this folder (the WSL path of infra/mysql in the repository, or wherever you copied it):
+#      cd /mnt/c/Users/Administrator/IdeaProjects/query/infra/mysql
+# 4. Create the password file once (.env is git-ignored; compose reads it automatically):
+#      printf 'QUERY_DB_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
+#    Read it later with:  grep PASSWORD .env
+# 5. Build the tool layer and start, about one minute the first time. The state must become "healthy":
+#      docker compose up -d --build
+#      docker compose ps
+# 6. Connect from Windows with the WSL address (172.x.x.x), not localhost. Look it up, the first address
+#    is the one to use, and it changes after a WSL restart:
+#      wsl -d Debian hostname -I
+#    Then use jdbc:mysql://<WSL_IP>:53306/query, user query or root, password QUERY_DB_PASSWORD.
+#    The port is published on 0.0.0.0; change it with QUERY_MYSQL_PORT in .env.
+# 7. Everyday commands, from this folder:
+#      docker compose logs -f mysql                          # follow the log, Ctrl+C to leave
+#      docker compose exec mysql ping -c 2 host.docker.internal   # ops tools live inside the container
+#      docker compose stop                                   # stop, data is kept
+#      docker compose up -d                                  # start again, no rebuild
+#      docker compose down -v                                # delete the container AND its data
+name: query-mysql
+
+services:
+  mysql:
+    build: .
+    image: query-dev/mysql:8.4.11
+    platform: linux/amd64
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
+    mem_reservation: 256m
+    cpus: 1.0
+    pids_limit: 256
+    environment:
+      MYSQL_DATABASE: query
+      MYSQL_USER: query
+      MYSQL_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in .env or the environment}
+      MYSQL_ROOT_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in .env or the environment}
+    command: [--innodb-buffer-pool-size=128M, --max-connections=30, --performance-schema=OFF]
+    ports:
+      - "${QUERY_MYSQL_PORT:-53306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u query -D query -e "SELECT 1" >/dev/null']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  mysql-data:
