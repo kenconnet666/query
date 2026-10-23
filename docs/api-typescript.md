@@ -245,6 +245,8 @@ WHERE LIPS3.MATNR = MARA.MATNR AND LIPS3.MANDT = MARA.MANDT AND LIPS3.LFIMG > ?)
 
 **`first(order)`**：例如每个物料最新的交货单，`m.deliveries.first((l) => l.createdOn.desc()).delivery`。连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来（三个库写法相同），没有匹配行时各列为 null。每次调用 `first` 都会产生一个新的派生表，要取多列时先存进变量。连接条件里没有这样的等值时报错。
 
+**合成一个分组连接（`groupJoin`）**：默认每个 `count`、`sum`、`any` 等都是一个相关子查询。同一关系上的运算较多、父表较大时，在作用域上写 `.groupJoin((m) => m.deliveries)`，这些运算合成一个按连接键分组的派生表，只 LEFT JOIN 一次；关系上的 `where` 筛选写成各自聚合的 `CASE WHEN`，行数和 `any`/`none` 在没有子行时按 0 处理，`sum` 等仍为 null；`stringAgg`、`first`、`list` 不参与合并。写法与 Java 相同，金样例 `group-join` 保证两端 SQL 一致。
+
 **`list(projection)`**：每个父行得到一个子行数组，放进对象投影。投影可以是一个表达式（得到值数组）或对象（得到对象数组），子投影里还可以再有 `list(...)`。
 
 ```ts

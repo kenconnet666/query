@@ -3,7 +3,7 @@ import { all, Cond, Expr, isWindow, Literal, toOrder, withSkipEmpty, type Order,
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
-import { Children, Many } from "./many.js";
+import { Children, isGrouped, Many, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
@@ -61,6 +61,8 @@ interface SelectSpec {
   /** 是否开启 skipEmpty：与空值比较的条件直接省略。 */
   readonly skipEmpty: boolean;
   readonly clauses: readonly Clause[];
+  /** groupJoin 的一对多关系：它们上的集合运算合成按连接键分组的派生表。 */
+  readonly groupJoins: readonly Many<any>[];
 }
 
 /** 校验 limit / offset 是非负整数。 */
@@ -578,6 +580,21 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   // 对外层的 SUM 来说不是数值）。GROUP BY、DISTINCT 及其 ORDER BY 按文本匹配表达式，
   // 所以其中的常量也必须是字面量。
   const grouped = groupBy.length > 0 || s.distinct || distinctClauses.length > 0;
+  const groupJoins = collectGroupJoins(w, arm, groupBy, orderBy);
+  const previous = w.substitute(undefined);
+  w.substitute(
+    groupJoins.length === 0
+      ? previous
+      : (node) => {
+          for (const g of groupJoins) {
+            const column = g.columns.get(node);
+            if (column !== undefined) {
+              return { render: (x: SqlWriter) => (node as Grouped).renderGrouped(x, { render: (y: SqlWriter) => void y.alias(g.alias).sql(".").identifier(column) }) };
+            }
+          }
+          return previous === undefined ? node : previous(node);
+        },
+  );
   const outer = w.inline(true);
   arm.items.forEach((item, i) => {
     if (i > 0) w.sql(", ");
@@ -603,6 +620,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
       w.sql(" ON ").render(all(j.on, ...extra));
     }
     emitRelations(w, owner, implicit, filters);
+    for (const g of groupJoins) if (g.owner === owner) emitGroupJoin(w, g);
   }
   const whereAll = all(...where, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
@@ -618,6 +636,61 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   w.inline(outer);
   w.dialect.limit(w, s.limit, s.offset);
   for (const c of s.clauses) if (c.position === "end") w.sql("\n").render(c);
+  w.substitute(previous);
+}
+
+/** groupJoin 的一个关系：所属的表出现、派生表的别名、派生表，以及每个集合运算节点对应的列名。 */
+interface GroupJoin {
+  readonly owner: RefOwner;
+  readonly alias: string;
+  readonly grouping: { readonly query: Query<unknown>; readonly outer: readonly Expr<unknown>[] };
+  readonly columns: Map<Renderable, string>;
+}
+
+/**
+ * 这一段 groupJoin 的关系：用探查写入器找出各子句里用到的、属于这些关系的集合运算（count、sum、any 等），
+ * 每个关系生成一个按连接键分组的派生表，每个运算一列。没有用到运算的关系不连接。
+ */
+function collectGroupJoins(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[]): GroupJoin[] {
+  const s = arm.spec;
+  if (s.groupJoins.length === 0) return [];
+  const found = new Map<Many<any>, Grouped[]>();
+  const probe = w.probe();
+  probe.substitute((node) => {
+    if (!isGrouped(node)) return node;
+    const relation = s.groupJoins.find((r) => r.sameRelation(node.relation));
+    if (relation === undefined) return node;
+    const ops = found.get(relation) ?? [];
+    if (!ops.includes(node)) ops.push(node);
+    found.set(relation, ops);
+    return { render: () => {} };
+  });
+  for (const e of arm.items) probe.render(e);
+  for (const j of s.joins) if (!j.on.isEmpty) probe.render(j.on);
+  for (const c of [...s.where, ...s.having]) if (!c.isEmpty) probe.render(c);
+  for (const g of groupBy) probe.render(g);
+  for (const o of orderBy) probe.render(o);
+  return [...found].map(([relation, ops]) => {
+    if (!s.joins.some((j) => ownerOf(j.ref) === relation.owner)) throw new Error("groupJoin(...) needs a relation of a table in from(...) or a join");
+    const name = relation.owner.source.entity?.name ?? "t";
+    return {
+      owner: relation.owner,
+      alias: w.aliasFor({}, `${name}_g`),
+      grouping: relation.grouping(ops),
+      columns: new Map(ops.map((op, i) => [op as Renderable, `c${i + 1}`])),
+    };
+  });
+}
+
+/** 写出 `LEFT JOIN (派生表) 别名 ON 别名.k1 = 所属列1 AND ...`。 */
+function emitGroupJoin(w: SqlWriter, g: GroupJoin): void {
+  w.sql("\nLEFT JOIN (\n");
+  renderQuery(w, stateOf(g.grouping.query), true, true);
+  w.sql("\n) ").alias(g.alias).sql(" ON ");
+  g.grouping.outer.forEach((o, i) => {
+    if (i > 0) w.sql(" AND ");
+    w.alias(g.alias).sql(".").identifier(`k${i + 1}`).sql(" = ").render(o);
+  });
 }
 
 /**
@@ -842,6 +915,14 @@ export class From<T extends readonly unknown[]> {
   }
 
   /**
+   * 把一对多关系上的集合运算（count、sum、any 等）合成一个按连接键分组的派生表，LEFT JOIN 一次，
+   * 代替每个运算一个相关子查询：`groupJoin((m) => m.deliveries)`。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
+   */
+  groupJoin(relation: (...refs: T) => Many<any>): From<T> {
+    return this.#with({ groupJoins: [...this.#spec.groupJoins, relation(...this.#refs)] });
+  }
+
+  /**
    * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
    * `qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).eq(1))`。
    * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
@@ -1005,6 +1086,7 @@ function emptySpec(): SelectSpec {
     filtered: true,
     skipEmpty: false,
     clauses: [],
+    groupJoins: [],
   };
 }
 

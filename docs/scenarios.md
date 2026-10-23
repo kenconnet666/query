@@ -12,6 +12,7 @@
 | 自连接 | 为每张表分别建代理 | 同一实体作为下一个 lambda 参数，别名自动生成 | 1 |
 | 隐式连接（导航属性 `t.author().name()`） | `@Navigate` 声明关系 | 表接口的 default 方法 `one(...)`、`many(...)`，或 `@ManyToOne`、`@OneToMany`；`l.mara().partNumber()` 用到时才 LEFT JOIN，同一关系只连接一次 | 2.0 |
 | 子查询：`EXISTS`、`IN`、标量 | `subQuery`，以及导航上的 `any()`、`none()` | `exists(...)`、`in(query)`、`scalar(query)`，lambda 直接捕获外层参数；一对多关系上的 `any()`、`none()`、`count()`、`sum(...)`、`first(order)` | 1 / 2.0 |
+| 多个关系聚合合成分组连接 | `subQueryToGroupJoin` | 作用域上的 `groupJoin(m -> m.deliveries())`：同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN | 2.0 |
 | CTE | `toCteAs`，相同查询自动去重 | `cte(name, query)`，渲染时统一提升到最外层的 `WITH`，以规避 HANA 嵌套 `WITH` 的问题 | 1 |
 | 递归 CTE / 树 | `asTreeCTE` | HANA 2.0 不支持递归 CTE，改用层级函数；PostgreSQL 由方言包提供 | 3 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |

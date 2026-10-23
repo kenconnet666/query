@@ -76,6 +76,29 @@ WHERE LIPS4.MATNR = MARA.MATNR AND LIPS4.MANDT = MARA.MANDT AND LIPS4.VRKME = ?)
     );
   });
 
+  it("groupJoin 把同一关系的运算合成一个分组派生表，没用到时不连接", () => {
+    const sql = from(Mara)
+      .groupJoin((m) => m.deliveries)
+      .where((m) => m.deliveries.where((l) => l.unit.eq("KG")).none())
+      .select((m) => ({ material: m.material, largest: m.deliveries.max((l) => l.quantity) }))
+      .toSql(DIALECT).sql;
+    assert.equal(
+      sql,
+      `SELECT MARA.MATNR AS "material", MARA_G."c1" AS "largest"
+FROM QUERY_IT.MARA MARA
+LEFT JOIN (
+SELECT LIPS.MATNR AS "k1", LIPS.MANDT AS "k2", MAX(LIPS.LFIMG) AS "c1", COUNT(CASE WHEN LIPS.VRKME = 'KG' THEN 1 END) AS "c2"
+FROM QUERY_IT.LIPS LIPS
+GROUP BY LIPS.MATNR, LIPS.MANDT
+) MARA_G ON MARA_G."k1" = MARA.MATNR AND MARA_G."k2" = MARA.MANDT
+WHERE COALESCE(MARA_G."c2", 0) = 0`,
+    );
+    assert.equal(
+      from(Mara).groupJoin((m) => m.deliveries).select((m) => m.material).toSql(DIALECT).sql,
+      from(Mara).select((m) => m.material).toSql(DIALECT).sql,
+    );
+  });
+
   it("first 取每组第一行并可继续取列", () => {
     const sql = from(Mara)
       .select((m) => ({ material: m.material, latest: m.deliveries.first((l) => l.createdOn.desc()).delivery }))

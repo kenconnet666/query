@@ -63,7 +63,7 @@ public final class Nodes {
         }
 
         /** 写出被包装的表达式本身，不加别名。 */
-        @Override public void render(SqlWriter w) { inner.render(w); }
+        @Override public void render(SqlWriter w) { w.render(inner); }
 
         /** 返回指定的列名。 */
         @Override public String label() { return label; }

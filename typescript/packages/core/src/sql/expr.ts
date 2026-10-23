@@ -512,7 +512,7 @@ class Labeled<T> extends Expr<T> {
 
   /** 与内部表达式相同，标签只影响投影。 */
   render(w: SqlWriter): void {
-    this.inner.render(w);
+    w.render(this.inner);
   }
 
   /** 显式指定的标签。 */

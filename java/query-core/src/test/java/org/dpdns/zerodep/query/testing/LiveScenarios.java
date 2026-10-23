@@ -450,6 +450,14 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 分组连接与相关子查询的结果相同() {
+        assertEquals(List.of("M1:3:6:3", "M2:2:12:1"), db.list(SpecCases.groupJoin()).stream()
+            .map(r -> r.get("material") + ":" + r.get("lines") + ":" + plain(r.get("total")) + ":" + r.get("recent")).toList());
+        assertEquals(List.of("M3", "M4"), db.list(from(Mara.class).groupJoin(m -> m.deliveries())
+            .where(m -> m.deliveries().none()).orderBy(m -> m.material()).select(m -> m.material())));
+    }
+
+    @Test
     void 条件对象在实库上筛选且通配符按普通字符匹配() {
         assertEquals(List.of("D1", "D2", "D3", "D5"),
             db.list(SpecCases.filterObject(new SpecCases.DeliverySearch(null, LocalDate.of(2026, 1, 1), null, "P", null))));

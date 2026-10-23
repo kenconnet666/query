@@ -208,6 +208,20 @@ from(Mara.class)
 
 `first` 渲染为 `ROW_NUMBER` 派生表再 LEFT JOIN 回来（HANA 没有 LATERAL，三个库都用这一种写法），没有匹配行时各列为 NULL。`first` 和 `list` 要求连接条件里至少有一个“目标列 = 本表的列”的等值，这些列作为分组键或批量加载的键，其余条件只筛选目标行；没有时报错。
 
+**合成一个分组连接（`groupJoin`）**：默认每个 `count`、`sum`、`any` 等都是一个相关子查询。同一关系上的运算较多、父表较大时（HANA 尤其明显），在作用域上写 `groupJoin(m -> m.deliveries())`，这些运算合成一个按连接键分组的派生表，只 LEFT JOIN 一次：
+
+```java
+from(Mara.class)
+    .groupJoin(m -> m.deliveries())
+    .where(m -> m.deliveries().any(l -> l.unit().eq("EA")))
+    .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total")));
+// LEFT JOIN (SELECT MATNR AS k1, MANDT AS k2, COUNT(*) AS c1, SUM(LFIMG) AS c2, COUNT(CASE WHEN VRKME = 'EA' THEN 1 END) AS c3
+//            FROM LIPS GROUP BY MATNR, MANDT) mara_g ON ...
+// SELECT COALESCE(mara_g.c1, 0), mara_g.c2 ... WHERE COALESCE(mara_g.c3, 0) > 0
+```
+
+关系上的 `where` 筛选写成各自聚合的 `CASE WHEN`；行数和 `any`/`none` 在没有子行时按 0 处理，`sum` 等仍为 NULL；`stringAgg`、`first`、`list` 不参与合并。结果与相关子查询相同，由金样例 `group-join` 和三库实库场景核对。
+
 ## 4. 写查询
 
 `from` 开启一个作用域，每 `join` 一张表，lambda 就多一个参数（最多 16 个来源）。表的参数是表接口本身，CTE、派生表等来源的参数是 `Ref`（第 8 节）。

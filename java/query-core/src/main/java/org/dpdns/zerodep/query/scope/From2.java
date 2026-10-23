@@ -12,6 +12,7 @@ import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;
 import org.dpdns.zerodep.query.select.Selection;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.Source;
 
@@ -65,6 +66,12 @@ public final class From2<T1, T2> extends AbstractFrom<From2<T1, T2>> {
 
     /** HAVING 条件；多次调用之间是 AND。 */
     public From2<T1, T2> having(Fn.F2<T1, T2, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2)))); }
+
+    /**
+     * 把一对多关系上的集合运算（count、sum、any 等）合成一个按连接键分组的派生表，LEFT JOIN 一次，
+     * 代替每个运算一个相关子查询：{@code groupJoin(m -> m.deliveries())}。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
+     */
+    public From2<T1, T2> groupJoin(Fn.F2<T1, T2, Many<?>> relation) { return rebuild(spec.groupJoin(relation.apply(p1, p2))); }
 
     /**
      * 窗口函数上的条件（QUALIFY），例如每组取最新一行：

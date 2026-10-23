@@ -1,7 +1,7 @@
 import { COLUMNS, NAMED } from "../internal.js";
 import { entityMeta, type Table } from "../schema/metadata.js";
 import { integer, type SqlType } from "../schema/types.js";
-import { all, any, Column, Comparison, compare, conjuncts, exists, expression, notExists, type Cond, type Expr, type OrderItem } from "../sql/expr.js";
+import { Aggregate, all, any, Column, Comparison, compare, Cond, conjuncts, exists, expression, Expr, notExists, type OrderItem } from "../sql/expr.js";
 import { avg, count, countDistinct, lit, max, min, rowNumber, scalar, stringAgg, sum } from "../sql/functions.js";
 import type { Renderable, SqlWriter } from "../sql/writer.js";
 import { from, type Projection, type Query, type Shape } from "./query.js";
@@ -25,32 +25,43 @@ type Ordering<T> = (target: Ref<T>) => OrderItem | readonly OrderItem[];
  * 只能通过集合运算使用：`any`、`none` 渲染为 EXISTS；`count`、`sum`、`max`、`min`、`avg` 渲染为相关标量子查询；
  * `first(order)` 每组取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来；`list(...)` 给每个父行一个子行数组。
  * `where` 先筛选目标行，`orderBy` 决定 `list` 与 `stringAgg` 的顺序，`limit` 限定 `list` 每个父行的子行数。
+ * 查询上 `groupJoin((m) => m.deliveries)` 时，同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN 一次。
  */
 export class Many<T> {
   readonly #owner: RefOwner;
   readonly #target: () => Table<T>;
-  readonly #condition: (target: Ref<T>) => Cond;
+  /** 关系本身的连接条件，也是判断两个 Many 是否同一个关系的依据。 */
+  readonly #on: (target: Ref<T>) => Cond;
+  /** where 追加的筛选条件。 */
+  readonly #filter: ((target: Ref<T>) => Cond) | undefined;
   readonly #order: Ordering<T> | undefined;
   /** {@link list} 给每个父行最多取的子行数。 */
   readonly #limit: number | undefined;
 
-  constructor(owner: RefOwner, target: () => Table<T>, condition: (target: Ref<T>) => Cond, order?: Ordering<T>, limit?: number) {
+  constructor(owner: RefOwner, target: () => Table<T>, on: (target: Ref<T>) => Cond, filter?: (target: Ref<T>) => Cond, order?: Ordering<T>, limit?: number) {
     this.#owner = owner;
     this.#target = target;
-    this.#condition = condition;
+    this.#on = on;
+    this.#filter = filter;
     this.#order = order;
     this.#limit = limit;
   }
 
+  /** 连接条件加 where 的筛选条件。 */
+  #condition(t: Ref<T>): Cond {
+    return this.#filter === undefined ? this.#on(t) : all(this.#on(t), this.#filter(t));
+  }
+
   /** 只看满足 condition 的目标行，返回新的 Many。 */
   where(condition: (target: Ref<T>) => Cond): Many<T> {
-    const before = this.#condition;
-    return new Many(this.#owner, this.#target, (t) => all(before(t), condition(t)), this.#order, this.#limit);
+    const before = this.#filter;
+    const filter = before === undefined ? condition : (t: Ref<T>) => all(before(t), condition(t));
+    return new Many(this.#owner, this.#target, this.#on, filter, this.#order, this.#limit);
   }
 
   /** 子行按 order 排序，用于 {@link list}：`h.items.orderBy((i) => i.position).list(...)`。对 any、count 等没有影响。 */
   orderBy(order: Ordering<T>): Many<T> {
-    return new Many(this.#owner, this.#target, this.#condition, order, this.#limit);
+    return new Many(this.#owner, this.#target, this.#on, this.#filter, order, this.#limit);
   }
 
   /**
@@ -60,47 +71,54 @@ export class Many<T> {
   limit(rows: number): Many<T> {
     if (!Number.isInteger(rows) || rows < 1) throw new RangeError("limit needs a whole number of rows, at least 1");
     if (this.#order === undefined) throw new Error("limit(...) keeps the first rows by orderBy(...); call orderBy first");
-    return new Many(this.#owner, this.#target, this.#condition, this.#order, rows);
+    return new Many(this.#owner, this.#target, this.#on, this.#filter, this.#order, rows);
   }
 
   /** 至少有一行（满足 condition）：`EXISTS (...)`。 */
   any(condition?: (target: Ref<T>) => Cond): Cond {
-    return exists((condition === undefined ? this : this.where(condition)).#scope());
+    const many = condition === undefined ? this : this.where(condition);
+    return new GroupedTest(many as unknown as Many<any>, exists(many.#scope()), many.#grouped(() => count()), false);
   }
 
   /** 一行也没有（满足 condition 的）：`NOT EXISTS (...)`。 */
   none(condition?: (target: Ref<T>) => Cond): Cond {
-    return notExists((condition === undefined ? this : this.where(condition)).#scope());
+    const many = condition === undefined ? this : this.where(condition);
+    return new GroupedTest(many as unknown as Many<any>, notExists(many.#scope()), many.#grouped(() => count()), true);
   }
 
   /** 行数，相关子查询 `(SELECT COUNT(*) ...)`。 */
   count(): Expr<number> {
-    return scalar(this.#scope().select(() => count())) as Expr<number>;
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(() => count())) as Expr<number>, this.#grouped(() => count()), true);
   }
 
   /** 某个值去重后的个数，相关子查询 `(SELECT COUNT(DISTINCT x) ...)`。 */
   countDistinct(value: (target: Ref<T>) => Expr<unknown>): Expr<number> {
-    return scalar(this.#scope().select((t) => countDistinct(value(t)))) as Expr<number>;
+    const agg = (t: Ref<T>) => countDistinct(value(t));
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<number>, this.#grouped(agg), true);
   }
 
   /** 某个值的合计；没有行时为 null。 */
   sum<N extends number | bigint | string>(value: (target: Ref<T>) => Expr<N | null>): Expr<N | null> {
-    return scalar(this.#scope().select((t) => sum(value(t) as Expr<N>))) as Expr<N | null>;
+    const agg = (t: Ref<T>) => sum(value(t) as Expr<N>);
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<N | null>, this.#grouped(agg), false);
   }
 
   /** 某个值的最大值；没有行时为 null。 */
   max<V>(value: (target: Ref<T>) => Expr<V>): Expr<V | null> {
-    return scalar(this.#scope().select((t) => max(value(t)))) as Expr<V | null>;
+    const agg = (t: Ref<T>) => max(value(t));
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<V | null>, this.#grouped(agg), false);
   }
 
   /** 某个值的最小值；没有行时为 null。 */
   min<V>(value: (target: Ref<T>) => Expr<V>): Expr<V | null> {
-    return scalar(this.#scope().select((t) => min(value(t)))) as Expr<V | null>;
+    const agg = (t: Ref<T>) => min(value(t));
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<V | null>, this.#grouped(agg), false);
   }
 
   /** 某个值的平均值（精确小数的字符串）；没有行时为 null。 */
   avg(value: (target: Ref<T>) => Expr<number | bigint | string | null>): Expr<string | null> {
-    return scalar(this.#scope().select((t) => avg(value(t) as Expr<number>)));
+    const agg = (t: Ref<T>) => avg(value(t) as Expr<number>);
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)), this.#grouped(agg), false);
   }
 
   /**
@@ -174,7 +192,50 @@ export class Many<T> {
   }
 
   /** 在目标表的一次出现 t 上展开连接条件并拆分；没有"目标列 = 所属表的列"时报错，use 是方法名。 */
-  #split(t: Ref<T>, use: string): Split {
+  // ---------- groupJoin ----------
+
+  /** 所属的那次表出现；groupJoin 把派生表连接在它后面。 */
+  get owner(): RefOwner {
+    return this.#owner;
+  }
+
+  /** 两个 Many 是否是同一个关系：同一次表出现上的同一个 `@many`，where 筛选可以不同。 */
+  sameRelation(other: Many<any>): boolean {
+    return this.#owner === other.#owner && (this.#on as unknown) === other.#on;
+  }
+
+  /** 派生表里计算一个运算的聚合：带上 where 的筛选条件，写成 CASE WHEN。 */
+  #grouped(aggregate: (t: Ref<T>) => Aggregate<unknown>): (row: object) => Aggregate<unknown> {
+    const filter = this.#filter;
+    return (row) => {
+      const agg = aggregate(row as Ref<T>);
+      return filter === undefined ? agg : agg.filter(filter(row as Ref<T>));
+    };
+  }
+
+  /**
+   * groupJoin 的派生表：按连接键分组，键的列名是 k1、k2……，operations 每个一列，列名是 c1、c2……；
+   * outer 是所属表里依次与 k1、k2…… 相等的列。
+   */
+  grouping(operations: readonly Grouped[]): { readonly query: Query<unknown>; readonly outer: readonly Expr<unknown>[] } {
+    let split: Split | undefined;
+    const scope = from(this.#target()).where((t) => {
+      split = this.#split(t, "groupJoin(...)", this.#on(t));
+      return all(...split.filters);
+    });
+    const { keys, outer } = split!;
+    const query = scope
+      .groupBy(() => keys)
+      .select((t) => {
+        const row: Record<string, Expr<unknown>> = {};
+        keys.forEach((k, i) => (row[`k${i + 1}`] = k));
+        operations.forEach((op, i) => (row[`c${i + 1}`] = op.aggregate(t as object)));
+        return row;
+      });
+    return { query: query as unknown as Query<unknown>, outer };
+  }
+
+  #split(t: Ref<T>, use: string, condition: Cond = this.#condition(t)): Split {
     const inner = ownerOf(t);
     const keys: Column<unknown>[] = [];
     const outer: Expr<unknown>[] = [];
@@ -185,7 +246,7 @@ export class Many<T> {
       outer.push(b);
       return true;
     };
-    for (const c of conjuncts(this.#condition(t))) {
+    for (const c of conjuncts(condition)) {
       if (c instanceof Comparison && c.operator === "=" && (link(c.left, c.right) || link(c.right, c.left))) continue;
       filters.push(c);
     }
@@ -202,6 +263,62 @@ export class Many<T> {
 }
 
 /** 一个或多个排序项统一成数组。 */
+/** 一对多关系上的一个集合运算；查询 groupJoin 这个关系时，渲染器把它换成分组派生表的一列。 */
+export interface Grouped extends Renderable {
+  /** 运算所在的关系。 */
+  readonly relation: Many<any>;
+  /** 在派生表里计算它的聚合，row 是派生表那次目标表出现的引用；关系上的 where 写成聚合的过滤条件。 */
+  aggregate(row: object): Aggregate<unknown>;
+  /** 换成派生表的列 column 之后的写法，例如行数写成 `COALESCE(列, 0)`。 */
+  renderGrouped(w: SqlWriter, column: Renderable): void;
+}
+
+/** node 是否是一对多关系上的集合运算。 */
+export function isGrouped(node: Renderable): node is Grouped {
+  return node instanceof GroupedValue || node instanceof GroupedTest;
+}
+
+/** 一对多上的聚合值：默认渲染为相关子查询；groupJoin 时换成分组派生表的列，行数类在没有行时为 0。 */
+class GroupedValue<T> extends Expr<T> implements Grouped {
+  constructor(
+    readonly relation: Many<any>,
+    readonly correlated: Expr<T>,
+    readonly aggregate: (row: object) => Aggregate<unknown>,
+    readonly zeroIfNone: boolean,
+  ) {
+    super(correlated.type);
+  }
+
+  render(w: SqlWriter): void {
+    w.render(this.correlated);
+  }
+
+  renderGrouped(w: SqlWriter, column: Renderable): void {
+    if (this.zeroIfNone) w.sql("COALESCE(").render(column).sql(", 0)");
+    else w.render(column);
+  }
+}
+
+/** 一对多上的存在判断：默认渲染为 EXISTS / NOT EXISTS；groupJoin 时比较分组派生表里的行数。 */
+class GroupedTest extends Cond implements Grouped {
+  constructor(
+    readonly relation: Many<any>,
+    readonly correlated: Cond,
+    readonly aggregate: (row: object) => Aggregate<unknown>,
+    readonly none: boolean,
+  ) {
+    super();
+  }
+
+  render(w: SqlWriter): void {
+    w.render(this.correlated);
+  }
+
+  renderGrouped(w: SqlWriter, column: Renderable): void {
+    w.sql("COALESCE(").render(column).sql(this.none ? ", 0) = 0" : ", 0) > 0");
+  }
+}
+
 function orderItems(items: OrderItem | readonly OrderItem[]): OrderItem[] {
   return Array.isArray(items) ? [...(items as readonly OrderItem[])] : [items as OrderItem];
 }

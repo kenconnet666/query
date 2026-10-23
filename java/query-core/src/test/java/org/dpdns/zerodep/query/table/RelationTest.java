@@ -81,6 +81,25 @@ class RelationTest {
     }
 
     @Test
+    void groupJoin把同一关系的运算合成一个分组派生表且没用到时不连接() {
+        String sql = from(Mara.class).groupJoin(m -> m.deliveries())
+            .where(m -> m.deliveries().where(l -> l.unit().eq("KG")).none())
+            .select(m -> cols(m.material(), m.deliveries().max(l -> l.quantity()).as("largest")))
+            .toSql(DIALECT).sql();
+        assertEquals("""
+            SELECT MARA.MATNR AS "material", MARA_G."c1" AS "largest"
+            FROM QUERY_IT.MARA MARA
+            LEFT JOIN (
+            SELECT LIPS.MATNR AS "k1", LIPS.MANDT AS "k2", MAX(LIPS.LFIMG) AS "c1", COUNT(CASE WHEN LIPS.VRKME = 'KG' THEN 1 END) AS "c2"
+            FROM QUERY_IT.LIPS LIPS
+            GROUP BY LIPS.MATNR, LIPS.MANDT
+            ) MARA_G ON MARA_G."k1" = MARA.MATNR AND MARA_G."k2" = MARA.MANDT
+            WHERE COALESCE(MARA_G."c2", 0) = 0""", sql);
+        assertEquals("SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA",
+            from(Mara.class).groupJoin(m -> m.deliveries()).select(m -> m.material()).toSql(DIALECT).sql());
+    }
+
+    @Test
     void first取每组第一行并可继续取列() {
         String sql = from(Mara.class)
             .select(m -> cols(m.material(), m.deliveries().first(l -> l.createdOn().desc()).delivery().as("latest")))

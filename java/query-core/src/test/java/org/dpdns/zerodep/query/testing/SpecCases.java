@@ -128,6 +128,7 @@ public final class SpecCases {
         cases.put("filter-many", SpecCase.filtered(() -> filterMany(new MaterialSearch("EA", new BigDecimal("5"), "ZMAT"))));
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
+        cases.put("group-join", SpecCase.filtered(SpecCases::groupJoin));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));
@@ -367,6 +368,16 @@ public final class SpecCases {
                 count().filter(l.unit().eq("EA")).as("eachLines"),
                 countDistinct(l.unit()).filter(l.quantity().gt(BigDecimal.ZERO)).as("units"),
                 stringAgg(l.delivery(), ",", l.delivery().asc()).as("deliveries")));
+    }
+
+    /** 同一个一对多关系上的存在判断、行数、合计和带筛选的行数，合成一个按连接键分组的派生表。 */
+    public static Query<Map<String, Object>> groupJoin() {
+        return from(Mara.class)
+            .groupJoin(m -> m.deliveries())
+            .where(m -> m.deliveries().any(l -> l.unit().eq("EA")))
+            .orderBy(m -> m.material())
+            .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total"),
+                m.deliveries().where(l -> l.createdOn().ge(LocalDate.of(2026, 1, 1))).count().as("recent")));
     }
 
     /** 表名是 Order：别名是保留字，必须加引号。 */

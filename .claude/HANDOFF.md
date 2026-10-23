@@ -19,13 +19,14 @@
 - **第七期 文档**：两份 API 说明、[迁移指南](../docs/migration.md)（含从 1.x 升级）、[CHANGELOG](../CHANGELOG.md) 的 2.0.0、0006 改为已采纳、场景对照、README。
 - 1.x 已有场景的金样例全部不变；新增 `navigation`、`one-to-many`、`dynamic-columns`、`filter-object`、`native-sql` 五个场景。
 
-### 阶段 A：对照 EasyQuery 简化与补全（进行中）
+### 阶段 A：对照 EasyQuery 简化与补全（已完成）
 
 四个子代理读完 EasyQuery 的测试（`sql-test`）和官方文档后结论一致，按三批推进：
 
 - **第 1 批 可移植函数（已完成）**：聚合的 `.filter(cond)`（CASE WHEN，取代 PG 专属的 FILTER）、核心 `stringAgg`（取代 MySQL `groupConcat` 和两个方言版本）、`year`/`month`/`day`/`addDays`/`addMonths`/`addYears`/`daysBetween`（取代 HANA、MySQL 的同类函数）、`e.range(from, until)` 半开区间；金样例 `date-functions`、`conditional-aggregates`。
 - **第 2 批 查询结构（已完成）**：`qualify(窗口条件)` 自动包派生表（写入器新增节点替换，窗口函数与不在结果里的排序项作为派生表的列）；`Many` 的 `countDistinct`、`stringAgg`；`firstValue`/`lastValue`/`ntile`、`lag`/`lead` 默认值；`db.page(q, page, size, total)`；金样例 `qualify`、`window-values`、`many-text`。
-- **第 3 批 性能（待做）**：`groupJoin(m -> m.deliveries())` 把同一关系的多个 count/sum/any 合成一个 GROUP BY 派生表；子列表每个父行限数；`@Where` 走一对多路径时生成 EXISTS。
+- **第 3 批 性能（已完成）**：`groupJoin(m -> m.deliveries())` 把同一关系的多个 count/sum/any 合成一个分组派生表（渲染时用节点替换，`Many` 的集合运算返回可替换的节点）；`many.orderBy(...).limit(n).list(...)` 每个父行限数（复用 qualify）；`@Where`/`@where` 走一对多路径时生成 EXISTS，同一关系的字段合并；金样例 `group-join`、`filter-many`。
+- 阶段 A 到此完成，下一步是阶段 B（流程引擎查询）。
 - **决定不做**：类型化元组（Java 局部 record 加 `row` 已够）、跨方言日期格式串翻译（易错，保留方言函数）、递归 CTE（HANA 不支持）、动态表名、多对多中间表、JSON。
 
 ### 测试（本机三库与 CI 全部通过）

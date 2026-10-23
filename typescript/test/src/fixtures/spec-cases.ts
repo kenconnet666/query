@@ -271,6 +271,7 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   qualify: plain(() => qualify()),
   "window-values": plain(() => windowValues()),
   "many-text": { filtered: true, query: () => manyText() },
+  "group-join": { filtered: true, query: () => groupJoin() },
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))
@@ -290,6 +291,20 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
 };
 
 /** Totals per material and unit, subtotals per material, and the grand total. */
+/** 同一个一对多关系上的存在判断、行数、合计和带筛选的行数，合成一个按连接键分组的派生表。 */
+export function groupJoin() {
+  return from(Mara)
+    .groupJoin((m) => m.deliveries)
+    .where((m) => m.deliveries.any((l) => l.unit.eq("EA")))
+    .orderBy((m) => m.material)
+    .select((m) => ({
+      material: m.material,
+      lines: m.deliveries.count(),
+      total: m.deliveries.sum((l) => l.quantity),
+      recent: m.deliveries.where((l) => l.createdOn.ge("2026-01-01")).count(),
+    }));
+}
+
 /** 日期部分、日期加减和相隔天数，按半开区间筛选。 */
 export function dateFunctions() {
   return from(Event)

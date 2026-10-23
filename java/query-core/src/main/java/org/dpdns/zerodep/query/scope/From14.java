@@ -12,6 +12,7 @@ import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;
 import org.dpdns.zerodep.query.select.Selection;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.Source;
 
@@ -89,6 +90,12 @@ public final class From14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13
 
     /** HAVING 条件；多次调用之间是 AND。 */
     public From14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> having(Fn.F14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, Cond> cond) { return rebuild(spec.having(condition(() -> cond.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14)))); }
+
+    /**
+     * 把一对多关系上的集合运算（count、sum、any 等）合成一个按连接键分组的派生表，LEFT JOIN 一次，
+     * 代替每个运算一个相关子查询：{@code groupJoin(m -> m.deliveries())}。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
+     */
+    public From14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> groupJoin(Fn.F14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, Many<?>> relation) { return rebuild(spec.groupJoin(relation.apply(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14))); }
 
     /**
      * 窗口函数上的条件（QUALIFY），例如每组取最新一行：

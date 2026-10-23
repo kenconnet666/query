@@ -115,6 +115,11 @@ function from(n) {
   m.push(`    /** HAVING 条件；多次调用之间是 AND。 */
     public ${self} having(${lam("Cond")} cond) { return rebuild(spec.having(condition(() -> cond.apply(${call})))); }`);
   m.push(`    /**
+     * 把一对多关系上的集合运算（count、sum、any 等）合成一个按连接键分组的派生表，LEFT JOIN 一次，
+     * 代替每个运算一个相关子查询：{@code groupJoin(m -> m.deliveries())}。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
+     */
+    public ${self} groupJoin(${lam("Many<?>")} relation) { return rebuild(spec.groupJoin(relation.apply(${call}))); }`);
+  m.push(`    /**
      * 窗口函数上的条件（QUALIFY），例如每组取最新一行：
      * {@code qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).eq(1L))}。
      * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
@@ -145,6 +150,7 @@ import ${ROOT}.select.Query;
 import ${ROOT}.select.SelectSpec;
 import ${ROOT}.select.Selection;
 import ${ROOT}.table.Entity;
+import ${ROOT}.table.Many;
 import ${ROOT}.table.Ref;
 import ${ROOT}.table.Source;
 
