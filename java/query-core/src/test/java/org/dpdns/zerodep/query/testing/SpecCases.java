@@ -129,6 +129,15 @@ public final class SpecCases {
         cases.put("navigation", SpecCase.filtered(SpecCases::navigation));
         cases.put("one-to-many", SpecCase.filtered(SpecCases::oneToMany));
         cases.put("group-join", SpecCase.filtered(SpecCases::groupJoin));
+        cases.put("workflow-todo", SpecCase.plain(() -> Workflow.todo("alice", List.of("managers", "leads"), new Workflow.TodoSearch("leave", "app", null))));
+        cases.put("workflow-variables", SpecCase.plain(Workflow::instancesByVariables));
+        cases.put("workflow-variables-grouped", SpecCase.plain(Workflow::instancesByVariablesGrouped));
+        cases.put("workflow-variables-joined", SpecCase.plain(Workflow::instancesByVariablesJoined));
+        cases.put("workflow-latest", SpecCase.plain(Workflow::latestDefinitions));
+        cases.put("workflow-latest-ranked", SpecCase.plain(Workflow::latestDefinitionsRanked));
+        cases.put("workflow-statistics", SpecCase.plain(Workflow::definitionStatistics));
+        cases.put("workflow-workload", SpecCase.plain(Workflow::workload));
+        cases.put("workflow-elapsed", SpecCase.plain(Workflow::elapsed));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));

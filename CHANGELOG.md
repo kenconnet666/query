@@ -24,7 +24,7 @@
 - **动态列与排序**：`exclude`、`excludeIf`、`only` 把不要的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉；`sortBy("total desc, material")` 只认结果列，可以直接传用户的排序参数。
 - **条件对象**：`where(search)` 把对象的每个非空字段变成条件，默认与同名列相等（集合用 IN），`@Where` / `@where` 指定比较方式和列，列可以走关系路径（经过一对多关系时写成 EXISTS，同一关系的字段合并进一个 EXISTS），多列为 OR，`@Ignore` 的字段跳过；字段名找不到列时报错。
 - **条件聚合**：`sum(x).filter(cond)`、`count().filter(cond)` 等只聚合满足条件的行，三个库都写成 `AGG(CASE WHEN cond THEN x END)`，多次调用按 AND 合并。
-- **日期函数**：`year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween` 在三个库上语义一致（月末对齐、可为负）。
+- **日期函数**：`year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween`、`secondsBetween` 在三个库上语义一致（月末对齐、可为负、秒数舍去小数）。
 - **文本聚合与半开区间**：核心 `stringAgg(e, sep, order...)`；`e.range(from, until)` 写成 `>= from AND < until`，skipEmpty 下缺少的一端被忽略。
 - **窗口条件**：`qualify(cond)` 按窗口函数过滤（每组前 N 行），三个库都渲染成派生表（HANA 没有 QUALIFY）；窗口函数增加 `firstValue`、`lastValue`、`ntile`，`lag`、`lead` 可给越界默认值。
 - **一对多与分页**：`many.orderBy(...).limit(n).list(...)` 每个父行只取前 n 个子行；`many.countDistinct(...)`、`many.stringAgg(...)`（顺序取 `orderBy`）；`db.page(q, page, size, total)` 沿用已知总数，不再执行 COUNT。

@@ -58,6 +58,9 @@ export const ADD_YEARS = FunctionDef.of("ADD_YEARS");
 /** `DAYS_BETWEEN(from, to)`；PostgreSQL 写成相减，MySQL 写成 DATEDIFF(to, from)。 */
 export const DAYS_BETWEEN = FunctionDef.of("DAYS_BETWEEN");
 
+/** `SECONDS_BETWEEN(from, to)`；PostgreSQL 写成 EXTRACT(EPOCH ...)，MySQL 写成 TIMESTAMPDIFF(SECOND, from, to)。 */
+export const SECONDS_BETWEEN = FunctionDef.of("SECONDS_BETWEEN");
+
 /** `STRING_AGG(value, separator ORDER BY ...)`，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
 export const STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) => {
   w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
@@ -78,6 +81,9 @@ const TEMPORAL: readonly TypeKind[] = ["date", "timestamp", "unknown"];
 
 /** 日期加减和相隔天数只接受日期：时间戳在 PostgreSQL 上加整数会失败。 */
 const DATE_ONLY: readonly TypeKind[] = ["date", "unknown"];
+
+/** 相隔秒数只接受时间戳。 */
+const TIMESTAMP_ONLY: readonly TypeKind[] = ["timestamp", "unknown"];
 
 /** 参数不是日期或时间戳时抛出 TypeError；TS 里日期是字符串，所以只能在运行时检查列的类型。 */
 function temporal(e: Expr<unknown>, fn: string, kinds: readonly TypeKind[] = TEMPORAL): void {
@@ -344,6 +350,13 @@ export function daysBetween(from: Expr<string | null>, to: Expr<string | null>):
   temporal(from, "DAYS_BETWEEN", DATE_ONLY);
   temporal(to, "DAYS_BETWEEN", DATE_ONLY);
   return functionCall(integer, DAYS_BETWEEN, [from, to]);
+}
+
+/** 从 from 到 to 相隔的整秒数（不足一秒的部分舍去），to 较早时为负；任一端为 null 时为 null。 */
+export function secondsBetween(from: Expr<string | null>, to: Expr<string | null>): Expr<number | null> {
+  temporal(from, "SECONDS_BETWEEN", TIMESTAMP_ONLY);
+  temporal(to, "SECONDS_BETWEEN", TIMESTAMP_ONLY);
+  return functionCall(integer, SECONDS_BETWEEN, [from, to]);
 }
 
 /** 日期加减的公共部分：检查类型、整数个数，再按函数定义渲染。 */

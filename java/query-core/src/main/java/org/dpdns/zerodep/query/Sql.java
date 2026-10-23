@@ -74,6 +74,9 @@ public class Sql extends Rows {
     /** {@code DAYS_BETWEEN(from, to)}；PostgreSQL 写成相减，MySQL 写成 DATEDIFF(to, from)。 */
     public static final FunctionDef DAYS_BETWEEN = FunctionDef.of("DAYS_BETWEEN");
 
+    /** {@code SECONDS_BETWEEN(from, to)}；PostgreSQL 写成 EXTRACT(EPOCH ...)，MySQL 写成 TIMESTAMPDIFF(SECOND, from, to)。 */
+    public static final FunctionDef SECONDS_BETWEEN = FunctionDef.of("SECONDS_BETWEEN");
+
     /** {@code STRING_AGG(value, separator ORDER BY ...)}，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
     public static final FunctionDef STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) -> {
         w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
@@ -380,6 +383,11 @@ public class Sql extends Rows {
     /** 从 from 到 to 相隔的天数，to 较早时为负。 */
     public static Expr<Integer> daysBetween(Expr<LocalDate> from, Expr<LocalDate> to) {
         return Nodes.call(SqlType.of(Integer.class), DAYS_BETWEEN, List.of(from, to));
+    }
+
+    /** 从 from 到 to 相隔的整秒数（不足一秒的部分舍去），to 较早时为负；任一端为 NULL 时为 NULL。 */
+    public static Expr<Long> secondsBetween(Expr<LocalDateTime> from, Expr<LocalDateTime> to) {
+        return Nodes.call(SqlType.of(Long.class), SECONDS_BETWEEN, List.of(from, to));
     }
 
     // ---------- 聚合 ----------

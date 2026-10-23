@@ -19,7 +19,7 @@ public class MysqlDialect extends Dialect {
 
     /**
      * 因为 {@code ||} 不是连接，CONCAT 改写为函数；LOCATE 的参数顺序与核心定义相反，需要对调；
-     * 日期加减写成 DATE_ADD，相隔天数写成 DATEDIFF(to, from)，STRING_AGG 写成 GROUP_CONCAT。
+     * 日期加减写成 DATE_ADD，相隔天数写成 DATEDIFF(to, from)，相隔秒数写成 TIMESTAMPDIFF，STRING_AGG 写成 GROUP_CONCAT。
      */
     protected MysqlDialect() {
         register(Sql.CONCAT, (w, args) -> FunctionDef.call(w, "CONCAT", args));
@@ -28,6 +28,7 @@ public class MysqlDialect extends Dialect {
         register(Sql.ADD_MONTHS, (w, args) -> dateAdd(w, args, "MONTH"));
         register(Sql.ADD_YEARS, (w, args) -> dateAdd(w, args, "YEAR"));
         register(Sql.DAYS_BETWEEN, (w, args) -> FunctionDef.call(w, "DATEDIFF", List.of(args.get(1), args.get(0))));
+        register(Sql.SECONDS_BETWEEN, (w, args) -> w.sql("TIMESTAMPDIFF(SECOND, ").render(args.get(0)).sql(", ").render(args.get(1)).sql(")"));
         register(Sql.STRING_AGG, (w, args) -> {
             w.sql("GROUP_CONCAT(").render(args.get(0));
             if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");

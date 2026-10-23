@@ -483,7 +483,7 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 | 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL |
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
 | 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
-| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)` |
+| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)`、`secondsBetween(from, to)`（时间戳，整秒） |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, order...)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity()).filter(l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |

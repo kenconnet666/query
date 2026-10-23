@@ -79,3 +79,19 @@
 | 分库分表 | sharding 模块 | — | — |
 | 写入、追踪、乐观锁、主键生成 | insert、update、track、`@Version` | 以后单独评估 | — |
 | DDL、迁移 | code first、migration | — | — |
+
+## 流程引擎的读查询
+
+为自研流程引擎做的准备：按 Flowable、Camunda 7、Activiti 7、jBPM 7、Warm-Flow、SnakerFlow 的映射文件和查询代码整理出最常见的读查询，用本库重写，表结构简化后放在测试夹具 `Workflow`（Java）和 `fixtures/workflow.ts`（TS）。每种写法都有金样例（`spec/render/workflow-*.sql`），并在三个库上实库核对结果。
+
+| 场景 | 引擎里的写法 | 本库的写法 | 金样例 |
+| --- | --- | --- | --- |
+| 待办：办理人是自己，或候选人、候选组含自己 | Flowable `ASSIGNEE_ = ? OR (ASSIGNEE_ IS NULL AND EXISTS (身份链接 ... USER_ID_ = ? OR GROUP_ID_ IN (...)))`，可选条件由 MyBatis 拼接，列表与计数共用 | 任务表的 `candidates()` 一对多关系加 `any(...)`；可选条件写成条件对象（定义 key 走多对一关系路径）；`db.page` 同时给出总数 | `workflow-todo` |
+| 按流程变量筛选实例（EAV 表） | Flowable 每个条件一个 EXISTS；Activiti 每个条件一个别名 JOIN | 一个三行的辅助方法 `variable(p, name, v -> 条件)` 包住 `p.variables().any(...)`；也可以加 `groupJoin` 合成一个分组派生表，或用两次 `join` | `workflow-variables`、`-grouped`、`-joined` |
+| 每个 key 的最新版本 | 相关子查询 `VERSION_ = (SELECT MAX(VERSION_) ... WHERE KEY_ = RES.KEY_)`；Camunda 用分组派生表 | 自关联 `versions()` 加 `d.version().eq(d.versions().max(...))`；或 `qualify(rowNumber() ... = 1)` | `workflow-latest`、`-ranked` |
+| 已办 | 历史任务 `END_TIME_ IS NOT NULL AND ASSIGNEE_ = ?` 按结束时间倒序分页 | 普通条件加 `db.page` | —（实库场景） |
+| 定义统计（运行中、已结束、平均耗时） | Camunda 三个分组派生表再 LEFT JOIN 回定义表 | `groupJoin(d -> d.instances())` 加带 `where` 的 `count()` 和 `avg(...)` | `workflow-statistics` |
+| 办理人工作量 | `GROUP BY ASSIGNEE_` 加 `SUM(CASE WHEN ...)` | `groupBy` 加 `count().filter(...)` | `workflow-workload` |
+| 读取时计算耗时 | Warm-Flow、SnakerFlow 不存耗时，按方言写日期差 | `secondsBetween(start, end)` | `workflow-elapsed` |
+
+写入能力（乐观锁的 `UPDATE ... WHERE REV_ = ?`、认领任务的 `FOR UPDATE SKIP LOCKED`、批量插入和逻辑删除）不在本库范围内，见交接文档里待用户决定的事项。

@@ -1,8 +1,8 @@
-# 交接（2026-10-23）
+# 交接（2026-10-24）
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部六期和文档，尚未合并、尚未发布。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）和阶段 B（流程引擎读查询），尚未合并、尚未发布。
 
 ## 当前状态
 
@@ -26,13 +26,18 @@
 - **第 1 批 可移植函数（已完成）**：聚合的 `.filter(cond)`（CASE WHEN，取代 PG 专属的 FILTER）、核心 `stringAgg`（取代 MySQL `groupConcat` 和两个方言版本）、`year`/`month`/`day`/`addDays`/`addMonths`/`addYears`/`daysBetween`（取代 HANA、MySQL 的同类函数）、`e.range(from, until)` 半开区间；金样例 `date-functions`、`conditional-aggregates`。
 - **第 2 批 查询结构（已完成）**：`qualify(窗口条件)` 自动包派生表（写入器新增节点替换，窗口函数与不在结果里的排序项作为派生表的列）；`Many` 的 `countDistinct`、`stringAgg`；`firstValue`/`lastValue`/`ntile`、`lag`/`lead` 默认值；`db.page(q, page, size, total)`；金样例 `qualify`、`window-values`、`many-text`。
 - **第 3 批 性能（已完成）**：`groupJoin(m -> m.deliveries())` 把同一关系的多个 count/sum/any 合成一个分组派生表（渲染时用节点替换，`Many` 的集合运算返回可替换的节点）；`many.orderBy(...).limit(n).list(...)` 每个父行限数（复用 qualify）；`@Where`/`@where` 走一对多路径时生成 EXISTS，同一关系的字段合并；金样例 `group-join`、`filter-many`。
-- 阶段 A 到此完成，下一步是阶段 B（流程引擎查询）。
 - **决定不做**：类型化元组（Java 局部 record 加 `row` 已够）、跨方言日期格式串翻译（易错，保留方言函数）、递归 CTE（HANA 不支持）、动态表名、多对多中间表、JSON。
 
-### 测试（本机三库与 CI 全部通过）
+### 阶段 B：流程引擎的读查询（已完成）
 
-- **Java**：core 130，HANA 76，PostgreSQL 80，MySQL 73，Spring 5（含实库场景与金样例）。
-- **TS**：单元、编译期与金样例 218，实库 103。
+- 子代理读了 Flowable、Camunda 7、Activiti 7、jBPM 7、Warm-Flow（经 RuoYi-Vue-Plus）、SnakerFlow 的映射文件和查询代码，整理出共同模式；结论写进[场景对照](../docs/scenarios.md#流程引擎的读查询)。
+- 简化后的六张表（定义、实例、任务、身份链接、变量、历史任务）和查询放在测试夹具 `Workflow`（Java）与 `fixtures/workflow.ts`（TS）：待办（候选人或候选组，条件对象，分页计数）、变量过滤三种写法（EXISTS、groupJoin、多别名 JOIN）、最新版本两种写法（自关联的 `versions().max`、qualify）、已办、定义统计（groupJoin）、工作量（条件聚合）、读取时算耗时。金样例 `workflow-*` 共 9 个场景，三库实库全部通过。
+- 由此补上的能力：`secondsBetween(from, to)`（三库统一为整秒、舍去小数）。其余写法用现有能力即可，没有发现别扭到需要新 API 的地方。
+
+### 测试（本机三库全部通过）
+
+- **Java**：core 185，HANA 105，PostgreSQL 109，MySQL 102（含实库场景与金样例），Spring 5。
+- **TS**：单元、编译期与金样例 271，实库 142。
 - 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
@@ -40,14 +45,11 @@
 - **合并 `feat/v2`**：需要用户同意后开 PR 合并进 `master`。
 - **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
+- **是否给本库加写入能力**（自研流程引擎需要）：流程引擎的写操作有乐观锁更新（`UPDATE ... SET REV_ = ? WHERE ID_ = ? AND REV_ = ?`，影响 0 行即并发冲突）、认领任务（Activiti 7 用 `FOR UPDATE SKIP LOCKED`，PG 和 MySQL 写法不同，HANA 未见等价写法）、批量插入、按编号批量删除、逻辑删除（更新 `del_flag`）和历史清理（按时间查编号再删除）。可选方向：本库加最小的 insert/update/delete 构建器（条件对象可复用于 update/delete 的 WHERE），或者写入交给 JDBC/MyBatis、本库只管查询。请用户决定。
 
 ## 下一步
 
-用户在 2026-10-23 定下的后续阶段，2.0 完成后依次进行：
-
-1. **研读 EasyQuery 的文档和测试场景**（`C:\Users\lionheart\IdeaProjects\easy-query`，以提交 `2b25e9510`（3.2.17）为准），对照本库逐项简化和补全写法。
-2. **调研成熟的流程引擎**（Flowable、Camunda 7、Activiti、jBPM、Warm-Flow、SnakerFlow 等）：收集它们的查询 SQL（待办与候选人、流程实例加变量过滤、历史、分页与计数），用本库在三库上多种写法测试，把别扭的写法简化优化。之后会自研流程引擎，这一步只做准备。
-   - 流程引擎需要写入（insert、update、delete、乐观锁），本库目前只做查询，涉及写入时先请用户决定。
+用户在 2026-10-23 定下的两个阶段（对照 EasyQuery、流程引擎读查询）都已完成。接下来等用户决定上面的待定事项：写入能力的方向、合并与发布 2.0。
 
 ## 换电脑后的准备
 

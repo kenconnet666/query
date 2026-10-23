@@ -65,6 +65,7 @@ import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutio
 import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg } from "@zerodep-dev/query-postgres";
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
+import * as wf from "./workflow.js";
 
 /**
  * The golden-SQL cases of spec/render, built the TypeScript way. The Java tests build the same
@@ -272,6 +273,15 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "window-values": plain(() => windowValues()),
   "many-text": { filtered: true, query: () => manyText() },
   "group-join": { filtered: true, query: () => groupJoin() },
+  "workflow-todo": plain(() => wf.todo("alice", ["managers", "leads"], Object.assign(new wf.TodoSearch(), { process: "leave", name: "app" }))),
+  "workflow-variables": plain(() => wf.instancesByVariables()),
+  "workflow-variables-grouped": plain(() => wf.instancesByVariablesGrouped()),
+  "workflow-variables-joined": plain(() => wf.instancesByVariablesJoined()),
+  "workflow-latest": plain(() => wf.latestDefinitions()),
+  "workflow-latest-ranked": plain(() => wf.latestDefinitionsRanked()),
+  "workflow-statistics": plain(() => wf.definitionStatistics()),
+  "workflow-workload": plain(() => wf.workload()),
+  "workflow-elapsed": plain(() => wf.elapsed()),
   subqueries: plain(() => {
     const parts = from(Mara)
       .where((m) => m.materialType.eq("ZMAT"))

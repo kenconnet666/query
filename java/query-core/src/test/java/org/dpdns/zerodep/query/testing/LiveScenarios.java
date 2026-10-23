@@ -31,10 +31,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -90,7 +92,10 @@ public abstract class LiveScenarios {
         live = connect();
         List<String> sql = new ArrayList<>();
         sql.add("-CREATE SCHEMA " + q("QUERY_IT"));
-        for (String t : List.of("MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS")) sql.add("-DROP TABLE " + t(t));
+        for (String t : List.of("MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK",
+            "WF_VARIABLE", "WF_HI_TASK")) {
+            sql.add("-DROP TABLE " + t(t));
+        }
         sql.add(table("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)));
         sql.add(table("LIPS", c("MANDT", 3), c("VBELN", 10), c("MATNR", 40), c("ERDAT", 8), q("LFIMG") + " DECIMAL(13,3)",
             c("VRKME", 3), c("VGBEL", 10)));
@@ -123,8 +128,49 @@ public abstract class LiveScenarios {
             insert("MCHBH", "'100', 'M1', '2026', '02', 6.000"),
             insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
             insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
+        workflow(sql);
         live.execute(sql);
         db = database(live.connections(), c -> c.filter(Client.class, r -> r.client().eq("100")));
+    }
+
+    /** 流程引擎场景的表和数据，见 {@link Workflow}。 */
+    private void workflow(List<String> sql) {
+        sql.add(table("WF_PROCDEF", c("ID", 10), c("DEF_KEY", 20), c("NAME", 20), q("VERSION") + " INTEGER"));
+        sql.add(table("WF_PROCINST", c("ID", 10), c("DEF_ID", 10), c("BUSINESS_KEY", 20), c("START_USER", 20),
+            q("START_TIME") + " " + timestamp(), q("END_TIME") + " " + timestamp(), q("DURATION") + " BIGINT"));
+        sql.add(table("WF_TASK", c("ID", 10), c("NAME", 20), c("ASSIGNEE", 20), c("PROC_INST_ID", 10), c("DEF_ID", 10),
+            q("CREATE_TIME") + " " + timestamp()));
+        sql.add(table("WF_LINK", c("ID", 10), c("TASK_ID", 10), c("KIND", 20), c("USER_ID", 20), c("GROUP_ID", 20)));
+        sql.add(table("WF_VARIABLE", c("ID", 10), c("PROC_INST_ID", 10), c("NAME", 20), c("TEXT_VALUE", 40), q("LONG_VALUE") + " BIGINT"));
+        sql.add(table("WF_HI_TASK", c("ID", 10), c("NAME", 20), c("ASSIGNEE", 20), c("PROC_INST_ID", 10),
+            q("START_TIME") + " " + timestamp(), q("END_TIME") + " " + timestamp(), q("DURATION") + " BIGINT"));
+        sql.addAll(List.of(
+            insert("WF_PROCDEF", "'D1', 'leave', 'Leave', 1"),
+            insert("WF_PROCDEF", "'D2', 'leave', 'Leave', 2"),
+            insert("WF_PROCDEF", "'D3', 'expense', 'Expense', 1"),
+            insert("WF_PROCINST", "'P1', 'D2', 'BK-1', 'alice', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
+            insert("WF_PROCINST", "'P2', 'D2', 'BK-2', 'bob', TIMESTAMP '2026-01-11 09:00:00', NULL, NULL"),
+            insert("WF_PROCINST", "'P3', 'D3', 'BK-3', 'alice', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 7200000"),
+            insert("WF_PROCINST", "'P4', 'D1', 'BK-4', 'alice', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 10:00:00', 3600000"),
+            insert("WF_VARIABLE", "'V1', 'P1', 'amount', NULL, 1500"),
+            insert("WF_VARIABLE", "'V2', 'P1', 'dept', 'X', NULL"),
+            insert("WF_VARIABLE", "'V3', 'P2', 'amount', NULL, 500"),
+            insert("WF_VARIABLE", "'V4', 'P2', 'dept', 'X', NULL"),
+            insert("WF_VARIABLE", "'V5', 'P3', 'amount', NULL, 2000"),
+            insert("WF_VARIABLE", "'V6', 'P3', 'dept', 'Y', NULL"),
+            insert("WF_TASK", "'T1', 'approve', NULL, 'P1', 'D2', TIMESTAMP '2026-01-10 09:00:00'"),
+            insert("WF_TASK", "'T2', 'approve', 'alice', 'P2', 'D2', TIMESTAMP '2026-01-11 09:00:00'"),
+            insert("WF_TASK", "'T3', 'review', NULL, 'P2', 'D2', TIMESTAMP '2026-01-11 10:00:00'"),
+            insert("WF_TASK", "'T4', 'pay', 'carol', 'P1', 'D2', TIMESTAMP '2026-01-10 11:00:00'"),
+            insert("WF_LINK", "'L1', 'T1', 'candidate', 'bob', NULL"),
+            insert("WF_LINK", "'L2', 'T1', 'candidate', NULL, 'managers'"),
+            insert("WF_LINK", "'L3', 'T3', 'candidate', NULL, 'finance'"),
+            insert("WF_LINK", "'L4', 'T4', 'candidate', 'alice', NULL"),
+            insert("WF_LINK", "'L5', 'T3', 'participant', 'alice', NULL"),
+            insert("WF_HI_TASK", "'H1', 'approve', 'alice', 'P3', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-11 09:00:00', 3600000"),
+            insert("WF_HI_TASK", "'H2', 'pay', 'alice', 'P3', TIMESTAMP '2026-01-11 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 5400000"),
+            insert("WF_HI_TASK", "'H3', 'approve', 'bob', 'P4', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 09:10:00', 600000"),
+            insert("WF_HI_TASK", "'H4', 'approve', 'alice', 'P1', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL")));
     }
 
     private String t(String table) { return q("QUERY_IT") + "." + q(table); }
@@ -527,6 +573,49 @@ public abstract class LiveScenarios {
         var page = db.page(from(Lips.class).orderBy(l -> l.delivery()).select(l -> l.delivery()), 2, 2, 5);
         assertEquals(List.of("D3", "D4"), page.rows());
         assertEquals(5, page.total());
+    }
+
+    @Test
+    void 流程引擎的待办包括自己办理的和自己或所在组是候选的任务() {
+        Function<List<Map<String, Object>>, List<String>> ids = rows -> rows.stream()
+            .map(r -> r.get("id") + "/" + r.get("process") + "/" + r.get("businessKey")).toList();
+        assertEquals(List.of("T2/leave/BK-2", "T1/leave/BK-1"),
+            ids.apply(db.list(Workflow.todo("alice", List.of("managers"), new Workflow.TodoSearch(null, null, null)))));
+        assertEquals(List.of("T3/leave/BK-2", "T1/leave/BK-1"),
+            ids.apply(db.list(Workflow.todo("bob", List.of("finance"), new Workflow.TodoSearch(null, null, null)))));
+        assertEquals(List.of("T2/leave/BK-2"), ids.apply(db.list(Workflow.todo("alice", List.of("managers"),
+            new Workflow.TodoSearch("leave", "app", LocalDateTime.of(2026, 1, 11, 0, 0))))));
+        var page = db.page(Workflow.todo("bob", List.of("finance"), new Workflow.TodoSearch(null, null, null)), 1, 1);
+        assertEquals(2, page.total());
+        assertEquals(1, page.rows().size());
+    }
+
+    @Test
+    void 流程引擎按变量筛选实例的三种写法结果相同() {
+        assertEquals(List.of("P1"), db.list(Workflow.instancesByVariables()));
+        assertEquals(List.of("P1"), db.list(Workflow.instancesByVariablesGrouped()));
+        assertEquals(List.of("P1"), db.list(Workflow.instancesByVariablesJoined()));
+    }
+
+    @Test
+    void 流程定义的最新版本两种写法结果相同() {
+        assertEquals(List.of("D3", "D2"), db.list(Workflow.latestDefinitions()));
+        assertEquals(List.of("D3", "D2"), db.list(Workflow.latestDefinitionsRanked()));
+    }
+
+    @Test
+    void 流程引擎的已办与统计() {
+        assertEquals(List.of("H2:pay:5400000", "H1:approve:3600000"), db.list(Workflow.done("alice")).stream()
+            .map(r -> r.get("id") + ":" + r.get("name") + ":" + r.get("duration")).toList());
+        assertEquals(List.of("D1:leave:1:0:1:3600000", "D2:leave:2:2:0:null", "D3:expense:1:0:1:7200000"),
+            db.list(Workflow.definitionStatistics()).stream()
+                .map(r -> r.get("id") + ":" + r.get("defKey") + ":" + r.get("version") + ":" + r.get("running") + ":" + r.get("finished") + ":"
+                    + (r.get("avgDuration") == null ? null : plain(r.get("avgDuration"))))
+                .toList());
+        assertEquals(List.of("H1:518400", "H2:90000", "H3:600", "H4:null"), db.list(Workflow.elapsed()).stream()
+            .map(r -> r.get("id") + ":" + r.get("seconds")).toList());
+        assertEquals(List.of("alice:2:9000000:1", "bob:1:600000:0"), db.list(Workflow.workload()).stream()
+            .map(r -> r.get("assignee") + ":" + r.get("tasks") + ":" + r.get("totalDuration") + ":" + r.get("slow")).toList());
     }
 
     @Test

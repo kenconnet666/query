@@ -28,6 +28,7 @@ import {
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
 import { dateFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
+import * as wf from "../fixtures/workflow.js";
 
 /**
  * Connection settings for live tests, from the JDBC-style QUERY_{NAME}_URL / _USER / _PASSWORD the
@@ -102,9 +103,12 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const c = (name: string, length: number) => `${q(name)} ${target.text(length)}`;
       const create = (name: string, ...columns: string[]) => `CREATE TABLE ${t(name)} (${columns.join(", ")})`;
       const insert = (name: string, values: string) => `INSERT INTO ${t(name)} VALUES (${values})`;
+      const ts = target.timestamp ?? "TIMESTAMP";
       const statements = [
         `-CREATE SCHEMA ${q("QUERY_IT")}`,
-        ...["MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS"].map((name) => `-DROP TABLE ${t(name)}`),
+        ...["MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK", "WF_VARIABLE", "WF_HI_TASK"].map(
+          (name) => `-DROP TABLE ${t(name)}`,
+        ),
         create("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)),
         create("LIPS", c("MANDT", 3), c("VBELN", 10), c("MATNR", 40), c("ERDAT", 8), `${q("LFIMG")} DECIMAL(13,3)`, c("VRKME", 3), c("VGBEL", 10)),
         create("MAKT", c("MANDT", 3), c("MATNR", 40), c("SPRAS", 1), c("MAKTX", 40)),
@@ -135,6 +139,39 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         insert("MCHBH", "'100', 'M1', '2026', '02', 6.000"),
         insert("EVENTS", "1, DATE '2024-03-31', TIMESTAMP '2024-03-31 02:30:00'"),
         insert("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'"),
+        // 流程引擎场景的表和数据，见 fixtures/workflow.ts
+        create("WF_PROCDEF", c("ID", 10), c("DEF_KEY", 20), c("NAME", 20), `${q("VERSION")} INTEGER`),
+        create("WF_PROCINST", c("ID", 10), c("DEF_ID", 10), c("BUSINESS_KEY", 20), c("START_USER", 20), `${q("START_TIME")} ${ts}`, `${q("END_TIME")} ${ts}`, `${q("DURATION")} BIGINT`),
+        create("WF_TASK", c("ID", 10), c("NAME", 20), c("ASSIGNEE", 20), c("PROC_INST_ID", 10), c("DEF_ID", 10), `${q("CREATE_TIME")} ${ts}`),
+        create("WF_LINK", c("ID", 10), c("TASK_ID", 10), c("KIND", 20), c("USER_ID", 20), c("GROUP_ID", 20)),
+        create("WF_VARIABLE", c("ID", 10), c("PROC_INST_ID", 10), c("NAME", 20), c("TEXT_VALUE", 40), `${q("LONG_VALUE")} BIGINT`),
+        create("WF_HI_TASK", c("ID", 10), c("NAME", 20), c("ASSIGNEE", 20), c("PROC_INST_ID", 10), `${q("START_TIME")} ${ts}`, `${q("END_TIME")} ${ts}`, `${q("DURATION")} BIGINT`),
+        insert("WF_PROCDEF", "'D1', 'leave', 'Leave', 1"),
+        insert("WF_PROCDEF", "'D2', 'leave', 'Leave', 2"),
+        insert("WF_PROCDEF", "'D3', 'expense', 'Expense', 1"),
+        insert("WF_PROCINST", "'P1', 'D2', 'BK-1', 'alice', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
+        insert("WF_PROCINST", "'P2', 'D2', 'BK-2', 'bob', TIMESTAMP '2026-01-11 09:00:00', NULL, NULL"),
+        insert("WF_PROCINST", "'P3', 'D3', 'BK-3', 'alice', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 7200000"),
+        insert("WF_PROCINST", "'P4', 'D1', 'BK-4', 'alice', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 10:00:00', 3600000"),
+        insert("WF_VARIABLE", "'V1', 'P1', 'amount', NULL, 1500"),
+        insert("WF_VARIABLE", "'V2', 'P1', 'dept', 'X', NULL"),
+        insert("WF_VARIABLE", "'V3', 'P2', 'amount', NULL, 500"),
+        insert("WF_VARIABLE", "'V4', 'P2', 'dept', 'X', NULL"),
+        insert("WF_VARIABLE", "'V5', 'P3', 'amount', NULL, 2000"),
+        insert("WF_VARIABLE", "'V6', 'P3', 'dept', 'Y', NULL"),
+        insert("WF_TASK", "'T1', 'approve', NULL, 'P1', 'D2', TIMESTAMP '2026-01-10 09:00:00'"),
+        insert("WF_TASK", "'T2', 'approve', 'alice', 'P2', 'D2', TIMESTAMP '2026-01-11 09:00:00'"),
+        insert("WF_TASK", "'T3', 'review', NULL, 'P2', 'D2', TIMESTAMP '2026-01-11 10:00:00'"),
+        insert("WF_TASK", "'T4', 'pay', 'carol', 'P1', 'D2', TIMESTAMP '2026-01-10 11:00:00'"),
+        insert("WF_LINK", "'L1', 'T1', 'candidate', 'bob', NULL"),
+        insert("WF_LINK", "'L2', 'T1', 'candidate', NULL, 'managers'"),
+        insert("WF_LINK", "'L3', 'T3', 'candidate', NULL, 'finance'"),
+        insert("WF_LINK", "'L4', 'T4', 'candidate', 'alice', NULL"),
+        insert("WF_LINK", "'L5', 'T3', 'participant', 'alice', NULL"),
+        insert("WF_HI_TASK", "'H1', 'approve', 'alice', 'P3', TIMESTAMP '2026-01-05 09:00:00', TIMESTAMP '2026-01-11 09:00:00', 3600000"),
+        insert("WF_HI_TASK", "'H2', 'pay', 'alice', 'P3', TIMESTAMP '2026-01-11 09:00:00', TIMESTAMP '2026-01-12 10:00:00', 5400000"),
+        insert("WF_HI_TASK", "'H3', 'approve', 'bob', 'P4', TIMESTAMP '2025-12-01 09:00:00', TIMESTAMP '2025-12-01 09:10:00', 600000"),
+        insert("WF_HI_TASK", "'H4', 'approve', 'alice', 'P1', TIMESTAMP '2026-01-10 09:00:00', NULL, NULL"),
         ...(target.setup ?? []),
       ];
       // A statement starting with "-" may fail, e.g. dropping what does not exist.
@@ -621,6 +658,44 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
     it("已知总数的分页不再执行 COUNT", async () => {
       const page = await live().db.page(from(Lips).orderBy((l) => l.delivery).select((l) => l.delivery), 2, 2, 5);
       assert.deepEqual([page.rows, page.total, page.totalPages], [["D3", "D4"], 5, 3]);
+    });
+
+    it("流程引擎的待办包括自己办理的和自己或所在组是候选的任务", async () => {
+      const { db } = live();
+      const ids = (rows: readonly { id: string; process: string | null; businessKey: string | null }[]) => rows.map((r) => `${r.id}/${r.process}/${r.businessKey}`);
+      assert.deepEqual(ids(await db.list(wf.todo("alice", ["managers"], new wf.TodoSearch()))), ["T2/leave/BK-2", "T1/leave/BK-1"]);
+      assert.deepEqual(ids(await db.list(wf.todo("bob", ["finance"], new wf.TodoSearch()))), ["T3/leave/BK-2", "T1/leave/BK-1"]);
+      const search = Object.assign(new wf.TodoSearch(), { process: "leave", name: "app", createdFrom: "2026-01-11 00:00:00" });
+      assert.deepEqual(ids(await db.list(wf.todo("alice", ["managers"], search))), ["T2/leave/BK-2"]);
+      const page = await db.page(wf.todo("bob", ["finance"], new wf.TodoSearch()), 1, 1);
+      assert.deepEqual([page.total, page.rows.length], [2, 1]);
+    });
+
+    it("流程引擎按变量筛选实例的三种写法结果相同", async () => {
+      const { db } = live();
+      for (const q of [wf.instancesByVariables(), wf.instancesByVariablesGrouped(), wf.instancesByVariablesJoined()]) assert.deepEqual(await db.list(q), ["P1"]);
+    });
+
+    it("流程定义的最新版本两种写法结果相同", async () => {
+      const { db } = live();
+      assert.deepEqual(await db.list(wf.latestDefinitions()), ["D3", "D2"]);
+      assert.deepEqual(await db.list(wf.latestDefinitionsRanked()), ["D3", "D2"]);
+    });
+
+    it("流程引擎的已办与统计", async () => {
+      const { db } = live();
+      assert.deepEqual((await db.list(wf.done("alice"))).map((r) => `${r.id}:${r.name}:${r.duration}`), ["H2:pay:5400000", "H1:approve:3600000"]);
+      assert.deepEqual(
+        (await db.list(wf.definitionStatistics())).map(
+          (r) => `${r.id}:${r.defKey}:${r.version}:${r.running}:${r.finished}:${r.avgDuration === null ? null : Number(r.avgDuration)}`,
+        ),
+        ["D1:leave:1:0:1:3600000", "D2:leave:2:2:0:null", "D3:expense:1:0:1:7200000"],
+      );
+      assert.deepEqual((await db.list(wf.elapsed())).map((r) => `${r.id}:${r.seconds}`), ["H1:518400", "H2:90000", "H3:600", "H4:null"]);
+      assert.deepEqual(
+        (await db.list(wf.workload())).map((r) => `${r.assignee}:${r.tasks}:${r.totalDuration}:${r.slow}`),
+        ["alice:2:9000000:1", "bob:1:600000:0"],
+      );
     });
 
     it("右侧的 UNION 保持原有分组", async () => {

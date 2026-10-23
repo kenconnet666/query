@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, DAY, DAYS_BETWEEN, Dialect, FunctionDef, LOCATE, MONTH, YEAR, type CastType, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, DAY, DAYS_BETWEEN, Dialect, FunctionDef, LOCATE, MONTH, SECONDS_BETWEEN, YEAR, type CastType, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
 
 /** PostgreSQL。未加引号的标识符折叠为小写；参数带编号（$1、$2……）。 */
 export class PostgresDialect extends Dialect {
@@ -9,7 +9,8 @@ export class PostgresDialect extends Dialect {
 
   /**
    * 没有 LOCATE，改写为 STRPOS；日期部分写成 EXTRACT 再转成整数（EXTRACT 返回 numeric），
-   * 加天数是 `date + n`，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减。
+   * 加天数是 `date + n`，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减，
+   * 相隔秒数取两个时间戳之差的 EPOCH 再舍去小数（直接转 BIGINT 会四舍五入）。
    */
   protected constructor() {
     super();
@@ -21,6 +22,7 @@ export class PostgresDialect extends Dialect {
     this.register(ADD_MONTHS, (w, args) => addInterval(w, args, "month"));
     this.register(ADD_YEARS, (w, args) => addInterval(w, args, "year"));
     this.register(DAYS_BETWEEN, (w, args) => void w.sql("(").render(args[1]!).sql(" - ").render(args[0]!).sql(")"));
+    this.register(SECONDS_BETWEEN, (w, args) => void w.sql("CAST(TRUNC(EXTRACT(EPOCH FROM (").render(args[1]!).sql(" - ").render(args[0]!).sql("))) AS BIGINT)"));
   }
 
   /** 只有小写字母、数字、下划线和 $ 构成的名称可以不加引号。 */

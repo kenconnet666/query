@@ -131,6 +131,8 @@ export {
   right,
   round,
   rowNumber,
+  SECONDS_BETWEEN,
+  secondsBetween,
   scalar,
   sql,
   sqlCond,

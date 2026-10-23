@@ -30,7 +30,8 @@ public class PostgresDialect extends Dialect {
 
     /**
      * PostgreSQL 没有 LOCATE，改写为 STRPOS；日期部分写成 EXTRACT 再转成整数（EXTRACT 返回 numeric），
-     * 加天数是 {@code date + n}，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减。
+     * 加天数是 {@code date + n}，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减，
+     * 相隔秒数取两个时间戳之差的 EPOCH 再舍去小数（直接转 BIGINT 会四舍五入）。
      */
     protected PostgresDialect() {
         register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "STRPOS", args));
@@ -41,6 +42,8 @@ public class PostgresDialect extends Dialect {
         register(Sql.ADD_MONTHS, (w, args) -> addInterval(w, args, "month"));
         register(Sql.ADD_YEARS, (w, args) -> addInterval(w, args, "year"));
         register(Sql.DAYS_BETWEEN, (w, args) -> w.sql("(").render(args.get(1)).sql(" - ").render(args.get(0)).sql(")"));
+        register(Sql.SECONDS_BETWEEN, (w, args) ->
+            w.sql("CAST(TRUNC(EXTRACT(EPOCH FROM (").render(args.get(1)).sql(" - ").render(args.get(0)).sql("))) AS BIGINT)"));
     }
 
     /** 写出 {@code CAST(EXTRACT(FIELD FROM e) AS INTEGER)}。 */
