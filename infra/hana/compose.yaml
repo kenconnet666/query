@@ -1,0 +1,82 @@
+# SAP HANA Express (database server edition) for local development and CI live tests, self-contained:
+# this folder is all you need. 8 GiB is SAP's published minimum; HANA treats the cgroup limit as physical
+# memory, so do not raise it to hide a failure. Business data lives in tenant HXE; the memory limit lives
+# only here and CI reads it back to check that Docker enforced it.
+#
+# HOW TO DEPLOY AND USE (WSL Debian; a plain Debian/Ubuntu server works the same way)
+#
+# 1. Open WSL from Windows (skip on a server):
+#      wsl -d Debian
+# 2. Install Docker Engine with the compose plugin (skip when `docker compose version` already works):
+#      curl -fsSL https://get.docker.com | sh
+# 3. HANA needs about 10 GiB of free memory. In WSL check it with `free -g`; the limit is set by
+#    memory= in C:\Users\<you>\.wslconfig (then run `wsl --shutdown` on Windows to apply it).
+# 4. Go to this folder (the WSL path of infra/hana in the repository, or wherever you copied it):
+#      cd /mnt/c/Users/Administrator/IdeaProjects/query/infra/hana
+# 5. Create the password file once (.env is git-ignored; compose reads it automatically). The password is
+#    only used the first time the data volume is initialized:
+#      printf 'QUERY_HANA_PASSWORD=E9a%s\n' "$(openssl rand -hex 16)" > .env
+#    Read it later with:  grep PASSWORD .env
+# 6. Start. The image is several GiB to pull and HANA needs about 4 minutes to boot. The state must become
+#    "healthy" (follow progress with `docker compose logs -f hana`):
+#      docker compose up -d --build
+#      docker compose ps
+# 7. Once healthy, run this a single time to switch off the web dispatcher (it only takes memory):
+#      docker compose exec hana /bin/bash /query/configure.sh
+# 8. Connect from Windows with the WSL address (172.x.x.x), not localhost. Look it up, the first address
+#    is the one to use, and it changes after a WSL restart:
+#      wsl -d Debian hostname -I
+#    Then use jdbc:sap://<WSL_IP>:39041 for tenant HXE and jdbc:sap://<WSL_IP>:39017 for SYSTEMDB
+#    (administration only), user SYSTEM, password QUERY_HANA_PASSWORD. The ports are published on 0.0.0.0;
+#    change them with QUERY_HANA_PORT and QUERY_HANA_SYSTEM_PORT in .env.
+# 9. Everyday commands, from this folder:
+#      docker compose logs -f hana                     # follow the log, Ctrl+C to leave
+#      docker compose stop                             # stop (it can take up to 2 minutes), data is kept
+#      docker compose up -d                            # start again, no rebuild
+#      docker compose down -v                          # delete the container AND its data
+name: query-hana
+
+services:
+  hana:
+    build: .
+    image: query-dev/hana:2.00.088
+    platform: linux/amd64
+    hostname: hxehost
+    restart: unless-stopped
+    mem_limit: 8g
+    memswap_limit: 8g
+    mem_reservation: 4g
+    cpus: 4.0
+    pids_limit: 4096
+    shm_size: 2g
+    stop_grace_period: 2m
+    environment:
+      QUERY_HANA_PASSWORD: ${QUERY_HANA_PASSWORD:?Set QUERY_HANA_PASSWORD in .env or the environment}
+      TZ: Asia/Singapore
+    ports:
+      - "${QUERY_HANA_PORT:-39041}:39041"
+      - "${QUERY_HANA_SYSTEM_PORT:-39017}:39017"
+    volumes:
+      - hana-data:/hana/mounts
+    tmpfs:
+      - /run/query:size=1m,mode=0700,uid=12000,gid=79
+    entrypoint: [/bin/bash, /query/start.sh]
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    sysctls:
+      kernel.shmmax: 1073741824
+      kernel.shmmni: 32768
+      kernel.shmall: 8388608
+      net.ipv4.ip_local_port_range: "40000 60999"
+    # Checked every 3 s so a ready HANA is noticed quickly; 300 retries keep the 15-minute ceiling.
+    healthcheck:
+      test: [CMD, /bin/bash, /query/health.sh]
+      interval: 3s
+      timeout: 5s
+      retries: 300
+      start_period: 2m
+
+volumes:
+  hana-data:
