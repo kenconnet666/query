@@ -5,29 +5,52 @@
 #
 # Images: PostgreSQL uses the official Debian (bookworm) image and MySQL the official Oracle Linux image
 # (8.4 has no Debian variant), each with ping, curl, ss, nano and the Asia/Singapore time zone added by
-# the Dockerfile. HANA is SAP's own SUSE-based image, used as it is.
+# infra/Dockerfile. HANA is SAP's own SUSE-based image, used as it is.
 #
-# First time on a new machine (Debian/Ubuntu; WSL works the same once dockerd runs):
-#   curl -fsSL https://get.docker.com | sh                    # Docker Engine and the compose plugin
-#   cd infra
-#   printf 'QUERY_DB_PASSWORD=%s\nQUERY_HANA_PASSWORD=E9a%s\n' "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
-#   # set APT_MIRROR=mirrors.aliyun.com in .env if deb.debian.org is slow
+# ---------------------------------------------------------------------------------------------------
+# HOW TO DEPLOY AND USE (WSL Debian; a plain Debian/Ubuntu server works the same way)
 #
-# Daily use, from infra/:
-#   docker compose --profile mysql --profile postgres up -d --build   # start (builds the tool layer once)
-#   docker compose --profile hana up -d                               # HANA needs ~10 GiB free and ~4 minutes
-#   docker compose --profile hana exec hana /bin/bash /query/configure.sh   # once, right after HANA first starts
-#   docker compose ps                                                 # state and health
-#   docker compose logs -f postgres                                   # follow one service
-#   docker compose exec postgres ping -c 1 host.docker.internal       # ops tools are inside the containers
-#   docker compose --profile mysql --profile postgres --profile hana stop      # stop, data is kept
-#   docker compose --profile mysql --profile postgres --profile hana down -v   # remove containers AND data
+# 1. Open WSL from Windows (skip on a server):
+#      wsl -d Debian
 #
-# Connections (ports are published on 0.0.0.0; override with QUERY_*_PORT in .env):
-#   MySQL       jdbc:mysql://localhost:53306/query   user root or query, password QUERY_DB_PASSWORD
-#   PostgreSQL  jdbc:postgresql://localhost:55432/query   user query, password QUERY_DB_PASSWORD
-#   HANA        jdbc:sap://localhost:39041 (tenant HXE), SYSTEMDB on 39017, user SYSTEM, password QUERY_HANA_PASSWORD
-# Live tests read QUERY_{MYSQL|PG|HANA}_{URL|USER|PASSWORD}; see CLAUDE.md for the values.
+# 2. Install Docker Engine with the compose plugin (skip when `docker compose version` already works):
+#      curl -fsSL https://get.docker.com | sh
+#
+# 3. Go to this folder (WSL path of the repository's infra/ directory):
+#      cd /mnt/c/Users/Administrator/IdeaProjects/query/infra
+#
+# 4. Create the password file once. .env is git-ignored; compose reads it automatically:
+#      printf 'QUERY_DB_PASSWORD=%s\nQUERY_HANA_PASSWORD=E9a%s\n' "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
+#    Add APT_MIRROR=mirrors.aliyun.com to .env when deb.debian.org is slow. Read the passwords later with:
+#      grep PASSWORD .env
+#
+# 5. Start MySQL and PostgreSQL (the first run builds the tool layer, about two minutes):
+#      docker compose --profile mysql --profile postgres up -d --build
+#    Both must show "healthy":
+#      docker compose ps
+#
+# 6. Start HANA when needed (about 10 GiB free memory and 4 minutes). Once it is healthy, run the
+#    configure step a single time to switch off the web dispatcher:
+#      docker compose --profile hana up -d
+#      docker compose --profile hana exec hana /bin/bash /query/configure.sh
+#
+# 7. Connect from Windows with the WSL address (172.x.x.x), not localhost:
+#      wsl -d Debian hostname -I        # the first address is the one to use, e.g. 172.19.1.143
+#    The ports are published on 0.0.0.0. Replace <WSL_IP>; override a port with QUERY_*_PORT in .env.
+#      MySQL       jdbc:mysql://<WSL_IP>:53306/query     user query or root, password QUERY_DB_PASSWORD
+#      PostgreSQL  jdbc:postgresql://<WSL_IP>:55432/query   user query, password QUERY_DB_PASSWORD
+#      HANA        jdbc:sap://<WSL_IP>:39041  tenant HXE   user SYSTEM, password QUERY_HANA_PASSWORD
+#                  jdbc:sap://<WSL_IP>:39017  SYSTEMDB (administration only)
+#    The address changes after a WSL restart; look it up again. The live tests read
+#    QUERY_{MYSQL|PG|HANA}_{URL|USER|PASSWORD}; CLAUDE.md shows how to fill them from .env.
+#
+# 8. Everyday commands, always from this folder:
+#      docker compose logs -f postgres                                 # follow one service, Ctrl+C to leave
+#      docker compose exec postgres ping -c 2 host.docker.internal    # ops tools live inside the containers
+#      docker compose --profile mysql --profile postgres --profile hana stop        # stop, data is kept
+#      docker compose --profile mysql --profile postgres up -d                      # start again, no rebuild
+#      docker compose --profile mysql --profile postgres --profile hana down -v     # delete containers AND data
+# ---------------------------------------------------------------------------------------------------
 name: query
 
 services:

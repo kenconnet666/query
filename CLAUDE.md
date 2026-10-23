@@ -108,9 +108,10 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
 
     ```powershell
     $env_ = Get-Content infra/.env | ConvertFrom-StringData
-    $env:QUERY_PG_URL = 'jdbc:postgresql://localhost:55432/query'; $env:QUERY_PG_USER = 'query'; $env:QUERY_PG_PASSWORD = $env_.QUERY_DB_PASSWORD
-    $env:QUERY_MYSQL_URL = 'jdbc:mysql://localhost:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true'; $env:QUERY_MYSQL_USER = 'root'; $env:QUERY_MYSQL_PASSWORD = $env_.QUERY_DB_PASSWORD
-    $env:QUERY_HANA_URL = 'jdbc:sap://localhost:39041'; $env:QUERY_HANA_USER = 'SYSTEM'; $env:QUERY_HANA_PASSWORD = $env_.QUERY_HANA_PASSWORD
+    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL address; changes after a WSL restart
+    $env:QUERY_PG_URL = "jdbc:postgresql://${ip}:55432/query"; $env:QUERY_PG_USER = 'query'; $env:QUERY_PG_PASSWORD = $env_.QUERY_DB_PASSWORD
+    $env:QUERY_MYSQL_URL = "jdbc:mysql://${ip}:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"; $env:QUERY_MYSQL_USER = 'root'; $env:QUERY_MYSQL_PASSWORD = $env_.QUERY_DB_PASSWORD
+    $env:QUERY_HANA_URL = "jdbc:sap://${ip}:39041"; $env:QUERY_HANA_USER = 'SYSTEM'; $env:QUERY_HANA_PASSWORD = $env_.QUERY_HANA_PASSWORD
     ```
 
   - 测试会在各库的 `QUERY_IT` schema 里重建测试表。
@@ -132,7 +133,7 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
   | PostgreSQL | `postgres:17.11-bookworm` | 55432 | `query` / `query` | 512 MiB |
   | HANA Express | `saplabs/hanaexpress:2.00.088.00.20251110.1` | 租户 HXE `39041`，SYSTEMDB `39017` | `SYSTEM` | 8 GiB |
 
-- **访问地址**：宿主机访问 WSL 用 WSL 的 `eth0` 地址（WSL 重启后可能变化，用 `wsl -d Debian hostname -I` 查）或 `localhost`；WSL 内访问宿主机用 `172.19.0.1`。
+- **访问地址**：宿主机访问数据库统一用 WSL 的 `172.x` 地址（`wsl -d Debian hostname -I` 的第一项，目前是 `172.19.1.143`，WSL 重启后可能变化），不用 `localhost`；WSL 内访问宿主机用 `172.19.0.1`。
 - **密码**：写在 `infra/.env`（已加入 `.gitignore`），首次部署时用文件开头注释里的命令随机生成，模板见 `infra/.env.example`。用户要连接信息时，可以在对话中明文给出，但绝不写进仓库文件或提交。
 - **数据**：用命名卷保存，`stop` 和 `down` 保留数据，`down -v` 才删除。
 - **HANA**：
