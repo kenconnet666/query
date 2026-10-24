@@ -1,6 +1,6 @@
 # 0009 SQLite 方言（兼容 SQLite WASM）
 
-- 状态：已采纳（2026-10-24），在 `feat/sqlite-idb` 上实现，两端同步
+- 状态：已采纳并实现（2026-10-24，`feat/sqlite-idb`），两端同步；用法见 [api.md 第 18 节](../api.md#18-sqlite) 和 [api-typescript.md 第 19 节](../api-typescript.md#19-sqlite-与浏览器)
 - 目标版本：2.1
 - 修订对象：CLAUDE.md 的"首批方言"（三库之外加 SQLite）；0001 的方言范围
 
@@ -96,20 +96,24 @@
 - 自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`（SQLite 只认这种写法，`BIGINT` 不行），读回时按此识别。
 - **外键只能在建表时写**：建表语句里内联外键；给已有的表加外键归入"只报告"（要重建表）。
 - `ALTER TABLE` 只能加列、改名、删列：改类型、改可空、改默认值都归入"只报告"，提示"新建表、搬数据、改名"的重建步骤。
-- 没有表和列的注释：建表时略过注释，每个实例第一次略过时记一条警告。
+- 没有表和列的注释：建表时略过注释；Java 每个实例第一次略过时记一条警告，TS 的结构变更没有写入器，只略过。
 - DDL 在事务里（与 PostgreSQL 相同），整个计划、每个迁移都在一个事务里执行，失败整体回滚。
 
 ### 5. 事务与并发
 
-- SQLite 只有一个写者：写事务用 `BEGIN IMMEDIATE`，避免读锁升级时的死锁；Java 连接设 `busy_timeout`。
+- SQLite 只有一个写者：TS 的驱动写事务用 `BEGIN IMMEDIATE`，避免读锁升级时的死锁；Java 由使用方在 `SQLiteConfig` 上设 `busy_timeout`（见 api.md）。
 - `forUpdate()` 报错（见第 3 条）；迁移的锁表照常可用。
 - `node:sqlite` 和 sqlite-wasm 都是单连接：驱动把语句排队，事务期间别的调用等待。
 
 ### 6. 核心包的浏览器适配（WASM 的前提）
 
 - **事务、实体追踪、`capture` 依赖 AsyncLocalStorage**，浏览器里没有。`db.transaction(work)` 的回调改为收到一个绑定在事务上的数据库（`work(tx)`，原来不用参数的写法在 Node 上照旧）；浏览器里必须用这个 `tx`。`tracking` 的 `t` 同理。`capture` 在浏览器里报错。
-- **迁移的校验和**：没有 `node:crypto` 时改用 Web Crypto 的 `crypto.subtle.digest`。
-- 打包检查：核心包不能静态引入 Node 模块（现在都是按需 `getBuiltinModule`）；加一个用 Playwright 在 chromium 里跑 sqlite-wasm 加本库的测试。
+  - 实现：`tx` 用 `Reflect.construct(Database, ..., 子类)` 构造，只运行 Database 的构造函数、复制状态，原型仍是方言子类，所以方言专属的方法照常可用；各子类的构造参数不同，也不需要再运行。
+  - 库内部的多语句写入、取回生成键、结构变更、追踪写回和迁移都改为经由 `tx` 执行，没有异步上下文时也在同一个事务里。
+- **迁移的校验和与锁的编号**：一律用 Web Crypto（`crypto.subtle.digest`、`crypto.randomUUID`，Node 19 起都有），结果与原来的 `node:crypto` 相同，已有的历史表不受影响。
+- 打包检查：核心包不能静态引入 Node 模块（现在都是按需 `getBuiltinModule`）。
+
+验证：`unit/browser-runtime.test.ts` 在去掉 `process.getBuiltinModule` 的子进程里，用 SQLite WASM 跑事务、追踪、多行写入和迁移；`browser/sqlite-wasm.browser.test.ts` 用 `playwright-core` 驱动本机或 CI runner 预装的 Chrome，不下载浏览器。它在 Worker 里用 `opfs-sahpool` 写入，再由新的 Worker 读回。
 
 ### 7. 不做
 

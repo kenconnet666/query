@@ -1,21 +1,21 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）；2.1 加 SQLite 方言（0009，含浏览器里的 SQLite WASM）和前端用的 IndexedDB 本地存储包（0010，只有 TS，不依赖核心包，不做同步）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@zerodep-dev/query-*`）和私有测试包 `test`。
-- **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
+- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
 - **文档**：
   - API 方向以 0002 为准，0006 修订了其中的实体声明、投影和条件；
-  - 用法写在 [docs/api.md](docs/api.md)（Java）和 [docs/api-typescript.md](docs/api-typescript.md)（TS），API 变化时同步更新；
+  - 用法写在 [docs/api.md](docs/api.md)（Java）、[docs/api-typescript.md](docs/api-typescript.md)（TS）和 [docs/api-idb.md](docs/api-idb.md)（IndexedDB），API 变化时同步更新；
   - 其余文档只记录决定、取舍和验证证据，过时的内容直接删改，不堆叠。
 
 ## 必须参考的本地仓库
@@ -69,11 +69,12 @@ cd typescript
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固定
 corepack pnpm test                       # tsc -b，再跑单元、编译期与金样例测试
-corepack pnpm test:live                  # 三库实库场景，变量见下文
+corepack pnpm test:live                  # 实库场景：三库要变量（见下文），SQLite 不需要
+corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览器测试（playwright-core，不下载浏览器）
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
-- **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`exec`，测试夹具在 `test/src/fixtures`。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|sqlite|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`ddl`、`exec`；测试在 `test/src` 的 `unit`、`live`、`browser`，夹具在 `fixtures`。
 - **生成代码**：`scope/From1..From16`、`select/Rows` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
@@ -82,7 +83,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
   - PostgreSQL、MySQL 实库：按"库 × 语言"拆成 4 个 job；
   - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
-  - TypeScript 编译、编译期检查、单元与金样例测试。
+  - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库场景用临时文件库，随 Java 单元测试运行。
 
   容器定义在 `infra/`。
 - **CI 的提速规则**：

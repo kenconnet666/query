@@ -2,7 +2,7 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），尚未合并、尚未发布。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），尚未合并、尚未发布。之后在 `feat/sqlite-idb`（基于 `feat/v2`）上完成了 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言（两端，含浏览器里的 SQLite WASM）和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，同样尚未合并。
 
 ## 当前状态
 
@@ -45,19 +45,20 @@
 ### 测试（本机三库全部通过）
 
 - **Java**：core 233，HANA 179，PostgreSQL 189，MySQL 177（含实库场景与金样例），Spring 5，Maven 插件 3。
-- **TS**：单元、编译期与金样例 430，实库 260。
+- **TS**：单元、编译期与金样例 526（含 IDB 20、没有异步上下文的运行环境 1）；实库 PostgreSQL 90、MySQL 84、HANA 86，SQLite 的 node:sqlite 75、WASM 72（各跳过 2 项，原因写在测试里）；Chrome 里的浏览器测试 3。
+- **Java SQLite**：158（实库场景 76，跳过手写 LPAD 1 项；金样例 75；渲染 7）。
 - 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
 
-- **合并 `feat/v2`**：需要用户同意后开 PR 合并进 `master`。
+- **合并 `feat/v2` 与 `feat/sqlite-idb`**：需要用户同意后开 PR 合并进 `master`；`feat/sqlite-idb` 基于 `feat/v2`，可以先合并 `feat/v2`，也可以一起合并。
 - **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
 - **流程引擎本身**：用户 2026-10-24 说先不做；读查询（阶段 B）和写入（0007）已经为它备好。
 
 ## 下一步
 
-阶段 A、阶段 B、写入能力、下面的四批、A/B/C 三批和 0008 都已完成并推送到 `feat/v2`。合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
+阶段 A、阶段 B、写入能力、下面的四批、A/B/C 三批和 0008 都已完成并推送到 `feat/v2`；0009 与 0010 的第一、二阶段完成并推送到 `feat/sqlite-idb`。合并与发布 2.0 / 2.1、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
 
 2026-10-24 对照 EasyQuery 讨论后规划并完成了四批（用户确认"暂不做代码生成"后要求四批都做；每批两端、三方言同步，带金样例与实库场景，各批的提交与 CI 见 git log）：
 
@@ -81,6 +82,17 @@
 - **0008 代码生成**：`query-maven-plugin` 的 `query:pull` 与 TS 方言包的 `query-pull-*` bin，生成只有列的父接口 / 基类；TS 增加 `smallint`。
 - **0008 实体追踪**：Java `db.tracking` / `tracked`、TS `db.tracking`，写成功后才写回版本、刷新快照；`Update.changedRows()`。
 - **0008 分区与分表**：`@TableOption`（TS `options`）写原生分区；`Config.shard` / 选项 `shards` 注册同库物理分表，按 WHERE 选表、`UNION ALL`、写入按行路由、`allShards()` / `onShards(...)`；三库执行计划都把外层条件推进各分支。
+
+### 0009 SQLite 与 0010 IndexedDB（已完成，`feat/sqlite-idb`；用户 2026-10-24 确认"就按照你的规划去做"）
+
+- **用户的决定**：SQLite 两端都做；只有带扩展的构建才支持的函数照常渲染并警告，完全不支持的在类型上拦住或渲染时报错；小数用 NUMERIC 亲和。IndexedDB 是给前端用的轻量本地存储，离线同步完全不做，只支持新浏览器；独立的包 `@zerodep-dev/idb`，自己的装饰器，不依赖核心包。
+- **SQLite（Java）**：`query-sqlite`（门面 `Sqlite`、`SqliteDialect`、`SqliteSchemaSyntax`），sqlite-jdbc 3.53.4.0 是测试依赖。核心加了方言钩子：按名字覆盖函数、窗口、CAST、算术、量化子查询、集合运算分组、写语句别名、`honoursQueryTimeout`（sqlite-jdbc 不理会 setQueryTimeout，由 `exec/Watchdog` 调 cancel）。`SchemaSyntax` 加了能力声明（`altersColumns`、`inlineForeignKeys`、`storesComments`）。警告按数据库实例去重（`SqlWriter.WARNED`）。实库场景用临时文件库加 `ATTACH ... AS QUERY_IT`。
+- **SQLite（TS）**：`@zerodep-dev/query-sqlite`，驱动 `nodeSqliteDriver`（node:sqlite）与 `wasmDriver`（sqlite-wasm 3.54.1-build1 的 oo1），共用串行队列和 `BEGIN IMMEDIATE`；`grouping`、`forUpdate` 用 `never` 类型遮住。金样例与 Java 逐字节相同；共享实库场景按 `supports(...)` 把 ROLLUP、加锁读改为断言报错，LPAD、超时跳过。
+- **核心的浏览器适配**：`db.transaction(async (tx) => ...)`，`tx` 由 `Reflect.construct(Database, ..., 子类)` 构造（只运行 Database 的构造函数、复制状态）；内部的多语句写入、取回生成键、结构变更、追踪写回和迁移都经由 tx；没有 AsyncLocalStorage 时 tracking 各自写回，capture 报错；迁移的校验和与锁编号改用 Web Crypto。
+- **IndexedDB**：`packages/idb`（`metadata`、`rows`、`transaction`、`query`、`database`）。第一阶段做了声明、打开与升级、读写、按索引查询、事务；第二阶段做了 include、实时查询（按仓库失效，BroadcastChannel 跨标签页）、QuotaError、persist / estimate。不压缩、只去掉注释时约 8.9 KB（gzip），压缩后在 8 KB 目标以内。
+- **浏览器测试**：`test/src/browser`，`playwright-core` 1.64.0 驱动本机或 runner 预装的 Chrome（不下载浏览器），`harness.ts` 是静态服务器，会把包名改写成路径，因为 Worker 里不能用 import map。覆盖 Worker 里 SQLite WASM 加 opfs-sahpool 的写入与读回、IDB 的真实自动提交、两个标签页之间的实时查询与升级。CI 的 TS job 加了 SQLite 实库和浏览器测试两步。
+- **文档**：[api.md 第 18 节](../docs/api.md#18-sqlite)、[api-typescript.md 第 19 节](../docs/api-typescript.md#19-sqlite-与浏览器)、新的 [api-idb.md](../docs/api-idb.md)，以及 0009、0010、CHANGELOG 的 2.1.0、README、release.md、CLAUDE.md。
+- **还没做**：Firefox / WebKit 的浏览器实测，发版前手动核对；IDB 的发布与示例（0010 第三阶段只做了文档）。
 
 ## 换电脑后的准备
 
@@ -148,3 +160,9 @@
 - **Java 重载与 lambda**：隐式类型的单参数 lambda 同时匹配 `Consumer` 和 `Function` 时报歧义（只抛异常的块就是这样），所以追踪分成 `tracking` 和 `tracked` 两个名字。
 - **时间精度**：Linux 上 `LocalDateTime.now()` 带纳秒，HANA 的 TIMESTAMP 只到 100 纳秒，绑定时拒绝截断；本机 Windows 的时钟只到 100 纳秒，复现不了，只在 CI 上出现。本库写入的时间戳先截到毫秒。
 - **PostgreSQL 手写 DDL**：没加引号的 `QUERY_IT` 会折成小写，测试里手写的分区语句要写 `"QUERY_IT"."PART_LOG"`。
+- **事务视图**：TS 的 `tx` 不能用 `new this.constructor(...)` 构造，因为测试的 `TestDatabase` 构造参数是 `(options, driver)`，与方言子类不同；用 `Reflect.construct` 只运行 Database 的构造函数。按实例比较的地方（事务、捕获、追踪范围的查找）要比较 `#root`。
+- **单连接驱动与事务**：浏览器里没有 AsyncLocalStorage，事务回调里直接用 `db` 的语句会排在事务后面，于是一直等下去；库内部一律经由 `tx`，文档要求使用方也这样写。
+- **Node 的 BroadcastChannel**：会让进程不退出，IDB 包创建频道后调用 `unref()`。
+- **sqlite-wasm 在 Node 里**：只支持内存库；QUERY_IT 也 ATTACH 成 `:memory:`。浏览器里 `ATTACH 'file:/x.db?vfs=opfs-sahpool'` 可用。
+- **fake-indexeddb**：用 6.2.5；它模拟不了真实的自动提交时机，相关的断言放在浏览器测试里。IDB 的 `anyOf` 结果按索引顺序，同一个值里的行再按主键排序。
+- **npm 依赖的版本**：新加的依赖选发布满两周的版本（fake-indexeddb 6.2.6 只有 8 天，所以用 6.2.5）。

@@ -37,7 +37,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 ```xml
 <dependency>
     <groupId>org.dpdns.zerodep</groupId>
-    <artifactId>query-hana</artifactId>      <!-- 或 query-postgres、query-mysql -->
+    <artifactId>query-hana</artifactId>      <!-- 或 query-postgres、query-mysql、query-sqlite -->
     <version>2.0.0</version>
 </dependency>
 ```
@@ -61,6 +61,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | SAP HANA | `org.dpdns.zerodep.query.hana.Hana` | `HanaDatabase` |
 | PostgreSQL | `org.dpdns.zerodep.query.postgres.Postgres` | `PostgresDatabase` |
 | MySQL 8 | `org.dpdns.zerodep.query.mysql.Mysql` | `MysqlDatabase` |
+| SQLite 3.46+ | `org.dpdns.zerodep.query.sqlite.Sqlite` | `SqliteDatabase`（见第 18 节） |
 
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
 
@@ -1039,3 +1040,29 @@ db.execute(insertInto(Event.class).values(rows));     // 每行写到它那个�
 - **限制**：一段 SELECT 里最多一张分表（另一张放进 CTE 或单独查询）；所有分表在同一个库，事务不变。
 - **建表**：`db.schema().plan(Event.class)` 按规则里的每张物理表比较和建表，索引和外键名加上同样的后缀；新的月份加进规则后再 `plan` 就会建出来。
 - **跨库分片**交给 ShardingSphere-JDBC 之类的数据源，本库无感知。
+
+## 18. SQLite
+
+`query-sqlite` 用 `org.xerial:sqlite-jdbc`（使用方自己引入）。设计、实测的语义差异和取舍见 [0009](decisions/0009-sqlite-dialect.md)，TypeScript 端与浏览器里的用法见 [TypeScript 的第 19 节](api-typescript.md#19-sqlite-与浏览器)。
+
+```java
+import static org.dpdns.zerodep.query.sqlite.Sqlite.*;
+
+SQLiteConfig config = new SQLiteConfig();
+config.enforceForeignKeys(true);       // 每个连接打开外键检查
+config.setBusyTimeout(5_000);          // 只有一个写者：等别的连接释放写锁
+SQLiteDataSource dataSource = new SQLiteDataSource(config);
+dataSource.setUrl("jdbc:sqlite:app.db");
+
+SqliteDatabase db = Sqlite.database(dataSource, c -> c.schema("ERP", "main"));
+db.list(from(Item.class).where(i -> glob(i.code(), "A*")).select(i -> median(i.price())));
+```
+
+- **schema** 是 ATTACH 进来的库名：要么在取连接时 ATTACH 同名的库，要么用 `schema("ERP", "main")` 映射到主库。
+- **类型**：小数列按 NUMERIC 亲和存储，比较和排序是数值的；但有效数字超过 15 位或要精确求和（金额）时不精确，金额建议存整数的最小单位。日期和时间戳存成 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM:SS.fff` 文本。
+- **语义差异**：`LIKE` 不区分 ASCII 大小写（与 MySQL 默认相同），要区分时用 `glob(e, "A*")`；`currentTimestamp()` 是本地时间。其余函数与三库语义一致，写法见金样例 `spec/render/*.sqlite.sql`。
+- **超时**：sqlite-jdbc 不理会 `setQueryTimeout`，所以 `queryTimeout(...)` 到时由本库调用 `Statement.cancel()` 中断语句。
+- **需要编译选项的函数**：`sqrt`、`power`、`ceil`、`floor`、`mod` 和门面的 `median`、`percentileCont(p, e)`、`percentileDisc(p, e)` 照常渲染，每个数据库实例对每个函数第一次渲染时记一条警告（`System.Logger` `org.dpdns.zerodep.query.sqlite`）。sqlite-jdbc 的构建都带这些函数。
+- **不支持的**：ROLLUP / GROUPING SETS、`grouping()`、`forUpdate()` 渲染时抛出 `UnsupportedOperationException`。SQLite 只有一个写者，在写事务里读写即可。
+- **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有注释，建表时略过并警告一次。`query:pull` 的 `dialect` 写 `sqlite`。
+- 联表写入：`updateJoin` 写成 `UPDATE ... FROM`，`deleteJoin` 写成 `WHERE EXISTS`。

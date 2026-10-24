@@ -2,6 +2,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.1.0] - 未发布
+
+SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本地存储。设计见 [0009](docs/decisions/0009-sqlite-dialect.md)、[0010](docs/decisions/0010-indexeddb-local-store.md)。
+
+### 新增
+
+- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有 `glob`、`median`、`percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
+  - 需要编译选项的函数照常渲染，每个数据库实例第一次渲染时警告（TS 选项 `warn`）；ROLLUP、`grouping()`、`forUpdate()` 报错，TS 从 SQLite 包导入时写不出来。
+  - 结构变更里不能就地改的列归入只报告（REBUILD）。
+- **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
+- **浏览器里的核心包**：`db.transaction(async (tx) => ...)` 的回调收到绑定在事务上的数据库；库内部的多语句写入、追踪写回和迁移都经由它执行，不依赖 AsyncLocalStorage。迁移的校验和改用 Web Crypto，结果不变。
+- **IndexedDB 本地存储** `@zerodep-dev/idb`（不依赖核心包）：`@store` / `@key` / `@index`（unique、multiEntry、optional、boolean / bigint / lowercase 编码器）、`@one` / `@many` 与 `include`；`openLocal` 按版本升级并核对结构；只按索引查询，`scan` / `sortBy` 写在明处；事务回调 await 了别的工作时报 `TransactionClosedError`；批量写入整批回滚并列出失败的行；实时查询按仓库失效，并经由 BroadcastChannel 通知其他标签页；`QuotaError`、`persist`、`estimate`。
+- 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
+
 ## [2.0.0] - 未发布
 
 查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。

@@ -7,7 +7,9 @@
 - 实体与场景：`typescript/test/src/fixtures/erp.ts`、`fixtures/scenarios.ts`；
 - 金样例的查询清单：`typescript/test/src/fixtures/spec-cases.ts`；
 - 各特性的单元测试：`typescript/test/src/unit/`（`relations`、`tree`、`dynamic`、`filter`、`native-sql`、`debug`、`typing`）；
-- 实库测试：`typescript/test/src/live/`。
+- 实库测试：`typescript/test/src/live/`；浏览器里的测试：`typescript/test/src/browser/`。
+
+浏览器里的轻量本地存储（IndexedDB）是另一个包，见 [IndexedDB 本地存储](api-idb.md)。
 
 文中的 SQL 取自单元测试的输出：标识符大写、不加引号，接近 HANA；PostgreSQL 与 MySQL 的写法见 `spec/render/<场景>.<方言>.sql`。
 
@@ -43,7 +45,7 @@
 
 ```ts
 import pg from "pg";
-import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@zerodep-dev/query-postgres"; // 或 @zerodep-dev/query-hana、@zerodep-dev/query-mysql
+import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@zerodep-dev/query-postgres"; // 或 @zerodep-dev/query-hana、@zerodep-dev/query-mysql、@zerodep-dev/query-sqlite
 
 const db = database(new pg.Pool({ /* ... */ }), {
   filters: [filter("tenant", ClientEntity, (r) => r.client.eq("100"))], // 全局过滤器；有名字时可以用 unfiltered("tenant") 单独关掉；回调返回 Cond.EMPTY 就不加条件
@@ -61,6 +63,7 @@ const db = database(new pg.Pool({ /* ... */ }), {
 | SAP HANA | `@zerodep-dev/query-hana` | `@sap/hana-client` 的连接池或连接 | `HanaDatabase` |
 | PostgreSQL | `@zerodep-dev/query-postgres` | `pg` 的 `Pool`、`PoolClient` 或 `Client` | `PostgresDatabase` |
 | MySQL 8 | `@zerodep-dev/query-mysql` | `mysql2/promise` 的连接池或连接 | `MysqlDatabase` |
+| SQLite 3.46+ | `@zerodep-dev/query-sqlite` | `node:sqlite` 的 `DatabaseSync`，或 `@sqlite.org/sqlite-wasm` 的 oo1 `DB`（见第 19 节） | `SqliteDatabase` |
 
 - 传入单个连接时（例如事务中的连接），库直接使用这个连接，不会关闭它。
 - 也可以实现 `Driver` 接口，然后 `new HanaDatabase(driver, options)`。
@@ -503,7 +506,7 @@ WHERE T."total" > ?
 | `r.debugSql()` | 把参数写成字面量，可以直接粘到数据库客户端执行；只用于排查，程序仍然绑定参数 |
 | `String(r)` | SQL 加一行 `-- parameters: ...` |
 | 选项 `printSql: true` 或 `(text) => logger.info(text)` | 打印每条执行过的语句；命中缓存时标 `(cached)`，失败时最后一行是错误信息 |
-| `db.capture(async () => {...})` | 返回这段代码（含其中的异步调用）通过本数据库执行的全部语句（`QueryEvent[]`，含缓存命中），可以嵌套；需要 Node 的 `AsyncLocalStorage` |
+| `db.capture(async () => {...})` | 返回这段代码（含其中的异步调用）通过本数据库执行的全部语句（`QueryEvent[]`，含缓存命中），可以嵌套；需要 Node 的 `AsyncLocalStorage`，浏览器里报错 |
 | `dryRunDriver()` | 不连数据库的驱动：每条查询得到空结果（`count` 为 0），但照常渲染、打印和触发监听器 |
 
 `printSql` 的输出格式（MyBatis 风格）：
@@ -653,7 +656,7 @@ class Seq {
 | `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
 | `.onConflict().update((d) => d.title)`、`.onConflict((d) => d.id).doNothing()` | 插入或更新；不写键时用 `@id` 的列，`update()` 不写列时更新键以外的全部列 |
 | `.with(forUpdate("skipLocked"))` | 加锁读，另有 `"wait"`（默认）、`"nowait"`；HANA 写作 `IGNORE LOCKED` |
-| `await db.transaction(async () => { ... })` | 一个连接上的事务：正常返回提交，抛出时回滚；里面的 `db.*` 调用经 AsyncLocalStorage 用同一个连接，嵌套调用加入外层事务 |
+| `await db.transaction(async (tx) => { ... })` | 一个连接上的事务：正常返回提交，抛出时回滚，嵌套调用加入外层事务。`tx` 是绑定在事务上的同一种数据库，经由它执行的语句都用事务的连接；在 Node 上里面直接用 `db.*` 也经 AsyncLocalStorage 用同一个连接，浏览器里必须用 `tx`（见第 19 节） |
 | `deleteFrom(Doc).where(...)` 在带 `@logicDelete` 的表上 | 改写成 `UPDATE ... SET DELETED = 1`，`.physically()` 才真正删除；查询、连接、关系都自动加"未删除"条件；插入时补上未删除的值；`timestamp` 列记录删除时间（`IS NULL` / `CURRENT_TIMESTAMP`）；`@logicDelete({ epochMillis: true })` 的 bigint 列未删除为 0、删除写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建 |
 
 **审计字段自动填充**：
@@ -701,7 +704,7 @@ const d = await db.tracking(async (t) => {
 }); // 范围结束时 UPDATE ... SET TITLE = ?, VERSION = VERSION + 1 WHERE ID = ? AND VERSION = ?；d.version 已是新值
 ```
 
-`t.one` / `t.optional` / `t.list(表, 查询)` / `t.track(表, 行)` / `t.forget(行)`。行是普通对象或类的实例，字段都是表的列、带主键（和版本）；快照是保留原型的浅拷贝。范围跟着异步上下文走（AsyncLocalStorage），嵌套调用加入外层。
+`t.one` / `t.optional` / `t.list(表, 查询)` / `t.track(表, 行)` / `t.forget(行)`。行是普通对象或类的实例，字段都是表的列、带主键（和版本）；快照是保留原型的浅拷贝。在 Node 上范围跟着异步上下文走（AsyncLocalStorage），嵌套调用加入外层；浏览器里每次调用是独立的范围，读写都经由 `t`。
 
 ## 16. 与 Java 版的差异
 
@@ -803,3 +806,39 @@ await db.list(from(Event).where((e) => e.day.range("2026-01-15", "2026-03-01")).
 
 `monthly(key, "YYYY-MM", "YYYY-MM")`（键是 'YYYY-MM-DD' 日期或时间戳文本）、`modulo(key, n)`（number 或 bigint）、`customShards(key, tables, router)`；
 查询和 `update` / `deleteFrom` 有 `allShards()`、`onShards(...tables)`；迁移里用 `tableBuilder(...).option(dialect, sql)`。规则、选表和渲染出的 SQL 与 Java 完全相同（金样例 `shard-*`）。
+
+## 19. SQLite 与浏览器
+
+`@zerodep-dev/query-sqlite` 在 Node 里接 `node:sqlite`，在浏览器里接官方的 SQLite WASM。设计、实测的语义差异和取舍见 [0009](decisions/0009-sqlite-dialect.md)。
+
+```ts
+import { DatabaseSync } from "node:sqlite";
+import { database, from, glob, median } from "@zerodep-dev/query-sqlite";
+
+const raw = new DatabaseSync("app.db");
+raw.exec("ATTACH DATABASE 'erp.db' AS ERP; PRAGMA foreign_keys = ON"); // 表声明里的 schema 是 ATTACH 进来的库名
+const db = database(raw);                                               // 或 database(raw, { schemas: { ERP: "main" } })
+```
+
+浏览器里把本库和 sqlite-wasm 一起放进一个 Worker，用 `opfs-sahpool` 持久化（不需要 COOP/COEP 响应头）。页面与 Worker 之间的消息由使用方定：
+
+```ts
+// worker.ts（new Worker(url, { type: "module" })）
+import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
+import { database, insertInto } from "@zerodep-dev/query-sqlite";
+
+const sqlite3 = await sqlite3InitModule();
+const pool = await sqlite3.installOpfsSAHPoolVfs({});
+const db = database(new pool.OpfsSAHPoolDb("/app.db"), { schemas: { ERP: "main" } });
+await db.transaction(async (tx) => {
+  await tx.execute(insertInto(Note).values(row));   // 浏览器里事务内必须经由 tx
+});
+```
+
+- **驱动**：两个驱动都是单连接，语句按到达顺序排队，事务期间别的调用等事务结束；事务用 `BEGIN IMMEDIATE`。它们不能中途取消语句，所以 `queryTimeoutMs` 不起作用。需要 ATTACH 别的库、打开外键检查时，在交给 `database(...)` 之前对连接执行。
+- **类型**：小数列按 NUMERIC 亲和存储，比较和排序是数值的，但有效数字超过 15 位或要精确求和（金额）时不精确，金额建议存整数的最小单位；日期和时间戳存成 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM:SS.fff` 文本；整数超出安全范围时读成 `bigint`。
+- **语义差异**：`LIKE` 不区分 ASCII 大小写（与 MySQL 默认相同），要区分时用方言包的 `glob(e, "A*")`；`currentTimestamp()` 是本地时间。其余函数与三库语义一致，写法见金样例 `spec/render/*.sqlite.sql`。
+- **需要编译选项的函数**：`sqrt`、`power`、`ceil`、`floor`、`mod` 和方言包的 `median`、`percentileCont(p, e)`、`percentileDisc(p, e)` 照常渲染。每个数据库实例对每个函数第一次渲染时，经由选项 `warn`（缺省 `console.warn`）记一条警告；`node:sqlite`、官方 WASM 和 sqlite-jdbc 都带这些函数。
+- **不支持的**：从 SQLite 包导入的 `grouping`、`forUpdate` 是 `never` 类型，写不出来；ROLLUP 在渲染时报错。
+- **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有表和列的注释。从库生成基类用 `query-pull-sqlite`。
+- **浏览器里的核心包**：事务、追踪写回和多语句写入都经由事务视图 `tx` 执行，不依赖 AsyncLocalStorage。但浏览器里事务回调中直接用 `db` 的语句不在事务里：单连接驱动上它会一直等到事务结束，所以必须用 `tx`。`capture` 需要 AsyncLocalStorage，浏览器里报错；嵌套的 `tracking` 各自写回。迁移的校验和用 Web Crypto，浏览器里要在安全上下文（https 或 localhost）中。

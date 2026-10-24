@@ -1,6 +1,6 @@
 # 0010 面向前端的 IndexedDB 本地存储
 
-- 状态：草案（2026-10-24），等用户确认
+- 状态：已采纳并实现第一、二阶段（2026-10-24，`feat/sqlite-idb`）；用法见 [api-idb.md](../api-idb.md)
 - 目标版本：2.1（与 0009 的 SQLite 方言分开发布）
 - 范围：只有 TypeScript；不涉及 Java，也不进入现有的 SQL 核心包
 
@@ -126,8 +126,8 @@ const stop = db.from(Note).where("owner").eq("u1").live((rows) => render(rows));
 
 ### 9. 测试
 
-- 单元测试：`fake-indexeddb` 6.x，跑在现有的 `node:test` 里。
-- 浏览器实测：Vitest 浏览器模式加 Playwright 的 chromium、firefox、webkit，新开一个 CI job；覆盖事务的自动提交、升级与 `versionchange`、多标签页通知、配额错误。
+- 单元测试：`fake-indexeddb` 6.2.5（6.2.6 发布不足两周，暂不用），跑在现有的 `node:test` 里；配额错误通过替换 `IDBObjectStore.prototype.put` 模拟。
+- 浏览器实测：实现时改用 `playwright-core` 直接驱动本机或 CI runner 预装的 Chrome，不用 Vitest、也不下载浏览器；放在 TS job 里，覆盖事务的自动提交（await `fetch`）、升级与 `versionchange`、两个标签页之间的实时查询。Firefox 与 WebKit 暂不在 CI 里，发版前手动核对。
 - WebKit 不是真正的 Safari，发版前在真 Safari 上手动过一遍核心场景。
 
 ### 10. 不做
@@ -143,7 +143,8 @@ const stop = db.from(Note).where("owner").eq("u1").live((rows) => render(rows));
 2. 关系的批量装载、实时查询与多标签页、配额封装；浏览器实测的 CI job。
 3. 文档（新开 `docs/api-idb.md`）、示例、发布。
 
-## 待用户确认
+## 已确认（2026-10-24，用户"就按照你的规划去做"）
 
-- 包名 `@zerodep-dev/idb`，以及"不依赖核心包、不共用实体类"。
-- 用装饰器声明（与核心包一致）而不是类型化的构建器：装饰器写不出"哪些字段有索引"的类型，所以 `where` 的索引名在运行时检查；构建器（`store<Note>("notes").key("id").index("owner")`）能在编译期检查索引名，代价是声明方式与核心包不同。
+- 包名 `@zerodep-dev/idb`，不依赖核心包、不共用实体类。
+- 用装饰器声明（与核心包一致）。`where` 的参数类型取类的字段名，是不是索引在构造查询时检查；字段的值类型（数组字段取元素类型、复合索引取元组）在编译期检查。
+- 实现时的补充：复合索引的字段不必单独声明；`include` 与实时查询在第二阶段一起做了；读取一次取键和值没有用 `getAllRecords`，因为主键可以从记录的 keyPath 取得。
