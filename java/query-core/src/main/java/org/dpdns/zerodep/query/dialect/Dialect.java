@@ -23,6 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public abstract class Dialect {
     private final Map<FunctionDef, FunctionRenderer> functions = new ConcurrentHashMap<>();
 
+    /** 按名字登记的函数和聚合写法，用于没有 {@link FunctionDef} 的调用（例如 LPAD、STDDEV_SAMP）。 */
+    private final Map<String, FunctionRenderer> calls = new ConcurrentHashMap<>();
+
     /** 供各方言继承。 */
     protected Dialect() { }
 
@@ -58,6 +61,9 @@ public abstract class Dialect {
         "RIGHT", "ROLLUP", "ROWID", "SELECT", "SESSION_USER", "SET", "SIMILAR", "SOME", "SQL", "START", "SYMMETRIC", "SYSTEM_USER", "TABLE",
         "TABLESAMPLE", "THEN", "TO", "TOP", "TRAILING", "TRUE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES", "VARIADIC",
         "VERBOSE", "WHEN", "WHERE", "WHILE", "WINDOW", "WITH");
+
+    /** 写出 FROM、JOIN、UPDATE、DELETE 里跟在来源后面的别名：默认 {@code 来源 别名}，SQLite 写 {@code 来源 AS 别名}。 */
+    public void sourceAlias(SqlWriter w, String alias) { w.sql(" ").alias(alias); }
 
     /** 返回别名在 SQL 中的写法。别名来自 {@link SqlWriter#aliasFor}，已经折叠过大小写。 */
     public String alias(String alias) { return quote(alias); }
@@ -257,6 +263,45 @@ public abstract class Dialect {
 
     /** 本方言登记的函数渲染器；没有登记则为 null，由 {@link FunctionDef} 退回标准写法。 */
     public final FunctionRenderer renderer(FunctionDef function) { return functions.get(function); }
+
+    /**
+     * 按名字登记一个普通函数或聚合的写法，覆盖 {@code NAME(arg, ...)}，供子类在构造函数中调用。
+     * 聚合带 {@code filter(...)} 时，参数已经换成 {@code CASE WHEN 条件 THEN 参数 END}。
+     */
+    protected final void registerCall(String name, FunctionRenderer renderer) { calls.put(name, renderer); }
+
+    /** 按名字登记的写法；没有登记则为 null，写成 {@code NAME(arg, ...)}。 */
+    public final FunctionRenderer callRenderer(String name) { return calls.get(name); }
+
+    /** 聚合 name 能否加 OVER (...) 当窗口函数用；方言用公式代替的聚合（例如 SQLite 的标准差）不能。 */
+    public boolean windowable(String name) { return true; }
+
+    /** 写出类型转换；默认 {@code CAST(inner AS 类型名)}，类型名见 {@link #castType}。 */
+    public void cast(SqlWriter w, Renderable inner, CastType<?> target) {
+        w.sql("CAST(").render(inner).sql(" AS ").sql(castType(target)).sql(")");
+    }
+
+    /**
+     * 写出与子查询的量化比较 {@code left op ANY (子查询)} / {@code ALL}。subquery 的列不带名字，named 是同一个子查询但列带名字，
+     * column 是那一列的名字；没有 ANY / ALL 的方言（SQLite）用 named 改写成 EXISTS。
+     */
+    public void quantified(SqlWriter w, Renderable left, String operator, String quantifier, Renderable subquery, Renderable named, String column) {
+        w.render(left).sql(" " + operator + " " + quantifier + " (").render(subquery).sql(")");
+    }
+
+    /** 集合运算里一组括号的开头；SQLite 不能给复合查询的一段加括号，写成 {@code SELECT * FROM (}。 */
+    public String groupOpen() { return "("; }
+
+    /** 集合运算里一组括号的结尾。 */
+    public String groupClose() { return ")"; }
+
+    /** 驱动是否按 {@code setQueryTimeout} 取消超时的语句；不按的（sqlite-jdbc）由执行器到时调用 {@code cancel()}。 */
+    public boolean honoursQueryTimeout() { return true; }
+
+    /** 写出算术运算 {@code (a op b op ...)}；括号保证嵌套时优先级不变。 */
+    public void arithmetic(SqlWriter w, String operator, List<? extends Renderable> operands) {
+        w.sql("(").join(operands, " " + operator + " ").sql(")");
+    }
 
     @Override public String toString() { return name(); }
 }

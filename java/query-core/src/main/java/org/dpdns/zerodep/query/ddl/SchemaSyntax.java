@@ -35,6 +35,15 @@ public abstract class SchemaSyntax {
     /** 能否就地改成不是放宽的类型（缩短、改类型族）；HANA 不能（实测报 feature not supported）。 */
     public boolean changesTypesInPlace() { return true; }
 
+    /** 能否就地改列的类型、可空和默认值；SQLite 不能，只能新建表、搬数据、改名，所以这些差异只报告。 */
+    public boolean altersColumns() { return true; }
+
+    /** 能否保存表和列的注释；SQLite 不能，建表时略过注释。 */
+    public boolean storesComments() { return true; }
+
+    /** 外键是否只能写在建表语句里（SQLite）：建表时内联外键，给已有的表加外键只报告。 */
+    public boolean inlineForeignKeys() { return false; }
+
     /** DDL 是否能在事务里回滚（PostgreSQL 能，MySQL 每条隐式提交，HANA 默认自动提交）。 */
     public boolean transactionalDdl() { return false; }
 
@@ -54,7 +63,10 @@ public abstract class SchemaSyntax {
             if (i > 0) sql.append(", ");
             sql.append(columnDefinition(t.columns().get(i)));
         }
-        if (!t.primaryKey().isEmpty()) sql.append(", PRIMARY KEY (").append(names(t.primaryKey())).append(")");
+        if (!t.primaryKey().isEmpty() && !inlinePrimaryKey(t)) sql.append(", PRIMARY KEY (").append(names(t.primaryKey())).append(")");
+        if (inlineForeignKeys()) {
+            for (TableDef.ForeignKey f : t.foreignKeys()) sql.append(", ").append(foreignKeyClause(f));
+        }
         sql.append(")").append(tableOptions(t));
         for (TableDef.Option o : t.options()) {
             if (o.dialect().isInstance(dialect)) sql.append(" ").append(o.sql());
@@ -63,6 +75,15 @@ public abstract class SchemaSyntax {
         out.addAll(comments(t));
         for (TableDef.Index i : t.indexes()) out.add(createIndex(t, i));
         return out;
+    }
+
+    /** 主键是否已经写在列定义里（SQLite 的 {@code INTEGER PRIMARY KEY AUTOINCREMENT}），这时不再写表级的 PRIMARY KEY。 */
+    protected boolean inlinePrimaryKey(TableDef t) { return false; }
+
+    /** 外键子句 {@code CONSTRAINT 名 FOREIGN KEY (列) REFERENCES schema.表 (列)}，内联和 ALTER TABLE 共用。 */
+    protected String foreignKeyClause(TableDef.ForeignKey f) {
+        String target = f.referencedSchema().isEmpty() ? quote(f.referencedTable()) : quote(f.referencedSchema()) + "." + quote(f.referencedTable());
+        return "CONSTRAINT " + quote(f.name()) + " FOREIGN KEY (" + names(f.columns()) + ") REFERENCES " + target + " (" + names(f.referencedColumns()) + ")";
     }
 
     /** CREATE TABLE 的关键字；HANA 写成 {@code CREATE COLUMN TABLE}。 */
@@ -120,11 +141,7 @@ public abstract class SchemaSyntax {
     }
 
     /** 加外键。 */
-    public String addForeignKey(TableDef t, TableDef.ForeignKey f) {
-        String target = f.referencedSchema().isEmpty() ? quote(f.referencedTable()) : quote(f.referencedSchema()) + "." + quote(f.referencedTable());
-        return "ALTER TABLE " + table(t) + " ADD CONSTRAINT " + quote(f.name()) + " FOREIGN KEY (" + names(f.columns()) + ") REFERENCES " + target
-            + " (" + names(f.referencedColumns()) + ")";
-    }
+    public String addForeignKey(TableDef t, TableDef.ForeignKey f) { return "ALTER TABLE " + table(t) + " ADD " + foreignKeyClause(f); }
 
     // ---------- 比较 ----------
 

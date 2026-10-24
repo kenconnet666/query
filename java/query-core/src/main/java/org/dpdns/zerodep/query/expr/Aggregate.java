@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.expr;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.FunctionRenderer;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.type.SqlType;
@@ -50,8 +51,16 @@ public final class Aggregate<T> extends Expr<T> {
     /** 加上 OVER (...) 变成窗口函数；window 从空窗口开始配置，例如 {@code over(w -> w.partitionBy(x))}。 */
     public Expr<T> over(UnaryOperator<Window> window) { return new Over<>(this, window.apply(Window.EMPTY)); }
 
-    /** 写出 {@code NAME([DISTINCT ]args)}；有过滤条件时参数换成 {@code CASE WHEN 条件 THEN 参数 END}。 */
+    /**
+     * 写出 {@code NAME([DISTINCT ]args)}；有过滤条件时参数换成 {@code CASE WHEN 条件 THEN 参数 END}。
+     * 方言按名字登记了写法时（不带 DISTINCT）交给它，参数同样先套上过滤条件。
+     */
     @Override public void render(SqlWriter w) {
+        FunctionRenderer custom = distinct ? null : w.dialect().callRenderer(name);
+        if (custom != null) {
+            custom.render(w, filter == null ? args : args.stream().map(a -> (Renderable) x -> x.sql("CASE WHEN ").render(filter).sql(" THEN ").render(a).sql(" END")).toList());
+            return;
+        }
         w.sql(name).sql("(");
         if (distinct) w.sql("DISTINCT ");
         if (filter != null) {
@@ -84,8 +93,13 @@ public final class Aggregate<T> extends Expr<T> {
             this.window = window;
         }
 
-        /** 写出 {@code function OVER (window)}。 */
-        @Override public void render(SqlWriter w) { w.render(function).sql(" OVER (").render(window).sql(")"); }
+        /** 写出 {@code function OVER (window)}；方言不能把这个聚合当窗口函数时报错。 */
+        @Override public void render(SqlWriter w) {
+            if (function instanceof Aggregate<?> a && !w.dialect().windowable(a.name)) {
+                throw new UnsupportedOperationException(a.name + "(...) OVER (...) is not supported on " + w.dialect().name());
+            }
+            w.render(function).sql(" OVER (").render(window).sql(")");
+        }
 
         /** 窗口化的聚合沿用聚合的列名。 */
         @Override public String nameHint() { return function.nameHint(); }

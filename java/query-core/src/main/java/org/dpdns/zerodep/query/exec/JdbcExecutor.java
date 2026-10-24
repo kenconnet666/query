@@ -260,8 +260,7 @@ public final class JdbcExecutor {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Object insertKey(Connection connection, Rendered statement, String column, SqlType<?> type) throws SQLException {
         long start = System.nanoTime();
-        try (PreparedStatement ps = dialect.prepareInsert(connection, statement.sql(), column)) {
-            configure(ps, statement, null);
+        try (PreparedStatement ps = configure(dialect.prepareInsert(connection, statement.sql(), column), statement, null)) {
             long rows = ps.executeUpdate();
             ResultSet rs = dialect.generatedKey(connection, ps);
             try {
@@ -373,23 +372,26 @@ public final class JdbcExecutor {
 
     /** 创建 PreparedStatement 并设置提取行数、超时和参数；中途失败会先关闭它再抛出。 */
     private PreparedStatement prepare(Connection connection, Rendered statement, Duration timeout) throws SQLException {
-        PreparedStatement ps = connection.prepareStatement(statement.sql());
+        return configure(connection.prepareStatement(statement.sql()), statement, timeout);
+    }
+
+    /**
+     * 设置提取行数、超时和参数，返回要使用的语句：驱动不按 setQueryTimeout 取消时（见 {@link Dialect#honoursQueryTimeout}），
+     * 返回的语句带一个到时调用 {@code cancel()} 的看门狗，关闭语句时撤销。出错时关闭 ps。
+     */
+    private PreparedStatement configure(PreparedStatement ps, Rendered statement, Duration timeout) throws SQLException {
         try {
-            configure(ps, statement, timeout);
-            return ps;
+            if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL 传 Integer.MIN_VALUE 表示逐行流式读取
+            Duration limit = timeout != null ? timeout : defaultTimeout;
+            boolean watch = limit != null && !dialect.honoursQueryTimeout();
+            if (limit != null && !watch) ps.setQueryTimeout(seconds(limit));
+            connections.prepared(ps);   // 在超时之后，连接来源（例如 Spring 的事务超时）能看到并调整它
+            bind(ps, statement);
+            return watch ? Watchdog.guard(ps, limit) : ps;
         } catch (SQLException | RuntimeException e) {
             ps.close();
             throw e;
         }
-    }
-
-    /** 设置提取行数、超时和参数。 */
-    private void configure(PreparedStatement ps, Rendered statement, Duration timeout) throws SQLException {
-        if (fetchSize != 0) ps.setFetchSize(fetchSize); // MySQL 传 Integer.MIN_VALUE 表示逐行流式读取
-        Duration limit = timeout != null ? timeout : defaultTimeout;
-        if (limit != null) ps.setQueryTimeout(seconds(limit));
-        connections.prepared(ps);
-        bind(ps, statement);
     }
 
     /** 按语句的绑定依次设置参数。 */

@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.expr;
 
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.FunctionRenderer;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.select.Query;
@@ -88,9 +89,14 @@ public final class Nodes {
             this.args = List.copyOf(args);
         }
 
-        /** 有函数定义时交给它渲染，否则按函数名写成普通调用。 */
+        /** 有函数定义时交给它渲染，否则用方言按名字登记的写法，都没有时写成普通调用。 */
         @Override public void render(SqlWriter w) {
-            if (function != null) function.render(w, args);
+            if (function != null) {
+                function.render(w, args);
+                return;
+            }
+            FunctionRenderer custom = w.dialect().callRenderer(name);
+            if (custom != null) custom.render(w, args);
             else FunctionDef.call(w, name, args);
         }
 
@@ -113,8 +119,8 @@ public final class Nodes {
             this.operands = List.copyOf(operands);
         }
 
-        /** 写成 {@code (a op b op ...)}。括号保证嵌套时优先级不变。 */
-        @Override public void render(SqlWriter w) { w.sql("(").join(operands, " " + operator + " ").sql(")"); }
+        /** 写成 {@code (a op b op ...)}，由方言决定（SQLite 的除法先转成浮点）。 */
+        @Override public void render(SqlWriter w) { w.dialect().arithmetic(w, operator, operands); }
     }
 
     /** 取负。操作数放在括号里，负数字面量就不会和前面的减号拼成注释。 */
@@ -146,10 +152,8 @@ public final class Nodes {
             this.target = target;
         }
 
-        /** 写成 {@code CAST(inner AS 方言类型)}。 */
-        @Override public void render(SqlWriter w) {
-            w.sql("CAST(").render(inner).sql(" AS ").sql(w.dialect().castType(target)).sql(")");
-        }
+        /** 写成 {@code CAST(inner AS 方言类型)}，由方言决定（SQLite 的日期写成 date(...)）。 */
+        @Override public void render(SqlWriter w) { w.dialect().cast(w, inner, target); }
 
         /** 类型转换沿用原列名。 */
         @Override public String nameHint() { return inner.nameHint(); }
@@ -268,8 +272,11 @@ public final class Nodes {
             this.right = right;
         }
 
-        /** 写出 {@code left op right}。 */
-        @Override public void render(SqlWriter w) { w.render(left).sql(" " + operator + " ").render(right); }
+        /** 写出 {@code left op right}；右边是 ANY / ALL 子查询时交给方言（SQLite 改写成 EXISTS）。 */
+        @Override public void render(SqlWriter w) {
+            if (right instanceof Quantified<?> q) w.dialect().quantified(w, left, operator, q.quantifier, x -> QueryRenderer.subquery(x, q.query), x -> QueryRenderer.named(x, q.query), q.query.labels().get(0));
+            else w.render(left).sql(" " + operator + " ").render(right);
+        }
     }
 
     /** 用 AND 连接的多个条件；保留各项，供 {@code first(...)} 拆开连接条件。 */

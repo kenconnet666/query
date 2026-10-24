@@ -21,11 +21,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -57,10 +60,27 @@ public abstract class RenderSpec {
     /** Cases only this dialect renders. */
     protected Map<String, SpecCase> dialectCases() { return Map.of(); }
 
+    /** 本方言不支持的共享用例：渲染时必须抛出 UnsupportedOperationException，也不能有金样例文件。 */
+    protected Set<String> unsupportedCases() { return Set.of(); }
+
     private Map<String, SpecCase> cases() {
         Map<String, SpecCase> all = new LinkedHashMap<>(SpecCases.shared());
+        all.keySet().removeAll(unsupportedCases());
         all.putAll(dialectCases());
         return all;
+    }
+
+    @TestFactory
+    Stream<DynamicTest> 不支持的用例渲染时报错() {
+        Database plain = database(NO_CONNECTIONS, Shards::configure);
+        return unsupportedCases().stream().map(name -> DynamicTest.dynamicTest(dialect() + " 不支持 " + name, () -> {
+            Object statement = SpecCases.shared().get(name).query().get();
+            assertThrows(UnsupportedOperationException.class, () -> {
+                if (statement instanceof Write w) plain.render(w);
+                else plain.render((Query<?>) statement);
+            });
+            assertFalse(Files.exists(directory().resolve(name + "." + dialect() + ".sql")), name + " has a golden file but is unsupported");
+        }));
     }
 
     @TestFactory

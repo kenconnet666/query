@@ -106,6 +106,12 @@ public class Sql extends Rows {
         w.sql(")");
     });
 
+    /** 当前日期；SQLite 写成本地时区的 {@code date('now', 'localtime')}。 */
+    public static final FunctionDef CURRENT_DATE = FunctionDef.of("CURRENT_DATE", (w, args) -> w.sql("CURRENT_DATE"));
+
+    /** 当前时间戳（会话时区）；SQLite 写成本地时区的 {@code strftime(..., 'now', 'localtime')}。 */
+    public static final FunctionDef CURRENT_TIMESTAMP = FunctionDef.of("CURRENT_TIMESTAMP", (w, args) -> w.sql("CURRENT_TIMESTAMP"));
+
     /** 只供方言门面继承，不能直接实例化。 */
     protected Sql() { }
 
@@ -694,10 +700,10 @@ public class Sql extends Rows {
     public static Expr<Boolean> bool(Cond condition) { return new Nodes.Truth(condition); }
 
     /** 当前日期。 */
-    public static Expr<LocalDate> currentDate() { return new Nodes.Raw<>(SqlType.of(LocalDate.class), "CURRENT_DATE"); }
+    public static Expr<LocalDate> currentDate() { return Nodes.call(SqlType.of(LocalDate.class), CURRENT_DATE, List.of()); }
 
     /** 当前时间戳。 */
-    public static Expr<LocalDateTime> currentTimestamp() { return new Nodes.Raw<>(SqlType.of(LocalDateTime.class), "CURRENT_TIMESTAMP"); }
+    public static Expr<LocalDateTime> currentTimestamp() { return Nodes.call(SqlType.of(LocalDateTime.class), CURRENT_TIMESTAMP, List.of()); }
 
     // ---------- 一个 lambda 返回多个键或排序项 ----------
 

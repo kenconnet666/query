@@ -91,7 +91,7 @@ public final class Ref<E> {
     public void renderSource(SqlWriter w) {
         if (w.state(this) instanceof List<?> shards) Sharding.renderSource(w, this, (List<String>) shards);
         else source.renderSource(w);
-        w.sql(" ").alias(alias(w));
+        w.dialect().sourceAlias(w, alias(w));
     }
 
     /** 调试用，形如 {@code Ref(Lips)}。 */

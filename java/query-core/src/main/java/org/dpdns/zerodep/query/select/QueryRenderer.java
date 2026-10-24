@@ -69,9 +69,9 @@ public final class QueryRenderer {
         Query.Combination c = q.combination();
         for (int i = 0; i < arms.size(); i++) {
             if (i > 0) w.sql("\n").sql(w.dialect().setOperator(c.operators().get(i - 1))).sql("\n");
-            w.sql("(".repeat(c.opens(i)));
+            w.sql(w.dialect().groupOpen().repeat(c.opens(i)));
             arm(w, arms.get(i), q.labels(), i == 0 && labeled, ordered);
-            w.sql(")".repeat(c.closes(i)));
+            w.sql(w.dialect().groupClose().repeat(c.closes(i)));
         }
         if (arms.size() > 1) w.dialect().limit(w, q.limitValue(), q.offsetValue());
     }

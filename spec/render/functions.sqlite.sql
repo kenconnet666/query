@@ -1,0 +1,3 @@
+-- parameters: []
+SELECT UPPER(lips.MATNR) AS upper, LOWER(lips.VRKME) AS lower, TRIM(lips.VBELN) AS trimmed, (lips.MATNR || '-' || lips.VRKME) AS joined, COALESCE(lips.VRKME, 'EA') AS fallback, NULLIF(lips.VRKME, '') AS emptyUnit, (lips.LFIMG + lips.LFIMG) AS total, (lips.LFIMG - 1) AS difference, (lips.LFIMG * 2) AS product, (CAST(lips.LFIMG AS REAL) / 3) AS ratio, ABS(lips.LFIMG) AS magnitude, ROUND(lips.LFIMG, 1) AS rounded, CAST(lips.LFIMG AS TEXT) AS asText, CAST(lips.MATNR AS NUMERIC) AS asDecimal, CAST(lips.LFIMG AS INTEGER) AS asInteger, CAST(lips.LFIMG AS REAL) AS asDouble, date(lips.VGBEL) AS asDate, rtrim(rtrim(strftime('%Y-%m-%d %H:%M:%f', lips.VGBEL), '0'), '.') AS asTimestamp
+FROM QUERY_IT.LIPS AS lips

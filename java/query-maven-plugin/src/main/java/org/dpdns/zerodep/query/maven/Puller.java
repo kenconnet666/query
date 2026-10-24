@@ -7,6 +7,7 @@ import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.hana.Hana;
 import org.dpdns.zerodep.query.mysql.Mysql;
 import org.dpdns.zerodep.query.postgres.Postgres;
+import org.dpdns.zerodep.query.sqlite.Sqlite;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +38,7 @@ public final class Puller {
     /**
      * 拉取的设置。
      *
-     * @param dialect         hana、postgres 或 mysql
+     * @param dialect         hana、postgres、mysql 或 sqlite
      * @param url             JDBC URL
      * @param user            用户
      * @param password        密码；在 pom 里用 {@code ${env.X}} 引用环境变量，不要写明文
@@ -89,7 +90,8 @@ public final class Puller {
             case "hana" -> Hana.database(connections, null);
             case "postgres" -> Postgres.database(connections, null);
             case "mysql" -> Mysql.database(connections, null);
-            default -> throw new IllegalArgumentException("dialect must be hana, postgres or mysql, got " + config.dialect());
+            case "sqlite" -> Sqlite.database(connections, null);
+            default -> throw new IllegalArgumentException("dialect must be hana, postgres, mysql or sqlite, got " + config.dialect());
         };
     }
 }

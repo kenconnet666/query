@@ -64,7 +64,8 @@ public final class SchemaPlan {
         List<String> foreignKeys = new ArrayList<>();
         for (Change c : changes) {
             if (c.risk == Risk.REPORT || (c.risk == Risk.DESTRUCTIVE && !destructive)) continue;
-            for (String s : c.statements) (s.contains(" FOREIGN KEY (") ? foreignKeys : head).add(s);
+            // 只有给已有的表加外键的 ALTER TABLE 放到最后；建表语句里内联的外键（SQLite）随建表执行。
+            for (String s : c.statements) (s.startsWith("ALTER TABLE") && s.contains(" FOREIGN KEY (") ? foreignKeys : head).add(s);
         }
         head.addAll(foreignKeys);
         return head;

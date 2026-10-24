@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
  */
 @Mojo(name = "pull", threadSafe = true)
 public class PullMojo extends AbstractMojo {
-    /** hana、postgres 或 mysql。 */
+    /** hana、postgres、mysql 或 sqlite（SQLite 的 schema 是 ATTACH 的库名，主库写 main）。 */
     @Parameter(property = "query.dialect", required = true)
     private String dialect;
 

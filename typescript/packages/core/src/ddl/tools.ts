@@ -42,7 +42,8 @@ export class SchemaPlan {
     const foreignKeys: string[] = [];
     for (const c of this.changes) {
       if (c.risk === "REPORT" || (c.risk === "DESTRUCTIVE" && !this.destructive)) continue;
-      for (const s of c.statements) (s.includes(" FOREIGN KEY (") ? foreignKeys : head).push(s);
+      // 只有给已有的表加外键的 ALTER TABLE 放到最后；建表语句里内联的外键（SQLite）随建表执行。
+      for (const s of c.statements) (s.startsWith("ALTER TABLE") && s.includes(" FOREIGN KEY (") ? foreignKeys : head).push(s);
     }
     return [...head, ...foreignKeys];
   }
