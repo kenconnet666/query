@@ -57,7 +57,24 @@
 
 ## 下一步
 
-阶段 A、阶段 B 和写入能力都已完成并推送到 `feat/v2`。接下来等用户决定上面的待定事项：合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎。
+阶段 A、阶段 B 和写入能力都已完成并推送到 `feat/v2`。合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
+
+2026-10-24 对照 EasyQuery 讨论后的规划（用户已确认"暂不做代码生成"，各批的 API 待用户确认后再动手；每批两端、三方言同步，带金样例与实库场景）：
+
+- **代码生成：暂不做**。现有的表接口加运行时代理已覆盖三级继承想要的效果（共用父接口、同表多视图、模板父接口、子接口覆盖注解），生成只省"照库抄列"，且只声明用到的列时量不大。讨论过的方案（Maven 插件连库生成、两级或三级继承、文件内生成区）记在会话里，需要时再评估。
+- **第 1 批 写入修正与补强**：
+  - 修正：UPDATE/DELETE 的 WHERE 里用多对一导航（如 TS `l.mara.materialType`）会渲染出没有连接的 `MARA.MTART`，SQL 无效（TS 已复现，Java 待确认）。改为把带导航的条件包成 `EXISTS (SELECT 1 FROM <单行种子> LEFT JOIN 关联表 ON ... WHERE 条件)`（HANA 用 DUMMY，前身仓库实测过），被连接表的过滤器进 ON；SET 里引用导航先报错。
+  - `update(T).byId(newRow).diffFrom(oldRow)`：只 SET 变化的列，没有变化时不发语句（取代 EasyQuery 式的线程跟踪；已核实其快照在 0 行时也刷新、新版本不写回对象两处缺陷）。
+  - 列级写入策略：`@ReadOnly`（从不写）与 `@WriteOnce`（只在插入时写，例如创建时间），TS 同名小写装饰器。
+  - `db.exists(q)`。
+- **第 2 批 配置与过滤**：
+  - 运行时 schema 映射：`Config.schema(Map/Function)`，SAP 各环境 schema 不同时不改代码。
+  - 按类别关闭过滤：过滤器带名字 `filter("tenant", Client.class, ...)`；`unfiltered()` 仍是全部关闭，另加 `unfiltered("tenant")` 和只看已删除行的 `withDeleted()`；写语句加 `withoutFills()`（数据迁移保留原审计值）。
+  - 枚举按编码映射：实现 `CodeEnum<C>` 的枚举自动按 `code()` 存取（Java；TS 的枚举本身就是值）。
+  - 逻辑删除记删除时刻的毫秒数：未删除为 0，唯一约束 `(key, deleted)` 才拦得住重复的未删除行。
+- **第 3 批 函数**：`lpad`、`rpad`（物料号补零）、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours`/`addMinutes`/`addSeconds`、按月截断的日期。每个都先在三库实测截断、负数、NULL 的行为，不一致的留在方言包；`length` 因 HANA 按 UTF-16 码元计数，保持方言函数；周相关函数推后。
+- **第 4 批 方言包的联表 UPDATE/DELETE**：PG `UPDATE ... FROM` / `DELETE ... USING`，MySQL `UPDATE a JOIN b ... SET` / `DELETE a FROM a JOIN b`，HANA 关联更新改写成 `MERGE ... USING (SELECT 主键, 新值 ...)`（目标要有 `@Id`，多匹配报 689），关联删除用 DUMMY 加 EXISTS。被连接表的过滤器进 ON（PG 进 WHERE），禁止 ORDER BY / LIMIT，文档写明"每个目标行至多匹配一行"。先实测：HANA 目标别名、MERGE 的影响行数、MySQL 驱动返回匹配行数还是改动行数。
+- **之后（随流程引擎）**：多对多（经过中间表）、显式的一层子行同步与中间表同步（Jimmer 式，不做跟踪）、内存装树、条件作为 SELECT 列、`query:check`（连库核对已声明的列，不生成代码）。
 
 ## 换电脑后的准备
 

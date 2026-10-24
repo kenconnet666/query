@@ -62,7 +62,7 @@
 | 值转换 | `ValueConverter<T, P>`、`@Column(conversion)` | `Converter<J, D>`，配合组合注解 `@ConvertWith` 使用 | 1 |
 | 枚举 | `@Enumerated` 等 | 默认按名称映射；按编码映射由转换器提供 | 1 |
 | SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
-| 加密列 | `@Encryption` | 读取一侧可用 `@ReadAs`；参数一侧的包装与写入一起评估 | 3 |
+| 加密列 | `@Encryption` | `Converter` 在写入、读取和比较参数三处都转换，应用侧加解密可直接实现，等值查询可用；不做可以 LIKE 的分段加密 | 1 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
 | 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`） | 2.0 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
