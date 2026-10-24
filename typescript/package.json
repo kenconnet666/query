@@ -15,7 +15,7 @@
     "test:browser": "tsc -b && node --test \"test/dist/browser/**/*.test.js\""
   },
   "devDependencies": {
-    "typescript": "7.0.2"
+    "typescript": "7.1.0-beta"
   },
   "packageManager": "pnpm@11.22.0"
 }

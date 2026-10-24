@@ -109,7 +109,7 @@ $env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
 
 GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及三个数据库的实库场景。PostgreSQL、MySQL 按语言各拆成两个 job；HANA 在一个 job 里先跑 Java、再跑 TypeScript。SQLite 不需要容器：Java 的实库场景随单元测试运行，TS 的 `node:sqlite` 与 WASM 场景和 Chrome 里的浏览器测试在 TS 的 job 里运行。
 
-TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.0.2：
+TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.1.0-beta：
 
 ```powershell
 cd typescript

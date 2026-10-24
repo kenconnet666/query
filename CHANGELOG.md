@@ -14,6 +14,7 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
 - **浏览器里的核心包**：`db.transaction(async (tx) => ...)` 的回调收到绑定在事务上的数据库；库内部的多语句写入、追踪写回和迁移都经由它执行，不依赖 AsyncLocalStorage。迁移的校验和改用 Web Crypto，结果不变。
 - **IndexedDB 本地存储** `@zerodep-dev/idb`（不依赖核心包）：`@store` / `@key` / `@index`（unique、multiEntry、optional、boolean / bigint / lowercase 编码器）、`@one` / `@many` 与 `include`；`openLocal` 按版本升级并核对结构；只按索引查询，`scan` / `sortBy` 写在明处；事务回调 await 了别的工作时报 `TransactionClosedError`；批量写入整批回滚并列出失败的行；实时查询按仓库失效，并经由 BroadcastChannel 通知其他标签页；`QuotaError`、`persist`、`estimate`。
+- 开发编译器升到 TypeScript 7.1.0-beta；`exclude` / `excludeIf` 的返回形态改用具名类型 `ExcludedKeys<R, K>`（7.1 不再把两处同样的内联映射类型当成同一个类型），核心包导出它。
 - 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
 
 ## [2.0.0] - 未发布

@@ -167,4 +167,5 @@
 - **sqlite-wasm 在 Node 里**：只支持内存库；QUERY_IT 也 ATTACH 成 `:memory:`。浏览器里 `ATTACH 'file:/x.db?vfs=opfs-sahpool'` 可用。
 - **fake-indexeddb**：用 6.2.5；它模拟不了真实的自动提交时机，相关的断言放在浏览器测试里。IDB 的 `anyOf` 结果按索引顺序，同一个值里的行再按主键排序。
 - **npm 依赖的版本**：新加的依赖选发布满两周的版本（fake-indexeddb 6.2.6 只有 8 天，所以用 6.2.5）。
+- **TypeScript 7.1**：开发编译器是 7.1.0-beta（与 vue-tsx-pro 一致）。7.1 不再把两处写法相同的内联映射类型当成同一个类型（`exclude` 与 `excludeIf` 报 TS2719），要抽成具名类型；用户代码推断出的类型引用到它时，具名类型还要从包里导出（否则 TS2883）。
 - **IndexedDB 的事务结束时机**：CI 的 Chrome 上，回调 await 了 fetch 之后事务已经结束，但 `complete` 事件还没派发，`objectStore()` 报 `InvalidStateError`。按规范它只在事务已结束时报这个错，所以不看 `#done`，一律换成 `TransactionClosedError`。本机复现不了，只在 CI 上出现。

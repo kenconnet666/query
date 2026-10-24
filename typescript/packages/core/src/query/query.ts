@@ -366,12 +366,12 @@ export class Query<R> {
    * 有分组时，与它们相同的分组键（以及按这些键的排序）一起去掉，于是同一个查询可以按用户选的维度汇总。
    * 名字是结果的键，嵌套对象的键去掉它下面的全部列；不分大小写和下划线，不存在的名字报错。
    */
-  exclude<K extends keyof R & string>(...names: K[]): Query<{ [P in keyof R]: P extends K ? Excluded<R[P]> : R[P] }> {
+  exclude<K extends keyof R & string>(...names: K[]): Query<ExcludedKeys<R, K>> {
     return this.#omit(this.#positionsOf(names, "exclude"));
   }
 
   /** condition 为真时才 {@link exclude}，例如 `.excludeIf(!withText, "text")`。 */
-  excludeIf<K extends keyof R & string>(condition: boolean, ...names: K[]): Query<{ [P in keyof R]: P extends K ? Excluded<R[P]> : R[P] }> {
+  excludeIf<K extends keyof R & string>(condition: boolean, ...names: K[]): Query<ExcludedKeys<R, K>> {
     return condition ? this.exclude(...names) : (this as never);
   }
 
@@ -541,6 +541,9 @@ export type Fields<C> = { [K in keyof C as K extends WritableKeys<C> ? (C[K] ext
 
 /** 被排除后的值：叶子可能为 null，嵌套对象保持结构（它的每一列都是 null）。 */
 export type Excluded<V> = V extends Record<string, unknown> ? { [K in keyof V]: Excluded<V[K]> } : V | null;
+
+/** `exclude(...names)` 之后的结果形态：names 里的键按 {@link Excluded} 变成可空，其余不变。 */
+export type ExcludedKeys<R, K extends keyof R> = { [P in keyof R]: P extends K ? Excluded<R[P]> : R[P] };
 
 /** 列名与名字的比较形式：去掉下划线并忽略大小写，与 Java 一致。 */
 function normalize(name: string): string {
