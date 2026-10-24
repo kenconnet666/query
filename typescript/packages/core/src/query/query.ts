@@ -3,7 +3,7 @@ import { all, Cond, Expr, isWindow, Literal, toOrder, withSkipEmpty, type Order,
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
-import { Children, isGrouped, Many, type Grouped } from "./many.js";
+import { Children, isGrouped, Many, type AnyMany, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
@@ -168,11 +168,11 @@ function list<T>(value: T | readonly T[]): readonly T[] {
  * 对象投影：每个叶子是一个表达式，嵌套的对象得到嵌套的结果。
  * 一对多（{@link Many}）和关系目标的引用不是列，会被略过，所以展开带关系的引用也能直接投影。
  */
-export type Projection = { readonly [key: string]: Expr<any> | Projection | Many<any> | Children<any> };
+export type Projection = { readonly [key: string]: Expr<any> | Projection | AnyMany | Children<any> };
 
 /** 投影的结果类型；略过一对多和关系目标的引用，与运行时一致。 */
 export type Shape<P> = {
-  -readonly [K in keyof P as K extends string ? (P[K] extends Many<any> | { readonly [RELATED]: true } ? never : K) : never]: P[K] extends Children<infer C>
+  -readonly [K in keyof P as K extends string ? (P[K] extends AnyMany | { readonly [RELATED]: true } ? never : K) : never]: P[K] extends Children<infer C>
     ? C[]
     : P[K] extends Expr<infer V>
       ? V
@@ -1085,8 +1085,10 @@ export class From<T extends readonly unknown[]> {
    * 把一对多关系上的集合运算（count、sum、any 等）合成一个按连接键分组的派生表，LEFT JOIN 一次，
    * 代替每个运算一个相关子查询：`groupJoin((m) => m.deliveries)`。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
    */
-  groupJoin(relation: (...refs: T) => Many<any>): From<T> {
-    return this.#with({ groupJoins: [...this.#spec.groupJoins, relation(...this.#refs)] });
+  groupJoin(relation: (...refs: T) => AnyMany): From<T> {
+    const many = relation(...this.#refs);
+    if (!(many instanceof Many)) throw new TypeError("groupJoin(...) needs a one-to-many relation such as (m) => m.deliveries");
+    return this.#with({ groupJoins: [...this.#spec.groupJoins, many] });
   }
 
   /**

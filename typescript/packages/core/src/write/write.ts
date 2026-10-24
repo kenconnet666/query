@@ -3,14 +3,14 @@ import { all, bindValue, Column, Cond, Expr, Param, skips, withSkipEmpty } from 
 import type { Renderable, Rendered, SqlWriter } from "../sql/writer.js";
 import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
-import type { Many } from "../query/many.js";
+import type { AnyMany } from "../query/many.js";
 import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, shardsBy, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
 import { choosesShards, Sharding } from "../query/sharding.js";
 import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
 import type { Clause, JoinWrite, Lock, Upsert } from "../sql/dialect.js";
 
 /** 表实体里的列字段：去掉 `@one`、`@many` 关系字段。 */
-export type Columns<T> = { [K in keyof T as T[K] extends Many<any> | One<any> ? never : K]: T[K] };
+export type Columns<T> = { [K in keyof T as T[K] extends AnyMany | One<any> ? never : K]: T[K] };
 
 /** `update(...).set(...)` 回调返回的对象：列字段到新值（值或表达式）。 */
 export type Assignments<T> = { readonly [K in keyof Columns<T>]?: Columns<T>[K] | null | Expr<Columns<T>[K]> | Expr<NonNullable<Columns<T>[K]>> };
