@@ -6,7 +6,7 @@
 
     <groupId>org.dpdns.zerodep</groupId>
     <artifactId>query-parent</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>query</name>
@@ -45,7 +45,9 @@
         <module>java/query-hana</module>
         <module>java/query-postgres</module>
         <module>java/query-mysql</module>
+        <module>java/query-sqlite</module>
         <module>java/query-spring</module>
+        <module>java/query-maven-plugin</module>
     </modules>
 
     <properties>
@@ -57,10 +59,13 @@
         <postgresql.version>42.7.14</postgresql.version>
         <ngdbc.version>2.30.11</ngdbc.version>
         <mysql.version>9.7.0</mysql.version>
+        <sqlite.version>3.53.4.0</sqlite.version>
         <!-- The oldest supported line (Spring Boot 2.7); CI also runs query-spring against 6.2 and 7.0. -->
         <spring.version>5.3.39</spring.version>
         <h2.version>2.5.252</h2.version>
         <surefire.version>3.6.0</surefire.version>
+        <maven.api.version>3.9.9</maven.api.version>
+        <maven.plugin.tools.version>3.15.1</maven.plugin.tools.version>
     </properties>
 
     <dependencyManagement>
@@ -82,6 +87,31 @@
                 <artifactId>query-core</artifactId>
                 <version>${project.version}</version>
                 <type>test-jar</type>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-hana</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-postgres</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-mysql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-sqlite</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.projectlombok</groupId>

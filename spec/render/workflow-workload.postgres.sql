@@ -1,0 +1,6 @@
+-- parameters: []
+SELECT hitask."ASSIGNEE" AS assignee, COUNT(*) AS tasks, SUM(hitask."DURATION") AS "totalDuration", COUNT(CASE WHEN hitask."DURATION" > 3600000 THEN 1 END) AS slow
+FROM "QUERY_IT"."WF_HI_TASK" hitask
+WHERE hitask."END_TIME" IS NOT NULL
+GROUP BY hitask."ASSIGNEE"
+ORDER BY hitask."ASSIGNEE" ASC

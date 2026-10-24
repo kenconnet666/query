@@ -1,33 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, cte, date, from, max, nest, rowNumber, sum, values, type Query } from "@zerodep-dev/query-core";
-import { DeliveryVO, LineVO, Lips, Mara } from "../erp.js";
-import { deliveries, lines, partTotals } from "../scenarios.js";
-import { FakeDriver, rows, TestDatabase } from "../support.js";
-
-/** A database answering every statement with the given rows. */
-function answering(columns: readonly string[], ...values: unknown[][]): { db: TestDatabase; driver: FakeDriver } {
-  const driver = new FakeDriver(() => rows(columns, ...values));
-  return { db: new TestDatabase({}, driver), driver };
-}
+import { count, cte, date, from, max, rowNumber, sum, values, type Query } from "@zerodep-dev/query-core";
+import { DeliveryVO, LineVO, Lips, Mara } from "../fixtures/erp.js";
+import { deliveries, lines, partTotals } from "../fixtures/scenarios.js";
+import { answering, FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
 describe("投影与映射", () => {
-  it("结果按键分组为父项与子项并保持首次出现的顺序", () => {
-    const lines = [
-      { order: "B", item: "b1" },
-      { order: "A", item: "a1" },
-      { order: "B", item: "b2" },
-      { order: "C", item: null },
-    ];
-    assert.deepEqual(
-      nest(lines, (l) => l.order, (l) => l.item, (first, items) => ({ order: first.order, items })),
-      [
-        { order: "B", items: ["b1", "b2"] },
-        { order: "A", items: ["a1"] },
-        { order: "C", items: [] },
-      ],
-    );
-  });
 
   it("对象投影的键就是列标签，结果按位置解码", async () => {
     const q = deliveries("2026-01-01", "2026-06-30", null);
@@ -71,7 +49,7 @@ describe("投影与映射", () => {
       .groupBy((l) => l.material)
       .select((l) => ({ partNumber: l.material, name: max(l.unit), quantity: sum(l.quantity), extra: count() }));
     const { db } = answering([], ["M1", "EA", "6.000", 2]);
-    const [vo] = await db.list(q.mapTo(DeliveryVO));
+    const [vo] = await db.list(q.into(DeliveryVO));
     assert.ok(vo instanceof DeliveryVO);
     assert.equal(vo.label, "M1:EA");
     assert.equal((vo as unknown as Record<string, unknown>).extra, undefined, "columns the class does not have are ignored");
@@ -80,7 +58,7 @@ describe("投影与映射", () => {
 
   it("单列查询直接返回值", async () => {
     const { db } = answering([], ["D1"], ["D2"]);
-    assert.deepEqual(await db.list(from(Lips).selectValue((l) => l.delivery)), ["D1", "D2"]);
+    assert.deepEqual(await db.list(from(Lips).select((l) => l.delivery)), ["D1", "D2"]);
   });
 
   it("自动投影找不到或找到多个来源时立刻报错", () => {
@@ -98,20 +76,20 @@ describe("投影与映射", () => {
   });
 
   it("只有扁平的对象投影能当作 CTE 或派生表", () => {
-    assert.throws(() => cte("x", from(Lips).selectValue((l) => l.delivery)), /flat object projection/);
+    assert.throws(() => cte("x", from(Lips).select((l) => l.delivery)), /flat object projection/);
     assert.throws(() => from(Lips).select((l) => ({ a: { b: l.delivery } })).asTable(), /flat object projection/);
     const ranked = cte(
       "ranked",
       from(Lips).select((l) => ({ delivery: l.delivery, n: rowNumber().over((w) => w.orderBy(l.delivery)) })),
     );
-    assert.ok(from(ranked).selectValue((r) => r.n));
+    assert.ok(from(ranked).select((r) => r.n));
   });
 
   it("UNION 的各段不能自带排序或分页，也不能先分页再合并", () => {
     const limited = from(Lips)
       .limit(1)
-      .selectValue((l) => l.delivery);
-    const plain = from(Lips).selectValue((l) => l.delivery);
+      .select((l) => l.delivery);
+    const plain = from(Lips).select((l) => l.delivery);
     assert.throws(() => plain.unionAll(limited), /UNION arm/);
     assert.throws(() => limited.unionAll(plain), /UNION arm/);
     assert.throws(() => plain.limit(1).unionAll(plain), /UNION arm|after combining/);
@@ -125,10 +103,10 @@ describe("投影与映射", () => {
     await db.one(
       from(Lips)
         .limit(1)
-        .selectValue((l) => l.delivery),
+        .select((l) => l.delivery),
     );
-    await db.first(from(Lips).selectValue((l) => l.delivery));
-    await db.one(from(Lips).selectValue((l) => l.delivery));
+    await db.first(from(Lips).select((l) => l.delivery));
+    await db.one(from(Lips).select((l) => l.delivery));
     assert.deepEqual(
       driver.statements.map((s) => s.sql.split("\n").at(-1)),
       ["LIMIT 1", "LIMIT 1", "LIMIT 2"],
@@ -136,8 +114,8 @@ describe("投影与映射", () => {
   });
 
   it("one 在没有行或多于一行时报错", async () => {
-    await assert.rejects(answering([]).db.one(from(Lips).selectValue((l) => l.delivery)), /got none/);
-    await assert.rejects(answering([], ["a"], ["b"]).db.one(from(Lips).selectValue((l) => l.delivery)), /more than one/);
+    await assert.rejects(answering([]).db.one(from(Lips).select((l) => l.delivery)), /got none/);
+    await assert.rejects(answering([], ["a"], ["b"]).db.one(from(Lips).select((l) => l.delivery)), /more than one/);
   });
 
   it("分页同时取当前页和总数，计数语句去掉排序", async () => {
@@ -150,7 +128,7 @@ describe("投影与映射", () => {
 
   it("解码失败时报出列名", async () => {
     const { db } = answering([], ["D1", "M1", "2026-01-15", "Pump"]);
-    await assert.rejects(db.list(from(Lips).selectValue((l) => l.quantity)), /Column 'quantity'/);
+    await assert.rejects(db.list(from(Lips).select((l) => l.quantity)), /Column 'quantity'/);
   });
 
   it("常量行按值推断列类型，也可以指定类型", async () => {
@@ -167,13 +145,13 @@ describe("投影与映射", () => {
   });
 
   it("SUM 等数值函数拒绝文本列", () => {
-    assert.throws(() => from(Lips).selectValue((l) => sum(l.material)), /SUM needs a numeric expression, got text/);
+    assert.throws(() => from(Lips).select((l) => sum(l.material)), /SUM needs a numeric expression, got text/);
   });
 
   it("没有驱动流式能力时逐行交付全部结果", async () => {
     const { db } = answering([], ["D1"], ["D2"]);
     const seen: string[] = [];
-    for await (const d of db.stream(from(Lips).selectValue((l) => l.delivery))) seen.push(d);
+    for await (const d of db.stream(from(Lips).select((l) => l.delivery))) seen.push(d);
     assert.deepEqual(seen, ["D1", "D2"]);
   });
 });

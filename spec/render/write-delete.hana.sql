@@ -1,0 +1,3 @@
+-- parameters: ["closed"]
+DELETE FROM QUERY_IT.W_NOTE NOTE
+WHERE NOTE.STATUS = ?

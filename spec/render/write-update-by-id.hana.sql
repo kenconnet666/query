@@ -1,0 +1,4 @@
+-- parameters: ["new","D1","3"]
+UPDATE QUERY_IT.W_DOC DOC
+SET TITLE = ?, VERSION = (DOC.VERSION + 1)
+WHERE DOC.ID = ? AND DOC.VERSION = ?

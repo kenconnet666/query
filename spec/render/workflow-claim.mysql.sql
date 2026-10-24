@@ -1,0 +1,7 @@
+-- parameters: []
+SELECT `task`.`ID` AS `id`
+FROM `QUERY_IT`.`WF_TASK` `task`
+WHERE `task`.`ASSIGNEE` IS NULL
+ORDER BY `task`.`CREATE_TIME` ASC, `task`.`ID` ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED

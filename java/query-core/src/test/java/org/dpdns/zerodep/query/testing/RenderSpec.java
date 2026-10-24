@@ -1,10 +1,11 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
-import org.dpdns.zerodep.query.testing.Erp.ClientEntity;
+import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.testing.Erp.Client;
+import org.dpdns.zerodep.query.write.Write;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -20,11 +21,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -33,11 +37,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * languages must render every file exactly; {@code QUERY_SPEC_WRITE=1} rewrites the files from Java.
  */
 public abstract class RenderSpec {
-    /** One case: a query, rendered by a database with or without the live scenarios' client filter. */
-    public record SpecCase(boolean filtered, Supplier<Query<?>> query) {
-        public static SpecCase plain(Supplier<Query<?>> query) { return new SpecCase(false, query); }
+    /** One case: a query or a single-statement write, rendered by a database with or without the live scenarios' client filter. */
+    public record SpecCase(boolean filtered, Supplier<?> query) {
+        public static SpecCase plain(Supplier<?> query) { return new SpecCase(false, query); }
 
-        public static SpecCase filtered(Supplier<Query<?>> query) { return new SpecCase(true, query); }
+        public static SpecCase filtered(Supplier<?> query) { return new SpecCase(true, query); }
     }
 
     private static final String HEADER = "-- parameters: ";
@@ -56,20 +60,48 @@ public abstract class RenderSpec {
     /** Cases only this dialect renders. */
     protected Map<String, SpecCase> dialectCases() { return Map.of(); }
 
+    /** 本方言不支持的共享用例：渲染时必须抛出 UnsupportedOperationException，也不能有金样例文件。 */
+    protected Set<String> unsupportedCases() { return Set.of(); }
+
     private Map<String, SpecCase> cases() {
         Map<String, SpecCase> all = new LinkedHashMap<>(SpecCases.shared());
+        all.keySet().removeAll(unsupportedCases());
         all.putAll(dialectCases());
         return all;
     }
 
     @TestFactory
+    Stream<DynamicTest> 不支持的用例渲染时报错() {
+        Database plain = database(NO_CONNECTIONS, Shards::configure);
+        return unsupportedCases().stream().map(name -> DynamicTest.dynamicTest(dialect() + " 不支持 " + name, () -> {
+            Object statement = SpecCases.shared().get(name).query().get();
+            assertThrows(UnsupportedOperationException.class, () -> {
+                if (statement instanceof Write w) plain.render(w);
+                else plain.render((Query<?>) statement);
+            });
+            assertFalse(Files.exists(directory().resolve(name + "." + dialect() + ".sql")), name + " has a golden file but is unsupported");
+        }));
+    }
+
+    @TestFactory
     Stream<DynamicTest> 渲染结果与金样例一致() {
-        Database filtered = database(NO_CONNECTIONS, c -> c.filter(ClientEntity.class, r -> r.col(ClientEntity::getClient).eq("100")));
-        Database plain = database(NO_CONNECTIONS, null);
+        Database filtered = database(NO_CONNECTIONS, c -> Shards.configure(c.filter(Client.class, r -> r.client().eq("100"))));
+        Database plain = database(NO_CONNECTIONS, Shards::configure);
         boolean write = System.getenv("QUERY_SPEC_WRITE") != null;
         return cases().entrySet().stream().map(e -> DynamicTest.dynamicTest(dialect() + " 渲染 " + e.getKey() + " 与金样例一致", () -> {
-            Rendered r = (e.getValue().filtered() ? filtered : plain).render(e.getValue().query().get());
-            List<String> parameters = r.parameters().stream().map(String::valueOf).toList();
+            Database db = e.getValue().filtered() ? filtered : plain;
+            Object statement = e.getValue().query().get();
+            Rendered r;
+            if (statement instanceof Write w) {
+                List<Rendered> all = db.render(w);
+                assertEquals(1, all.size(), "a write case renders one statement");
+                r = all.get(0);
+            } else {
+                r = db.render((Query<?>) statement);
+            }
+            // 数组参数写成逗号连接的元素，与 TypeScript 的 String(array) 相同。
+            List<String> parameters = r.parameters().stream().map(v -> v instanceof Object[] a
+                ? java.util.Arrays.stream(a).map(String::valueOf).collect(java.util.stream.Collectors.joining(",")) : String.valueOf(v)).toList();
             Path file = directory().resolve(e.getKey() + "." + dialect() + ".sql");
             if (write) {
                 Files.writeString(file, HEADER + json(parameters) + "\n" + r.sql() + "\n", StandardCharsets.UTF_8);
@@ -95,17 +127,22 @@ public abstract class RenderSpec {
         assertEquals(List.of(), missing);
     }
 
-    /** spec/render at the repository root, found from the module directory Maven runs tests in. */
-    private static Path directory() {
+    /** spec/render at the repository root. */
+    private static Path directory() { return specDirectory("render"); }
+
+    /** spec/<name> at the repository root; created when missing. */
+    private static Path specDirectory(String name) {
+        try {
+            return Files.createDirectories(repositoryRoot().resolve("spec").resolve(name));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The repository root (the directory holding spec/), found from the module directory Maven runs tests in. */
+    static Path repositoryRoot() {
         for (Path p = Path.of("").toAbsolutePath(); p != null; p = p.getParent()) {
-            if (Files.isDirectory(p.resolve("spec"))) {
-                Path render = p.resolve("spec").resolve("render");
-                try {
-                    return Files.createDirectories(render);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            }
+            if (Files.isDirectory(p.resolve("spec"))) return p;
         }
         throw new IllegalStateException("No spec directory above " + Path.of("").toAbsolutePath());
     }

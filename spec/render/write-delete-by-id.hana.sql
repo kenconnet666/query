@@ -1,0 +1,3 @@
+-- parameters: ["D1","3"]
+DELETE FROM QUERY_IT.W_DOC DOC
+WHERE DOC.ID = ? AND DOC.VERSION = ?

@@ -3,13 +3,35 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ]
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../packages/core" },
-    { "path": "../packages/hana" },
-    { "path": "../packages/postgres" },
-    { "path": "../packages/mysql" }
+    {
+      "path": "../packages/core"
+    },
+    {
+      "path": "../packages/hana"
+    },
+    {
+      "path": "../packages/postgres"
+    },
+    {
+      "path": "../packages/mysql"
+    },
+    {
+      "path": "../packages/sqlite"
+    },
+    {
+      "path": "../packages/idb"
+    }
   ]
 }

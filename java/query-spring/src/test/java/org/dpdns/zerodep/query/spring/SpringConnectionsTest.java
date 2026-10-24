@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.spring;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Query;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.TestDialect;
 import org.h2.jdbcx.JdbcDataSource;
@@ -16,7 +16,6 @@ import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.sql.DataSource;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -28,6 +27,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import javax.sql.DataSource;
 
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -99,7 +99,7 @@ class SpringConnectionsTest {
         dataSource.borrowed.set(0);
     }
 
-    private Query<String> deliveries() { return from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)); }
+    private Query<String> deliveries() { return from(Lips.class).select(l -> l.delivery()); }
 
     @Test
     void 事务中的查询看得到同一事务尚未提交的写入并随事务回滚() {

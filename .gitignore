@@ -44,3 +44,4 @@ typescript/**/dist/
 *.tsbuildinfo
 .claude/settings.local.json
 /infra/*/.env
+/.local/

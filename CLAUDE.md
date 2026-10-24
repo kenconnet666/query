@@ -1,21 +1,21 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、导航、DDL 和迁移。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）；2.1 加 SQLite 方言（0009，含浏览器里的 SQLite WASM）和前端用的 IndexedDB 本地存储包（0010，只有 TS，不依赖核心包，不做同步）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
-  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\Administrator\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
+  - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
-  - 不使用注解处理器（APT），也不在使用方生成代码。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@zerodep-dev/query-*`）和私有测试包 `test`。
-- **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
+  - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-beta（原生编译器，与 vue-tsx-pro 一致），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
+- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
 - **文档**：
-  - API 方向以 0002 为准；
-  - 用法写在 [docs/api.md](docs/api.md)（Java）和 [docs/api-typescript.md](docs/api-typescript.md)（TS），API 变化时同步更新；
+  - API 方向以 0002 为准，0006 修订了其中的实体声明、投影和条件；
+  - 用法写在 [docs/api.md](docs/api.md)（Java）、[docs/api-typescript.md](docs/api-typescript.md)（TS）和 [docs/api-idb.md](docs/api-idb.md)（IndexedDB），API 变化时同步更新；
   - 其余文档只记录决定、取舍和验证证据，过时的内容直接删改，不堆叠。
 
 ## 必须参考的本地仓库
@@ -24,7 +24,7 @@
 
 ### 前身：EasyQuery Pro
 
-路径 `C:\Users\Administrator\IdeaProjects\easy_query_pro`（GitHub `kenconnet666/easy_query_pro`，分支 `codex/bootstrap-easyquery-pro`）。它是基于 EasyQuery 3.2.17 的 Java 8 增强包，外加一个 TS ORM 子项目。可以借鉴的部分：
+路径 `C:\Users\lionheart\IdeaProjects\easy_query_pro`（GitHub `kenconnet666/easy_query_pro`，分支 `codex/bootstrap-easyquery-pro`）。它是基于 EasyQuery 3.2.17 的 Java 8 增强包，外加一个 TS ORM 子项目。可以借鉴的部分：
 
 - **HANA 的实测知识**：`docs/hana-*.md`，包括类型、函数和函数审计、字符类型、LOB、JSON、层级、全文检索、参数化视图、生成键、写入、HDI 与迁移。
 - **三库差异清单与报表能力**：`docs/dsl-design.md` 列出三库的类型和操作清单；`docs/reporting-*.md`、`dsl-windows.md`、`dsl-statistics.md`、`dsl-groups.md`、`dsl-temporal.md`、`dsl-comparison.md` 覆盖报表、窗口、统计、分组、时间与比较；`native-numeric.md` 和 `mysql-*.md`、`pgsql-*.md` 覆盖原生数值与各库专属类型。
@@ -35,17 +35,20 @@
 
 ### 上游 EasyQuery
 
-路径 `C:\Users\Administrator\IdeaProjects\easy-query`（`dromara/easy-query`，基线 tag `3.2.17`，工作区比 tag 多几个提交，比较时以 tag 为准）。可以参考：
+路径 `C:\Users\lionheart\IdeaProjects\easy-query`（`dromara/easy-query`，基线为提交 `2b25e9510 build: 3.2.17`，本机没有 `3.2.17` tag）。它是重要参考，Claude 会话需要把这个目录加入工作目录才能读取。可以参考：
 
 - 函数目录：`sql-core/.../func/SQLFunc.java` 及其子接口；
 - 各数据库的差异实现：`sql-db-support/`（含 `sql-duckdb`）；
-- CTE、分页和窗口的生成方式。
+- CTE、分页和窗口的生成方式；
+- 导航属性（`@Navigate`）与隐式连接、隐式子查询；
+- 按 DTO 生成条件（`whereObject`、`@EasyWhereCondition`）；
+- VO 对象树映射（`selectAutoInclude`、`@NavigateFlat`）。
 
 本项目不依赖它。
 
 ### 其他 ORM
 
-路径 `C:\Users\Administrator\IdeaProjects\orm-references\`，都是 `--depth 1` 的浅克隆，用 `git pull --depth 1` 更新；需要时可以继续克隆其他 ORM 或驱动仓库到这里。
+路径 `C:\Users\lionheart\IdeaProjects\orm-references\`（本机尚未克隆，按需创建），都是 `--depth 1` 的浅克隆，用 `git pull --depth 1` 更新；需要时可以继续克隆其他 ORM 或驱动仓库到这里。
 
 | 仓库 | 主要参考点 |
 | --- | --- |
@@ -59,18 +62,20 @@
 ## 构建与验证
 
 ```powershell
-$env:JAVA_HOME = 'C:\Users\Administrator\.jdks\jbr-17.0.14'
+$env:JAVA_HOME = 'C:\Users\lionheart\.jdks\jbr-17.0.14'
 .\mvnw.cmd --batch-mode verify          # Maven 3.9.16 由 wrapper 固定
 
 cd typescript
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固定
 corepack pnpm test                       # tsc -b，再跑单元、编译期与金样例测试
-corepack pnpm test:live                  # 三库实库场景，变量见下文
+corepack pnpm test:live                  # 实库场景：三库要变量（见下文），SQLite 不需要
+corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览器测试（playwright-core，不下载浏览器）
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|spring`。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
-- **生成代码**：`From1..From8` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|sqlite|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`ddl`、`exec`；测试在 `test/src` 的 `unit`、`live`、`browser`，夹具在 `fixtures`。
+- **生成代码**：`scope/From1..From16`、`select/Rows` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
   - Java 单元、渲染与金样例测试（Maven `--threads 1C` 并行构建模块；带 `release` profile、跳过签名，顺带检查 javadoc）；
@@ -78,7 +83,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
   - PostgreSQL、MySQL 实库：按"库 × 语言"拆成 4 个 job；
   - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
-  - TypeScript 编译、编译期检查、单元与金样例测试。
+  - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库场景用临时文件库，随 Java 单元测试运行。
 
   容器定义在 `infra/`。
 - **CI 的提速规则**：
@@ -107,7 +112,7 @@ corepack pnpm test:live                  # 三库实库场景，变量见下文
   - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`，不入库），按需读进环境变量，不打印也不落盘：
 
     ```powershell
-    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL address; changes after a WSL restart
+    $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL 的地址，WSL 重启后会变
     $mysql = (Get-Content infra/mysql/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
     $pg = (Get-Content infra/postgres/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
     $hana = (Get-Content infra/hana/.env | ConvertFrom-StringData).QUERY_HANA_PASSWORD
@@ -179,5 +184,6 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
 - **提交与推送**：完成的工作直接提交并推送，不必询问：先建分支，再推这个分支。force-push、改写历史、推 `master`、合并 PR 都需要用户明确要求。
 - **公开仓库的限制**：仓库是公开的，绝不写入凭据，也不写入实际使用方的信息（公司、项目名、内部路径、业务常量）。使用方的说明只保存在本机 Claude 项目记忆中，文档里统称"内部 ERP 分析大屏"。
 - **提交格式**：commit message 用中文，结尾加 `Co-Authored-By` trailer；文档用中文。
-- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为；代码标识符、注释和日志仍用英文。
+- **测试命名**：测试方法名和 `@DisplayName` 用中文，写明被验证的行为。
+- **注释**：每个类型和方法都写中文注释（Java 用 Javadoc，TS 用 TSDoc），说明用途和用法；代码标识符、日志和异常信息仍用英文。
 - **行尾**：由 `.gitattributes` 统一为 LF，`*.cmd` 为 CRLF。

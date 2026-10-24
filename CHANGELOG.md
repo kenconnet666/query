@@ -2,6 +2,78 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.1.0] - 未发布
+
+SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本地存储。设计见 [0009](docs/decisions/0009-sqlite-dialect.md)、[0010](docs/decisions/0010-indexeddb-local-store.md)。
+
+### 新增
+
+- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有 `glob`、`median`、`percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
+  - 需要编译选项的函数照常渲染，每个数据库实例第一次渲染时警告（TS 选项 `warn`）；ROLLUP、`grouping()`、`forUpdate()` 报错，TS 从 SQLite 包导入时写不出来。
+  - 结构变更里不能就地改的列归入只报告（REBUILD）。
+- **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
+- **浏览器里的核心包**：`db.transaction(async (tx) => ...)` 的回调收到绑定在事务上的数据库；库内部的多语句写入、追踪写回和迁移都经由它执行，不依赖 AsyncLocalStorage。迁移的校验和改用 Web Crypto，结果不变。
+- **IndexedDB 本地存储** `@zerodep-dev/idb`（不依赖核心包）：`@store` / `@key` / `@index`（unique、multiEntry、optional、boolean / bigint / lowercase 编码器）、`@one` / `@many` 与 `include`；`openLocal` 按版本升级并核对结构；只按索引查询，`scan` / `sortBy` 写在明处；事务回调 await 了别的工作时报 `TransactionClosedError`；批量写入整批回滚并列出失败的行；实时查询按仓库失效，并经由 BroadcastChannel 通知其他标签页；`QuotaError`、`persist`、`estimate`。
+- 开发编译器升到 TypeScript 7.1.0-beta；`exclude` / `excludeIf` 的返回形态改用具名类型 `ExcludedKeys<R, K>`（7.1 不再把两处同样的内联映射类型当成同一个类型），核心包导出它。
+- 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
+
+## [2.0.0] - 未发布
+
+查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。
+
+### 不兼容的变化
+
+- Java 的表是继承 `Entity`、带 `@Table` 的接口，列是返回 `Col<T>` 的抽象方法，注解写在方法上；lambda 里直接写 `l.material()`。CTE、派生表等行类来源仍用 `r.col(Row::x)`。声明为类的 `@Table` 会报错。
+- 投影只留三种：单个表达式、按名取列的 `cols(...)`（Map 行）、按位置构造的 `row(X::new, ...)`；加上按同名映射的 `selectAs(X.class)` 和 `into(X.class)`。删除函数式投影、`selectAs(X, 额外列)`、`selectValue`、`@MapFrom`、`Nest` / `nest`。
+- 可选条件统一用作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件自动省略；不开启时与 null 比较报错。删除 `eqIfPresent` 等 `IfPresent` 系列和 `likeIfPresent`，以及 `(表, getter)` 比较简写。
+- 原来分在方言门面里的同类函数并入核心：`stringAgg`（取代 MySQL 的 `groupConcat`）、`daysBetween`（取代 MySQL 的 `dateDiff`，参数顺序为 from、to）、`addDays`、`addMonths`、`addYears`；PostgreSQL 的 `filter(agg, cond)`（TS `filterWhere`）改为所有方言通用的 `agg.filter(cond)`，写法从 `FILTER (WHERE ...)` 变为 `CASE WHEN`。
+- 改名：`mapTo` → `into`，`SimpleCase` → `Case.Simple`，`Entity.all()` → `columns()`；删除单参数的 `coalesce(Expr)` 重载。
+- Java 包按职责分子包：`table`、`expr`、`scope`、`select`、`exec`（另有 `annotation`、`dialect`、`meta`、`type`），根包只有 `Sql` 和 `Fn`。
+
+### 新增
+
+- **作用域与投影的上限**：由脚本生成，Java 作用域最多 16 张表，`row(...)` 最多 22 个参数，可以嵌套。
+- **导航关系**：Java 的 `one(...)` / `many(...)` 写在表接口的 default 方法里，或用 `@ManyToOne`、`@OneToMany` 按列名配对；TS 的 `@one` / `@many` 字段。多对一用到时才 LEFT JOIN，同一关系只连接一次，可以继续导航，全局过滤器进入 ON。一对多提供 `any`、`none`（EXISTS）、`count`、`sum`、`max`、`min`、`avg`（相关子查询）、`where`、`first(order)`（ROW_NUMBER 取每组第一行）。
+- **分组连接**：作用域上的 `groupJoin(m -> m.deliveries())` 把同一关系上的 `count`、`sum`、`any` 等合成一个按连接键分组的派生表，只 LEFT JOIN 一次，代替每个运算一个相关子查询；关系上的 `where` 写成各自聚合的 CASE WHEN。
+- **对象树**：`many.list(...)` 给每个父行一个子列表，父查询只多取连接键，子行用一条按键批量的 IN 查询加载（每 500 个键一批），可以逐层嵌套；`many.orderBy(...)` 决定子行顺序。Java 的 `selectAs(VO.class)` 按同名关系自动映射嵌套 VO 和 `List<X>` 属性。
+- **动态列与排序**：`exclude`、`excludeIf`、`only` 把不要的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉；`sortBy("total desc, material")` 只认结果列，可以直接传用户的排序参数。
+- **条件对象**：`where(search)` 把对象的每个非空字段变成条件，默认与同名列相等（集合用 IN），`@Where` / `@where` 指定比较方式和列，列可以走关系路径（经过一对多关系时写成 EXISTS，同一关系的字段合并进一个 EXISTS），多列为 OR，`@Ignore` 的字段跳过；字段名找不到列时报错。
+- **条件聚合**：`sum(x).filter(cond)`、`count().filter(cond)` 等只聚合满足条件的行，三个库都写成 `AGG(CASE WHEN cond THEN x END)`，多次调用按 AND 合并。
+- **日期函数**：`year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween`、`secondsBetween` 在三个库上语义一致（月末对齐、可为负、秒数舍去小数）。
+- **文本聚合与半开区间**：核心 `stringAgg(e, sep, order...)`；`e.range(from, until)` 写成 `>= from AND < until`，skipEmpty 下缺少的一端被忽略。
+- **窗口条件**：`qualify(cond)` 按窗口函数过滤（每组前 N 行），三个库都渲染成派生表（HANA 没有 QUALIFY）；窗口函数增加 `firstValue`、`lastValue`、`ntile`，`lag`、`lead` 可给越界默认值。
+- **一对多与分页**：`many.orderBy(...).limit(n).list(...)` 每个父行只取前 n 个子行；`many.countDistinct(...)`、`many.stringAgg(...)`（顺序取 `orderBy`）；`db.page(q, page, size, total)` 沿用已知总数，不再执行 COUNT。
+- **文本匹配**：`contains`、`startsWith`、`endsWith`，用户输入里的 `%`、`_` 按普通字符匹配。
+- **原生 SQL 片段**：`sql`、`sqlCond` 的参数可以混用表达式和值，集合展开成多个参数；`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 把原生查询当作数据源；`identifier(name)` 按方言加引号。
+- **写入**（[0007](docs/decisions/0007-writes.md)）：不可变的 `insertInto(T).values(rows)` / `.from(query)`、`update(T).set(...).where(...)`、`deleteFrom(T).where(...)`，`db.execute` 返回影响的行数；没有 WHERE 的更新和删除报错（`.all()` 放行），全局过滤器进入 WHERE，`expect(n)` 校验行数；多行写入自动在一个事务里，Java 用 JDBC 批量。
+- **按主键写与乐观锁**：`@Id`、`@Version`（TS `@id`、`@version`），`update(T).byId(rows)`、`deleteFrom(T).byId(rows)`，版本不对时抛 `UnexpectedRowCountException`（TS `UnexpectedRowCountError`）。
+- **生成主键**：`@Generated` 加 `db.insertKeys(insert)`，按行的顺序返回数据库生成的值。
+- **插入或更新与加锁读**：`.onConflict(keys).update(cols)` / `.doNothing()`（HANA `MERGE`、PostgreSQL `ON CONFLICT`、MySQL `ON DUPLICATE KEY UPDATE`）；`.with(forUpdate(Lock.SKIP_LOCKED))`，HANA 写作 `IGNORE LOCKED`。
+- **事务**：`db.transaction(work)`（Java 线程绑定连接，TS 用 AsyncLocalStorage）；接入 Spring 时交给 `@Transactional`。TS 的 `DriverResult` 增加 `affected`、`insertId`，`Driver` 增加 `transaction`。
+- **逻辑删除与审计填充**：`@LogicDelete`（TS `@logicDelete()`）让查询、连接和关系自动只看未删除的行，删除改写成 UPDATE，`.physically()` 物理删除；数据库实例的 `onInsert` / `onUpdate`（TS `fills`）在插入、更新、插入或更新和逻辑删除时自动填充审计列。
+- **差异更新与写入策略**：`update(T).byId(edited).diffFrom(loaded)` 只 SET 变了的属性，没变的行不发语句；`@ReadOnly`（插入和更新都不写）、`@WriteOnce`（只在插入时写，TS `@readOnly`、`@writeOnce`）；插入、更新、删除的 `withoutFills()`。
+- **过滤与 schema**：具名的全局过滤器 `filter("tenant", ...)`，查询和写语句可以 `unfiltered("tenant")` 单独关闭、`withDeleted()` 只关逻辑删除；`Config.schema("ERP", "SAPHANADB")` / `schema(fn)`（TS `schemas`）把表声明里的 schema 换成实际名字。
+- **按编码的枚举与毫秒逻辑删除**：Java 实现 `CodeEnum<C>` 的枚举按编码存取；`@LogicDelete(epochMillis = true)`（TS `@logicDelete({ epochMillis: true })`）删除时写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建。
+- **函数**：`lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`，三库实测语义一致。
+- **执行**：`db.exists(q)`、`db.optional(q)`（零行或一行，多于一行报错）。
+- **结构变更**（0008）：`@Column` 的长度、精度、可空、默认值、注释、`previousName`，`@Table(external, comment)`，`@Index`、`@ForeignKey`（TS 是装饰器选项）；`db.schema().check(...)` / `plan(...)` / `createTable(...)` / `read(...)`：安全的差异自动执行，有风险的要 `allowDestructive()`，库里多出的对象只报告；三库读系统目录（information_schema、pg_catalog、SYS 视图），HANA 不能就地缩短列时只报告。版本化迁移 `db.migrator(migrations)`：代码写的迁移（`TableBuilder`、方言专属的 `sql(...)`、写语句做数据变更）、历史表与校验和、锁表互斥、`plan` / `verify` / `baseline` / `repair` / `migrateTo`。
+- **分区与分表**（0008）：`@TableOption(dialect, sql)`（TS `@table` 的 `options`、`tableBuilder(...).option`）写原生分区子句；同库物理分表 `Config.shard(table, ShardRule.monthly/modulo/custom)`（TS 选项 `shards: [shard(...)]`），按 WHERE 里分表键的条件选表（AND 取交、OR 取并），一张时直接写那张表、多张时写成 `UNION ALL`，推不出来时报错，`allShards()` / `onShards(...)` 显式选择，子查询沿用；插入按行、更新删除按条件或 byId 的行路由，改分表键报错；`db.schema()` 按物理表建表和比较。
+- **实体追踪**（0008）：`db.tracking(t -> ...)`（Java 另有返回结果的 `tracked`），`t.one` / `optional` / `list(表, 查询)`、`track`、`forget`；同一主键只登记一份，范围正常结束时在一个事务里写 `byId(行).diffFrom(快照)`，成功后写回版本并刷新快照，异常或冲突时不动；范围绑定线程（TS 异步上下文），嵌套加入外层。`Update.changedRows()` 返回 byId 里会被写的行。
+- **从数据库生成列**（0008）：Maven 插件 `query-maven-plugin` 的 `query:pull` 和 TS 方言包的 `query-pull-hana` / `query-pull-postgres` / `query-pull-mysql`，按配置的表（可只取部分列）生成只有列的父接口 / 基类，表接口继承它；内容不变不重写，`only` 只重新生成部分表，三库读回同一张表时生成相同的源码。读回的结构里默认值统一成 SQL 写法，并带上表和列的注释；TS 增加 `smallint` 类型。
+- **方言包的结构能力**：PostgreSQL、MySQL 的 `intersectAll` / `exceptAll`、RANGE 窗口帧（`w.frame(range(daysPreceding(7), Bound.currentRow()))`）、`recursiveCte`、`forShare`、`forUpdateOf`；PostgreSQL 的 `db.returning(write, ...)`、`percentileCont` / `percentileDisc` / `mode` / `corr`；HANA 的 `median`、窗口式 `percentileCont` / `percentileDisc`、`corr`；核心作用域的 `fullJoin`（HANA、PostgreSQL）。删除 PostgreSQL 的 `pg(e).isDistinctFrom`，改用核心的 `isDistinctFrom`。
+- **方言包的函数与来源**：HANA 的 `fromView`（计算视图参数）、`fromFunction`（表函数）、`hierarchy` / `descendants` / `ancestors`、`contains` / `containsFuzzy` / `score`、`jsonValue`；PostgreSQL 的数组（`eqAny`、数组列、`arrayContains`、`arrayOverlaps`、`cardinality`、`arrayAgg`）、JSONB（`jsonText`、`jsonContains`、`jsonHasKey`、`jsonb`）、全文检索（`textMatches`、`webMatches`、`textRank`）；MySQL 的优化器提示 `index` / `noIndex`（与 `maxExecutionTime` 合并进一个注释）、JSON（`jsonText`、`jsonContains`）、全文检索（`match`、`matchBoolean`、`matchScore`）。
+- **定制**：执行前钩子 `config.intercept(...)` / TS `interceptors`（改写或拦下每条语句，缓存按改写后的 SQL 作键）；插入时逐行生成值的 `generate(...)`；条件对象的自定义比较 `@Where(using = ...)` / `@where(fn, ...)`；`db.attach` / `attachMany` 按键装回另一个查询的结果；`db.one` / `optional` 抛 `EmptyResultException`、`TooManyRowsException`（TS `EmptyResultError`、`TooManyRowsError`）。
+- **集合运算与连接**：`intersect`、`except`（按调用顺序求值，三库读法可能不同处自动加括号）、`rightJoin`（左侧各表的全局过滤条件进它的 ON；TS 中之前各参数变成可空）。
+- **子查询比较与条件列**：多列 `keys(a, b).in(q)`、`anyOf(q)` / `allOf(q)`、NULL 安全的 `isNotDistinctFrom` / `isDistinctFrom`（PostgreSQL 原生、MySQL `<=>`、HANA 用 CASE）、条件作为布尔列 `bool(cond)`。
+- **聚合与窗口**：`sumDistinct`、`avgDistinct`、`stddevSamp`、`stddevPop`、`varSamp`、`varPop`，`percentRank`、`cumeDist`、`nthValue`。
+- **联表更新与删除（方言包）**：`updateJoin(T, S, on).set(...).where(...)`、`deleteJoin(...)`；PostgreSQL `UPDATE ... FROM` / `DELETE ... USING`，MySQL `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 按主键的 MERGE（一行匹配多行时报错）/ `WHERE EXISTS`。
+- **打印与测试 SQL**：`Rendered.debugSql()`（参数写回原处）、`parameterText()`；数据库实例的 `printSql` 选项按 MyBatis 的格式打印语句、参数、行数和耗时；`db.capture(...)` 收集一段代码执行的全部语句；`ConnectionProvider.dryRun()` / `dryRunDriver()` 不连数据库也能执行。
+
+### 修复
+
+- 空跑或没有行时 `count` 不再出错。
+- UPDATE、DELETE 的 WHERE 经过多对一导航时渲染出没有连接的列（SQL 无效）；现在写成 `EXISTS (... LEFT JOIN ...)`，语义与查询里的导航相同，SET 里用导航时报错。
+
 ## [1.0.0] - 2026-10-22
 
 第一个正式版本。Java 发布到 Maven 中央仓库（坐标 `org.dpdns.zerodep:query-*`，Java 包名仍是 `org.dpdns.zerodep.query`），TypeScript 发布到 npm（`@zerodep-dev/query-core`、`-postgres`、`-mysql`、`-hana`）。

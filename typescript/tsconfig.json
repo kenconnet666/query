@@ -1,10 +1,26 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/hana" },
-    { "path": "packages/postgres" },
-    { "path": "packages/mysql" },
-    { "path": "test" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/hana"
+    },
+    {
+      "path": "packages/postgres"
+    },
+    {
+      "path": "packages/mysql"
+    },
+    {
+      "path": "packages/sqlite"
+    },
+    {
+      "path": "packages/idb"
+    },
+    {
+      "path": "test"
+    }
   ]
 }

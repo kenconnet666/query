@@ -6,9 +6,9 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** The column reads an empty string as NULL, as SAP tables store "no value": {@code NULLIF(column, '')}. */
+/** 把列里的空字符串读成 NULL。SAP 表用空字符串表示"无值"，读取时按 {@code NULLIF(column, '')} 处理。 */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.FIELD)
+@Target(ElementType.METHOD)
 @ReadAs("NULLIF({0}, '')")
 public @interface BlankAsNull { }

@@ -32,7 +32,7 @@
   - `OrderItem`：`Expr`（升序）、`Order`，或 `orders(...)` 返回的 `OrderList`。
 
   接口没有任何方法，不会在 IDE 的补全里多出东西。`KeyList` 和 `OrderList` 仍然是 `List`，`groupingSets(keys(a, b), keys())` 照旧可用。
-- **同样接受裸表达式的地方**：窗口的 `orderBy`、HANA 与 PostgreSQL 的 `stringAgg`、MySQL 的 `groupConcat` 的排序参数。
+- **同样接受裸表达式的地方**：窗口的 `orderBy`、`stringAgg` 的排序参数。
 - **两端对照**：TS 本来就是这样，现在两端写法一致。
 
 ### 2. EXISTS 直接接收作用域，去掉 `selectOne()`
@@ -58,7 +58,6 @@
 - **`l.col(Lips::getMaterial)` 太长**：这是不用代码生成的代价（0001、0002），Java 拿不到字段的静态引用。`col` 已经是最短的有意义的名字。
 - **引入 Spring 时自动接入事务**：可以用 ServiceLoader 让 `database(dataSource)` 在有 `query-spring` 时自动改用 `SpringConnections`。但隐式行为更难排查，而且只读的大屏查询不依赖事务里的未提交写入，所以保持显式。
 - **合并 `val` 和 `lit`**：两者在条件里的行为确实不同（参数还是字面量），合并会让常量在 WHERE 里的行为不可控。只在文档里讲清楚。
-- **Java 的 `filter`（PostgreSQL 聚合过滤）与 TS 的 `filterWhere`**：TS 的 `filter` 已经用作全局过滤器的函数名，只能换名；Java 保留与 SQL 关键字相同的名字。
 - **`q.toSql(dialect)` 与 `db.render(q)`**：前者只按方言渲染，用于测试；后者带上数据库实例的过滤器和改写，是将要执行的 SQL。用途不同，都保留。
 - **LIKE 自动转义**：见 0004，等有用户输入的模糊搜索时再设计。
 

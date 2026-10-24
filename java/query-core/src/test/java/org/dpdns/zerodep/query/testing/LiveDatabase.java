@@ -14,7 +14,14 @@ import java.util.List;
  * when the variables are absent, so a plain build needs no database. CI also sets
  * QUERY_REQUIRE_LIVE, which turns a missing variable into a failure instead of a silent skip.
  */
-public record LiveDatabase(String url, String user, String password) {
+public record LiveDatabase(String url, String user, String password, List<String> onOpen) {
+    /** onOpen: statements run on every new connection, e.g. SQLite attaching the QUERY_IT database. */
+    public LiveDatabase {
+        onOpen = List.copyOf(onOpen);
+    }
+
+    /** A database that needs nothing run when a connection opens. */
+    public LiveDatabase(String url, String user, String password) { this(url, user, password, List.of()); }
 
     public static LiveDatabase fromEnvironment(String name) {
         String url = System.getenv("QUERY_" + name + "_URL");
@@ -27,7 +34,17 @@ public record LiveDatabase(String url, String user, String password) {
         return new LiveDatabase(url, user, password);
     }
 
-    public Connection open() throws SQLException { return DriverManager.getConnection(url, user, password); }
+    public Connection open() throws SQLException {
+        Connection c = DriverManager.getConnection(url, user, password);
+        if (onOpen.isEmpty()) return c;
+        try (Statement s = c.createStatement()) {
+            for (String sql : onOpen) s.execute(sql);
+        } catch (SQLException e) {
+            c.close();
+            throw e;
+        }
+        return c;
+    }
 
     public ConnectionProvider connections() {
         return new ConnectionProvider() {

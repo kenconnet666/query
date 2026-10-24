@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@zerodep-dev/query-core";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
-import { DeliveryVO, Lips } from "../erp.js";
-import { FakeDriver, rows, TestDatabase } from "../support.js";
+import { DeliveryVO, Lips } from "../fixtures/erp.js";
+import { FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
 describe("执行", () => {
   it("原生 SQL 替换引号、注释和类型转换之外的命名参数并展开数组", () => {
@@ -51,7 +51,7 @@ describe("执行", () => {
     const driver = new FakeDriver(() => rows(["C"], ["6"]));
     const db = new TestDatabase({ cache: inMemoryCache(), listener: (e) => void events.push(e) }, driver);
     const q = from(Lips)
-      .selectValue(() => count())
+      .select(() => count())
       .cached(60_000);
     assert.equal(await db.one(q), 6);
     assert.equal(await db.one(q), 6);
@@ -69,7 +69,7 @@ describe("执行", () => {
     const driver = new FakeDriver(() => rows(["C"], ["6"]));
     const db = new TestDatabase({ cache: inMemoryCache() }, driver);
     const q = from(Lips)
-      .selectValue(() => count())
+      .select(() => count())
       .cached(60_000);
     await Promise.all([db.list(q), db.list(q), db.list(q)]);
     assert.equal(driver.statements.length, 1);
@@ -79,7 +79,7 @@ describe("执行", () => {
     await assert.rejects(
       new TestDatabase({}, new FakeDriver()).list(
         from(Lips)
-          .selectValue((l) => l.delivery)
+          .select((l) => l.delivery)
           .cached(1000),
       ),
       /has no cache/,
@@ -92,7 +92,7 @@ describe("执行", () => {
       throw new Error("table not found");
     });
     const db = new TestDatabase({ name: "erp", listener: (e) => void events.push(e) }, driver);
-    const error = await db.list(from(Lips).selectValue((l) => l.delivery)).catch((e: unknown) => e);
+    const error = await db.list(from(Lips).select((l) => l.delivery)).catch((e: unknown) => e);
     assert.ok(error instanceof QueryExecutionError);
     assert.match(error.message, /^erp: table not found\nSELECT LIPS.VBELN/);
     assert.equal(events.length, 1);
@@ -102,7 +102,7 @@ describe("执行", () => {
   it("超时取数据库实例的默认值，查询和原生 SQL 自己的值优先", async () => {
     const driver = new FakeDriver(() => rows(["C"], [1]));
     const db = new TestDatabase({ queryTimeoutMs: 1500 }, driver);
-    const q = from(Lips).selectValue((l) => l.delivery);
+    const q = from(Lips).select((l) => l.delivery);
     await db.list(q);
     await db.list(q.timeout(200));
     await db.count(q.timeout(3000));
@@ -119,16 +119,16 @@ describe("执行", () => {
 
   it("参数个数超过方言上限时在连接数据库之前报错", async () => {
     const many = Array.from({ length: 70_000 }, (_, i) => `D${i}`);
-    const q = from(Lips).where((l) => l.delivery.in(many)).selectValue((l) => l.delivery);
+    const q = from(Lips).where((l) => l.delivery.in(many)).select((l) => l.delivery);
     await assert.rejects(new TestDatabase().list(q), /binds 70000 parameters; .* accepts at most 65535/);
   });
 
   it("非有限的浮点数在 SELECT 列表里仍绑定为参数，写成字面量时报错", () => {
     const db = new TestDatabase();
-    const r = db.render(from(Lips).selectValue(() => val(Number.NaN)));
+    const r = db.render(from(Lips).select(() => val(Number.NaN)));
     assert.match(r.sql, /^SELECT \? AS /);
     assert.equal(r.parameters.length, 1);
-    assert.throws(() => db.render(from(Lips).selectValue(() => lit(Number.POSITIVE_INFINITY))), /No literal form for Infinity/);
+    assert.throws(() => db.render(from(Lips).select(() => lit(Number.POSITIVE_INFINITY))), /No literal form for Infinity/);
   });
 
   it("监听器抛出的异常不影响查询", async () => {
@@ -140,6 +140,6 @@ describe("执行", () => {
       },
       new FakeDriver(() => rows([], ["D1"])),
     );
-    assert.deepEqual(await db.list(from(Lips).selectValue((l) => l.delivery)), ["D1"]);
+    assert.deepEqual(await db.list(from(Lips).select((l) => l.delivery)), ["D1"]);
   });
 });

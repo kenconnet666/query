@@ -1,0 +1,57 @@
+{
+  "name": "@zerodep-dev/query-sqlite",
+  "version": "2.0.0-dev",
+  "type": "module",
+  "description": "SQLite dialect (3.46+): functions, schema changes and drivers for node:sqlite and SQLite WASM",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenconnet666/query.git",
+    "directory": "typescript/packages/sqlite"
+  },
+  "homepage": "https://github.com/kenconnet666/query#readme",
+  "bugs": {
+    "url": "https://github.com/kenconnet666/query/issues"
+  },
+  "keywords": [
+    "sql",
+    "query-builder",
+    "analytics",
+    "sqlite",
+    "sqlite-wasm"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "query-pull-sqlite": "./dist/pull.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "dependencies": {
+    "@zerodep-dev/query-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@sqlite.org/sqlite-wasm": "^3.54.1-build1"
+  },
+  "peerDependenciesMeta": {
+    "@sqlite.org/sqlite-wasm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

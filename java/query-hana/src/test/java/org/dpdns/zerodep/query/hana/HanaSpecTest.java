@@ -1,14 +1,20 @@
 package org.dpdns.zerodep.query.hana;
 
-import org.dpdns.zerodep.query.Database;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.hana.HanaTables.LipsByUnit;
+import org.dpdns.zerodep.query.hana.HanaTables.Org;
+import org.dpdns.zerodep.query.hana.HanaTables.OrgNode;
+import org.dpdns.zerodep.query.hana.HanaTables.SalesView;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -23,39 +29,92 @@ class HanaSpecTest extends RenderSpec {
     }
 
     @Override protected Map<String, SpecCase> dialectCases() {
+        Map<String, SpecCase> cases = new LinkedHashMap<>(classicCases());
+        cases.putAll(structureCases());
+        cases.putAll(functionCases());
+        return cases;
+    }
+
+    /** 方言包早先就有的函数与子句。 */
+    private Map<String, SpecCase> classicCases() {
         LocalDate first = LocalDate.of(2026, 1, 1);
         LocalDate day = LocalDate.of(2026, 1, 31);
         return Map.of(
             "hana-extremes", SpecCase.plain(() -> from(Lips.class)
-                .select((r, l) -> Arrays.asList(
-                    r.get(greatest(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atLeast4")),
-                    r.get(least(l.col(Lips::getQuantity), val(new BigDecimal("4"))).as("atMost4")),
-                    r.get(toInteger(substring(l.col(Lips::getDelivery), 2)).as("number"))))),
+                .select(l -> cols(
+                    greatest(l.quantity(), val(new BigDecimal("4"))).as("atLeast4"),
+                    least(l.quantity(), val(new BigDecimal("4"))).as("atMost4"),
+                    toInteger(substring(l.delivery(), 2)).as("number")))),
             "hana-grouping-sets", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> groupingSets(keys(l.col(Lips::getMaterial), l.col(Lips::getUnit)), keys(l.col(Lips::getMaterial)), keys()))
-                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+                .groupBy(l -> groupingSets(keys(l.material(), l.unit()), keys(l.material()), keys()))
+                .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
             "hana-cube", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> cube(l.col(Lips::getMaterial), l.col(Lips::getUnit)))
-                .select((r, l) -> Arrays.asList(r.get(l, Lips::getMaterial), r.get(l, Lips::getUnit), r.get(count().as("lines"))))),
+                .groupBy(l -> cube(l.material(), l.unit()))
+                .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
             "hana-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
-                .select((r, l) -> Arrays.asList(
-                    r.get(daysBetween(lit(first), addDays(lit(first), 3)).as("days")),
-                    r.get(addMonths(lit(day), 1).as("months")),
-                    r.get(addYears(lit(day), 2).as("years")),
-                    r.get(toVarchar(lit(day), "YYYYMMDD").as("text")),
-                    r.get(toDate(l.col(Lips::getDelivery), "YYYYMMDD").as("day")),
-                    r.get(length(l.col(Lips::getMaterial)).as("size"))))),
+                .select(l -> cols(
+                    daysBetween(lit(first), addDays(lit(first), 3)).as("days"),
+                    addMonths(lit(day), 1).as("months"),
+                    addYears(lit(day), 2).as("years"),
+                    toVarchar(lit(day), "YYYYMMDD").as("text"),
+                    toDate(l.delivery(), "YYYYMMDD").as("day"),
+                    length(l.material()).as("size")))),
             "hana-regexpr", SpecCase.plain(() -> from(Lips.class)
-                .where(l -> likeRegexpr(l.col(Lips::getDelivery), "^D[0-9]+$"))
-                .select((r, l) -> Arrays.asList(
-                    r.get(toNvarchar(l.col(Lips::getQuantity)).as("text")),
-                    r.get(toNvarchar(lit(day), "YYYYMMDD").as("day"))))),
+                .where(l -> likeRegexpr(l.delivery(), "^D[0-9]+$"))
+                .select(l -> cols(
+                    toNvarchar(l.quantity()).as("text"),
+                    toNvarchar(lit(day), "YYYYMMDD").as("day")))),
             "hana-string-agg", SpecCase.plain(() -> from(Lips.class)
-                .groupBy(l -> l.col(Lips::getMaterial))
-                .select((r, l) -> Arrays.asList(
-                    r.get(l, Lips::getMaterial),
-                    r.get(stringAgg(l.col(Lips::getDelivery), ",", l.col(Lips::getDelivery).asc(), l.col(Lips::getUnit).desc())
-                        .as("deliveries"))))));
+                .groupBy(l -> l.material())
+                .select(l -> cols(
+                    l.material(),
+                    stringAgg(l.delivery(), ",", l.delivery().asc(), l.unit().desc())
+                        .as("deliveries")))));
+    }
+
+    /** HANA 的中位数、窗口式的百分位数、相关系数与 FULL JOIN。 */
+    private Map<String, SpecCase> structureCases() {
+        return Map.of(
+            "hana-statistics", SpecCase.plain(() -> from(Lips.class)
+                .distinct()
+                .select(l -> cols(l.material(),
+                    percentileCont(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("median"),
+                    percentileDisc(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("lower")))),
+            "hana-median", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> l.material())
+                .select(l -> cols(l.material(), median(l.quantity()).as("median"), corr(l.quantity(), l.quantity()).as("self")))),
+            "hana-full-join", SpecCase.plain(() -> from(Lips.class)
+                .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
+                .select((l, m) -> cols(l.delivery(), m.material()))));
+    }
+
+    /** 带参数的视图与表函数、层级、全文检索与 JSON。 */
+    private Map<String, SpecCase> functionCases() {
+        Map<String, Object> placeholders = new LinkedHashMap<>();
+        placeholders.put("P_YEAR", "2026");
+        placeholders.put("P_REGION", null);
+        return Map.of(
+            "hana-calculation-view", SpecCase.plain(() -> fromView(SalesView.class, placeholders)
+                .where(v -> v.amount().gt(BigDecimal.TEN))
+                .select(v -> cols(v.material(), v.amount()))),
+            "hana-table-function", SpecCase.plain(() -> fromFunction(LipsByUnit.class, Map.of("P_UNIT", "EA"))
+                .orderBy(f -> f.delivery())
+                .select(f -> f.delivery())),
+            "hana-hierarchy", SpecCase.plain(() -> from(hierarchy(OrgNode.class, orgSource()))
+                .orderBy(n -> n.col(OrgNode::hierarchyRank))
+                .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyLevel), n.col(OrgNode::hierarchyParentRank), n.col(OrgNode::name)))),
+            "hana-descendants", SpecCase.plain(() -> from(descendants(OrgNode.class, orgSource(), List.of("B")))
+                .orderBy(n -> n.col(OrgNode::nodeId))
+                .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyDistance)))),
+            "hana-search", SpecCase.plain(() -> from(Lips.class)
+                .where(l -> all(contains("M1", l.material()), containsFuzzy(0.8, "D1", l.delivery(), l.material())))
+                .orderBy(l -> score().desc())
+                .select(l -> cols(l.delivery(), score().as("score"), jsonValue(l.unit(), "$.unit").as("json")))));
+    }
+
+    /** 组织表作为层级的来源：编号与上级编号改名为 nodeId、parentId。 */
+    static org.dpdns.zerodep.query.select.Query<Map<String, Object>> orgSource() {
+        return from(Org.class).select(o -> cols(o.id().as("nodeId"), o.parent().as("parentId"), o.name()));
     }
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { bigint, boolean, bytes, date, decimal, double, integer, text, timestamp, typeOf } from "@zerodep-dev/query-core";
-import { sapDate } from "../erp.js";
+import { sapDate } from "../fixtures/erp.js";
 
 describe("值类型", () => {
   it("时间戳统一为秒加去掉尾零的小数", () => {
