@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, dryRunDriver, from, inMemoryCache, lit } from "@zerodep-dev/query-core";
+import { count, dryRunDriver, EmptyResultError, from, inMemoryCache, lit, Rendered } from "@zerodep-dev/query-core";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { Lips, Mara } from "../fixtures/erp.js";
 import { TestDatabase, TestDialect } from "../fixtures/support.js";
@@ -49,6 +49,34 @@ describe("打印与测试 SQL", () => {
     assert.deepEqual(events.slice(3).map((e) => e.cached), [false, true]);
     assert.equal(await db.count(from(Mara).select((m) => m.material)), 0);
     assert.deepEqual(await db.capture(() => undefined), []);
+  });
+
+  it("执行前钩子按注册顺序改写每条语句", async () => {
+    const db = new TestDatabase(
+      { interceptors: [(s) => new Rendered(`${s.sql}\n-- a`, s.bindings, s.dialect), (s) => new Rendered(`${s.sql} b`, s.bindings, s.dialect)] },
+      dryRunDriver(),
+    );
+    const events = await db.capture(async () => {
+      await db.list(from(Lips).select((l) => l.delivery));
+      await db.count(from(Lips).select((l) => l.delivery));
+      await db.exists(from(Lips).select((l) => l.delivery));
+      await db.sql("SELECT 1 AS n").list();
+    });
+    assert.equal(events.length, 4);
+    assert.ok(events.every((e) => e.statement.sql.endsWith("\n-- a b")), JSON.stringify(events.map((e) => e.statement.sql)));
+  });
+
+  it("执行前钩子抛出异常时语句不执行", async () => {
+    const db = new TestDatabase({ interceptors: [() => { throw new Error("blocked"); }] }, dryRunDriver());
+    const seen: unknown[] = [];
+    await assert.rejects(async () => seen.push(...(await db.capture(() => db.list(from(Lips).select((l) => l.delivery))))), /blocked/);
+    assert.deepEqual(seen, []);
+  });
+
+  it("恰好一行的查询没有行时抛出专门的错误", async () => {
+    const db = new TestDatabase({}, dryRunDriver());
+    await assert.rejects(db.one(from(Lips).select((l) => l.delivery)), EmptyResultError);
+    await assert.rejects(db.sql("SELECT 1 AS n").one(), EmptyResultError);
   });
 
   it("捕获可以嵌套且只收集本数据库的语句", async () => {

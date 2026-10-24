@@ -1,5 +1,5 @@
 import { entityMeta, type Ctor, type WhereOp } from "../schema/metadata.js";
-import { all, any, Cond, Expr, withSkipEmpty } from "../sql/expr.js";
+import { all, any, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
 import { contains, endsWith, startsWith } from "../sql/functions.js";
 import { Many } from "./many.js";
 
@@ -113,6 +113,7 @@ function exists(many: Many<unknown>, inner: (target: unknown) => Cond): Cond {
 
 /** 一个字段的条件；值为空时由 skipEmpty 规则省略。 */
 function compare(column: Expr<unknown>, op: WhereOp, value: unknown, field: string): Cond {
+  if (typeof op === "function") return skips(value) ? Cond.EMPTY : op(column, value);
   const c = column as Expr<never>;
   if (Array.isArray(value)) {
     if (op === "eq") return c.in(value as never[]);

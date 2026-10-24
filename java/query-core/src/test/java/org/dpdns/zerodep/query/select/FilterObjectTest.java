@@ -3,6 +3,8 @@ package org.dpdns.zerodep.query.select;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Rendered;
+import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.TestDialect;
@@ -10,11 +12,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 import static org.dpdns.zerodep.query.Sql.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("条件对象")
 class FilterObjectTest {
@@ -44,6 +48,26 @@ class FilterObjectTest {
             WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFRPN LIKE ? ESCAPE '!') OR (MAKT.MAKTX LIKE ? ESCAPE '!')) \
             AND LIPS.VRKME <> ?""", r.sql());
         assertEquals(List.of("1", "M1", "M2", "20260101", "20260701", "%50!%%", "%50!%%", "KG"), r.parameters());
+    }
+
+    /** 按月筛选：日期落在这个月里。 */
+    public static final class InMonth implements Where.Operator {
+        /** 写成 {@code col >= 月初 AND col < 下月初}。 */
+        @SuppressWarnings("unchecked")
+        @Override public Cond apply(Expr<?> column, Object value) {
+            YearMonth month = (YearMonth) value;
+            return ((Expr<LocalDate>) column).range(month.atDay(1), month.plusMonths(1).atDay(1));
+        }
+    }
+
+    @Test
+    void 自定义比较由using指定且字段为空时不调用() {
+        record Search(@Where(value = "createdOn", using = InMonth.class) YearMonth month) { }
+        Rendered r = from(Lips.class).where(new Search(YearMonth.of(2026, 1))).select(l -> l.delivery()).toSql(DIALECT);
+        assertTrue(r.sql().endsWith("WHERE LIPS.ERDAT >= ? AND LIPS.ERDAT < ?"), r.sql());
+        assertEquals(List.of("20260101", "20260201"), r.parameters());
+        assertEquals("SELECT LIPS.VBELN AS \"delivery\"\nFROM QUERY_IT.LIPS LIPS",
+            from(Lips.class).where(new Search(null)).select(l -> l.delivery()).toSql(DIALECT).sql());
     }
 
     @Test

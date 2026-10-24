@@ -94,7 +94,12 @@
 | 列级写入策略 | `@InsertIgnore`、`@UpdateIgnore` | `@ReadOnly`（从不写）、`@WriteOnce`（只在插入时写） | 2.0 |
 | 联表更新、删除 | 导航属性隐式 JOIN（`updatable(...).where(c -> c.user().name()...)`） | 写语句的 WHERE 经过导航时写成 `EXISTS (... LEFT JOIN ...)`，三库语义一致；显式联表写法只在方言包：`updateJoin` / `deleteJoin`，HANA 写成 MERGE 防止一行匹配多行时误写 | 2.0 |
 | 是否存在 | `any()` | `db.exists(q)` | 2.0 |
-| 零行或一行 | `singleOrNull`、`firstNotNull` | `db.optional(q)`（多于一行报错）；必须有值用 `db.first(q).orElseThrow(...)` 或 `db.one(q)` | 2.0 |
+| 零行或一行 | `singleOrNull`、`firstNotNull` | `db.optional(q)`（多于一行报错）；必须有值用 `db.first(q).orElseThrow(...)` 或 `db.one(q)`；没有行、多于一行分别抛 `EmptyResultException` / `TooManyRowsException`（TS 为 `...Error`），代替可替换的异常工厂 | 2.0 |
+| 执行前拦截 | `JdbcExecutorListener`、`Interceptor` | `config.intercept(...)` / `interceptors`：改写 SQL 或抛异常拦下，作用于所有语句 | 2.0 |
+| 装回关联数据 | `fillMany`、`fillOne` | `db.attach(rows, key, ids -> query, keyOf, setter)`、`attachMany` | 2.0 |
+| 主键生成器 | `PrimaryKeyGenerator` | `config.generate(T.class, t -> t.id(), gen)` / TS `generate(...)`：只给为 null 的行生成，不写回对象 | 2.0 |
+| 条件对象的自定义比较 | `@EasyWhereCondition(type = ...)` 的扩展 | `@Where(using = X.class)` / `@where(fn, ...)` | 2.0 |
+| 拦截器的启用与顺序 | `enable()`、`order()`、`apply(entityClass)` | 过滤器、填充按添加顺序生效，按表接口的父类型匹配；动态开关在回调里返回 `Cond.EMPTY` | 2.0 |
 | 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
 | 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照 | 不做线程绑定的跟踪；差异更新写成 `update(T).byId(edited).diffFrom(loaded)`，由调用方给出修改前的行 | 2.0 |
 | 对象图级联保存 | `savable(root)` | 暂不做；随流程引擎再按"显式一层子行同步加中间表"评估 | 3 |

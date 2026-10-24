@@ -42,6 +42,7 @@ export {
   type RelationMeta,
   type WhereMeta,
   type WhereOp,
+  type WhereOperator,
   type WriteMeta,
   type LogicDeleteMeta,
   type Table,
@@ -204,7 +205,10 @@ export {
   Database,
   inMemoryCache,
   NativeQuery,
+  EmptyResultError,
   QueryExecutionError,
+  TooManyRowsError,
+  type StatementInterceptor,
   UnexpectedRowCountError,
   type CacheKey,
   type DatabaseOptions,
@@ -219,4 +223,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
-export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";
+export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";

@@ -1,5 +1,8 @@
 package org.dpdns.zerodep.query.annotation;
 
+import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Expr;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -29,6 +32,18 @@ public @interface Where {
 
     /** 比较方式，默认相等。 */
     Op op() default Op.EQ;
+
+    /**
+     * 自定义的比较，优先于 {@link #op}：实现 {@link Operator} 且有无参构造方法的类，每个类只创建一次。
+     * 例如按月筛选 {@code @Where(value = "createdOn", using = InMonth.class) YearMonth month}。
+     */
+    Class<? extends Operator> using() default Operator.class;
+
+    /** 自定义的比较：字段值为 null、空白字符串或空集合时不调用，直接省略条件。 */
+    interface Operator {
+        /** 由列和字段值构造条件；返回 {@code Cond.EMPTY} 表示不加条件。 */
+        Cond apply(Expr<?> column, Object value);
+    }
 
     /** 字段值与列的比较方式。值是集合时 EQ 为 IN，NE 为 NOT IN。 */
     enum Op {

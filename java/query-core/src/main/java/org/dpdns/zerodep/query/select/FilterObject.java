@@ -42,11 +42,12 @@ public final class FilterObject {
             Where where = p.field().getAnnotation(Where.class);
             String[] paths = where == null || where.value().length == 0 ? new String[] {p.name()} : where.value();
             Where.Op op = where == null ? Where.Op.EQ : where.op();
+            Where.Operator custom = where == null || where.using() == Where.Operator.class ? null : operator(where.using());
             Object value = read(p, filter);
             String owner = type.getSimpleName() + "." + p.name();
             List<Cond> any = new ArrayList<>();
             for (String path : paths) {
-                Step step = new Step(path.split("\\."), path, op, value, owner);
+                Step step = new Step(path.split("\\."), path, op, custom, value, owner);
                 Object start = Members.find(spec, step.steps[0], owner);
                 if (start == null) throw new IllegalArgumentException(owner + ": the query's tables have no " + path);
                 Group group = paths.length == 1 ? group(start, step, groups) : null;
@@ -59,8 +60,24 @@ public final class FilterObject {
         return Sql.all(all);
     }
 
-    /** 一个字段沿一条路径的比较：steps 是拆开的路径，其余是字段的比较方式、值和报错用的名字。 */
-    private record Step(String[] steps, String path, Where.Op op, Object value, String owner) { }
+    /** 一个字段沿一条路径的比较：steps 是拆开的路径，其余是字段的比较方式（custom 不为 null 时用它）、值和报错用的名字。 */
+    private record Step(String[] steps, String path, Where.Op op, Where.Operator custom, Object value, String owner) { }
+
+    /** 自定义比较的实例，每个类只创建一次。 */
+    private static final Map<Class<?>, Where.Operator> OPERATORS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 取（必要时创建）自定义比较的实例。 */
+    private static Where.Operator operator(Class<? extends Where.Operator> type) {
+        return OPERATORS.computeIfAbsent(type, t -> {
+            try {
+                var constructor = t.getDeclaredConstructor();
+                constructor.trySetAccessible();
+                return (Where.Operator) constructor.newInstance();
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalArgumentException("@Where(using = " + t.getSimpleName() + ".class) needs a no-argument constructor", e);
+            }
+        });
+    }
 
     /** 走过同一个一对多关系的字段，合并进一个 EXISTS；rest 是关系之后的第一段。 */
     private record Group(Many<?> many, int rest, List<Step> steps) { }
@@ -90,6 +107,7 @@ public final class FilterObject {
             if (at == null) throw new IllegalArgumentException(step.owner + ": the query's tables have no " + step.path);
         }
         if (!(at instanceof Expr<?> column)) throw new IllegalArgumentException(step.owner + ": " + step.path + " is a relation, not a column");
+        if (step.custom != null) return SkipEmpty.within(true, () -> SkipEmpty.skips(step.value) ? Cond.EMPTY : step.custom.apply(column, step.value));
         return SkipEmpty.within(true, () -> compare(column, step.op, step.value, step.owner));
     }
 

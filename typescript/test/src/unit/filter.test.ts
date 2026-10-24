@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { all, contains, endsWith, from, ignore, startsWith, where } from "@zerodep-dev/query-core";
+import { all, contains, endsWith, from, ignore, startsWith, where, type Cond, type Expr } from "@zerodep-dev/query-core";
 import { Lips, Mara } from "../fixtures/erp.js";
 import { TestDialect } from "../fixtures/support.js";
 
@@ -32,6 +32,21 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
         `AND LIPS.VRKME <> ?`,
     );
     assert.deepEqual(r.parameters, ["1", "M1", "M2", "20260101", "20260701", "%50!%%", "%50!%%", "KG"]);
+  });
+
+  it("自定义比较由函数指定且字段为空时不调用", () => {
+    const inMonth = (column: Expr<string | null>, month: string): Cond => {
+      const [y, m] = month.split("-").map(Number) as [number, number];
+      const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+      return column.range(`${month}-01`, `${next}-01`);
+    };
+    class Search {
+      @where(inMonth, "createdOn") month?: string | null;
+    }
+    const r = from(Lips).where(Object.assign(new Search(), { month: "2026-01" })).select((l) => l.delivery).toSql(DIALECT);
+    assert.ok(r.sql.endsWith("WHERE LIPS.ERDAT >= ? AND LIPS.ERDAT < ?"), r.sql);
+    assert.deepEqual(r.parameters, ["20260101", "20260201"]);
+    assert.equal(from(Lips).where(Object.assign(new Search(), { month: null })).select((l) => l.delivery).toSql(DIALECT).sql, 'SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS');
   });
 
   it("值为空的字段不产生条件也不连接关系", () => {

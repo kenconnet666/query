@@ -1,6 +1,6 @@
 import type { Many } from "../query/many.js";
 import type { Ref } from "../query/source.js";
-import type { Cond } from "../sql/expr.js";
+import type { Cond, Expr } from "../sql/expr.js";
 import { text, type SqlType } from "./types.js";
 
 // 标准装饰器把元数据记录在 Symbol.metadata 上，而 Node 还没有定义它。编译后的类在
@@ -90,7 +90,10 @@ export function deletedValue(logic: LogicDeleteMeta): unknown {
 }
 
 /** 条件对象字段的比较方式。 */
-export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith";
+export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | WhereOperator;
+
+/** 自定义的比较：由列和字段值构造条件，返回 `Cond.EMPTY` 表示不加条件；字段值为空时不调用，直接省略。 */
+export type WhereOperator = (column: Expr<any>, value: any) => Cond;
 
 /** 条件对象里一个字段的比较方式和要比较的列（关系路径）。 */
 export interface WhereMeta {
@@ -233,7 +236,7 @@ export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Re
 /**
  * 条件对象（`from(...).where(filter)`）里一个字段怎样变成条件：op 是比较方式，columns 是比较的列，默认是字段名；
  * 列可以经过多对一关系（`"mara.partNumber"`），写多个时任一满足即可（OR）。没有这个装饰器的字段与同名列比较相等
- * （数组用 IN）。例如 `@where("ge", "createdOn") from?: string;`。
+ * （数组用 IN）。例如 `@where("ge", "createdOn") from?: string;`；op 也可以是自定义函数 `(column, value) => cond`。
  */
 export function where(op: WhereOp, ...columns: string[]) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });

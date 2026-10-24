@@ -54,6 +54,16 @@ export interface Fill {
   /** 每条语句取一次值；返回表达式时原样写出（例如 `currentTimestamp()`），否则按列的类型绑定。 */
   readonly value: () => unknown;
   readonly onInsert: boolean;
+  /** 插入时逐行生成：只填行里为 null 或没有这个字段的行，每行调用一次 value，见 {@link generate}。 */
+  readonly generate?: boolean;
+}
+
+/**
+ * 插入 type（或它的子类）的表时逐行生成一列的值，只填行里为 null 或没有这个字段的行，例如主键：
+ * `generate(Keyed, (k) => k.id, () => randomUUID())`。生成的值不写回行对象，之后还要用这个值时在代码里先生成。
+ */
+export function generate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => NonNullable<V>): Fill {
+  return Object.freeze({ type, column: column as Fill["column"], value, onInsert: true, generate: true });
 }
 
 /** 插入 type（或它的子类）的表时自动填充一列，例如创建时间：`onInsert(Audited, (a) => a.createdAt, () => now())`。 */
@@ -66,17 +76,24 @@ export function onUpdate<E, V>(type: abstract new (...args: never[]) => E, colum
   return Object.freeze({ type, column: column as Fill["column"], value, onInsert: false });
 }
 
-/** 写入器上的数据库实例里，对 ref 这张表生效的一类填充：列和值。 */
+/** 写入器上的数据库实例里，对 ref 这张表生效的一类填充（不含逐行生成的）：列和值。 */
 function fillsFor(w: SqlWriter, ref: object, insert: boolean): (readonly [Column<unknown>, Expr<unknown>])[] {
+  return matchingFills(w, ref, insert, false).map(([column, f]) => {
+    const value = f.value();
+    return [column, value instanceof Expr ? value : bindValue(column.type, value)] as const;
+  });
+}
+
+/** 对 ref 这张表生效的一类填充和它的列；generated 为 true 时只取逐行生成的。 */
+function matchingFills(w: SqlWriter, ref: object, insert: boolean, generated: boolean): (readonly [Column<unknown>, Fill])[] {
   const entity = ownerOf(ref).source.entity;
   const fills = (w.settings.fills as readonly Fill[] | undefined) ?? [];
   return fills
-    .filter((f) => f.onInsert === insert && entity !== undefined && (entity === f.type || entity.prototype instanceof f.type))
+    .filter((f) => f.onInsert === insert && (f.generate === true) === generated && entity !== undefined && (entity === f.type || entity.prototype instanceof f.type))
     .map((f) => {
       const column = f.column(ref as never);
       if (!(column instanceof Column) || column.owner !== ownerOf(ref)) throw new Error(`A fill for ${f.type.name} must return one of its columns`);
-      const value = f.value();
-      return [column as Column<unknown>, value instanceof Expr ? value : bindValue(column.type, value)] as const;
+      return [column as Column<unknown>, f] as const;
     });
 }
 
@@ -227,7 +244,12 @@ export class Insert<T> extends Write {
       if (i >= 0) out[i] = [column, value];
       else out.push([column, value]);
     };
-    for (const [column, value] of this.#fills ? fillsFor(w, createRef(tableSource(this.#table)) as object, true) : []) put(column.column as PropertyMeta, value);
+    const ref = createRef(tableSource(this.#table)) as object;
+    for (const [column, value] of this.#fills ? fillsFor(w, ref, true) : []) put(column.column as PropertyMeta, value);
+    for (const [column, f] of matchingFills(w, ref, true, true)) {
+      const property = column.column as PropertyMeta;
+      if (((row as Record<string, unknown>)[property.name] ?? null) === null) put(property, bindValue(column.type, f.value()));
+    }
     const meta = entityMeta(this.#table);
     const logic = meta.writes.logicDelete;
     if (logic !== undefined && !logic.timestamp && !out.some(([c]) => c.name === logic.property)) {

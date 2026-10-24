@@ -6,15 +6,16 @@ import org.dpdns.zerodep.query.exec.QueryListener;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;
-import org.dpdns.zerodep.query.testing.Writes;
 import org.dpdns.zerodep.query.testing.Writes.Note;
 import org.dpdns.zerodep.query.testing.Writes.NoteRow;
 import org.dpdns.zerodep.query.testing.Writes.Tenanted;
+import org.dpdns.zerodep.query.testing.Writes;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.dpdns.zerodep.query.Sql.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,6 +33,19 @@ class WriteTest {
         assertEquals("INSERT INTO QUERY_IT.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)", r.get(0).sql());
         assertEquals(r.get(0).sql(), r.get(1).sql());
         assertEquals(Arrays.asList("N2", "T1", null, 2, "open"), r.get(1).parameters());
+    }
+
+    @Test
+    void 生成器只给值为空的行生成值() {
+        AtomicInteger next = new AtomicInteger();
+        Database db = TestDatabase.dryRun(c -> c.generate(Note.class, n -> n.id(), () -> "G" + next.incrementAndGet()));
+        List<Rendered> r = db.render(insertInto(Note.class).values(new NoteRow(null, "T1", "a", 1, "open"), new NoteRow("N2", "T1", "b", 2, "open")));
+        assertEquals(Arrays.asList("G1", "T1", "a", 1, "open"), r.get(0).parameters());
+        assertEquals("N2", r.get(1).parameters().get(0));
+        record Untitled(String tenant, String title) { }
+        Rendered missing = db.render(insertInto(Note.class).values(new Untitled("T1", "c"))).get(0);
+        assertEquals("INSERT INTO QUERY_IT.W_NOTE (TENANT, TITLE, ID) VALUES (?, ?, ?)", missing.sql());
+        assertEquals(List.of("T1", "c", "G2"), missing.parameters());
     }
 
     @Test

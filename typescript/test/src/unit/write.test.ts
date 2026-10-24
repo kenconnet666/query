@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, JoinUpdate, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
+import { deleteFrom, dryRunDriver, filter, forUpdate, from, generate, insertInto, JoinUpdate, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
 import { Lips } from "../fixtures/erp.js";
 import { claimable } from "../fixtures/workflow.js";
@@ -46,6 +46,15 @@ describe("写入", () => {
     assert.equal(r[0]!.sql, "INSERT INTO QUERY_IT.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)");
     assert.equal(r[1]!.sql, r[0]!.sql);
     assert.deepEqual(r[1]!.parameters, ["N2", "T1", null, 2, "open"]);
+  });
+
+  it("生成器只给值为空的行生成值", () => {
+    let next = 0;
+    const gen = new TestDatabase({ fills: [generate(Note, (n) => n.id, () => `G${++next}`)] });
+    const r = gen.render(insertInto(Note).values({ tenant: "T1", title: "a" }, { tenant: "T1", title: "b" }));
+    assert.equal(r[0]!.sql, "INSERT INTO QUERY_IT.W_NOTE (TENANT, TITLE, ID) VALUES (?, ?, ?)");
+    assert.deepEqual(r.map((s) => s.parameters), [["T1", "a", "G1"], ["T1", "b", "G2"]]);
+    assert.deepEqual(gen.render(insertInto(Note).values({ id: "N2", tenant: "T1", title: "c" }))[0]!.parameters, ["N2", "T1", "c"]);
   });
 
   it("行的字段不是表的列，或各行字段不同时报错", () => {

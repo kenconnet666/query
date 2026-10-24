@@ -41,6 +41,7 @@ public final class JdbcExecutor {
     private final ConnectionProvider connections;
     private final TypeRegistry types;
     private final List<QueryListener> listeners;
+    private final List<StatementInterceptor> interceptors;
     private final int fetchSize;
     private final Duration defaultTimeout;
 
@@ -56,18 +57,33 @@ public final class JdbcExecutor {
      * @param connections    连接来源
      * @param types          绑定参数与读取列所用的类型注册表
      * @param listeners      语句监听器
+     * @param interceptors   执行前依次改写或拦截语句的钩子
      * @param fetchSize      JDBC 每次提取的行数；0 表示使用驱动默认值
      * @param defaultTimeout 默认查询超时；null 表示不限制
      */
     public JdbcExecutor(String database, Dialect dialect, ConnectionProvider connections, TypeRegistry types, List<QueryListener> listeners,
-                        int fetchSize, Duration defaultTimeout) {
+                        List<StatementInterceptor> interceptors, int fetchSize, Duration defaultTimeout) {
         this.database = database;
         this.dialect = dialect;
         this.connections = connections;
         this.types = types;
         this.listeners = List.copyOf(listeners);
+        this.interceptors = List.copyOf(interceptors);
         this.fetchSize = fetchSize;
         this.defaultTimeout = defaultTimeout;
+    }
+
+    /**
+     * 把语句依次交给各个执行前钩子，返回最终要执行的语句。调用方在执行前调用一次
+     * （查询缓存要用改写后的语句作键，所以不在执行方法里自动调用）。
+     */
+    public Rendered intercept(Rendered statement) {
+        Rendered current = statement;
+        for (StatementInterceptor i : interceptors) {
+            current = i.intercept(current);
+            if (current == null) throw new IllegalStateException("A StatementInterceptor returned null for " + statement.sql());
+        }
+        return current;
     }
 
     /** 本执行器使用的类型注册表。 */

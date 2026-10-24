@@ -108,6 +108,29 @@ export class UnexpectedRowCountError extends Error {
   }
 }
 
+/** 要求恰好一行（`db.one(q)`）的查询没有读到行；应用可以在全局错误处理里把它单独映射成"未找到"。 */
+export class EmptyResultError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmptyResultError";
+  }
+}
+
+/** 最多一行（`db.one(q)`、`db.optional(q)`）的查询读到了多行，通常说明条件写漏了。 */
+export class TooManyRowsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TooManyRowsError";
+  }
+}
+
+/**
+ * 语句执行前的钩子：查询、写语句、计数、原生 SQL 都经过它。返回要执行的语句，原样返回表示不改；抛出异常则语句不执行。
+ * 用 `new Rendered(sql, s.bindings, s.dialect)` 改写 SQL 文本，例如加注释或提示；改写不要改变参数的个数和顺序。
+ * 多个钩子按顺序依次调用；设置了 `cached(...)` 的查询按改写后的 SQL 作缓存键。
+ */
+export type StatementInterceptor = (statement: Rendered) => Rendered;
+
 /** 一次 {@link Database.transaction}：该数据库在其中使用的驱动。 */
 interface Transaction {
   readonly database: Database;
@@ -238,6 +261,8 @@ export interface DatabaseOptions {
   readonly filters?: readonly SourceFilter[];
   /** 写入时自动填充的列（审计字段）：`[onInsert(Audited, (a) => a.createdAt, now), onUpdate(Audited, (a) => a.updatedBy, user)]`。 */
   readonly fills?: readonly Fill[];
+  /** 执行前依次改写或拦截语句的钩子，见 {@link StatementInterceptor}。 */
+  readonly interceptors?: readonly StatementInterceptor[];
   /**
    * 表声明里的 schema 换成实际的名字，例如 SAP 各环境的 schema 不同：`{ ERP: "SAPHANADB" }`，或按规则 `(s) => s + "_TEST"`。
    * 查询、写语句和关系里的表都换；原生 SQL 文本不换。
@@ -269,6 +294,8 @@ function schemaMapping(schemas: Readonly<Record<string, string>> | ((schema: str
 }
 
 let instances = 0;
+/** attach 每批至多这么多个键，免得 IN 列表和参数个数过大。 */
+const ATTACH_BATCH = 1000;
 let executeNative: (db: Database, statement: Rendered, timeoutMs: number | undefined) => Promise<DriverResult>;
 
 /**
@@ -282,6 +309,7 @@ export abstract class Database {
   readonly #cache: QueryCache | undefined;
   readonly #listener: QueryListener | undefined;
   readonly #timeout: number | undefined;
+  readonly #interceptors: readonly StatementInterceptor[];
 
   protected constructor(
     readonly dialect: Dialect,
@@ -298,6 +326,7 @@ export abstract class Database {
       ...(options.functions === undefined ? {} : { functions: options.functions }),
     });
     this.#cache = options.cache;
+    this.#interceptors = [...(options.interceptors ?? [])];
     const print = options.printSql === true ? printToConsole : options.printSql || undefined;
     const listener = options.listener;
     this.#listener =
@@ -316,18 +345,59 @@ export abstract class Database {
     return assembleRows(q, await this.#rows(q, this.render(q)), (child) => this.list(child));
   }
 
-  /** 恰好一行，否则抛错。 */
+  /** 恰好一行：没有时抛 {@link EmptyResultError}，多于一行时抛 {@link TooManyRowsError}；至多读取两行。 */
   async one<R>(q: Query<R>): Promise<R> {
     const rows = await this.list(limitAtMost(q, 2));
-    if (rows.length !== 1) throw new Error(`Expected exactly one row, got ${rows.length === 0 ? "none" : "more than one"}`);
+    if (rows.length === 0) throw new EmptyResultError("Expected exactly one row, got none");
+    if (rows.length > 1) throw new TooManyRowsError("Expected exactly one row, got more than one");
     return rows[0]!;
   }
 
-  /** 零行或一行：没有时返回 `undefined`，多于一行抛错；至多读取两行。 */
+  /** 零行或一行：没有时返回 `undefined`，多于一行抛 {@link TooManyRowsError}；至多读取两行。 */
   async optional<R>(q: Query<R>): Promise<R | undefined> {
     const rows = await this.list(limitAtMost(q, 2));
-    if (rows.length > 1) throw new Error("Expected at most one row, got more than one");
+    if (rows.length > 1) throw new TooManyRowsError("Expected at most one row, got more than one");
     return rows[0];
+  }
+
+  /**
+   * 按键把另一个查询的结果装回已经读出的行（一对一）：收集各行的键（去掉 null 和重复），每批至多 1000 个交给 load
+   * 得到查询，执行后按 keyOf 对应回去，用 set 写进行里；没有对应的行写 null。适合不便声明成关系的数据：
+   * `await db.attach(orders, (o) => o.customerId, (ids) => from(Customer).where((c) => c.id.in(ids)).select(...), (c) => c.id, (o, c) => { o.customer = c; })`。
+   * 同一个键对应多行时抛出 {@link TooManyRowsError}。
+   */
+  async attach<R, K, V>(rows: readonly R[], key: (row: R) => K | null | undefined, load: (keys: K[]) => Query<V>, keyOf: (value: V) => K, set: (row: R, value: V | null) => void): Promise<void> {
+    const found = new Map<K, V>();
+    for (const v of await this.#loadAll(rows, key, load)) {
+      if (found.has(keyOf(v))) throw new TooManyRowsError(`attach(...) found more than one row for key ${String(keyOf(v))}`);
+      found.set(keyOf(v), v);
+    }
+    for (const r of rows) {
+      const k = key(r);
+      set(r, k == null ? null : (found.get(k) ?? null));
+    }
+  }
+
+  /** 同 {@link attach}，但一个键对应多行（一对多），按查询返回的顺序装成数组；没有对应的行写空数组。 */
+  async attachMany<R, K, V>(rows: readonly R[], key: (row: R) => K | null | undefined, load: (keys: K[]) => Query<V>, keyOf: (value: V) => K, set: (row: R, values: V[]) => void): Promise<void> {
+    const found = new Map<K, V[]>();
+    for (const v of await this.#loadAll(rows, key, load)) {
+      const list = found.get(keyOf(v));
+      if (list === undefined) found.set(keyOf(v), [v]);
+      else list.push(v);
+    }
+    for (const r of rows) {
+      const k = key(r);
+      set(r, k == null ? [] : [...(found.get(k) ?? [])]);
+    }
+  }
+
+  /** 去重后的非空键分批交给 load，返回全部结果行。 */
+  async #loadAll<R, K, V>(rows: readonly R[], key: (row: R) => K | null | undefined, load: (keys: K[]) => Query<V>): Promise<V[]> {
+    const keys = [...new Set(rows.map(key).filter((k): k is K => k != null))];
+    const out: V[] = [];
+    for (let from = 0; from < keys.length; from += ATTACH_BATCH) out.push(...(await this.list(load(keys.slice(from, from + ATTACH_BATCH)))));
+    return out;
   }
 
   /** 第一行，至多读取一行；没有结果时返回 `undefined`。 */
@@ -342,7 +412,7 @@ export abstract class Database {
       yield* await this.list(q);
       return;
     }
-    const statement = this.render(q);
+    const statement = this.#intercept(this.render(q));
     this.#checkParameterCount(statement);
     const { types, assemble } = decoderOf(q);
     const start = Date.now();
@@ -497,9 +567,11 @@ export abstract class Database {
   }
 
   /** 取得解码后的行：标记了 `.cached(...)` 的查询经由缓存，其余直接执行。 */
-  async #rows(q: Query<unknown>, statement: Rendered): Promise<Rows> {
+  async #rows(q: Query<unknown>, rendered: Rendered): Promise<Rows> {
     const { types } = decoderOf(q);
-    const fetch = async () => (await this.#execute(statement, timeoutOf(q))).rows.map((raw) => decode(q, types, raw));
+    // 缓存键用执行前钩子改写后的语句，所以先改写，执行时不再改写。
+    const statement = this.#intercept(rendered);
+    const fetch = async () => (await this.#execute(statement, timeoutOf(q), true)).rows.map((raw) => decode(q, types, raw));
     const ttl = ttlOf(q);
     if (ttl === undefined) return fetch();
     if (this.#cache === undefined) throw new Error(`The query is .cached(...) but database ${this.name} has no cache; pass cache: inMemoryCache()`);
@@ -513,8 +585,19 @@ export abstract class Database {
     return rows;
   }
 
-  /** 执行语句并通知监听器；`timeoutMs` 为 undefined 时用实例的默认值。 */
-  async #execute(statement: Rendered, timeoutMs: number | undefined): Promise<DriverResult> {
+  /** 把语句依次交给各个执行前钩子，返回最终要执行的语句。 */
+  #intercept(statement: Rendered): Rendered {
+    let current = statement;
+    for (const intercept of this.#interceptors) {
+      current = intercept(current);
+      if (!(current instanceof Rendered)) throw new Error(`A statement interceptor returned ${String(current)} for ${statement.sql}`);
+    }
+    return current;
+  }
+
+  /** 执行语句并通知监听器；`timeoutMs` 为 undefined 时用实例的默认值。intercepted 为 true 表示已经经过执行前钩子。 */
+  async #execute(rendered: Rendered, timeoutMs: number | undefined, intercepted = false): Promise<DriverResult> {
+    const statement = intercepted ? rendered : this.#intercept(rendered);
     this.#checkParameterCount(statement);
     const start = Date.now();
     try {
@@ -649,7 +732,8 @@ export class NativeQuery {
   /** 恰好一行，否则抛错。 */
   async one(): Promise<Record<string, unknown>> {
     const rows = await this.list();
-    if (rows.length !== 1) throw new Error(`Expected exactly one row, got ${rows.length}`);
+    if (rows.length === 0) throw new EmptyResultError("Expected exactly one row, got none");
+    if (rows.length > 1) throw new TooManyRowsError(`Expected exactly one row, got ${rows.length}`);
     return rows[0]!;
   }
 

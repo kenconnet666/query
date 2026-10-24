@@ -18,6 +18,7 @@ import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.lit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("打印与测试 SQL")
@@ -63,6 +64,36 @@ class SqlDebugTest {
         assertEquals(List.of(false, true), events.subList(3, 5).stream().map(QueryListener.Event::cached).toList());
         assertEquals(0, db.count(from(Mara.class).select(m -> m.material())), "a dry run counts no rows");
         assertTrue(db.capture(() -> { }).isEmpty());
+    }
+
+    @Test
+    void 执行前钩子按注册顺序改写每条语句() {
+        Database db = TestDatabase.dryRun(c -> c
+            .intercept(s -> new Rendered(s.sql() + "\n-- a", s.bindings(), s.dialect()))
+            .intercept(s -> new Rendered(s.sql() + " b", s.bindings(), s.dialect())));
+        List<QueryListener.Event> events = db.capture(() -> {
+            db.list(from(Lips.class).select(l -> l.delivery()));
+            db.count(from(Lips.class).select(l -> l.delivery()));
+            db.exists(from(Lips.class).select(l -> l.delivery()));
+        });
+        assertEquals(3, events.size());
+        assertTrue(events.stream().allMatch(e -> e.statement().sql().endsWith("\n-- a b")), events.toString());
+    }
+
+    @Test
+    void 执行前钩子抛出异常时语句不执行() {
+        Database db = TestDatabase.dryRun(c -> c.intercept(s -> { throw new IllegalStateException("blocked"); }));
+        List<QueryListener.Event> events = new ArrayList<>();
+        Query<String> q = from(Lips.class).select(l -> l.delivery());
+        var e = assertThrows(IllegalStateException.class, () -> events.addAll(db.capture(() -> db.list(q))));
+        assertEquals("blocked", e.getMessage());
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
+    void 恰好一行的查询没有行时抛出专门的异常() {
+        Database db = TestDatabase.dryRun(null);
+        assertThrows(EmptyResultException.class, () -> db.one(from(Lips.class).select(l -> l.delivery())));
     }
 
     @Test

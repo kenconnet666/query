@@ -30,7 +30,7 @@ import {
   type QueryEvent,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { all, allOf, anyOf, bool, keys, nullOf, text } from "@zerodep-dev/query-core";
+import { all, allOf, anyOf, bool, keys, nullOf, text, TooManyRowsError } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
 import { distributionWindows, statistics } from "../fixtures/spec-cases.js";
 import { dateFunctions, numberTextFunctions, timeFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
@@ -698,7 +698,28 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const db = live().db;
       assert.equal(await db.optional(from(Lips).where((l) => l.delivery.eq("D1")).select((l) => l.delivery)), "D1");
       assert.equal(await db.optional(from(Lips).where((l) => l.delivery.eq("none")).select((l) => l.delivery)), undefined);
-      await assert.rejects(db.optional(from(Lips).select((l) => l.delivery)), /at most one row/);
+      await assert.rejects(db.optional(from(Lips).select((l) => l.delivery)), TooManyRowsError);
+      await assert.rejects(db.one(from(Lips).select((l) => l.delivery)), TooManyRowsError);
+    });
+
+    it("按键把另一个查询的结果装回行", async () => {
+      const db = live().db;
+      const rows = ["M1", "M2", "M3", "M9", null].map((material) => ({ material, partNumber: "unset" as string | null, deliveries: [] as string[] }));
+      await db.attach(
+        rows,
+        (h) => h.material,
+        (ms) => from(Mara).where((m) => m.material.in(ms)).select((m) => ({ material: m.material, partNumber: m.partNumber })),
+        (r) => r.material,
+        (h, r) => { h.partNumber = r === null ? null : r.partNumber.trim(); },
+      );
+      await db.attachMany(
+        rows,
+        (h) => h.material,
+        (ms) => from(Lips).where((l) => l.material.in(ms)).orderBy((l) => l.delivery).select((l) => ({ material: l.material, delivery: l.delivery })),
+        (r) => r.material,
+        (h, list) => { h.deliveries = list.map((r) => r.delivery); },
+      );
+      assert.deepEqual(rows.map((h) => `${h.material}:${h.partNumber}:${h.deliveries.join(",")}`), ["M1:P1:D1,D2,D5", "M2:P2:D3,D4", "M3:P3:", "M9:null:", "null:null:"]);
     });
 
     it("条件聚合只聚合满足条件的行且文本按指定顺序拼接", async () => {

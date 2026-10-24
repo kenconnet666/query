@@ -2,6 +2,7 @@ package org.dpdns.zerodep.query.write;
 
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Ref;
 
@@ -25,14 +26,44 @@ public final class Fills {
      */
     public record Fill(Class<?> type, Function<Object, Col<?>> column, Supplier<?> value, boolean onInsert) { }
 
+    /**
+     * 插入时逐行生成值的一列，只填值为 null 的行，例如雪花主键。
+     *
+     * @param type   表接口或它继承的接口
+     * @param column 从表接口实例取出要生成的列
+     * @param value  每行调用一次
+     */
+    public record Generator(Class<?> type, Function<Object, Col<?>> column, Supplier<?> value) { }
+
+    /** 插入时要生成的一列：列的属性和取值函数。 */
+    record Generated(PropertyMeta column, Supplier<?> value) { }
+
     /** 没有任何填充。 */
-    public static final Fills NONE = new Fills(List.of());
+    public static final Fills NONE = new Fills(List.of(), List.of());
 
     /** 按注册顺序生效的填充。 */
     private final List<Fill> fills;
 
-    /** 由数据库实例用配置里的填充创建。 */
-    public Fills(List<Fill> fills) { this.fills = List.copyOf(fills); }
+    /** 插入时逐行生成值的列。 */
+    private final List<Generator> generators;
+
+    /** 由数据库实例用配置里的填充和生成器创建。 */
+    public Fills(List<Fill> fills, List<Generator> generators) {
+        this.fills = List.copyOf(fills);
+        this.generators = List.copyOf(generators);
+    }
+
+    /** 插入 ref 这张表时逐行生成的列；列必须是这张表的列。 */
+    List<Generated> generators(Ref<?> ref) {
+        List<Generated> out = new ArrayList<>();
+        for (Generator g : generators) {
+            if (!g.type().isAssignableFrom(ref.entity())) continue;
+            Col<?> column = g.column().apply(ref.param());
+            if (column == null || column.ref() != ref) throw new IllegalArgumentException("A generator for " + g.type().getSimpleName() + " must return one of its columns");
+            out.add(new Generated(column.property(), g.value()));
+        }
+        return out;
+    }
 
     /** 写入器上数据库实例的填充；没有数据库实例时（例如 {@code toSql(dialect)}）没有填充。 */
     static Fills of(org.dpdns.zerodep.query.dialect.SqlWriter w) {

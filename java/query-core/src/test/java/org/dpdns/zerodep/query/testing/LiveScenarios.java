@@ -7,6 +7,7 @@ import org.dpdns.zerodep.query.exec.Page;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.exec.QueryListener;
+import org.dpdns.zerodep.query.exec.TooManyRowsException;
 import org.dpdns.zerodep.query.exec.UnexpectedRowCountException;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.select.Query;
@@ -642,7 +643,30 @@ public abstract class LiveScenarios {
     void 零行或一行的查询多于一行时报错() {
         assertEquals(Optional.of("D1"), db.optional(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.delivery())));
         assertEquals(Optional.empty(), db.optional(from(Lips.class).where(l -> l.delivery().eq("none")).select(l -> l.delivery())));
-        assertThrows(IllegalStateException.class, () -> db.optional(from(Lips.class).select(l -> l.delivery())));
+        assertThrows(TooManyRowsException.class, () -> db.optional(from(Lips.class).select(l -> l.delivery())));
+        assertThrows(TooManyRowsException.class, () -> db.one(from(Lips.class).select(l -> l.delivery())));
+    }
+
+    /** attach 装回数据的行：物料、它的零件号和交货单。 */
+    public static final class MaterialHolder {
+        private final String material;
+        private String partNumber = "unset";
+        private List<String> deliveries;
+
+        MaterialHolder(String material) { this.material = material; }
+    }
+
+    @Test
+    void 按键把另一个查询的结果装回行() {
+        List<MaterialHolder> rows = Stream.of("M1", "M2", "M3", "M9", null).map(MaterialHolder::new).toList();
+        db.attach(rows, h -> h.material,
+            ms -> from(Mara.class).where(m -> m.material().in(ms)).select(m -> cols(m.material(), m.partNumber())),
+            r -> (String) r.get("material"), (h, r) -> h.partNumber = r == null ? null : ((String) r.get("partNumber")).strip());
+        db.attachMany(rows, h -> h.material,
+            ms -> from(Lips.class).where(l -> l.material().in(ms)).orderBy(l -> l.delivery()).select(l -> cols(l.material(), l.delivery())),
+            r -> (String) r.get("material"), (h, list) -> h.deliveries = list.stream().map(r -> (String) r.get("delivery")).toList());
+        assertEquals(List.of("M1:P1:[D1, D2, D5]", "M2:P2:[D3, D4]", "M3:P3:[]", "M9:null:[]", "null:null:[]"),
+            rows.stream().map(h -> h.material + ":" + h.partNumber + ":" + h.deliveries).toList());
     }
 
     @Test

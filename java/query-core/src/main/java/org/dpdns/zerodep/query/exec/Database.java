@@ -12,13 +12,13 @@ import org.dpdns.zerodep.query.exec.QueryListener;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
+import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
+import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.SourceFilters;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
-import org.dpdns.zerodep.query.meta.PropertyMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.write.Fills;
 import org.dpdns.zerodep.query.write.Insert;
 import org.dpdns.zerodep.query.write.Write;
@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -73,7 +74,7 @@ public abstract class Database {
         SourceFilters filters = new SourceFilters(config.filters);
         attributes.put(SourceFilters.class, filters);
         attributes.put(NamingStrategy.class, config.naming);
-        attributes.put(Fills.class, new Fills(config.fills));
+        attributes.put(Fills.class, new Fills(config.fills, config.generators));
         Map<String, String> schemas = Map.copyOf(config.schemas);
         UnaryOperator<String> schemaMapping = config.schemaMapping;
         attributes.put(SqlWriter.SCHEMAS, (UnaryOperator<String>) schema -> schemas.getOrDefault(schema, schemaMapping.apply(schema)));
@@ -82,8 +83,8 @@ public abstract class Database {
         List<QueryListener> listeners = new ArrayList<>();
         listeners.add(this::record);
         listeners.addAll(config.listeners);
-        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, listeners, config.fetchSize,
-            config.queryTimeout);
+        this.executor = new JdbcExecutor(name, dialect, Objects.requireNonNull(connections, "connections"), types, listeners, config.interceptors,
+            config.fetchSize, config.queryTimeout);
     }
 
     /** 本数据库的方言。 */
@@ -99,17 +100,18 @@ public abstract class Database {
         return q.mapRows(rows(q, render(q)), this::list);
     }
 
-    /** 恰好一行，没有或多于一行都抛出异常。最多只读取两行。 */
+    /** 恰好一行：没有时抛 {@link EmptyResultException}，多于一行时抛 {@link TooManyRowsException}。最多只读取两行。 */
     public <R> R one(Query<R> q) {
         List<R> rows = list(q.limitAtMost(2));
-        if (rows.size() != 1) throw new IllegalStateException("Expected exactly one row, got " + (rows.isEmpty() ? "none" : "more than one"));
+        if (rows.isEmpty()) throw new EmptyResultException("Expected exactly one row, got none");
+        if (rows.size() > 1) throw new TooManyRowsException("Expected exactly one row, got more than one");
         return rows.get(0);
     }
 
-    /** 零行或一行：没有时为空，多于一行抛出异常。最多只读取两行。 */
+    /** 零行或一行：没有时为空，多于一行抛出 {@link TooManyRowsException}。最多只读取两行。 */
     public <R> Optional<R> optional(Query<R> q) {
         List<R> rows = list(q.limitAtMost(2));
-        if (rows.size() > 1) throw new IllegalStateException("Expected at most one row, got more than one");
+        if (rows.size() > 1) throw new TooManyRowsException("Expected at most one row, got more than one");
         return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.get(0));
     }
 
@@ -122,7 +124,7 @@ public abstract class Database {
     /** 从同一个游标惰性读取各行；用完要关闭流（try-with-resources）以释放连接。 */
     public <R> Stream<R> stream(Query<R> q) {
         if (q.hasChildren()) throw new UnsupportedOperationException("A query with list(...) needs all rows before it can load the children; use list() or page()");
-        return executor.stream(render(q), executor.columns(q.columnTypes()), q.timeout()).map(q::mapRow);
+        return executor.stream(executor.intercept(render(q)), executor.columns(q.columnTypes()), q.timeout()).map(q::mapRow);
     }
 
     /** 逐行处理查询结果，处理完自动关闭游标。 */
@@ -134,14 +136,14 @@ public abstract class Database {
 
     /** 查询是否至少有一行：{@code SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END}，不读出任何行。 */
     public boolean exists(Query<?> q) {
-        Rendered statement = QueryRenderer.exists(writer(), q);
+        Rendered statement = executor.intercept(QueryRenderer.exists(writer(), q));
         List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Integer.class))), q.timeout());
         return !rows.isEmpty() && ((Number) rows.get(0)[0]).intValue() == 1;  // 空跑时没有行
     }
 
     /** 查询的总行数，即对同一条查询执行 {@code SELECT COUNT(*)}，忽略 ORDER BY。 */
     public long count(Query<?> q) {
-        Rendered statement = QueryRenderer.count(writer(), q);
+        Rendered statement = executor.intercept(QueryRenderer.count(writer(), q));
         List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Long.class))), q.timeout());
         return rows.isEmpty() ? 0 : ((Number) rows.get(0)[0]).longValue();  // 空跑时没有行
     }
@@ -202,7 +204,7 @@ public abstract class Database {
      * 写入成功后清空结果缓存，免得读到改动前的结果。
      */
     public long execute(Write write) {
-        List<Rendered> statements = render(write);
+        List<Rendered> statements = render(write).stream().map(executor::intercept).toList();
         if (statements.isEmpty()) return 0;
         long rows = atomically(statements, () -> executor.update(statements, null));
         clearCache();
@@ -223,7 +225,7 @@ public abstract class Database {
     @SuppressWarnings("unchecked")
     public <K> List<K> insertKeys(Insert<?> insert) {
         PropertyMeta generated = insert.generated();
-        List<Rendered> statements = render(insert);
+        List<Rendered> statements = render(insert).stream().map(executor::intercept).toList();
         if (statements.isEmpty()) return List.of();
         String column = generated.columnName(settings.naming());
         List<Object> keys = atomically(statements, () -> executor.insertKeys(statements, column, generated.type()));
@@ -253,6 +255,53 @@ public abstract class Database {
         });
     }
 
+    // ---------- 装回关联数据 ----------
+
+    /**
+     * 按键把另一个查询的结果装回已经读出的行（一对一）：收集各行的键（去掉 null 和重复），每批至多 1000 个交给 load
+     * 得到查询，执行后按 keyOf 对应回去，用 set 写进行里；没有对应的行写 null。适合不便声明成关系的数据，
+     * 例如另一个库、另一个服务的表：
+     * <pre>{@code
+     * db.attach(orders, OrderVO::getCustomerId,
+     *     ids -> from(Customer.class).where(c -> c.id().in(ids)).selectAs(CustomerVO.class),
+     *     CustomerVO::getId, OrderVO::setCustomer);
+     * }</pre>
+     * 同一个键对应多行时抛出 {@link TooManyRowsException}。
+     */
+    public <R, K, V> void attach(List<R> rows, Function<? super R, K> key, Function<List<K>, Query<V>> load,
+                                 Function<? super V, K> keyOf, BiConsumer<? super R, ? super V> set) {
+        Map<K, V> found = new HashMap<>();
+        for (V v : loadAll(rows, key, load)) {
+            if (found.put(keyOf.apply(v), v) != null) throw new TooManyRowsException("attach(...) found more than one row for key " + keyOf.apply(v));
+        }
+        for (R r : rows) {
+            K k = key.apply(r);
+            set.accept(r, k == null ? null : found.get(k));
+        }
+    }
+
+    /** 同 {@link #attach}，但一个键对应多行（一对多），按查询返回的顺序装成列表；没有对应的行写空列表。 */
+    public <R, K, V> void attachMany(List<R> rows, Function<? super R, K> key, Function<List<K>, Query<V>> load,
+                                     Function<? super V, K> keyOf, BiConsumer<? super R, ? super List<V>> set) {
+        Map<K, List<V>> found = new HashMap<>();
+        for (V v : loadAll(rows, key, load)) found.computeIfAbsent(keyOf.apply(v), k -> new ArrayList<>()).add(v);
+        for (R r : rows) {
+            K k = key.apply(r);
+            set.accept(r, k == null ? new ArrayList<>() : found.getOrDefault(k, new ArrayList<>()));
+        }
+    }
+
+    /** 每批至多这么多个键，免得 IN 列表和参数个数过大。 */
+    private static final int ATTACH_BATCH = 1000;
+
+    /** 去重后的非空键分批交给 load，返回全部结果行。 */
+    private <R, K, V> List<V> loadAll(List<R> rows, Function<? super R, K> key, Function<List<K>, Query<V>> load) {
+        List<K> keys = rows.stream().map(key).filter(Objects::nonNull).distinct().toList();
+        List<V> out = new ArrayList<>();
+        for (int from = 0; from < keys.size(); from += ATTACH_BATCH) out.addAll(list(load.apply(keys.subList(from, Math.min(keys.size(), from + ATTACH_BATCH)))));
+        return out;
+    }
+
     /** 清空查询结果缓存；没有配置缓存时什么也不做。 */
     public void clearCache() {
         if (settings.cache() != null) settings.cache().clear();
@@ -266,8 +315,9 @@ public abstract class Database {
     /** 新建一个带本库方言、函数覆盖和共享对象的 SQL 写入器。 */
     SqlWriter writer() { return new SqlWriter(dialect, settings.functions(), settings.attributes()); }
 
-    /** 读取查询结果的原始行；设置了 ttl 时经过缓存，命中时通知监听器。 */
-    private List<Object[]> rows(Query<?> q, Rendered statement) {
+    /** 读取查询结果的原始行；设置了 ttl 时经过缓存（以执行前钩子改写后的语句作键），命中时通知监听器。 */
+    private List<Object[]> rows(Query<?> q, Rendered rendered) {
+        Rendered statement = executor.intercept(rendered);
         if (q.ttl() == null) return executor.fetch(statement, executor.columns(q.columnTypes()), q.timeout());
         if (settings.cache() == null) {
             throw new IllegalStateException("Query is .cached(...) but database " + name + " has no cache; configure config.cache(QueryCache.inMemory())");
@@ -292,6 +342,12 @@ public abstract class Database {
 
         /** 查询监听器。 */
         private final List<QueryListener> listeners = new ArrayList<>();
+
+        /** 执行前的钩子，按添加顺序调用。 */
+        private final List<StatementInterceptor> interceptors = new ArrayList<>();
+
+        /** 插入时逐行生成值的列。 */
+        private final List<Fills.Generator> generators = new ArrayList<>();
 
         /** 本库专属的函数渲染，优先于方言的默认写法。 */
         private final Map<FunctionDef, FunctionRenderer> functions = new HashMap<>();
@@ -409,6 +465,23 @@ public abstract class Database {
 
         /** 打印每条执行过的语句到 out，例如 {@code log::info} 或 {@code System.out::println}。 */
         public Config printSql(Consumer<String> out) { return listener(new SqlPrinter(out)); }
+
+        /** 添加执行前钩子，见 {@link StatementInterceptor}；可以添加多个，按添加顺序调用。 */
+        public Config intercept(StatementInterceptor interceptor) {
+            interceptors.add(Objects.requireNonNull(interceptor, "interceptor"));
+            return this;
+        }
+
+        /**
+         * 插入时逐行生成一列的值，只填行里为 null（或行里没有这个属性）的行，例如雪花主键：
+         * {@code generate(Keyed.class, k -> k.id(), ids::next)}。按表接口的父类型或接口匹配；生成的值不写回行对象，
+         * 之后还要用这个值时在代码里先生成。
+         */
+        @SuppressWarnings("unchecked")
+        public <T, V> Config generate(Class<T> type, Function<? super T, Col<V>> column, Supplier<? extends V> value) {
+            generators.add(new Fills.Generator(type, (Function<Object, Col<?>>) (Function<?, ?>) column, value));
+            return this;
+        }
 
         /** 添加查询监听器，接收每条语句的执行事件；可以添加多个。 */
         public Config listener(QueryListener listener) {

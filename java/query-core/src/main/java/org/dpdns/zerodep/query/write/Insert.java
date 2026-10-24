@@ -237,7 +237,12 @@ public final class Insert<T extends Entity> implements Write {
             cols.add(c.column());
             vals.add(value(c, row));
         }
-        for (Assignment a : (fills ? Fills.of(w) : Fills.NONE).onInsert(Ref.table(table.type()))) put(cols, vals, a.column().property(), a.value());
+        Ref<T> ref = Ref.table(table.type());
+        for (Assignment a : (fills ? Fills.of(w) : Fills.NONE).onInsert(ref)) put(cols, vals, a.column().property(), a.value());
+        for (Fills.Generated g : Fills.of(w).generators(ref)) {
+            RowColumns.Column written = columns.stream().filter(c -> c.column().name().equals(g.column().name())).findFirst().orElse(null);
+            if (written == null || written.value(row) == null) put(cols, vals, g.column(), new Nodes.Param<>((SqlType) g.column().type(), g.value().get()));
+        }
         WriteMeta.LogicDeleteMeta logic = table.writes().logicDelete();
         if (logic != null && !logic.timestamp() && cols.stream().noneMatch(p -> p.name().equals(logic.property()))) {
             PropertyMeta column = table.property(logic.property());

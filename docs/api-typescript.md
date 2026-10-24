@@ -46,7 +46,7 @@ import pg from "pg";
 import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@zerodep-dev/query-postgres"; // 或 @zerodep-dev/query-hana、@zerodep-dev/query-mysql
 
 const db = database(new pg.Pool({ /* ... */ }), {
-  filters: [filter("tenant", ClientEntity, (r) => r.client.eq("100"))], // 全局过滤器；有名字时可以用 unfiltered("tenant") 单独关掉
+  filters: [filter("tenant", ClientEntity, (r) => r.client.eq("100"))], // 全局过滤器；有名字时可以用 unfiltered("tenant") 单独关掉；回调返回 Cond.EMPTY 就不加条件
   schemas: { ERP: "SAPHANADB" },                                 // 表声明里的 schema 换成实际名字，也可以是 (s) => ...
   cache: inMemoryCache(),                                        // 结果缓存（按查询开启）
   listener: (e) => log.debug(`${e.statement.sql} ${e.elapsedMs}ms`),
@@ -344,6 +344,7 @@ class DeliverySearch {
   @where("contains", "mara.partNumber", "text.text") keyword?: string;   // 经关系取列；多列任一满足（OR）
   @where("ne") unit?: string;                                    // 只指定比较方式，列取字段名
   @ignore sort?: string;                                         // 不作为条件
+  @where((c, v: string) => c.range(`${v}-01`, nextMonth(v)), "createdOn") month?: string;  // 自定义比较，值为空时不调用
 }
 
 from(Lips).where(search).select((l) => l.delivery)   // search: DeliverySearch 的实例
@@ -527,6 +528,7 @@ console.log(events[0]!.statement.debugSql());
 | `db.count(q)` | 外包 `COUNT(*)` |
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size, total?)` | 页号从 1 开始，同时返回总数和总页数；传入已知的 `total` 时不再执行 COUNT |
+| `db.attach(rows, key, (ids) => query, keyOf, set)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空数组 |
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列，另有 `first()`、`one()`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(60_000)` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的值；并发读取同一个键只查询一次 |
 | `q.timeout(10_000)`、`db.sql(...).timeout(...)` | 这条语句的时限（毫秒），覆盖选项 `queryTimeoutMs` |
@@ -550,6 +552,9 @@ console.log(events[0]!.statement.debugSql());
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect` 或某个现成方言，覆盖引号、字面量、占位符、分页、排序项和类型名 |
 | 驱动、监听、缓存 | `Driver`、`listener`、`QueryCache` |
+| 执行前改写或拦截 | 选项 `interceptors: [(statement) => statement]`：每条语句（查询、写语句、计数、原生 SQL）执行前依次调用，返回要执行的 `Rendered`；抛出异常则不执行。`cached(...)` 的查询用改写后的 SQL 作缓存键 |
+| 条件对象的比较 | `@where((column, value) => cond, "列")`，见第 6 节 |
+| 结果错误 | `db.one` 没有行时抛 `EmptyResultError`，多于一行（以及 `db.optional`）抛 `TooManyRowsError` |
 
 **记录语句**：只想看 SQL 时用 `printSql`；要接入项目已有的日志（pino、winston 或 console），用监听器。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
 
@@ -651,6 +656,8 @@ const db = database(pool, {
   ],
 });
 ```
+
+逐行生成的列用 `generate(Keyed, (k) => k.id, () => randomUUID())`，放进同一个 `fills`：只填行里为 null 或没有这个字段的行，每行调用一次；生成的值不写回行对象。
 
 按实体的基类匹配。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列；值每条语句取一次，总是覆盖行里或 SET 里的同名项。`toSql(dialect)` 没有数据库实例，不带填充。
 

@@ -63,7 +63,7 @@ public final class NativeQuery {
 
     /** 执行语句，把每一行按列标签映射成 type 的实例。 */
     public <R> List<R> list(Class<R> type) {
-        Rendered statement = render();
+        Rendered statement = database.executor().intercept(render());
         TypeRegistry types = database.executor().types();
         return database.executor().query(statement, rs -> read(rs, type, types), List::size, timeout);
     }
@@ -77,7 +77,8 @@ public final class NativeQuery {
     /** 恰好一行，没有或多于一行都抛出异常。 */
     public <R> R one(Class<R> type) {
         List<R> rows = list(type);
-        if (rows.size() != 1) throw new IllegalStateException("Expected exactly one row, got " + rows.size());
+        if (rows.isEmpty()) throw new EmptyResultException("Expected exactly one row, got none");
+        if (rows.size() > 1) throw new TooManyRowsException("Expected exactly one row, got " + rows.size());
         return rows.get(0);
     }
 

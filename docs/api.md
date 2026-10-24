@@ -64,9 +64,10 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
 
-- `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；
+- `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；过滤器每次渲染都调用，返回 `Cond.EMPTY` 就不加条件，所以"管理员看全部租户"这类动态开关写在回调里：`t -> currentTenant() == null ? Cond.EMPTY : t.tenant().eq(currentTenant())`。多个过滤器按添加顺序生效；
 - `schema("ERP", "SAPHANADB")` 或 `schema(s -> s + "_TEST")`：表接口里写的 schema 换成实际的名字，SAP 各环境 schema 不同时不用改代码，查询、写语句和关系里的表都换，原生 SQL 文本不换；
-- `onInsert`、`onUpdate`：审计字段自动填充，见第 15 节；
+- `onInsert`、`onUpdate`：审计字段自动填充；`generate(Keyed.class, k -> k.id(), ids::next)`：插入时逐行给值为 null 的列生成值（例如雪花主键），见第 15 节；
+- `intercept(statement -> ...)`：语句执行前的钩子，可以改写 SQL 或抛出异常拦下语句，见第 12 节；
 - `function`、`type`（覆盖函数渲染与类型读写，见第 12 节）、`fetchSize`、`name`。
 
 **在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource)` 取连接：
@@ -425,6 +426,7 @@ from(Lips.class).where(search).select(l -> l.delivery());
 ```
 
 - 没有 `@Where` 的字段与同名列比较相等，集合用 `IN`。`op` 取 `EQ`、`NE`、`GT`、`GE`、`LT`、`LE`、`CONTAINS`、`STARTS_WITH`、`ENDS_WITH`；集合值只能配 `EQ`（`IN`）和 `NE`（`NOT IN`）。
+- 自定义的比较写成实现 `Where.Operator` 的类（要有无参构造方法），用 `using` 指定：`@Where(value = "createdOn", using = InMonth.class) YearMonth month`，`InMonth.apply(column, value)` 返回条件；字段为空时不调用。
 - `value` 是列路径，默认是字段名；可以经过多对一关系（`"mara.partNumber"`）；写多个时任一满足即可（OR）。
 - 路径经过一对多关系时写成 EXISTS，例如物料查询里的 `@Where("deliveries.unit") String unit` 和 `@Where(value = "deliveries.quantity", op = Where.Op.GE) BigDecimal minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个交货行同时满足；这些字段的值都为空时整个 EXISTS 省略。
 - 值为 null、空白字符串或空集合的字段不产生条件，对应的关系也不会连接；所以可以直接传入请求参数。
@@ -573,6 +575,7 @@ from(totals)
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
 | `db.sql("... :name IN (:ids)").bind("ids", ids).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射；另有 `first`、`one`、`bindNull`、`timeout`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、`::` 类型转换、MySQL 的反引号）里的 `:name` 不是参数 |
+| `db.attach(rows, key, ids -> query, keyOf, setter)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空列表；适合不便声明成关系的数据，例如别的库或别的模块的表 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
 | `q.timeout(Duration.ofSeconds(10))`、`db.sql(...).timeout(...)` | 这条语句的时限，覆盖 `config.queryTimeout` |
 
@@ -630,6 +633,20 @@ assertTrue(events.get(0).statement().sql().contains("LIPS"));
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect`（或某个现成方言），覆盖引号、字面量、分页、排序项、类型名、函数渲染和 JDBC 读写 |
 | 连接与监听 | `ConnectionProvider`、`QueryListener`、`QueryCache` |
+| 执行前改写或拦截 | `config.intercept(StatementInterceptor)`：每条语句（查询、写语句、计数、原生 SQL）执行前调用，返回要执行的 `Rendered`；抛出异常则不执行 |
+| 条件对象的比较 | `@Where(using = MyOperator.class)`，见第 7 节 |
+| 结果异常 | `db.one` 没有行时抛 `EmptyResultException`，多于一行（以及 `db.optional`）抛 `TooManyRowsException`，都继承 `IllegalStateException`，全局异常处理里可以分别映射成 404 和 500 |
+
+**执行前钩子**：
+
+```java
+Database db = Hana.database(dataSource, c -> c.intercept(s -> {
+    if (readOnlyMode() && !s.sql().startsWith("SELECT")) throw new IllegalStateException("read-only");
+    return new Rendered(s.sql() + "\n-- app=report", s.bindings(), s.dialect());   // 只改文本，参数不变
+}));
+```
+
+多个钩子按添加顺序调用。设置了 `cached(...)` 的查询用改写后的 SQL 作缓存键。`db.render(q)` 显示的是改写前的语句，监听器和 `capture` 看到的是改写后的。
 
 **用 SLF4J 记录语句**：本库不依赖任何日志框架，监听器里接上项目已有的日志即可。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存；监听器抛出的异常会被忽略：
 
@@ -801,6 +818,8 @@ Hana.database(dataSource, c -> c
     .onUpdate(Audited.class, a -> a.updatedAt(), currentTimestamp())     // 也可以是表达式
     .onUpdate(Audited.class, a -> a.updatedBy(), currentUser::name));
 ```
+
+逐行生成的列用 `generate(Keyed.class, k -> k.id(), ids::next)`：只填行里为 null（或行里没有这个属性）的行，每行调用一次；生成的值不写回行对象，之后还要用这个值时在代码里先生成。
 
 按表接口的父接口匹配（同全局过滤器）。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列。填充的值每条语句取一次，总是覆盖行里或 SET 里的同名项；迁移数据要保留原值时，在语句上写 `.withoutFills()`。`toSql(dialect)` 没有数据库实例，所以不带填充；要看实际执行的 SQL 用 `db.render(write)`。
 
