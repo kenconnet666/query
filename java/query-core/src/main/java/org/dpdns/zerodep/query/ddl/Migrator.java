@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -163,7 +164,7 @@ public final class Migrator {
             Map<String, Applied> applied = byVersion(history());
             for (Migration m : migrations) {
                 if (!applied.containsKey(m.version())) {
-                    LocalDateTime now = LocalDateTime.now();
+                    LocalDateTime now = now();
                     backend.update("INSERT INTO " + table(HISTORY) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
                         m.version(), m.description(), checksum(record(m)), "baseline", now, now);
                 }
@@ -187,7 +188,7 @@ public final class Migrator {
         MigrationSteps steps = record(m);
         String checksum = checksum(steps);
         backend.update("INSERT INTO " + table(HISTORY) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
-            m.version(), m.description(), checksum, "started", LocalDateTime.now());
+            m.version(), m.description(), checksum, "started", now());
         Runnable work = () -> {
             for (MigrationSteps.Step s : steps.steps()) {
                 if (s instanceof MigrationSteps.Ddl d) backend.run(List.of(d.sql()));
@@ -209,7 +210,7 @@ public final class Migrator {
 
     /** 改历史表里一个版本的状态和结束时间。 */
     private void mark(String version, String status) {
-        backend.update("UPDATE " + table(HISTORY) + cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, LocalDateTime.now(), version);
+        backend.update("UPDATE " + table(HISTORY) + cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
     }
 
     /** 让迁移登记它的步骤。 */
@@ -279,7 +280,7 @@ public final class Migrator {
     /** 占用锁行；别的实例占着时每半秒重试一次，超过 lockTimeout 报错。 */
     private void lock() {
         long deadline = System.nanoTime() + lockTimeout.toNanos();
-        while (backend.update("UPDATE " + table(LOCK) + cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), owner, LocalDateTime.now(), 1) == 0) {
+        while (backend.update("UPDATE " + table(LOCK) + cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), owner, now(), 1) == 0) {
             if (System.nanoTime() > deadline) {
                 throw new IllegalStateException("Another process holds the migration lock in " + table(LOCK) + "; if it crashed, clear OWNER by hand");
             }
@@ -313,6 +314,9 @@ public final class Migrator {
     }
 
     private static String text(Object value) { return value == null ? "" : value.toString(); }
+
+    /** 当前时间，截到毫秒：Linux 上 now() 带纳秒，HANA 的 TIMESTAMP 只到 100 纳秒，绑定时会拒绝截断。与 TS 的毫秒精度一致。 */
+    private static LocalDateTime now() { return LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS); }
 
     /** 目录里的时间戳（java.sql.Timestamp 或 LocalDateTime）。 */
     private static LocalDateTime time(Object value) {
