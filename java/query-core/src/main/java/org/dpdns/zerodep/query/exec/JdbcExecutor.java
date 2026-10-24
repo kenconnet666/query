@@ -287,21 +287,25 @@ public final class JdbcExecutor {
     /** 当前线程是否在 {@link #transaction} 里。 */
     public boolean inTransaction() { return bound.get() != null; }
 
-    /** 能否开启 {@link #transaction}：还不在事务里，连接来源也不自己管理事务。 */
-    public boolean canStartTransaction() { return bound.get() == null && !connections.managesTransactions(); }
+    /** 能否开启 {@link #transaction}：还不在本库的事务里，连接来源也不自己管理事务，或者它能按需开启事务。 */
+    public boolean canStartTransaction() {
+        return bound.get() == null && (!connections.managesTransactions() || connections.startsTransactions());
+    }
 
     /** 累加行数；任一方未知（负数）时结果未知。 */
     private static long add(long total, long rows) { return total < 0 || rows < 0 ? -1 : total + rows; }
 
     /**
      * 在一个事务里执行 work：线程上绑定一个连接，work 里执行的语句都用它；正常结束时提交，抛出异常时回滚。
-     * 已经在事务里时直接执行，加入外层事务。连接来源自己管理事务（例如 Spring）时报错，那时用它的事务机制。
+     * 已经在事务里时直接执行，加入外层事务。连接来源自己管理事务（例如 Spring）时交给它（加入或开启它的事务），
+     * 它不能开启事务时报错。
      */
     public <T> T transaction(java.util.function.Supplier<T> work) {
         if (bound.get() != null) return work.get();
         if (connections.managesTransactions()) {
+            if (connections.startsTransactions()) return connections.transaction(work);
             throw new UnsupportedOperationException(database + ": the connection provider joins its own transactions (e.g. Spring); "
-                + "use @Transactional or its TransactionTemplate instead of transaction(...)");
+                + "give it a transaction manager (SpringConnections.of(dataSource, transactionManager)) or use @Transactional");
         }
         Connection connection = null;
         boolean autoCommit = true;

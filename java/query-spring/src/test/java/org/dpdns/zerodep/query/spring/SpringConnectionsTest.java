@@ -149,6 +149,64 @@ class SpringConnectionsTest {
         assertEquals(60, dataSource.timeouts.get(2), "outside a transaction the database instance's default applies");
     }
 
+    /** 同一个 H2 库，连接来源带着事务管理器。 */
+    private Database managed() { return new H2Database(SpringConnections.of(dataSource, tx.getTransactionManager()), null); }
+
+    /** JdbcTemplate 和本库一样经由 DataSourceUtils 取连接，在事务里用的是同一个连接。 */
+    private void insertDelivery(String delivery) {
+        jdbc.update("INSERT INTO QUERY_IT.LIPS (MANDT, VBELN) VALUES ('100', ?)", delivery);
+    }
+
+    @Test
+    void 只给DataSource时db的transaction报错() {
+        assertThrows(UnsupportedOperationException.class, () -> db.transaction(() -> db.list(deliveries())));
+    }
+
+    @Test
+    void 给了事务管理器时db的transaction正常结束就提交() {
+        Database managed = managed();
+        managed.transaction(() -> {
+            insertDelivery("M1");
+            assertEquals(List.of("M1"), managed.list(deliveries()));
+            assertEquals(1, dataSource.borrowed.get(), "the query and the insert share the transaction's connection");
+        });
+        assertEquals(List.of("M1"), db.list(deliveries()));
+    }
+
+    @Test
+    void 给了事务管理器时db的transaction抛出异常就回滚() {
+        Database managed = managed();
+        assertThrows(IllegalStateException.class, () -> managed.transaction(() -> {
+            insertDelivery("M2");
+            throw new IllegalStateException("boom");
+        }));
+        assertEquals(List.of(), db.list(deliveries()));
+    }
+
+    @Test
+    void 已有外层事务时db的transaction加入它并随外层回滚() {
+        Database managed = managed();
+        tx.executeWithoutResult(status -> {
+            insertDelivery("O1");
+            managed.transaction(() -> {
+                insertDelivery("M3");
+                assertEquals(2, managed.count(deliveries()), "the inner work sees the outer writes");
+            });
+            status.setRollbackOnly();
+        });
+        assertEquals(List.of(), db.list(deliveries()), "the outer rollback undoes the inner work too");
+    }
+
+    @Test
+    void 事务里的语句失败时之前的写入一起回滚() {
+        Database managed = managed();
+        assertThrows(QueryExecutionException.class, () -> managed.transaction(() -> {
+            insertDelivery("M4");
+            managed.sql("SELECT MISSING_COLUMN FROM QUERY_IT.LIPS").list(String.class);
+        }));
+        assertEquals(List.of(), db.list(deliveries()));
+    }
+
     @Test
     void 事务超时已过时查询直接失败() {
         TransactionTemplate timed = new TransactionTemplate(tx.getTransactionManager());

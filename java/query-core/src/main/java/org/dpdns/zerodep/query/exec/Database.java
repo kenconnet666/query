@@ -270,7 +270,7 @@ public abstract class Database {
         return statements.size() > 1 ? atomically(work) : work.get();
     }
 
-    /** 在一个事务里执行 work；已经在事务里时加入它，连接来源自己管理事务（Spring）时直接执行。 */
+    /** 在一个事务里执行 work；已经在事务里时加入它，连接来源自己管理事务又不能开启事务（只给了 DataSource 的 Spring 适配器）时直接执行。 */
     <T> T atomically(Supplier<T> work) { return executor.canStartTransaction() ? executor.transaction(work) : work.get(); }
 
     /** 本数据库会为这条写语句执行的语句与参数，已套用全局过滤器；多行插入每行一条。 */
@@ -278,7 +278,8 @@ public abstract class Database {
 
     /**
      * 在一个事务里执行 work 并返回它的结果：其中的查询和写语句用同一个连接，正常结束时提交，抛出异常时回滚；
-     * 嵌套调用加入外层事务。Spring 项目用 {@code @Transactional}，这里会报错。
+     * 嵌套调用加入外层事务。Spring 项目里由事务管理器执行（{@code SpringConnections.of(dataSource, transactionManager)}，
+     * 已有 {@code @Transactional} 时加入它）；只给了 DataSource 时报错，事务交给 {@code @Transactional}。
      */
     public <T> T transaction(Supplier<T> work) { return executor.transaction(work); }
 

@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.exec;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 
 /**
@@ -22,10 +23,24 @@ public interface ConnectionProvider {
     default void prepared(PreparedStatement statement) throws SQLException { }
 
     /**
-     * 连接来源是否自己管理事务（例如 Spring 适配器加入外层的 {@code @Transactional}）；为 true 时
-     * {@code Database.transaction(...)} 报错，事务交给它自己的机制。
+     * 连接来源是否自己管理事务（例如 Spring 适配器加入外层的 {@code @Transactional}）；为 true 时本库从不自己开启、
+     * 提交事务：{@link #startsTransactions()} 为 true 时 {@code Database.transaction(...)} 交给 {@link #transaction}，否则报错。
      */
     default boolean managesTransactions() { return false; }
+
+    /**
+     * 自己管理事务的连接来源能否按需开启事务（Spring 适配器给了事务管理器时为 true）。为 true 时
+     * {@code Database.transaction(...)} 和多行写入的自动事务都交给 {@link #transaction}。
+     */
+    default boolean startsTransactions() { return false; }
+
+    /**
+     * 在连接来源自己的事务里执行 work：已有事务时加入，没有时开启，正常结束时提交、抛出异常时回滚。
+     * 只在 {@link #managesTransactions()} 与 {@link #startsTransactions()} 都为 true 时调用。
+     */
+    default <T> T transaction(Supplier<T> work) {
+        throw new UnsupportedOperationException(getClass().getName() + " cannot start transactions");
+    }
 
     /**
      * 空跑：不连接任何数据库，每条查询都得到空结果（计数为 0），但照常渲染、打印和触发监听器。

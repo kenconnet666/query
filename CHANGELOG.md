@@ -17,6 +17,7 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - 开发编译器升到 TypeScript 7.1.0-dev.20261023.1（7.1 的 dev 构建）；`exclude` / `excludeIf` 的返回形态改用具名类型 `ExcludedKeys<R, K>`（7.1 不再把两处同样的内联映射类型当成同一个类型），核心包导出它。
 - 投影、`groupJoin` 和写入的列筛选用品牌类型 `AnyMany`（核心包导出）认一对多关系，不再写成 `Many<any>`：编辑器只检查单个文件时，`Many<Lips>` 赋不给 `Many<any>`，带关系的投影被推成 `Query<unknown>`（TS2769）。`groupJoin` 收到的不是一对多关系时报 `TypeError`。
 - 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
+- **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 之后，`db.transaction(...)` 与多行写入的自动事务由这个事务管理器执行（传播行为 REQUIRED，已有事务时加入）。多数据源的项目每个数据源各传自己的事务管理器；只给 DataSource 时仍然报错。连接来源的接口加了 `startsTransactions()` 与 `transaction(work)`。
 
 ## [2.0.0] - 未发布
 

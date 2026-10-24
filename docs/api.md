@@ -71,16 +71,20 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 - `intercept(statement -> ...)`：语句执行前的钩子，可以改写 SQL 或抛出异常拦下语句，见第 12 节；
 - `function`、`type`（覆盖函数渲染与类型读写，见第 12 节）、`fetchSize`、`name`。
 
-**在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource)` 取连接：
+**在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource, transactionManager)` 取连接。多数据源的项目每个数据源一个数据库实例，各自传入管理这个数据源的事务管理器：
 
 ```java
 @Bean
-HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource) {
-    return Hana.database(SpringConnections.of(dataSource), c -> c.filter(...));
+HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource,
+                  @Qualifier("sapHanaTransactionManager") PlatformTransactionManager transactionManager) {
+    return Hana.database(SpringConnections.of(dataSource, transactionManager), c -> c.filter(...));
 }
 ```
 
 - 它通过 `DataSourceUtils` 取连接，所以在 `@Transactional` 方法里，查询使用事务的连接：能看到同一事务里 MyBatis、JdbcTemplate 尚未提交的写入，也随事务一起回滚（`QueryExecutionException` 是运行时异常）。不在事务里时，每条语句借一个连接，用完归还。
+- 给了事务管理器时，`db.transaction(...)` 和多行写入的自动事务由它执行（传播行为 REQUIRED）：这个事务管理器已有事务（`@Transactional("sapHanaTransactionManager")` 或编程式的 `TransactionTemplate`）时加入，没有时开启。建在本库上的库（例如流程引擎）因此能自己划定事务边界，不依赖调用方有没有写 `@Transactional`。
+- 跨数据源的事务用编程式事务把几个事务管理器的 `TransactionTemplate` 嵌套起来，各个数据库实例的 `db.transaction(...)` 分别加入自己那一层；这不是分布式事务，提交顺序由嵌套的先后决定。
+- 只用 `SpringConnections.of(dataSource)` 时 `db.transaction(...)` 报错，事务只能用 `@Transactional`。
 - `@Transactional(timeout = 30)` 的事务里，每条语句的时限是事务剩余的时间，优先于 `queryTimeout`；时间已经用完时直接抛出 `TransactionTimedOutException`。
 - 路由型数据源可以直接传入。模块只依赖 spring-jdbc（`provided`）：5.3、6.2、7.0 都在 CI 中验证。
 
@@ -823,7 +827,7 @@ db.transaction(() -> {
 });                            // 正常返回时提交，抛出异常时回滚
 ```
 
-不用 Spring 时 `db.transaction(work)` 把一个连接绑定到当前线程，嵌套调用加入外层事务。用 `SpringConnections` 时 `transaction(...)` 报错，事务交给 `@Transactional`。
+不用 Spring 时 `db.transaction(work)` 把一个连接绑定到当前线程，嵌套调用加入外层事务。用 `SpringConnections.of(dataSource, transactionManager)` 时由那个事务管理器执行（已有事务时加入）；只给了 DataSource 时 `transaction(...)` 报错，事务交给 `@Transactional`。见第 1 节。
 
 ### 逻辑删除
 
