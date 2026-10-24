@@ -10,6 +10,16 @@ import { createRef, ownerOf, type Ref, type RefOwner, type Related, type Source 
 /** 排名子查询里行号列的名字。 */
 const ROW_NUMBER = "rn__";
 
+/** 只用于类型：Many 的标记，见 {@link AnyMany}。 */
+declare const MANY: unique symbol;
+
+/**
+ * 任意一个一对多关系，用于投影和筛选列。不写成 `Many<any>`：私有的连接条件让 T 处在逆变位置，而 `Ref<any>`
+ * 是带索引签名的映射类型、不是 any，于是 `Many<Lips>` 能否赋给 `Many<any>` 取决于编译器是否已经算出 T 的变型——
+ * 整个项目一起编译时通过，编辑器只检查一个文件时却报 TS2769（TS 7.1 实测）。
+ */
+export type AnyMany = { readonly [MANY]: true };
+
 /** 连接条件拆成的三部分：键（目标表的列）、所属行里与键相等的表达式、其余只筛选目标行的条件。 */
 interface Split {
   readonly keys: readonly Column<unknown>[];
@@ -28,6 +38,7 @@ type Ordering<T> = (target: Ref<T>) => OrderItem | readonly OrderItem[];
  * 查询上 `groupJoin((m) => m.deliveries)` 时，同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN 一次。
  */
 export class Many<T> {
+  declare readonly [MANY]: true;
   readonly #owner: RefOwner;
   readonly #target: () => Table<T>;
   /** 关系本身的连接条件，也是判断两个 Many 是否同一个关系的依据。 */
