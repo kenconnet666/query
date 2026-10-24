@@ -26,12 +26,39 @@ export class BatchWriteError extends Error {
   }
 }
 
+/** 写入超出了浏览器给这个源的配额。usage、quota 是 `navigator.storage.estimate()` 的估计值（字节），拿不到时为 undefined。 */
+export class QuotaError extends Error {
+  constructor(
+    readonly usage: number | undefined,
+    readonly quota: number | undefined,
+    cause: unknown,
+  ) {
+    super(`The browser's storage quota is exhausted${usage === undefined ? "" : ` (using ${usage} of ${quota} bytes)`}; delete data or ask for persistent storage`, { cause });
+    this.name = "QuotaError";
+  }
+
+  /** e 是配额错误时换成 QuotaError（带上估计值），否则原样返回。 */
+  static async wrap(e: unknown): Promise<unknown> {
+    if ((e as DOMException | undefined)?.name !== "QuotaExceededError") return e;
+    const estimate = await storageEstimate();
+    return new QuotaError(estimate?.usage, estimate?.quota, e);
+  }
+}
+
+/** `navigator.storage.estimate()`；没有 StorageManager 时为 undefined。 */
+export async function storageEstimate(): Promise<StorageEstimate | undefined> {
+  const storage = (globalThis as { navigator?: { storage?: StorageManager } }).navigator?.storage;
+  return storage?.estimate === undefined ? undefined : storage.estimate().catch(() => undefined);
+}
+
 /** 查询在哪里执行：数据库（每次一个新事务）或已有的事务（加入它）。 */
 export interface Runner {
   /** 仓库类的元数据；类不在 openLocal 的 stores 里时报错。 */
   meta(type: StoreClass): StoreMeta;
   /** 在覆盖 stores、模式为 mode 的事务里执行 work。 */
   run<R>(stores: readonly StoreClass[], mode: IDBTransactionMode, work: (tx: Transaction) => Promise<R>): Promise<R>;
+  /** 实时查询：stores 里任何一个有写入提交时调用 refresh；返回取消的函数。只有数据库有，事务里没有。 */
+  watch?(stores: readonly string[], refresh: () => void): () => void;
 }
 
 /** 本包内部（查询）经由事务读写原生仓库的方式；不对外导出。 */
@@ -178,7 +205,7 @@ export class Transaction implements Runner {
     return work(this);
   }
 
-  /** 在事务里执行 work：正常结束时提交并等到完成，抛出异常时回滚。由数据库调用。 */
+  /** 在事务里执行 work：正常结束时提交并等到完成，抛出异常时回滚；配额用尽时报 {@link QuotaError}。由数据库调用。 */
   static async execute<R>(tx: Transaction, work: (tx: Transaction) => Promise<R>): Promise<R> {
     let result: R;
     try {
@@ -186,7 +213,7 @@ export class Transaction implements Runner {
     } catch (e) {
       tx.#abort();
       await tx.#finished.catch(() => undefined);
-      throw e;
+      throw await QuotaError.wrap(e);
     }
     if (!tx.#done) {
       try {
@@ -195,13 +222,12 @@ export class Transaction implements Runner {
         // 事务已经不活跃，正在自动提交
       }
     }
-    await tx.#finished;
+    try {
+      await tx.#finished;
+    } catch (e) {
+      throw await QuotaError.wrap(e);
+    }
     return result;
-  }
-
-  /** 等事务结束（升级用：versionchange 事务由打开数据库的请求提交）。 */
-  static finished(tx: Transaction): Promise<void> {
-    return tx.#finished;
   }
 
   /** 中止事务；已经结束时什么也不做。 */

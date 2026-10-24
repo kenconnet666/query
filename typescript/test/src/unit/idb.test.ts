@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { BatchWriteError, bigint, InvalidRowError, openLocal, TransactionClosedError, type LocalDatabase } from "@zerodep-dev/idb";
+import { BatchWriteError, bigint, InvalidRowError, openLocal, QuotaError, TransactionClosedError, type LocalDatabase } from "@zerodep-dev/idb";
 import { Cell, Comment, Counter, Note, note, User } from "../fixtures/local.js";
 
 /** IndexedDB 本地存储（0010）的单元测试，跑在 fake-indexeddb 上；自动提交时机与多标签页另由浏览器实测覆盖。 */
@@ -280,5 +280,77 @@ describe("IndexedDB 的打开与升级", () => {
     assert.equal(notified, 1);
     await assert.rejects(old.get(User, "u1"), /is closed/);
     next.close();
+  });
+});
+
+describe("IndexedDB 的实时查询与配额", () => {
+  /** 等到 check 成立，至多 2 秒。 */
+  async function until(check: () => boolean): Promise<void> {
+    for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(check(), "timed out");
+  }
+
+  it("写入提交后读过这个仓库的实时查询重新执行，写别的仓库不触发，停止后不再回调", async () => {
+    const db = await open();
+    const seen: string[][] = [];
+    const stop = db.from(Note).where("owner").eq("u1").live((rows) => seen.push(ids(rows)));
+    await until(() => seen.length === 1);
+    await db.put(Note, note("n1"));
+    await until(() => seen.length === 2);
+    await db.put(User, { id: "u1", name: "Ann" });
+    await db.transaction([Note], "readwrite", async (tx) => {
+      await tx.put(Note, note("n2"));
+      await tx.put(Note, note("n3", { owner: "u2" }));
+    });
+    await until(() => seen.length === 3);
+    await assert.rejects(db.transaction([Note], "readwrite", async (tx) => {
+      await tx.put(Note, note("n4"));
+      throw new Error("rolled back");
+    }));
+    stop();
+    await db.put(Note, note("n5"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(seen, [[], ["n1"], ["n1", "n2"]], "a rolled-back write and writes after stop() do not notify");
+    await assert.rejects(db.transaction([Note], "readonly", async (tx) => tx.from(Note).all().live(() => undefined)), /runs on the database/);
+    db.close();
+  });
+
+  it("另一个连接（另一个标签页）提交的写入经由 BroadcastChannel 让实时查询重新执行", async () => {
+    const name = `tabs-${++databases}`;
+    const a = await openLocal(name, { version: 1, stores: STORES });
+    const b = await openLocal(name, { version: 1, stores: STORES });
+    const seen: string[][] = [];
+    const stop = a.from(Note).all().include("user").live((rows) => seen.push(rows.map((n) => `${n.id}:${n.user?.name ?? ""}`)));
+    await until(() => seen.length === 1);
+    await b.put(Note, note("n1"));
+    await until(() => seen.length === 2);
+    await b.put(User, { id: "u1", name: "Ann" });
+    await until(() => seen.length === 3);
+    assert.deepEqual(seen, [[], ["n1:"], ["n1:Ann"]], "writes to an included store notify too");
+    stop();
+    a.close();
+    b.close();
+  });
+
+  it("配额用尽的写入报 QuotaError，事务回滚", async () => {
+    const db = await open();
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore["put"]>) {
+      if (this.name === "comments") throw new DOMException("quota", "QuotaExceededError");
+      return put.apply(this, args);
+    };
+    try {
+      await assert.rejects(
+        db.transaction([Note, Comment], "readwrite", async (tx) => {
+          await tx.put(Note, note("n1"));
+          await tx.put(Comment, { id: "c1", noteId: "n1", text: "x" });
+        }),
+        (e: Error) => e instanceof QuotaError && (e.cause as DOMException).name === "QuotaExceededError",
+      );
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+    assert.equal(await db.get(Note, "n1"), undefined);
+    assert.equal(await db.persist(), false, "Node has no StorageManager");
   });
 });

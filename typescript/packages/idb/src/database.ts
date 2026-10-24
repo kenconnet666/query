@@ -1,6 +1,6 @@
 import { storeMeta, type IndexMeta, type StoreClass, type StoreMeta } from "./metadata.js";
 import { Source } from "./query.js";
-import { Transaction, type Runner } from "./transaction.js";
+import { storageEstimate, Transaction, type Runner } from "./transaction.js";
 
 /** 一个版本的数据迁移，在升级的 versionchange 事务里执行；只用 tx 上的操作，不要 await 别的工作。 */
 export type UpgradeStep = (tx: Transaction, info: { readonly oldVersion: number }) => void | Promise<void>;
@@ -101,6 +101,10 @@ export class LocalDatabase implements Runner {
   readonly #raw: IDBDatabase;
   readonly #metas: ReadonlyMap<StoreClass, StoreMeta>;
   readonly #durability: IDBTransactionDurability;
+  /** 实时查询：仓库名到要重新执行的查询。 */
+  readonly #watchers = new Map<string, Set<() => void>>();
+  /** 与同源的其他标签页互通写入的频道，第一次需要时创建。 */
+  #channel: BroadcastChannel | undefined;
   #closed = false;
 
   /** 由 openLocal 创建。 */
@@ -172,10 +176,38 @@ export class LocalDatabase implements Runner {
     return this.run(stores, mode, work);
   }
 
-  /** 关闭连接；之后的读写报错。 */
+  /**
+   * 请求持久存储（`navigator.storage.persist()`），返回是否获准。浏览器多半要求在用户手势（点击）里调用；
+   * 没有获准时，空间紧张或（Safari 下）七天没有访问时数据可能被清除，重要的数据不要只存在这里。
+   */
+  async persist(): Promise<boolean> {
+    const storage = (globalThis as { navigator?: { storage?: StorageManager } }).navigator?.storage;
+    return storage?.persist === undefined ? false : storage.persist();
+  }
+
+  /** 这个源已用和可用的存储空间估计（`navigator.storage.estimate()`，字节）；浏览器不支持时为 undefined。 */
+  estimate(): Promise<StorageEstimate | undefined> {
+    return storageEstimate();
+  }
+
+  /** 关闭连接和标签页之间的频道；之后的读写报错，实时查询不再更新。 */
   close(): void {
     this.#closed = true;
+    this.#channel?.close();
+    this.#channel = undefined;
     this.#raw.close();
+  }
+
+  watch(stores: readonly string[], refresh: () => void): () => void {
+    for (const s of stores) {
+      let set = this.#watchers.get(s);
+      if (set === undefined) this.#watchers.set(s, (set = new Set()));
+      set.add(refresh);
+    }
+    this.#connect();
+    return () => {
+      for (const s of stores) this.#watchers.get(s)?.delete(refresh);
+    };
   }
 
   meta(type: StoreClass): StoreMeta {
@@ -187,7 +219,32 @@ export class LocalDatabase implements Runner {
     if (this.#closed) return Promise.reject(new Error(`The database ${this.name} is closed (close() was called, or another tab upgraded it)`));
     const names = [...new Set(stores.map((s) => this.meta(s).name))];
     const tx = new Transaction(this.#raw.transaction(names, mode, { durability: this.#durability }), this);
-    return Transaction.execute(tx, work);
+    return Transaction.execute(tx, work).then((result) => {
+      if (tx.written.size > 0) {
+        const written = [...tx.written];
+        this.#notify(written);
+        this.#connect()?.postMessage({ stores: written });
+      }
+      return result;
+    });
+  }
+
+  /** 重新执行读过这些仓库的实时查询（每个只执行一次）。 */
+  #notify(stores: readonly string[]): void {
+    const due = new Set<() => void>();
+    for (const s of stores) for (const refresh of this.#watchers.get(s) ?? []) due.add(refresh);
+    for (const refresh of due) refresh();
+  }
+
+  /** 标签页之间的频道（同名的库共用）；没有 BroadcastChannel 或已关闭时为 undefined。 */
+  #connect(): BroadcastChannel | undefined {
+    if (this.#channel !== undefined || this.#closed || typeof BroadcastChannel === "undefined") return this.#channel;
+    this.#channel = new BroadcastChannel(`@zerodep-dev/idb:${this.name}`);
+    (this.#channel as { unref?(): void }).unref?.(); // Node 上频道不让进程一直不退出；浏览器没有 unref
+    this.#channel.onmessage = (event: MessageEvent<{ stores?: unknown }>) => {
+      if (Array.isArray(event.data?.stores)) this.#notify(event.data.stores.filter((s): s is string => typeof s === "string"));
+    };
+    return this.#channel;
   }
 }
 

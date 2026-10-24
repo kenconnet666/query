@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { chromium, type Browser } from "playwright-core";
-import { serve } from "./server.js";
+import type { Browser } from "playwright-core";
+import { launch, serve } from "./harness.js";
 
 /** 页面：按 phase 起一个模块 Worker，把它发回的消息交给测试；每次读完就结束 Worker，释放 OPFS 的文件句柄。 */
 const PAGE = `<!doctype html><meta charset="utf-8"><link rel="icon" href="data:,"><script type="module">
@@ -12,18 +12,6 @@ window.runWorker = (phase) => new Promise((resolve, reject) => {
 });
 </script>`;
 
-/** 依次试本机装的 Chrome 和 Edge（playwright-core 不下载浏览器）；都没有时返回 undefined。 */
-async function launch(): Promise<Browser | undefined> {
-  for (const channel of ["chrome", "msedge"]) {
-    try {
-      return await chromium.launch({ channel });
-    } catch {
-      // 换下一个
-    }
-  }
-  return undefined;
-}
-
 /** 0009 的浏览器用法：Worker 里的 SQLite WASM 用 opfs-sahpool 持久化，事务经由 tx。CI 设 QUERY_REQUIRE_BROWSER=1，找不到浏览器时失败。 */
 describe("浏览器里的 SQLite WASM", () => {
   let browser: Browser | undefined;
@@ -32,7 +20,6 @@ describe("浏览器里的 SQLite WASM", () => {
 
   before(async () => {
     browser = await launch();
-    if (browser === undefined && process.env.QUERY_REQUIRE_BROWSER === "1") throw new Error("QUERY_REQUIRE_BROWSER=1 but neither Chrome nor Edge could be launched");
     const s = await serve(PAGE);
     url = s.url;
     close = () => new Promise((resolve) => s.server.close(() => resolve()));

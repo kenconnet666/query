@@ -243,6 +243,53 @@ export class Query<T> {
     });
   }
 
+  /**
+   * 实时查询：先执行一次，之后本页或同源的其他标签页向查询读到的仓库（含 include 的）提交写入时重新执行，
+   * 把结果交给 onRows。按仓库失效：写到同一个仓库的别的行也会触发。返回停止的函数。只能在数据库上用，不能在事务里。
+   *
+   * ```ts
+   * const stop = db.from(Note).where("owner").eq("u1").live((rows) => render(rows));
+   * ```
+   */
+  live(onRows: (rows: T[]) => void, onError: (error: unknown) => void = (e) => console.error(e)): () => void {
+    const watch = this.source.runner.watch;
+    if (watch === undefined) throw new Error("live() runs on the database, not inside a transaction");
+    const meta = this.source.meta;
+    const stores = [meta.name, ...this.options.include.map((r) => this.source.runner.meta(meta.relations.get(r)!.target()).name)];
+    let stopped = false;
+    let running = false;
+    let again = false;
+    // 一次只执行一个；执行期间又有写入时，结束后再执行一次，回调总是拿到最新的结果
+    const refresh = (): void => {
+      if (stopped) return;
+      if (running) {
+        again = true;
+        return;
+      }
+      running = true;
+      this.list().then(
+        (rows) => {
+          running = false;
+          if (stopped) return;
+          if (again) {
+            again = false;
+            refresh();
+          } else onRows(rows);
+        },
+        (e: unknown) => {
+          running = false;
+          if (!stopped) onError(e);
+        },
+      );
+    };
+    const unwatch = watch.call(this.source.runner, stores, refresh);
+    refresh();
+    return () => {
+      stopped = true;
+      unwatch();
+    };
+  }
+
   /** 逐行遍历全部匹配的行（先读完再交出，遍历中可以 await 别的工作）。 */
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     yield* await this.list();

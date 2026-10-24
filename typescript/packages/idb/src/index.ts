@@ -4,6 +4,6 @@
  */
 export { bigint, boolean, index, key, lowercase, many, one, store, type Codec, type IndexOptions, type StoreClass, type StoreOptions } from "./metadata.js";
 export { InvalidRowError } from "./rows.js";
-export { BatchWriteError, Transaction, TransactionClosedError } from "./transaction.js";
+export { BatchWriteError, QuotaError, Transaction, TransactionClosedError } from "./transaction.js";
 export { Query, Source, Where, type BetweenOptions } from "./query.js";
 export { LocalDatabase, openLocal, type OpenOptions, type UpgradeStep } from "./database.js";

@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium, type Browser } from "playwright-core";
 
 /** 工作区根目录 `typescript/`：各包的 dist 和测试的 dist 都在它下面。 */
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -14,6 +15,7 @@ const WASM = dirname(createRequire(import.meta.url).resolve("@sqlite.org/sqlite-
 const PACKAGES: Readonly<Record<string, string>> = {
   "@zerodep-dev/query-core": "/packages/core/dist/index.js",
   "@zerodep-dev/query-sqlite": "/packages/sqlite/dist/index.js",
+  "@zerodep-dev/idb": "/packages/idb/dist/index.js",
   "@sqlite.org/sqlite-wasm": "/sqlite-wasm/index.mjs",
 };
 
@@ -53,4 +55,20 @@ export async function serve(page: string): Promise<{ server: Server; url: string
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("the test server has no port");
   return { server, url: `http://127.0.0.1:${address.port}/` };
+}
+
+/**
+ * 依次试本机装的 Chrome 和 Edge（playwright-core 不下载浏览器）；都没有时返回 undefined，
+ * 但设置了 QUERY_REQUIRE_BROWSER=1（CI）时报错。
+ */
+export async function launch(): Promise<Browser | undefined> {
+  for (const channel of ["chrome", "msedge"]) {
+    try {
+      return await chromium.launch({ channel });
+    } catch {
+      // 换下一个
+    }
+  }
+  if (process.env.QUERY_REQUIRE_BROWSER === "1") throw new Error("QUERY_REQUIRE_BROWSER=1 but neither Chrome nor Edge could be launched");
+  return undefined;
 }
