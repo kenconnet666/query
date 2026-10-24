@@ -1,17 +1,17 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md)、[0012 PolarDB 方言](docs/decisions/0012-polardb-dialect.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）；2.1 加 SQLite 方言（0009，含浏览器里的 SQLite WASM）和前端用的 IndexedDB 本地存储包（0010，只有 TS，不依赖核心包，不做同步）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）；2.1 加 SQLite 方言（0009，含浏览器里的 SQLite WASM）、前端用的 IndexedDB 本地存储包（0010，只有 TS，不依赖核心包，不做同步）和继承 MySQL 方言的 PolarDB 方言（0012）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
-- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
+- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。PolarDB 方言继承 MySQL 方言（写法相同，金样例沿用 MySQL 的文件，实库测试继承 MySQL 的全部场景），只多 PolarDB 专属的能力；专属能力只纳入在开源 PolarDB-X 引擎上实测过、并且与阿里云 PolarDB 写法一致的（0012）。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
 - **文档**：
   - API 方向以 0002 为准，0006 修订了其中的实体声明、投影和条件；
@@ -73,14 +73,14 @@ corepack pnpm test:live                  # 实库场景：三库要变量（见�
 corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览器测试（playwright-core，不下载浏览器）
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|sqlite|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|polardb|sqlite|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
 - **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`ddl`、`exec`；测试在 `test/src` 的 `unit`、`live`、`browser`，夹具在 `fixtures`。
 - **生成代码**：`scope/From1..From16`、`select/Rows` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
   - Java 单元、渲染与金样例测试（Maven `--threads 1C` 并行构建模块；带 `release` profile、跳过签名，顺带检查 javadoc）；
   - JDK 21 与 25 上的 Java 单元测试（字节码仍按 release 17 生成）；
-  - PostgreSQL、MySQL 实库：按"库 × 语言"拆成 4 个 job；
+  - PostgreSQL、MySQL、PolarDB 实库：按"库 × 语言"拆成 6 个 job（PolarDB 的 job 跑 MySQL 的全部场景加 PolarDB 专属的）；
   - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
   - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库场景用临时文件库，随 Java 单元测试运行。
@@ -107,9 +107,9 @@ corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览�
   - `typescript/pnpm-lock.yaml` 是否与各 `package.json` 一致（CI 用 `--frozen-lockfile` 安装）。
 - **实库测试的变量**：
   - 共享场景：Java 在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；TS 在 `test/src/live/live.ts`，各方言一个 `*.live.test.ts`；
-  - 两端读取同一组 `QUERY_{HANA|PG|MYSQL}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
+  - 两端读取同一组 `QUERY_{HANA|PG|MYSQL|POLARDB}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
   - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
-  - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`，不入库），按需读进环境变量，不打印也不落盘：
+  - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`、`infra/polardb/.env`，不入库），按需读进环境变量，不打印也不落盘：
 
     ```powershell
     $ip = ((wsl -d Debian hostname -I).Trim() -split ' ')[0]   # WSL 的地址，WSL 重启后会变
@@ -119,6 +119,8 @@ corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览�
     $env:QUERY_PG_URL = "jdbc:postgresql://${ip}:55432/query"; $env:QUERY_PG_USER = 'query'; $env:QUERY_PG_PASSWORD = $pg
     $env:QUERY_MYSQL_URL = "jdbc:mysql://${ip}:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"; $env:QUERY_MYSQL_USER = 'root'; $env:QUERY_MYSQL_PASSWORD = $mysql
     $env:QUERY_HANA_URL = "jdbc:sap://${ip}:39041"; $env:QUERY_HANA_USER = 'SYSTEM'; $env:QUERY_HANA_PASSWORD = $hana
+    $polardb = (Get-Content infra/polardb/.env | ConvertFrom-StringData).QUERY_DB_PASSWORD
+    $env:QUERY_POLARDB_URL = "jdbc:mysql://${ip}:53307/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"; $env:QUERY_POLARDB_USER = 'root'; $env:QUERY_POLARDB_PASSWORD = $polardb
     ```
 
   - 测试会在各库的 `QUERY_IT` schema 里重建测试表。
@@ -127,7 +129,7 @@ corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览�
 
 WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"一节：NAT 模式，双方用各自的地址直接访问，不配 portproxy。本项目的具体情况如下：
 
-- **定义位置**：`infra/mysql/`、`infra/postgres/`、`infra/hana/` 各是一个自包含的目录（`compose.yaml`、`Dockerfile`、`.env.example`），开发和 CI 共用，可以单独复制到别的机器部署。每个 `compose.yaml` 开头的注释写了完整的部署和使用步骤，在对应目录下执行 `docker compose up -d --build` 即可。
+- **定义位置**：`infra/mysql/`、`infra/postgres/`、`infra/hana/`、`infra/polardb/` 各是一个自包含的目录（`compose.yaml`、`Dockerfile`、`.env.example`），开发和 CI 共用，可以单独复制到别的机器部署。每个 `compose.yaml` 开头的注释写了完整的部署和使用步骤，在对应目录下执行 `docker compose up -d --build` 即可。
 - **镜像**：
   - PostgreSQL 用官方 Debian（bookworm）镜像，MySQL 8.4 官方没有 Debian 变体，用官方 Oracle Linux 镜像；两者都由 `infra/Dockerfile` 加装 ping、curl、ss、nano 等运维工具，并把时区设为 `Asia/Singapore`。
   - HANA 是 SAP 的 SUSE 镜像，没有软件源，不能加装工具；它的 `Dockerfile` 只把启动、健康检查和配置脚本打进镜像，目录因此不依赖绑定挂载。
@@ -139,8 +141,11 @@ WSL 和宿主机之间的网络约定见用户级 CLAUDE.md 的"WSL 与 Docker"�
   | MySQL | `mysql:8.4.11` | 53306 | `query` / `query`，管理员 `root` | 1 GiB |
   | PostgreSQL | `postgres:17.11-bookworm` | 55432 | `query` / `query` | 512 MiB |
   | HANA Express | `saplabs/hanaexpress:2.00.088.00.20251110.1` | 租户 HXE `39041`，SYSTEMDB `39017` | `SYSTEM` | 8 GiB |
+| PolarDB-X 引擎 | `polardbx/polardbx-engine:v2.5.0_8.4.21`（MySQL 8.0.42 内核，单节点 X-Cluster） | 53307 | `query` / `query`，管理员 `root` | 2 GiB |
 
-- **访问地址**：宿主机访问数据库统一用 WSL 的 `172.x` 地址（`wsl -d Debian hostname -I` 的第一项，目前是 `172.19.1.143`，WSL 重启后可能变化），不用 `localhost`；WSL 内访问宿主机用 `172.19.0.1`。
+- **访问地址**：宿主机访问数据库统一用 WSL 的 `172.x` 地址（`wsl -d Debian hostname -I` 的第一项，2026-10-24 是 `172.17.206.87`，WSL 重启后会变），不用 `localhost`。
+- **WSL 空闲会关机**：没有 `wsl` 进程挂着时 WSL 很快关掉虚拟机，里面的数据库被正常关机，实库测试卡住或连不上，容器总显示"刚启动"。跑实库测试前在后台挂一个 `wsl -d Debian -- sleep 14400`。
+- **PolarDB**：镜像只带裸的 `mysqld`，`infra/polardb/entrypoint.sh` 在首次启动时初始化、等节点成为 Paxos Leader 后建库和账号；表名不区分大小写（`.env` 的 `QUERY_POLARDB_LOWER_CASE_TABLE_NAMES`，只能在建数据卷时定）；`my.cnf` 打开了 undo 保留，闪回查询要用。
 - **密码**：写在各目录自己的 `.env`（已加入 `.gitignore`），首次部署时用 `compose.yaml` 开头注释里的命令随机生成，模板是同目录的 `.env.example`。MySQL 和 PostgreSQL 用 `QUERY_DB_PASSWORD`，HANA 用 `QUERY_HANA_PASSWORD`。用户要连接信息时，可以在对话中明文给出，但绝不写进仓库文件或提交。
 - **数据**：用命名卷保存，`stop` 和 `down` 保留数据，`down -v` 才删除。
 - **HANA**：

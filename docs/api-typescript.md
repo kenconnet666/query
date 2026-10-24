@@ -63,6 +63,7 @@ const db = database(new pg.Pool({ /* ... */ }), {
 | SAP HANA | `@zerodep-dev/query-hana` | `@sap/hana-client` 的连接池或连接 | `HanaDatabase` |
 | PostgreSQL | `@zerodep-dev/query-postgres` | `pg` 的 `Pool`、`PoolClient` 或 `Client` | `PostgresDatabase` |
 | MySQL 8 | `@zerodep-dev/query-mysql` | `mysql2/promise` 的连接池或连接 | `MysqlDatabase` |
+| PolarDB for MySQL | `@zerodep-dev/query-polardb`（重新导出 MySQL 包的全部内容） | 同 MySQL | `PolardbDatabase`（也是 `MysqlDatabase`，见第 20 节） |
 | SQLite 3.46+ | `@zerodep-dev/query-sqlite` | `node:sqlite` 的 `DatabaseSync`，或 `@sqlite.org/sqlite-wasm` 的 oo1 `DB`（见第 19 节） | `SqliteDatabase` |
 
 - 传入单个连接时（例如事务中的连接），库直接使用这个连接，不会关闭它。
@@ -656,6 +657,7 @@ class Seq {
 | `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
 | `.onConflict().update((d) => d.title)`、`.onConflict((d) => d.id).doNothing()` | 插入或更新；不写键时用 `@id` 的列，`update()` 不写列时更新键以外的全部列 |
 | `.with(forUpdate("skipLocked"))` | 加锁读，另有 `"wait"`（默认）、`"nowait"`；HANA 写作 `IGNORE LOCKED` |
+| `update(Lips).with((l) => noIndex(l, "IX_LIPS")).set(...)`、`deleteFrom(...).with(...)` | 写在 UPDATE、DELETE 关键字后面的提示（MySQL 的优化器提示、PolarDB 的 `inventory(n)`），同一方言的合并进一个注释，别的方言的提示渲染时报错；插入暂不支持 |
 | `await db.transaction(async (tx) => { ... })` | 一个连接上的事务：正常返回提交，抛出时回滚，嵌套调用加入外层事务。`tx` 是绑定在事务上的同一种数据库，经由它执行的语句都用事务的连接；在 Node 上里面直接用 `db.*` 也经 AsyncLocalStorage 用同一个连接，浏览器里必须用 `tx`（见第 19 节） |
 | `deleteFrom(Doc).where(...)` 在带 `@logicDelete` 的表上 | 改写成 `UPDATE ... SET DELETED = 1`，`.physically()` 才真正删除；查询、连接、关系都自动加"未删除"条件；插入时补上未删除的值；`timestamp` 列记录删除时间（`IS NULL` / `CURRENT_TIMESTAMP`）；`@logicDelete({ epochMillis: true })` 的 bigint 列未删除为 0、删除写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建 |
 
@@ -842,3 +844,21 @@ await db.transaction(async (tx) => {
 - **不支持的**：从 SQLite 包导入的 `grouping`、`forUpdate` 是 `never` 类型，写不出来；ROLLUP 在渲染时报错。
 - **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有表和列的注释。从库生成基类用 `query-pull-sqlite`。
 - **浏览器里的核心包**：事务、追踪写回和多语句写入都经由事务视图 `tx` 执行，不依赖 AsyncLocalStorage。但浏览器里事务回调中直接用 `db` 的语句不在事务里：单连接驱动上它会一直等到事务结束，所以必须用 `tx`。`capture` 需要 AsyncLocalStorage，浏览器里报错；嵌套的 `tracking` 各自写回。迁移的校验和用 Web Crypto，浏览器里要在安全上下文（https 或 localhost）中。
+
+## 20. PolarDB
+
+`@zerodep-dev/query-polardb` 重新导出 `@zerodep-dev/query-mysql` 的全部内容（一次导入），另有闪回查询和库存提示，驱动同 MySQL 用 `mysql2`。与 Java 的第 19 节一一对应，金样例相同；设计与实测见 [0012](decisions/0012-polardb-dialect.md)。
+
+```ts
+import { database, from, fromAsOf, inventory, minus, update, val } from "@zerodep-dev/query-polardb";
+
+const db = database(mysql.createPool({ host, port, user, password, database: "app" }));
+await db.list(fromAsOf(Stock, "2026-10-24 10:00:00").where((s) => s.qty.gt(0)).select((s) => s.id));
+await db.transaction(async (tx) => {
+  await tx.execute(update(Stock).with(() => inventory(1)).set((s) => ({ qty: minus(s.qty, val(1)) })).where((s) => s.id.eq(1n)));
+});
+```
+
+- `fromAsOf(表, "YYYY-MM-DD HH:MM:SS[.小数]")`：时刻是数据库所在时区的本地时间，写成 `FROM 表 AS OF TIMESTAMP CAST(? AS DATETIME(6)) 别名`；条件同 Java。
+- `inventory(n)`：只能写在 `update` / `deleteFrom` 的 `with(...)` 上，必须在事务里执行；正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务。
+- 写法与 MySQL 完全相同，MySQL 包的专属函数照常可用；没有纳入的能力与云产品的差异见 Java 的第 19 节。

@@ -61,6 +61,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | SAP HANA | `org.dpdns.zerodep.query.hana.Hana` | `HanaDatabase` |
 | PostgreSQL | `org.dpdns.zerodep.query.postgres.Postgres` | `PostgresDatabase` |
 | MySQL 8 | `org.dpdns.zerodep.query.mysql.Mysql` | `MysqlDatabase` |
+| PolarDB for MySQL | `org.dpdns.zerodep.query.polardb.Polardb`（含 MySQL 的全部写法） | `PolardbDatabase`（也是 `MysqlDatabase`，见第 19 节） |
 | SQLite 3.46+ | `org.dpdns.zerodep.query.sqlite.Sqlite` | `SqliteDatabase`（见第 18 节） |
 
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
@@ -809,6 +810,15 @@ insertInto(Doc.class).values(row).onConflict(d -> d.id()).doNothing();   // 冲�
 
 `onConflict()` 不写键时用 `@Id` 的列，键必须是插入的列。HANA 写成 `MERGE INTO ... USING (SELECT ? AS ... FROM DUMMY)`，PostgreSQL 写成 `ON CONFLICT (...) DO UPDATE SET c = EXCLUDED.c`（键上要有主键或唯一约束），MySQL 写成 `... AS new ON DUPLICATE KEY UPDATE c = new.c`。
 
+### 写语句的提示
+
+```java
+db.execute(update(Lips.class).with(l -> noIndex(l, "IX_LIPS")).set(l -> l.unit().to("KG")).where(l -> l.delivery().eq("D1")));
+// UPDATE /*+ NO_INDEX(`lips` `IX_LIPS`) */ `ERP`.`LIPS` `lips` SET ...
+```
+
+`update(...)` 和 `deleteFrom(...)` 的 `with(t -> 提示)` 把提示写在 UPDATE、DELETE 关键字后面（逻辑删除改写成的 UPDATE 也带上），lambda 收到被改的表；只收写在关键字后面的提示（MySQL 的优化器提示、PolarDB 的 `inventory(n)`），同一方言的提示合并进一个注释，别的方言的提示渲染时报错。插入暂不支持提示。
+
 ### 加锁读
 
 ```java
@@ -1071,3 +1081,19 @@ db.list(from(Item.class).where(i -> glob(i.code(), "A*")).select(i -> median(i.p
 - **不支持的**：ROLLUP / GROUPING SETS、`grouping()`、`forUpdate()` 渲染时抛出 `UnsupportedOperationException`。SQLite 只有一个写者，在写事务里读写即可。
 - **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有注释，建表时略过并警告一次。`query:pull` 的 `dialect` 写 `sqlite`。
 - 联表写入：`updateJoin` 写成 `UPDATE ... FROM`，`deleteJoin` 写成 `WHERE EXISTS`。
+
+## 19. PolarDB
+
+`query-polardb` 是 PolarDB for MySQL 的方言包，依赖 `query-mysql`，驱动同 MySQL 用 Connector/J。设计、实测与云产品的差异见 [0012](decisions/0012-polardb-dialect.md)。
+
+```java
+import static org.dpdns.zerodep.query.polardb.Polardb.*;   // 核心 + MySQL + PolarDB 的全部写法
+
+PolardbDatabase db = Polardb.database(SpringConnections.of(dataSource, transactionManager), c -> c.printSql());
+```
+
+- **写法与 MySQL 完全相同**：MySQL 方言的全部能力（函数、提示、加锁读、联表写入、JSON、全文检索）照常可用，渲染出的 SQL 与 MySQL 逐字一致；`PolardbDatabase` 也是 `MysqlDatabase`。
+- **闪回查询**：`fromAsOf(Stock.class, at)` 读表在 `at`（数据库所在时区的本地时间）那一刻的样子，写成 `FROM 表 AS OF TIMESTAMP CAST(? AS DATETIME(6)) 别名`，其余写法同 `from(...)`，全局过滤器照常生效。时刻要在 undo 的保留时间之内，阿里云 PolarDB 要先打开闪回查询（`loose_innodb_backquery_enable`），社区版引擎由 `innodb_undo_retention` 决定；表结构在这一刻之后变过时数据库报错。
+- **热点行的库存提示**：`update(Stock.class).with(s -> inventory(1)).set(...).where(...)` 写成 `UPDATE /*+ COMMIT_ON_SUCCESS ROLLBACK_ON_FAIL TARGET_AFFECT_ROW(1) */ ...`。必须在事务里执行（自动提交时数据库报错）；正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务，所以让它单独占一个事务或放在事务的最后一句：`db.transaction(() -> db.execute(...))`。
+- **没有纳入的**：序列（云产品没有）、`dbms_trans.returning`（云上 8.0 不支持）、并行查询与列存索引的提示（社区版上测不了），需要时用原生 SQL 片段。
+- **与社区 MySQL 的差异**：云上 PolarDB 8.0 的语法基线是社区 8.0.13 / 8.0.18（见 0011），默认隔离级别是读已提交。
