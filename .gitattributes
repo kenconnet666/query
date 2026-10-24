@@ -11,6 +11,7 @@
 *.config text eol=lf
 *.sh text eol=lf
 *.sql text eol=lf
+*.cnf text eol=lf
 Dockerfile text eol=lf
 .env.example text eol=lf
 mvnw text eol=lf
