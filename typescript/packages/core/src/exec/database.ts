@@ -238,6 +238,11 @@ export interface DatabaseOptions {
   readonly filters?: readonly SourceFilter[];
   /** 写入时自动填充的列（审计字段）：`[onInsert(Audited, (a) => a.createdAt, now), onUpdate(Audited, (a) => a.updatedBy, user)]`。 */
   readonly fills?: readonly Fill[];
+  /**
+   * 表声明里的 schema 换成实际的名字，例如 SAP 各环境的 schema 不同：`{ ERP: "SAPHANADB" }`，或按规则 `(s) => s + "_TEST"`。
+   * 查询、写语句和关系里的表都换；原生 SQL 文本不换。
+   */
+  readonly schemas?: Readonly<Record<string, string>> | ((schema: string) => string);
   readonly cache?: QueryCache;
   readonly listener?: QueryListener;
   /**
@@ -256,6 +261,11 @@ export interface DatabaseOptions {
    * HANA 和 PostgreSQL 由服务端取消，详见方言包的驱动说明。
    */
   readonly queryTimeoutMs?: number;
+}
+
+/** 把 `DatabaseOptions.schemas` 变成换名规则：对象按名字查，没有的不变。 */
+function schemaMapping(schemas: Readonly<Record<string, string>> | ((schema: string) => string)): (schema: string) => string {
+  return typeof schemas === "function" ? schemas : (schema) => (Object.hasOwn(schemas, schema) ? schemas[schema]! : schema);
 }
 
 let instances = 0;
@@ -283,6 +293,7 @@ export abstract class Database {
     this.#settings = Object.freeze({
       filters: options.filters ?? [],
       fills: options.fills ?? [],
+      ...(options.schemas === undefined ? {} : { schema: schemaMapping(options.schemas) }),
       ...(options.naming === undefined ? {} : { naming: options.naming }),
       ...(options.functions === undefined ? {} : { functions: options.functions }),
     });

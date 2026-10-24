@@ -87,6 +87,8 @@ export interface RenderSettings {
   readonly filters?: unknown;
   /** 数据库级的写入填充；写入器不解读，由写语句读取。 */
   readonly fills?: unknown;
+  /** 把表声明里的 schema 换成实际名字的规则，见 `DatabaseOptions.schemas`。 */
+  readonly schema?: (schema: string) => string;
 }
 
 /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联引用不会被遮蔽。 */
@@ -146,6 +148,12 @@ export class SqlWriter {
   sql(text: string): this {
     this.#chunks.push(text);
     return this;
+  }
+
+  /** 写出 `schema.表名`：schema 按数据库实例的映射换成实际的名字；没有 schema 时只写表名。 */
+  table(schema: string | undefined, name: string): this {
+    if (schema !== undefined) this.identifier(this.settings.schema?.(schema) ?? schema).sql(".");
+    return this.identifier(name);
   }
 
   /** 追加按方言加引号的标识符。 */

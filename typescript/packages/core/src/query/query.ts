@@ -13,27 +13,75 @@ declare const rowType: unique symbol;
 
 // ---------- 全局过滤器 ----------
 
-/** 作用于整个数据库的条件：凡实体是 `type` 或其子类的表都会套用。 */
+/** 作用于整个数据库的条件：凡实体是 `type` 或其子类的表都会套用。有名字的可以用 `unfiltered(name)` 单独关闭。 */
 export interface SourceFilter {
+  readonly name: string | undefined;
   readonly type: Ctor<unknown>;
   readonly condition: (ref: Ref<never>) => Cond;
 }
 
 /** FROM 的表加到 WHERE，连接的表加到 ON；`.unfiltered()` 可跳过。 */
-export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => Cond): SourceFilter {
-  return Object.freeze({ type, condition: condition as (ref: Ref<never>) => Cond });
+export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => Cond): SourceFilter;
+/**
+ * 具名的全局过滤器，其余同上；单个查询或写语句可以用 `.unfiltered(name)` 只关闭它，例如
+ * `filter("tenant", Client, (c) => c.client.eq(tenant()))` 后，`from(...).unfiltered("tenant")` 跨租户查询，逻辑删除的条件仍然生效。
+ */
+export function filter<E>(name: string, type: Ctor<E>, condition: (ref: Ref<E>) => Cond): SourceFilter;
+export function filter<E>(...args: [Ctor<E>, (ref: Ref<E>) => Cond] | [string, Ctor<E>, (ref: Ref<E>) => Cond]): SourceFilter {
+  const [name, type, condition] = args.length === 3 ? args : [undefined, ...args];
+  return Object.freeze({ name, type, condition: condition as (ref: Ref<never>) => Cond });
 }
 
 /**
- * 这张表要追加的条件：全局过滤器，再加 `@logicDelete` 列的"未删除"条件；filters 为 undefined 表示 `unfiltered()`，两者都不加。
+ * 一条查询或写语句对全局过滤器和逻辑删除的开关。默认全部生效；`unfiltered()` 全部关闭；`unfiltered("tenant")`
+ * 只关闭这些名字的过滤器；`withDeleted()` 只关闭逻辑删除，能看到已删除的行。
+ */
+export interface Filtering {
+  readonly enabled: boolean;
+  readonly disabled: readonly string[];
+  readonly logicDelete: boolean;
+}
+
+/** 全部生效。 */
+export const FILTERING_ON: Filtering = Object.freeze({ enabled: true, disabled: Object.freeze([]), logicDelete: true });
+
+/** 全部关闭。 */
+export const FILTERING_OFF: Filtering = Object.freeze({ enabled: false, disabled: Object.freeze([]), logicDelete: false });
+
+/** 在 f 的基础上关闭这些名字的过滤器；没有名字时全部关闭。 */
+export function unfilteredBy(f: Filtering, names: readonly string[]): Filtering {
+  return names.length === 0 ? FILTERING_OFF : Object.freeze({ ...f, disabled: Object.freeze([...f.disabled, ...names]) });
+}
+
+/** 一条语句实际套用的过滤器：全局过滤器和是否加逻辑删除条件；undefined 表示全部关闭。 */
+export interface AppliedFilters {
+  readonly filters: readonly SourceFilter[];
+  readonly logicDelete: boolean;
+}
+
+/**
+ * 按一条语句的开关从数据库实例配置的过滤器里取舍。关闭的名字不是任何已配置的过滤器时报错，免得拼错的名字悄悄不起作用；
+ * 没有数据库实例（configured 为 undefined）时不检查。
+ */
+export function applyFiltering(configured: readonly SourceFilter[] | undefined, f: Filtering): AppliedFilters | undefined {
+  if (!f.enabled) return undefined;
+  if (configured !== undefined) {
+    const known = configured.map((x) => x.name).filter((n) => n !== undefined);
+    for (const name of f.disabled) if (!known.includes(name)) throw new Error(`unfiltered("${name}") names no configured filter; known: ${known.join(", ")}`);
+  }
+  return { filters: (configured ?? []).filter((x) => x.name === undefined || !f.disabled.includes(x.name)), logicDelete: f.logicDelete };
+}
+
+/**
+ * 这张表要追加的条件：全局过滤器，再加 `@logicDelete` 列的"未删除"条件；applied 为 undefined 表示 `unfiltered()`，两者都不加。
  * 派生表、CTE 等不是表的来源没有。
  */
-export function conditionsFor(filters: readonly SourceFilter[] | undefined, ref: object): Cond[] {
+export function conditionsFor(applied: AppliedFilters | undefined, ref: object): Cond[] {
   const owner = ownerOf(ref);
   const entity = owner.source.entity;
-  if (filters === undefined || entity === undefined || !owner.source.filtered) return [];
-  const out = filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
-  const active = activeCondition(ref);
+  if (applied === undefined || entity === undefined || !owner.source.filtered) return [];
+  const out = applied.filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
+  const active = applied.logicDelete ? activeCondition(ref) : undefined;
   if (active !== undefined) out.push(active);
   return out;
 }
@@ -73,7 +121,8 @@ interface SelectSpec {
   readonly distinct: boolean;
   readonly limit: number | undefined;
   readonly offset: number | undefined;
-  readonly filtered: boolean;
+  /** 全局过滤器和逻辑删除的开关。 */
+  readonly filtering: Filtering;
   /** 是否开启 skipEmpty：与空值比较的条件直接省略。 */
   readonly skipEmpty: boolean;
   readonly clauses: readonly Clause[];
@@ -633,7 +682,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   });
   w.inline(false);
   if (s.joins.length === 0) w.dialect.fromNothing(w);
-  const filters = s.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined;
+  const filters = applyFiltering(w.settings.filters as readonly SourceFilter[] | undefined, s.filtering);
   const where: Cond[] = [];
   const implicit = usedRelations(w, arm, groupBy, orderBy);
   for (const j of s.joins) {
@@ -855,7 +904,7 @@ function reaches(owner: RefOwner, touched: ReadonlySet<object>): boolean {
 }
 
 /** 紧跟在 owner 的 FROM 或 JOIN 之后写出它用到的隐式连接（LEFT JOIN），再写更深的关系；全局过滤器放进 ON。 */
-export function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[] | undefined): void {
+export function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: AppliedFilters | undefined): void {
   for (const r of owner.relations) {
     if (!used.has(r)) continue;
     w.sql("\nLEFT JOIN ");
@@ -989,9 +1038,17 @@ export class From<T extends readonly unknown[]> {
     return this.#with({ offset: rows(n, "offset") });
   }
 
-  /** 本查询不套用数据库实例的全局过滤器。 */
-  unfiltered(): From<T> {
-    return this.#with({ filtered: false });
+  /**
+   * 本查询不套用数据库实例的全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器（见具名的 `filter(name, ...)`），
+   * 例如跨租户但仍排除已删除的行：`unfiltered("tenant")`。
+   */
+  unfiltered(...names: string[]): From<T> {
+    return this.#with({ filtering: unfilteredBy(this.#spec.filtering, names) });
+  }
+
+  /** 本查询不加逻辑删除的条件，能看到已删除的行；全局过滤器照常，例如仍限定在当前租户。 */
+  withDeleted(): From<T> {
+    return this.#with({ filtering: { ...this.#spec.filtering, logicDelete: false } });
   }
 
   /**
@@ -1121,7 +1178,7 @@ function emptySpec(): SelectSpec {
     distinct: false,
     limit: undefined,
     offset: undefined,
-    filtered: true,
+    filtering: FILTERING_ON,
     skipEmpty: false,
     clauses: [],
     groupJoins: [],

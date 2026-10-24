@@ -97,6 +97,19 @@ public final class SqlWriter {
         return this;
     }
 
+    /** {@link #attribute} 的键：数据库实例配置的 schema 映射，值是 {@code UnaryOperator<String>}。 */
+    public static final Object SCHEMAS = new Object();
+
+    /** 写出 {@code schema.表名}：schema 按数据库实例的映射换成实际的名字；没有 schema 时只写表名。 */
+    @SuppressWarnings("unchecked")
+    public SqlWriter table(String schema, String table) {
+        if (schema != null) {
+            UnaryOperator<String> mapping = (UnaryOperator<String>) attributes.get(SCHEMAS);
+            identifier(mapping == null ? schema : mapping.apply(schema)).sql(".");
+        }
+        return identifier(table);
+    }
+
     /** 写出按方言需要加引号的标识符。 */
     public SqlWriter identifier(String name) { return sql(dialect.quote(name)); }
 

@@ -1,4 +1,4 @@
-import { all, column, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
+import { all, bigint, column, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
 /** 写入场景的表和语句：单元测试、金样例和三库实库场景共用，与 Java 的 Writes 一一对应。 */
@@ -98,6 +98,20 @@ export function insertDocIfAbsent(row: InsertRow<Doc>) {
     .values(row)
     .onConflict((d) => d.id)
     .doNothing();
+}
+
+/** 声明在逻辑 schema APP 里的便签表，由数据库实例的 schema 映射换成 QUERY_IT。 */
+@table("W_NOTE", { schema: "APP" })
+export class AppNote {
+  @id @column("ID") id!: string;
+}
+
+/** 编码表：逻辑删除列记录删除时刻的毫秒数，(CODE, DELETED) 唯一，所以同一个编码删除后可以再建。 */
+@table("W_CODE", { schema: SCHEMA })
+export class Code {
+  @id @column("ID") id!: string;
+  @column("CODE") code!: string;
+  @logicDelete({ epochMillis: true }) @column("DELETED", bigint) deleted!: bigint;
 }
 
 /** 插入两行，第二行的标题为 NULL。 */

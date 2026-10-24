@@ -150,8 +150,7 @@ class TableSource<E> implements Source<E> {
 
   /** 写出 `schema.表名`，schema 可省略。 */
   renderSource(w: SqlWriter): void {
-    if (this.#table.schema !== undefined) w.identifier(this.#table.schema).sql(".");
-    w.identifier(this.#table.name);
+    w.table(this.#table.schema, this.#table.name);
   }
 
   /** 显式列名，否则按数据库的命名策略推导。 */

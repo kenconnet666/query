@@ -40,6 +40,10 @@ public record WriteMeta(List<String> ids, String version, String generated, Logi
      * @param active   未删除时的值；timestamp 为 true 时不用
      * @param deleted  删除后的值；timestamp 为 true 时不用
      * @param timestamp 是否是记录删除时间的列：未删除为 NULL，删除时写当前时间
+     * @param epochMillis 删除时是否写当前的毫秒数而不是 deleted
      */
-    public record LogicDeleteMeta(String property, Object active, Object deleted, boolean timestamp) { }
+    public record LogicDeleteMeta(String property, Object active, Object deleted, boolean timestamp, boolean epochMillis) {
+        /** 删除时写入的值：epochMillis 时是此刻的毫秒数，否则是 deleted；timestamp 时不用。 */
+        public Object deletedValue() { return epochMillis ? System.currentTimeMillis() : deleted; }
+    }
 }

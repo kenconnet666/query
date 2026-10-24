@@ -42,7 +42,7 @@ interface FieldMeta {
   readonly id?: true;
   readonly version?: true;
   readonly generated?: true;
-  readonly logicDelete?: { readonly active: unknown; readonly deleted: unknown };
+  readonly logicDelete?: { readonly active: unknown; readonly deleted: unknown; readonly epochMillis: boolean };
   readonly readOnly?: true;
   readonly writeOnce?: true;
 }
@@ -72,12 +72,21 @@ export function updates(writes: WriteMeta, field: string): boolean {
   return !writes.ids.includes(field) && field !== writes.version && inserts(writes, field) && !writes.writeOnce.includes(field);
 }
 
-/** 逻辑删除列：timestamp 为 true 时记录删除时间（未删除为 NULL，删除写当前时间），否则按 active、deleted 两个值。 */
+/**
+ * 逻辑删除列：timestamp 为 true 时记录删除时间（未删除为 NULL，删除写当前时间）；epochMillis 为 true 时删除写当前的毫秒数；
+ * 否则按 active、deleted 两个值。
+ */
 export interface LogicDeleteMeta {
   readonly property: string;
   readonly active: unknown;
   readonly deleted: unknown;
   readonly timestamp: boolean;
+  readonly epochMillis: boolean;
+}
+
+/** 删除时写入的值：epochMillis 时是此刻的毫秒数，否则是 deleted；timestamp 时不用。 */
+export function deletedValue(logic: LogicDeleteMeta): unknown {
+  return logic.epochMillis ? BigInt(Date.now()) : logic.deleted;
 }
 
 /** 条件对象字段的比较方式。 */
@@ -252,12 +261,23 @@ export function generated(_value: undefined, context: ClassFieldDecoratorContext
 }
 
 /**
- * 逻辑删除列，一张表至多一列：这张表的每次出现都自动加上"未删除"的条件（`unfiltered()` 一起关闭），
+ * 逻辑删除列，一张表至多一列：这张表的每次出现都自动加上"未删除"的条件（`unfiltered()`、`withDeleted()` 关闭），
  * `delete(...)` 改写成把这一列设为 deleted 的 UPDATE，`.physically()` 才真正删除。
  * 列是时间戳时记录删除时间：未删除是 NULL，删除写当前时间，两个参数不用写。
  */
-export function logicDelete(active: unknown = 0, deleted: unknown = 1) {
-  return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { logicDelete: Object.freeze({ active, deleted }) });
+export function logicDelete(active?: unknown, deleted?: unknown): (value: undefined, context: ClassFieldDecoratorContext) => void;
+/**
+ * 删除时写当前的毫秒数（bigint 列，未删除为 active，默认 0）。这样 `UNIQUE (业务键, 删除列)` 能拦住两条未删除的同键行，
+ * 又允许同一个键被删除多次（记录删除时间的 NULL 互不相等，做不到这一点）：`@logicDelete({ epochMillis: true })`。
+ */
+export function logicDelete(options: { readonly epochMillis: true; readonly active?: unknown }): (value: undefined, context: ClassFieldDecoratorContext) => void;
+export function logicDelete(first: unknown = 0, deleted: unknown = 1) {
+  const options = typeof first === "object" && first !== null && "epochMillis" in first ? (first as { epochMillis: true; active?: unknown }) : undefined;
+  const meta =
+    options === undefined
+      ? { active: first, deleted, epochMillis: false }
+      : { active: options.active ?? 0, deleted: undefined, epochMillis: true };
+  return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { logicDelete: Object.freeze(meta) });
 }
 
 /**
@@ -332,6 +352,9 @@ function writes(type: Ctor<unknown>, fields: readonly FieldMeta[], columns: Read
   }
   const logic = single("logicDelete");
   const timestamp = logic !== undefined && columns.get(logic.name)?.type.kind === "timestamp";
+  if (logic?.logicDelete!.epochMillis && columns.get(logic.name)?.type.kind !== "bigint") {
+    throw new Error(`${type.name}.${logic.name}: @logicDelete({ epochMillis: true }) needs a bigint column`);
+  }
   const readOnly = fields.filter((f) => f.readOnly).map((f) => f.name);
   const writeOnce = fields.filter((f) => f.writeOnce).map((f) => f.name);
   for (const f of fields.filter((x) => x.readOnly)) {
@@ -349,6 +372,7 @@ function writes(type: Ctor<unknown>, fields: readonly FieldMeta[], columns: Read
             active: timestamp ? null : logic.logicDelete!.active,
             deleted: timestamp ? null : logic.logicDelete!.deleted,
             timestamp,
+            epochMillis: logic.logicDelete!.epochMillis,
           }),
     readOnly: Object.freeze(readOnly),
     writeOnce: Object.freeze(writeOnce),

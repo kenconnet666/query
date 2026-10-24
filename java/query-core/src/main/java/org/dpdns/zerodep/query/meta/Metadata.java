@@ -161,11 +161,15 @@ public final class Metadata {
     /** 逻辑删除列：时间戳列记录删除时间，其余按列的类型解析未删除和已删除的值。 */
     private static WriteMeta.LogicDeleteMeta logicDelete(Class<?> type, PropertyMeta column) {
         Class<?> javaType = column.javaType();
-        if (javaType == LocalDateTime.class) return new WriteMeta.LogicDeleteMeta(column.name(), null, null, true);
+        if (javaType == LocalDateTime.class) return new WriteMeta.LogicDeleteMeta(column.name(), null, null, true, false);
         LogicDelete a = null;
         for (Method d : declarations(type, column.name())) if ((a = d.getAnnotation(LogicDelete.class)) != null) break;
         String where = type.getSimpleName() + "." + column.name() + "()";
-        return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), parse(where, javaType, a.deleted()), false);
+        if (a.epochMillis()) {
+            if (javaType != Long.class) throw new IllegalArgumentException(where + ": @LogicDelete(epochMillis = true) needs Col<Long>");
+            return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), null, false, true);
+        }
+        return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), parse(where, javaType, a.deleted()), false, false);
     }
 
     /** 把 {@code @LogicDelete} 里写的值按列的 Java 类型解析。 */

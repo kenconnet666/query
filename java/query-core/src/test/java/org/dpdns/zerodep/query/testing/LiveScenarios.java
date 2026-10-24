@@ -104,7 +104,7 @@ public abstract class LiveScenarios {
         List<String> sql = new ArrayList<>();
         sql.add("-CREATE SCHEMA " + q("QUERY_IT"));
         for (String t : List.of("MARA", "LIPS", "MAKT", "VBKD", "MARDH", "MCHBH", "EVENTS", "WF_PROCDEF", "WF_PROCINST", "WF_TASK", "WF_LINK",
-            "WF_VARIABLE", "WF_HI_TASK", "W_NOTE", "W_DOC", "W_SEQ", "W_TICKET")) {
+            "WF_VARIABLE", "WF_HI_TASK", "W_NOTE", "W_DOC", "W_SEQ", "W_TICKET", "W_CODE")) {
             sql.add("-DROP TABLE " + t(t));
         }
         sql.add(table("MARA", c("MANDT", 3), c("MATNR", 40), c("MFRPN", 40), c("MFRNR", 10), c("MTART", 4)));
@@ -143,6 +143,7 @@ public abstract class LiveScenarios {
         sql.add(table("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), q("QTY") + " INTEGER", c("STATUS", 10)));
         sql.add(table("W_DOC", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("VERSION") + " INTEGER", c("SOURCE", 10) + " DEFAULT 'db'"));
         sql.add(table("W_SEQ", q("ID") + " " + identity(), c("NAME", 20)));
+        sql.add(table("W_CODE", c("ID", 10) + " PRIMARY KEY", c("CODE", 10), q("DELETED") + " BIGINT", "UNIQUE (" + q("CODE") + ", " + q("DELETED") + ")"));
         sql.add(table("W_TICKET", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("DELETED") + " INTEGER", q("CREATED_AT") + " " + timestamp(),
             q("UPDATED_AT") + " " + timestamp(), c("UPDATED_BY", 20)));
         live.execute(sql);
@@ -672,6 +673,33 @@ public abstract class LiveScenarios {
             .map(r -> r.get("title") + ":" + r.get("version") + ":" + r.get("source")).toList());
         assertTrue(db.exists(from(Writes.Doc.class).where(d -> d.id().eq("D1")).select(d -> d.id())));
         assertFalse(db.exists(from(Writes.Doc.class).where(d -> d.id().eq("D9")).select(d -> d.id())));
+    }
+
+    @Test
+    void 具名过滤器与schema映射和按编码的枚举在实库上生效() {
+        Database scoped = database(live.connections(), c -> c.filter("tenant", Writes.Tenanted.class, t -> t.tenant().eq("T9")).schema("APP", "QUERY_IT"));
+        scoped.execute(deleteFrom(Writes.Note.class).unfiltered().all());
+        scoped.execute(Writes.insertNotes());
+        assertEquals(List.of(), scoped.list(from(Writes.Note.class).select(n -> n.id())), "the tenant filter hides tenant T1");
+        assertEquals(List.of("N1", "N2"), scoped.list(from(Writes.Note.class).unfiltered("tenant").orderBy(n -> n.id()).select(n -> n.id())));
+        assertEquals(List.of("N1", "N2"), scoped.list(from(Writes.AppNote.class).orderBy(n -> n.id()).select(n -> n.id())), "APP maps to QUERY_IT");
+        assertEquals(List.of(Writes.NoteState.OPEN, Writes.NoteState.OPEN),
+            scoped.list(from(Writes.StatefulNote.class).unfiltered("tenant").orderBy(n -> n.id()).select(n -> n.state())));
+        assertEquals(1, scoped.execute(update(Writes.StatefulNote.class).unfiltered("tenant").set(n -> n.state().to(Writes.NoteState.CLOSED))
+            .where(n -> n.id().eq("N1"))));
+        assertEquals(List.of("closed", "open"), db.list(from(Writes.Note.class).orderBy(n -> n.id()).select(n -> n.status())));
+    }
+
+    @Test
+    void 逻辑删除记毫秒数时同一个编码删除后可以再建() {
+        db.execute(deleteFrom(Writes.Code.class).physically().unfiltered().all());
+        db.execute(insertInto(Writes.Code.class).values(new Writes.CodeRow("C1", "A")));
+        assertThrows(QueryExecutionException.class, () -> db.execute(insertInto(Writes.Code.class).values(new Writes.CodeRow("C2", "A"))),
+            "the unique key stops a second live row with the same code");
+        assertEquals(1, db.execute(deleteFrom(Writes.Code.class).where(c -> c.code().eq("A"))));
+        db.execute(insertInto(Writes.Code.class).values(new Writes.CodeRow("C2", "A")));
+        assertEquals(List.of("C2"), db.list(from(Writes.Code.class).select(c -> c.id())));
+        assertEquals(2, db.count(from(Writes.Code.class).withDeleted().select(c -> c.id())));
     }
 
     @Test

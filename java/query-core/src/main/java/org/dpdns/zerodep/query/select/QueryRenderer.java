@@ -135,8 +135,8 @@ public final class QueryRenderer {
         }
         w.inlining(false);
         if (s.joins.isEmpty()) w.dialect().fromNothing(w);
-        SourceFilters filters = s.filtered ? (SourceFilters) w.attribute(SourceFilters.class) : SourceFilters.OFF;
-        if (filters == null) filters = SourceFilters.NONE;
+        SourceFilters configured = (SourceFilters) w.attribute(SourceFilters.class);
+        SourceFilters filters = (configured == null ? SourceFilters.NONE : configured).select(s.filtering);
         List<Cond> where = new ArrayList<>();
         Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy);
         for (SelectSpec.Join j : s.joins) {

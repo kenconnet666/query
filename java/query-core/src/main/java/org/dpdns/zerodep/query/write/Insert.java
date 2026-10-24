@@ -58,6 +58,9 @@ public final class Insert<T extends Entity> implements Write {
     /** 插入或更新：冲突的键和冲突时更新的列；只是插入时为 null。 */
     private final OnConflict conflict;
 
+    /** 是否套用数据库实例的写入填充（审计列）。 */
+    private final boolean fills;
+
     /**
      * 插入或更新的设置。
      *
@@ -67,18 +70,19 @@ public final class Insert<T extends Entity> implements Write {
     private record OnConflict(List<String> keys, List<String> updates) { }
 
     /** 由 {@link #into} 和各修改方法调用。 */
-    private Insert(EntityMeta<T> table, List<Object> rows, List<RowColumns.Column> columns, Query<?> source, OnConflict conflict) {
+    private Insert(EntityMeta<T> table, List<Object> rows, List<RowColumns.Column> columns, Query<?> source, OnConflict conflict, boolean fills) {
         this.table = table;
         this.rows = rows;
         this.columns = columns;
         this.source = source;
         this.conflict = conflict;
+        this.fills = fills;
     }
 
     /** 插入 table；通常写作 {@code Sql.insertInto(Lips.class)}。 */
     public static <T extends Entity> Insert<T> into(Class<T> table) {
         Ref.table(table);   // 校验它是带 @Table 的表接口
-        return new Insert<>(Metadata.entity(table), List.of(), List.of(), null, null);
+        return new Insert<>(Metadata.entity(table), List.of(), List.of(), null, null, true);
     }
 
     /**
@@ -136,7 +140,7 @@ public final class Insert<T extends Entity> implements Write {
     /** 带上插入或更新设置的副本。 */
     private Insert<T> withConflict(OnConflict c) {
         if (source != null) throw new IllegalStateException("onConflict(...) needs values(...), not from(query)");
-        return new Insert<>(table, rows, columns, source, c);
+        return new Insert<>(table, rows, columns, source, c, fills);
     }
 
     /** 表达式都是这张表的列，返回它们的属性名；what 用于报错。 */
@@ -164,7 +168,7 @@ public final class Insert<T extends Entity> implements Write {
         List<RowColumns.Column> written = columns.isEmpty()
             ? RowColumns.of(table, type).stream().filter(c -> table.writes().inserts(c.name())).toList() : columns;
         if (written.isEmpty()) throw new IllegalArgumentException(type.getSimpleName() + " has no property to insert into " + table.type().getSimpleName());
-        return new Insert<>(table, List.copyOf(all), written, null, conflict);
+        return new Insert<>(table, List.copyOf(all), written, null, conflict, fills);
     }
 
     /** INSERT ... SELECT：查询的每一列按列名对应表的同名列，例如 {@code cols(s.delivery(), s.material())}。 */
@@ -175,8 +179,11 @@ public final class Insert<T extends Entity> implements Write {
             RowColumns.column(table, label, "the query's column");
             if (!table.writes().inserts(label)) throw new IllegalArgumentException("from(query) writes " + label + ", which is @ReadOnly or @Generated");
         }
-        return new Insert<>(table, List.of(), List.of(), query, null);
+        return new Insert<>(table, List.of(), List.of(), query, null, fills);
     }
+
+    /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留行里原来的创建人和时间。 */
+    public Insert<T> withoutFills() { return new Insert<>(table, rows, columns, source, conflict, false); }
 
     /** 插入不检查影响的行数。 */
     @Override public Long expected() { return null; }
@@ -230,7 +237,7 @@ public final class Insert<T extends Entity> implements Write {
             cols.add(c.column());
             vals.add(value(c, row));
         }
-        for (Assignment a : Fills.of(w).onInsert(Ref.table(table.type()))) put(cols, vals, a.column().property(), a.value());
+        for (Assignment a : (fills ? Fills.of(w) : Fills.NONE).onInsert(Ref.table(table.type()))) put(cols, vals, a.column().property(), a.value());
         WriteMeta.LogicDeleteMeta logic = table.writes().logicDelete();
         if (logic != null && !logic.timestamp() && cols.stream().noneMatch(p -> p.name().equals(logic.property()))) {
             PropertyMeta column = table.property(logic.property());
@@ -259,7 +266,7 @@ public final class Insert<T extends Entity> implements Write {
             if (!names.contains(k)) throw new IllegalArgumentException("onConflict(...) key '" + k + "' must be one of the inserted columns " + names);
         }
         Map<String, Renderable> assignments = new LinkedHashMap<>();
-        for (Assignment a : Fills.of(w).onUpdate(Ref.table(table.type()))) assignments.put(a.column().property().columnName(naming), a.value());
+        for (Assignment a : (fills ? Fills.of(w) : Fills.NONE).onUpdate(Ref.table(table.type()))) assignments.put(a.column().property().columnName(naming), a.value());
         List<String> updates = (conflict.updates() != null ? conflict.updates()
                 : names.stream().filter(n -> !conflict.keys().contains(n) && !table.writes().writeOnce().contains(n)).toList())
             .stream().map(u -> table.property(u).columnName(naming)).filter(c -> !assignments.containsKey(c)).toList();
@@ -269,8 +276,7 @@ public final class Insert<T extends Entity> implements Write {
 
     /** 写出 {@code schema.表名}。 */
     private void tableName(SqlWriter w) {
-        if (table.schema() != null) w.identifier(table.schema()).sql(".");
-        w.identifier(table.table());
+        w.table(table.schema(), table.table());
     }
 
     /** 写入器上的命名策略。 */

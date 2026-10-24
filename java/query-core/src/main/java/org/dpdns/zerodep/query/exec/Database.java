@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 /**
@@ -73,6 +74,9 @@ public abstract class Database {
         attributes.put(SourceFilters.class, filters);
         attributes.put(NamingStrategy.class, config.naming);
         attributes.put(Fills.class, new Fills(config.fills));
+        Map<String, String> schemas = Map.copyOf(config.schemas);
+        UnaryOperator<String> schemaMapping = config.schemaMapping;
+        attributes.put(SqlWriter.SCHEMAS, (UnaryOperator<String>) schema -> schemas.getOrDefault(schema, schemaMapping.apply(schema)));
         this.settings = new Settings(filters, config.cache, config.naming, Map.copyOf(config.functions), Map.copyOf(attributes));
         TypeRegistry types = dialect.types().with(config.types);
         List<QueryListener> listeners = new ArrayList<>();
@@ -303,6 +307,12 @@ public abstract class Database {
         /** 数据库名，null 时取方言名加一个标识。 */
         private String name;
 
+        /** 按名字替换的 schema。 */
+        private final Map<String, String> schemas = new HashMap<>();
+
+        /** 其余 schema 的替换规则，默认不变。 */
+        private UnaryOperator<String> schemaMapping = UnaryOperator.identity();
+
         /** 由 {@link Database} 的构造方法创建，用户通过 configure 回调使用。 */
         Config() { }
 
@@ -312,11 +322,23 @@ public abstract class Database {
          */
         @SuppressWarnings("unchecked")
         public <T> Config filter(Class<T> type, Function<? super T, Cond> condition) {
-            filters.add(new SourceFilters.Filter(type, table -> condition.apply((T) table)));
+            filters.add(new SourceFilters.Filter(null, type, table -> condition.apply((T) table)));
             return this;
         }
 
-        /** 配置查询结果缓存；只有设置了 {@code .cached(...)} 的查询才会使用，例如 {@code QueryCache.inMemory()}。 */
+        /**
+         * 具名的全局过滤器，其余同上；单个查询或写语句可以用 {@code .unfiltered(name)} 只关闭它，例如
+         * {@code filter("tenant", Client.class, c -> c.client().eq(tenant()))} 后，{@code from(...).unfiltered("tenant")} 跨租户查询，
+         * 逻辑删除的条件仍然生效。
+         */
+        @SuppressWarnings("unchecked")
+        public <T> Config filter(String name, Class<T> type, Function<? super T, Cond> condition) {
+            Objects.requireNonNull(name, "name");
+            if (filters.stream().anyMatch(f -> name.equals(f.name()))) throw new IllegalArgumentException("A filter named " + name + " is already configured");
+            filters.add(new SourceFilters.Filter(name, type, table -> condition.apply((T) table)));
+            return this;
+        }
+
         /**
          * 插入 type（表接口或它继承的接口）的表时自动填充一列，例如创建时间：
          * {@code c.onInsert(Audited.class, a -> a.createdAt(), LocalDateTime::now)}；每条语句取一次值，覆盖行里的值。
@@ -351,6 +373,22 @@ public abstract class Database {
             return this;
         }
 
+        /**
+         * 表接口里写的 schema 换成实际的名字，例如 SAP 各环境的 schema 不同：{@code schema("ERP", "SAPHANADB")}。
+         * 查询、写语句和关系里的表都换；原生 SQL 文本不换。可以多次调用。
+         */
+        public Config schema(String declared, String actual) {
+            schemas.put(Objects.requireNonNull(declared, "declared"), Objects.requireNonNull(actual, "actual"));
+            return this;
+        }
+
+        /** 同上，按规则替换没有用 {@link #schema(String, String)} 单独指定的 schema，例如 {@code schema(s -> s + "_TEST")}。 */
+        public Config schema(UnaryOperator<String> mapping) {
+            this.schemaMapping = Objects.requireNonNull(mapping, "mapping");
+            return this;
+        }
+
+        /** 配置查询结果缓存；只有设置了 {@code .cached(...)} 的查询才会使用，例如 {@code QueryCache.inMemory()}。 */
         public Config cache(QueryCache cache) {
             this.cache = cache;
             return this;

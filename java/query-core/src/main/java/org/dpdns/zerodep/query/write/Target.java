@@ -8,6 +8,7 @@ import org.dpdns.zerodep.query.select.FilterObject;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.select.SelectSpec;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Filtering;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
@@ -22,13 +23,14 @@ import java.util.function.Function;
  * @param ref       目标表的这次出现
  * @param where     where 追加的条件，渲染时以 AND 连接
  * @param skipping  是否开启 skipEmpty
- * @param filtered  是否套用数据库实例的全局过滤器
+ * @param filtering 全局过滤器和逻辑删除的开关
+ * @param fills     是否套用数据库实例的写入填充
  * @param everyRow  是否允许没有 where 条件（改动或删除全表）
  * @param expected  期望影响的总行数，null 表示不检查
  */
-record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, boolean filtered, boolean everyRow, Long expected) {
+record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, Filtering filtering, boolean fills, boolean everyRow, Long expected) {
     /** 以 table 的一次新出现开始。 */
-    static <T extends Entity> Target<T> of(Class<T> table) { return new Target<>(Ref.table(table), List.of(), false, true, false, null); }
+    static <T extends Entity> Target<T> of(Class<T> table) { return new Target<>(Ref.table(table), List.of(), false, Filtering.ON, true, false, null); }
 
     /** 目标表的表接口实例，传给各个 lambda。 */
     T row() { return ref.param(); }
@@ -47,22 +49,25 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
     Target<T> withWhere(Cond c) {
         List<Cond> all = new ArrayList<>(where);
         all.add(c);
-        return new Target<>(ref, List.copyOf(all), skipping, filtered, everyRow, expected);
+        return new Target<>(ref, List.copyOf(all), skipping, filtering, fills, everyRow, expected);
     }
 
     /** 之后的 where 与 SET 里，与空值比较的条件和值为空的 SET 项被省略。 */
-    Target<T> skipEmpty() { return new Target<>(ref, where, true, filtered, everyRow, expected); }
+    Target<T> skipEmpty() { return new Target<>(ref, where, true, filtering, fills, everyRow, expected); }
 
-    /** 不套用全局过滤器。 */
-    Target<T> unfiltered() { return new Target<>(ref, where, skipping, false, everyRow, expected); }
+    /** 换一个过滤开关。 */
+    Target<T> filtering(Filtering f) { return new Target<>(ref, where, skipping, f, fills, everyRow, expected); }
+
+    /** 不套用写入填充。 */
+    Target<T> withoutFills() { return new Target<>(ref, where, skipping, filtering, false, everyRow, expected); }
 
     /** 允许没有 where 条件。 */
-    Target<T> all() { return new Target<>(ref, where, skipping, filtered, true, expected); }
+    Target<T> all() { return new Target<>(ref, where, skipping, filtering, fills, true, expected); }
 
     /** 期望影响 rows 行。 */
     Target<T> expect(long rows) {
         if (rows < 0) throw new IllegalArgumentException("expect needs a non-negative row count");
-        return new Target<>(ref, where, skipping, filtered, everyRow, rows);
+        return new Target<>(ref, where, skipping, filtering, fills, everyRow, rows);
     }
 
     /**
@@ -85,12 +90,14 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
     }
 
-    /** 这条语句套用的过滤器：数据库实例配置的；没有数据库实例时只有逻辑删除；{@code unfiltered()} 时什么都没有。 */
+    /** 这条语句套用的过滤器：数据库实例配置的（没有数据库实例时只有逻辑删除），再按 {@link #filtering} 取舍。 */
     SourceFilters filters(SqlWriter w) {
-        if (!filtered) return SourceFilters.OFF;
         SourceFilters configured = (SourceFilters) w.attribute(SourceFilters.class);
-        return configured == null ? SourceFilters.NONE : configured;
+        return (configured == null ? SourceFilters.NONE : configured).select(filtering);
     }
+
+    /** 这条语句套用的写入填充；{@code withoutFills()} 时没有。 */
+    Fills fillsOf(SqlWriter w) { return fills ? Fills.of(w) : Fills.NONE; }
 
     /**
      * own 经过导航关系读到别的表时，包成 {@code EXISTS (SELECT 1 FROM 单行 LEFT JOIN 关联表 ON ... WHERE own)}；没有时原样返回。

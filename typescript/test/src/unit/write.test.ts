@@ -4,7 +4,7 @@ import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, update, 
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
 import { Lips } from "../fixtures/erp.js";
 import { claimable } from "../fixtures/workflow.js";
-import { Archive, audit, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
+import { AppNote, Archive, audit, Code, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
@@ -196,6 +196,81 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
       "UPDATE QUERY_IT.W_TICKET TICKET\nSET CREATED_AT = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
       "an explicit set(...) may still change it",
     );
+  });
+
+  it("具名过滤器可以单独关闭，withDeleted 只关闭逻辑删除", () => {
+    const named = new TestDatabase({ filters: [filter("tenant", Tenanted, (t) => t.tenant.eq("T1"))] });
+    assert.ok(named.render(from(Note).select((n) => n.id)).sql.endsWith("WHERE NOTE.TENANT = ?"));
+    assert.ok(
+      named
+        .render(
+          from(Note)
+            .unfiltered("tenant")
+            .select((n) => n.id),
+        )
+        .sql.endsWith("FROM QUERY_IT.W_NOTE NOTE"),
+    );
+    assert.equal(
+      named.render(
+        deleteFrom(Note)
+          .unfiltered("tenant")
+          .where((n) => n.id.eq("N1")),
+      )[0]!.sql,
+      "DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.ID = ?",
+    );
+    assert.throws(
+      () =>
+        named.render(
+          from(Note)
+            .unfiltered("tennant")
+            .select((n) => n.id),
+        ),
+      /names no configured filter; known: tenant/,
+    );
+    assert.ok(
+      from(Ticket)
+        .withDeleted()
+        .select((t) => t.id)
+        .toSql(new TestDialect())
+        .sql.endsWith("FROM QUERY_IT.W_TICKET TICKET"),
+    );
+    assert.equal(db.render(deleteTicket("T1").withDeleted())[0]!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.ID = ?");
+  });
+
+  it("schema 按数据库实例的映射换成实际的名字", () => {
+    const mapped = new TestDatabase({ schemas: { QUERY_IT: "PROD" } });
+    assert.ok(mapped.render(from(Note).select((n) => n.id)).sql.includes("FROM PROD.W_NOTE NOTE"));
+    assert.equal(mapped.render(insertNotes())[0]!.sql, "INSERT INTO PROD.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)");
+    assert.ok(mapped.render(closeOpenNote("N1"))[0]!.sql.startsWith("UPDATE PROD.W_NOTE NOTE"));
+    const ruled = new TestDatabase({ schemas: (s) => (s === "APP" ? "QUERY_IT" : `${s}_T`) });
+    assert.ok(ruled.render(from(Note).select((n) => n.id)).sql.includes("FROM QUERY_IT_T.W_NOTE NOTE"));
+    assert.ok(ruled.render(from(AppNote).select((n) => n.id)).sql.includes("FROM QUERY_IT.W_NOTE APPNOTE"));
+  });
+
+  it("withoutFills 不套用审计填充", () => {
+    const audited = new TestDatabase({ fills: audit });
+    assert.equal(
+      audited.render(insertInto(Ticket).values({ id: "T1", title: "a" }).withoutFills())[0]!.sql,
+      "INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, DELETED) VALUES (?, ?, ?)",
+    );
+    assert.equal(
+      audited.render(
+        update(Ticket)
+          .set(() => ({ title: "b" }))
+          .where((t) => t.id.eq("T1"))
+          .withoutFills(),
+      )[0]!.sql,
+      "UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+    );
+    assert.equal(audited.render(deleteTicket("T1").withoutFills())[0]!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
+  });
+
+  it("逻辑删除记毫秒数时删除写此刻的毫秒数", () => {
+    const before = BigInt(Date.now());
+    const [r] = db.render(deleteFrom(Code).where((c) => c.code.eq("A")));
+    assert.equal(r!.sql, "UPDATE QUERY_IT.W_CODE CODE\nSET DELETED = ?\nWHERE CODE.DELETED = ? AND CODE.CODE = ?");
+    assert.ok((r!.parameters[0] as bigint) >= before);
+    assert.deepEqual(r!.parameters.slice(1), [0, "A"]);
   });
 
   it("执行时影响的行数与期望不符则报错，空跑不检查", async () => {

@@ -30,8 +30,14 @@ public abstract class AbstractFrom<S extends AbstractFrom<S>> {
     /** 跳过前 rows 行。 */
     public final S offset(int rows) { return rebuild(spec.offset(rows)); }
 
-    /** 本查询不套用数据库实例的全局过滤器。 */
+    /** 本查询不套用数据库实例的全局过滤器，也不加逻辑删除的条件。 */
     public final S unfiltered() { return rebuild(spec.unfiltered()); }
+
+    /** 本查询不套用这些名字的全局过滤器（见 {@code Config.filter(name, ...)}），其余照常，例如跨租户但仍排除已删除的行。 */
+    public final S unfiltered(String filter, String... more) { return rebuild(spec.unfiltered(filter, more)); }
+
+    /** 本查询不加逻辑删除的条件，能看到已删除的行；全局过滤器照常，例如仍限定在当前租户。 */
+    public final S withDeleted() { return rebuild(spec.withDeleted()); }
 
     /**
      * 之后写的 WHERE、HAVING、连接条件里，与 null、空白字符串或空集合比较的条件直接省略，

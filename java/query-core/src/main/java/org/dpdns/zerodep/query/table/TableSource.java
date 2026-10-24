@@ -26,8 +26,7 @@ public final class TableSource<E> implements Source<E> {
 
     /** 写出 {@code schema.table}，没有 schema 时只写表名。 */
     @Override public void renderSource(SqlWriter w) {
-        if (meta.schema() != null) w.identifier(meta.schema()).sql(".");
-        w.identifier(meta.table());
+        w.table(meta.schema(), meta.table());
     }
 
     /** 列名取自 {@code @Column}，没有时按命名策略推导。 */

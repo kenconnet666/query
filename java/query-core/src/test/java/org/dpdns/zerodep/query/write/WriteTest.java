@@ -198,6 +198,62 @@ class WriteTest {
     }
 
     @Test
+    void 具名过滤器可以单独关闭而withDeleted只关闭逻辑删除() {
+        Database db = new TestDatabase(c -> c.filter("tenant", Tenanted.class, t -> t.tenant().eq("T1")));
+        assertTrue(db.render(from(Note.class).select(n -> n.id())).sql().endsWith("WHERE NOTE.TENANT = ?"));
+        assertTrue(db.render(from(Note.class).unfiltered("tenant").select(n -> n.id())).sql().endsWith("FROM QUERY_IT.W_NOTE NOTE"));
+        assertEquals("DELETE FROM QUERY_IT.W_NOTE NOTE\nWHERE NOTE.ID = ?",
+            db.render(deleteFrom(Note.class).unfiltered("tenant").where(n -> n.id().eq("N1"))).get(0).sql());
+        var e = assertThrows(IllegalArgumentException.class, () -> db.render(from(Note.class).unfiltered("tennant").select(n -> n.id())));
+        assertTrue(e.getMessage().contains("names no configured filter; known: [tenant]"), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> new TestDatabase(c -> c.filter("t", Note.class, n -> n.id().eq("x")).filter("t", Note.class, n -> n.id().eq("y"))));
+        assertTrue(from(Writes.Ticket.class).withDeleted().select(t -> t.id()).toSql(DIALECT).sql().endsWith("FROM QUERY_IT.W_TICKET TICKET"));
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.ID = ?", Writes.deleteTicket("T1").withDeleted().toSql(DIALECT).get(0).sql());
+    }
+
+    @Test
+    void schema按数据库实例的映射换成实际的名字() {
+        Database db = new TestDatabase(c -> c.schema("QUERY_IT", "PROD"));
+        assertTrue(db.render(from(Note.class).select(n -> n.id())).sql().contains("FROM PROD.W_NOTE NOTE"));
+        assertEquals("INSERT INTO PROD.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)", db.render(Writes.insertNotes()).get(0).sql());
+        assertTrue(db.render(Writes.closeOpenNote("N1")).get(0).sql().startsWith("UPDATE PROD.W_NOTE NOTE"));
+        Database ruled = new TestDatabase(c -> c.schema(s -> s + "_T").schema("APP", "QUERY_IT"));
+        assertTrue(ruled.render(from(Note.class).select(n -> n.id())).sql().contains("FROM QUERY_IT_T.W_NOTE NOTE"));
+        assertTrue(ruled.render(from(Writes.AppNote.class).select(n -> n.id())).sql().contains("FROM QUERY_IT.W_NOTE APPNOTE"), "a named schema wins over the rule");
+    }
+
+    @Test
+    void withoutFills不套用审计填充() {
+        Database db = new TestDatabase(Writes::audit);
+        assertEquals("INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, DELETED) VALUES (?, ?, ?)",
+            db.render(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("T1", "a")).withoutFills()).get(0).sql());
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            db.render(update(Writes.Ticket.class).set(t -> t.title().to("b")).where(t -> t.id().eq("T1")).withoutFills()).get(0).sql());
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            db.render(Writes.deleteTicket("T1").withoutFills()).get(0).sql());
+    }
+
+    @Test
+    void 实现CodeEnum的枚举按编码存取() {
+        Rendered r = update(Writes.StatefulNote.class).set(n -> n.state().to(Writes.NoteState.CLOSED))
+            .where(n -> n.state().eq(Writes.NoteState.OPEN)).toSql(DIALECT).get(0);
+        assertEquals(List.of("closed", "open"), r.parameters());
+        org.dpdns.zerodep.query.type.SqlType<Writes.NoteState> type = org.dpdns.zerodep.query.type.SqlType.of(Writes.NoteState.class);
+        assertEquals(String.class, type.storageType());
+        assertEquals(Writes.NoteState.OPEN, type.fromDatabase("open"));
+        assertThrows(IllegalArgumentException.class, () -> type.fromDatabase("gone"));
+    }
+
+    @Test
+    void 逻辑删除记毫秒数时删除写此刻的毫秒数() {
+        long before = System.currentTimeMillis();
+        Rendered r = deleteFrom(Writes.Code.class).where(c -> c.code().eq("A")).toSql(DIALECT).get(0);
+        assertEquals("UPDATE QUERY_IT.W_CODE CODE\nSET DELETED = ?\nWHERE CODE.DELETED = ? AND CODE.CODE = ?", r.sql());
+        assertTrue((Long) r.parameters().get(0) >= before);
+        assertEquals(List.of(0L, "A"), r.parameters().subList(1, 3));
+    }
+
+    @Test
     void 逻辑删除的表查询时只看未删除的行且删除改写成UPDATE() {
         assertTrue(from(Writes.Ticket.class).select(t -> t.id()).toSql(DIALECT).sql().endsWith("WHERE TICKET.DELETED = ?"));
         assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",

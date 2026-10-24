@@ -7,6 +7,7 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Filtering;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -96,8 +97,17 @@ public final class Update<T extends Entity> implements Write {
     /** 之后的 set 与 where 里，值为空的 SET 项和与空值比较的条件被省略；要写在它们之前。 */
     public Update<T> skipEmpty() { return new Update<>(target.skipEmpty(), sets, byId); }
 
-    /** 不套用数据库实例的全局过滤器。 */
-    public Update<T> unfiltered() { return new Update<>(target.unfiltered(), sets, byId); }
+    /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件。 */
+    public Update<T> unfiltered() { return new Update<>(target.filtering(Filtering.OFF), sets, byId); }
+
+    /** 不套用这些名字的全局过滤器，其余照常。 */
+    public Update<T> unfiltered(String filter, String... more) { return new Update<>(target.filtering(target.filtering().without(filter, more)), sets, byId); }
+
+    /** 不加逻辑删除的条件，已删除的行也会被改到；全局过滤器照常。 */
+    public Update<T> withDeleted() { return new Update<>(target.filtering(target.filtering().withDeleted()), sets, byId); }
+
+    /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留原来的创建人和时间。 */
+    public Update<T> withoutFills() { return new Update<>(target.withoutFills(), sets, byId); }
 
     /** 允许没有 where 条件，即更新全表。 */
     public Update<T> all() { return new Update<>(target.all(), sets, byId); }
@@ -141,7 +151,7 @@ public final class Update<T extends Entity> implements Write {
      */
     static Rendered set(SqlWriter w, Target<?> target, List<Assignment> assignments, Cond located, String statement) {
         List<Assignment> all = new ArrayList<>(assignments);
-        for (Assignment fill : Fills.of(w).onUpdate(target.ref())) {
+        for (Assignment fill : target.fillsOf(w).onUpdate(target.ref())) {
             all.removeIf(a -> a.column().property().name().equals(fill.column().property().name()));
             all.add(fill);
         }

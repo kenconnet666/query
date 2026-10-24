@@ -10,6 +10,7 @@ import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.annotation.WriteOnce;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.type.CodeEnum;
 import org.dpdns.zerodep.query.write.Delete;
 import org.dpdns.zerodep.query.write.Insert;
 import org.dpdns.zerodep.query.write.Update;
@@ -152,6 +153,56 @@ public final class Writes {
 
     /** 插入便签的一行：属性按名字对应 {@link Note} 的列。 */
     public record NoteRow(String id, String tenant, String title, Integer qty, String status) { }
+
+    /** 便签的状态，按编码存储。 */
+    public enum NoteState implements CodeEnum<String> {
+        /** 开着。 */
+        OPEN("open"),
+        /** 已关闭。 */
+        CLOSED("closed");
+
+        /** 库里的编码。 */
+        private final String code;
+
+        /** 由常量声明调用。 */
+        NoteState(String code) { this.code = code; }
+
+        /** 库里的编码。 */
+        @Override public String code() { return code; }
+    }
+
+    /** 用枚举读写便签的状态列。 */
+    @Table(schema = SCHEMA, value = "W_NOTE")
+    public interface StatefulNote extends Tenanted {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 状态。 */
+        @Column("STATUS") Col<NoteState> state();
+    }
+
+    /** 声明在逻辑 schema APP 里的便签表，由数据库实例的 schema 映射换成 QUERY_IT。 */
+    @Table(schema = "APP", value = "W_NOTE")
+    public interface AppNote extends Entity {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+    }
+
+    /** 编码表：逻辑删除列记录删除时刻的毫秒数，{@code (CODE, DELETED)} 唯一，所以同一个编码删除后可以再建。 */
+    @Table(schema = SCHEMA, value = "W_CODE")
+    public interface Code extends Entity {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 编码。 */
+        @Column("CODE") Col<String> code();
+
+        /** 删除时刻的毫秒数，未删除为 0。 */
+        @LogicDelete(epochMillis = true) @Column("DELETED") Col<Long> deleted();
+    }
+
+    /** 编码表的一行。 */
+    public record CodeRow(String id, String code) { }
 
     /** 插入两行，第二行的标题为 NULL。 */
     public static Insert<Note> insertNotes() {

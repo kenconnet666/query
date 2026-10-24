@@ -1,10 +1,10 @@
-import { columnName, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
+import { columnName, deletedValue, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
 import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
 import type { Rendered, SqlWriter } from "../sql/writer.js";
 import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
-import { conditionsFor, emitRelations, implicitJoins, renderNamed, type Query, type SourceFilter } from "../query/query.js";
+import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
 import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
 import type { Clause, Lock, Upsert } from "../sql/dialect.js";
 
@@ -82,8 +82,7 @@ function fillsFor(w: SqlWriter, ref: object, insert: boolean): (readonly [Column
 
 /** 写出 `schema.表名`。 */
 function tableName(w: SqlWriter, meta: EntityMeta): void {
-  if (meta.table!.schema !== undefined) w.identifier(meta.table!.schema).sql(".");
-  w.identifier(meta.table!.name);
+  w.table(meta.table!.schema, meta.table!.name);
 }
 
 /**
@@ -98,6 +97,8 @@ export class Insert<T> extends Write {
   readonly #source: Query<unknown> | undefined;
   /** 插入或更新：冲突的键和冲突时更新的列（undefined 是插入的列里除了键以外的全部，空数组是什么也不做）。 */
   readonly #conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined } | undefined;
+  /** 是否套用数据库实例的写入填充（审计列）。 */
+  readonly #fills: boolean;
 
   /** 由 {@link insertInto} 和各修改方法调用。 */
   constructor(
@@ -106,6 +107,7 @@ export class Insert<T> extends Write {
     columns: readonly PropertyMeta[],
     source: Query<unknown> | undefined,
     conflict?: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined },
+    fills = true,
   ) {
     super();
     tableSource(table);   // 校验它是带 @table 的表
@@ -114,6 +116,12 @@ export class Insert<T> extends Write {
     this.#columns = columns;
     this.#source = source;
     this.#conflict = conflict;
+    this.#fills = fills;
+  }
+
+  /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留行里原来的创建人和时间。 */
+  withoutFills(): Insert<T> {
+    return new Insert(this.#table, this.#rows, this.#columns, this.#source, this.#conflict, false);
   }
 
   /**
@@ -134,7 +142,7 @@ export class Insert<T> extends Write {
     const names = typeof updates === "function" ? this.#names(updates(createRef(tableSource(this.#table))), "update(...)") : updates;
     const readOnly = entityMeta(this.#table).writes.readOnly;
     for (const n of names ?? []) if (readOnly.includes(n)) throw new Error(`onConflict(...).update(...) cannot write @readOnly ${n}`);
-    return new Insert(this.#table, this.#rows, this.#columns, undefined, { keys, updates: names });
+    return new Insert(this.#table, this.#rows, this.#columns, undefined, { keys, updates: names }, this.#fills);
   }
 
   /** 表达式都是这张表的列，返回它们的字段名；what 用于报错。 */
@@ -157,7 +165,7 @@ export class Insert<T> extends Write {
       const own = this.#columnsOf(row).map((c) => c.name).join(",");
       if (own !== names) throw new Error(`insertInto(...) rows must have the same fields; got ${names} and ${own}`);
     }
-    return new Insert(this.#table, all, columns, undefined, this.#conflict);
+    return new Insert(this.#table, all, columns, undefined, this.#conflict, this.#fills);
   }
 
   /** INSERT ... SELECT：查询的每一列按名字对应表的同名列，例如 `select((s) => ({ delivery: s.delivery }))`。 */
@@ -169,7 +177,7 @@ export class Insert<T> extends Write {
       this.#column(label, "the query's column");
       if (!inserts(writes, label)) throw new Error(`from(query) writes ${label}, which is @readOnly or @generated`);
     }
-    return new Insert(this.#table, [], [], query);
+    return new Insert(this.#table, [], [], query, undefined, this.#fills);
   }
 
   /** 插入不检查影响的行数。 */
@@ -219,7 +227,7 @@ export class Insert<T> extends Write {
       if (i >= 0) out[i] = [column, value];
       else out.push([column, value]);
     };
-    for (const [column, value] of fillsFor(w, createRef(tableSource(this.#table)) as object, true)) put(column.column as PropertyMeta, value);
+    for (const [column, value] of this.#fills ? fillsFor(w, createRef(tableSource(this.#table)) as object, true) : []) put(column.column as PropertyMeta, value);
     const meta = entityMeta(this.#table);
     const logic = meta.writes.logicDelete;
     if (logic !== undefined && !logic.timestamp && !out.some(([c]) => c.name === logic.property)) {
@@ -235,7 +243,7 @@ export class Insert<T> extends Write {
     for (const k of conflict.keys) if (!names.includes(k)) throw new Error(`onConflict(...) key '${k}' must be one of the inserted columns ${names.join(", ")}`);
     const meta = entityMeta(this.#table);
     const name = (field: string) => columnName(meta.property(field)!, w.naming);
-    const assignments = fillsFor(w, createRef(tableSource(this.#table)) as object, false).map(([c, v]) => [columnName(c.column as PropertyMeta, w.naming), v] as const);
+    const assignments = (this.#fills ? fillsFor(w, createRef(tableSource(this.#table)) as object, false) : []).map(([c, v]) => [columnName(c.column as PropertyMeta, w.naming), v] as const);
     const assigned = new Set(assignments.map(([c]) => c));
     return {
       table: { render: (x: SqlWriter) => tableName(x, meta) },
@@ -282,7 +290,7 @@ export class Insert<T> extends Write {
  */
 function renderSet(w: SqlWriter, target: Target<unknown>, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[], located: Cond, statement: string): Rendered {
   const all = [...sets];
-  for (const fill of fillsFor(w, target.ref as object, false)) {
+  for (const fill of target.fills ? fillsFor(w, target.ref as object, false) : []) {
     const i = all.findIndex(([c]) => c.column.name === fill[0].column.name);
     if (i >= 0) all.splice(i, 1);
     all.push(fill);
@@ -334,20 +342,23 @@ export class Target<T> {
     readonly ref: Ref<T>,
     readonly conditions: readonly Cond[],
     readonly skipping: boolean,
-    readonly filtered: boolean,
+    /** 全局过滤器和逻辑删除的开关。 */
+    readonly filtering: Filtering,
+    /** 是否套用数据库实例的写入填充。 */
+    readonly fills: boolean,
     readonly everyRow: boolean,
     readonly expected: number | undefined,
   ) {}
 
   /** 以 table 的一次新出现开始。 */
   static of<T>(table: Table<T>): Target<T> {
-    return new Target(table, createRef(tableSource(table)), [], false, true, false, undefined);
+    return new Target(table, createRef(tableSource(table)), [], false, FILTERING_ON, true, false, undefined);
   }
 
   /** 改动部分字段后的副本。 */
-  with(change: Partial<Pick<Target<T>, "conditions" | "skipping" | "filtered" | "everyRow" | "expected">>): Target<T> {
+  with(change: Partial<Pick<Target<T>, "conditions" | "skipping" | "filtering" | "fills" | "everyRow" | "expected">>): Target<T> {
     const c = { ...this, ...change };
-    return new Target(this.table, this.ref, c.conditions, c.skipping, c.filtered, c.everyRow, c.expected);
+    return new Target(this.table, this.ref, c.conditions, c.skipping, c.filtering, c.fills, c.everyRow, c.expected);
   }
 
   /** 追加 WHERE 条件：回调或条件对象。 */
@@ -376,9 +387,9 @@ export class Target<T> {
     if (!where.isEmpty) w.sql("\nWHERE ").render(where);
   }
 
-  /** 这条语句套用的过滤器：数据库实例配置的；`unfiltered()` 时为 undefined，逻辑删除也不加。 */
-  filters(w: SqlWriter): readonly SourceFilter[] | undefined {
-    return this.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined;
+  /** 这条语句套用的过滤器：数据库实例配置的，再按 `filtering` 取舍；全部关闭时为 undefined。 */
+  filters(w: SqlWriter): AppliedFilters | undefined {
+    return applyFiltering(w.settings.filters as readonly SourceFilter[] | undefined, this.filtering);
   }
 
   /**
@@ -386,7 +397,7 @@ export class Target<T> {
    * UPDATE、DELETE 不能像查询那样直接 LEFT JOIN，三个库的联表写法又各不相同；从单行的种子出发再 LEFT JOIN，
    * 没有关联行时关联列为 NULL，与查询里导航的语义一致。
    */
-  #navigated(w: SqlWriter, own: Cond, filters: readonly SourceFilter[] | undefined): Cond {
+  #navigated(w: SqlWriter, own: Cond, filters: AppliedFilters | undefined): Cond {
     if (own.isEmpty) return own;
     const owner = ownerOf(this.ref as object);
     const used = implicitJoins(w, [owner], [own]);
@@ -459,9 +470,19 @@ export class Update<T> extends Write {
     return new Update(this.#target.with({ skipping: true }), this.#sets, this.#byId);
   }
 
-  /** 不套用数据库实例的全局过滤器。 */
-  unfiltered(): Update<T> {
-    return new Update(this.#target.with({ filtered: false }), this.#sets, this.#byId);
+  /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器。 */
+  unfiltered(...names: string[]): Update<T> {
+    return new Update(this.#target.with({ filtering: unfilteredBy(this.#target.filtering, names) }), this.#sets, this.#byId);
+  }
+
+  /** 不加逻辑删除的条件，已删除的行也会被改到；全局过滤器照常。 */
+  withDeleted(): Update<T> {
+    return new Update(this.#target.with({ filtering: { ...this.#target.filtering, logicDelete: false } }), this.#sets, this.#byId);
+  }
+
+  /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留原来的修改人和时间。 */
+  withoutFills(): Update<T> {
+    return new Update(this.#target.with({ fills: false }), this.#sets, this.#byId);
   }
 
   /** 允许没有 where 条件，即更新全表。 */
@@ -556,9 +577,19 @@ export class Delete<T> extends Write {
     return new Delete(this.#target.with({ skipping: true }), this.#byId, this.#physical);
   }
 
-  /** 不套用数据库实例的全局过滤器。 */
-  unfiltered(): Delete<T> {
-    return new Delete(this.#target.with({ filtered: false }), this.#byId, this.#physical);
+  /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器。 */
+  unfiltered(...names: string[]): Delete<T> {
+    return new Delete(this.#target.with({ filtering: unfilteredBy(this.#target.filtering, names) }), this.#byId, this.#physical);
+  }
+
+  /** 不加逻辑删除的条件，已删除的行也会被删到；全局过滤器照常。 */
+  withDeleted(): Delete<T> {
+    return new Delete(this.#target.with({ filtering: { ...this.#target.filtering, logicDelete: false } }), this.#byId, this.#physical);
+  }
+
+  /** 不套用数据库实例的写入填充（审计列）；只影响逻辑删除改写成的 UPDATE。 */
+  withoutFills(): Delete<T> {
+    return new Delete(this.#target.with({ fills: false }), this.#byId, this.#physical);
   }
 
   /** 允许没有 where 条件，即删除全表。 */
@@ -595,7 +626,7 @@ export class Delete<T> extends Write {
     }
     const ref = this.#target.ref as unknown as Record<string, Column<unknown>>;
     const column = ref[logic.property]!;
-    const sets: (readonly [Column<unknown>, Expr<unknown>])[] = [[column, logic.timestamp ? (currentTimestamp() as Expr<unknown>) : bindValue(column.type, logic.deleted)]];
+    const sets: (readonly [Column<unknown>, Expr<unknown>])[] = [[column, logic.timestamp ? (currentTimestamp() as Expr<unknown>) : bindValue(column.type, deletedValue(logic))]];
     const version = meta.writes.version;
     if (this.#byId !== undefined && version !== undefined) sets.push([ref[version]!, plus(ref[version] as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
     return renderSet(w, this.#target as Target<unknown>, sets, located, "deleteFrom(...)");

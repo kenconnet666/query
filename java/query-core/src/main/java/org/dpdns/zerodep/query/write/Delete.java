@@ -10,6 +10,7 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Filtering;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,8 +68,17 @@ public final class Delete<T extends Entity> implements Write {
     /** 之后的 where 里，与空值比较的条件被省略；要写在 where 之前。 */
     public Delete<T> skipEmpty() { return new Delete<>(target.skipEmpty(), byId, physical); }
 
-    /** 不套用数据库实例的全局过滤器。 */
-    public Delete<T> unfiltered() { return new Delete<>(target.unfiltered(), byId, physical); }
+    /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件。 */
+    public Delete<T> unfiltered() { return new Delete<>(target.filtering(Filtering.OFF), byId, physical); }
+
+    /** 不套用这些名字的全局过滤器，其余照常。 */
+    public Delete<T> unfiltered(String filter, String... more) { return new Delete<>(target.filtering(target.filtering().without(filter, more)), byId, physical); }
+
+    /** 不加逻辑删除的条件，已删除的行也会被改到；全局过滤器照常。 */
+    public Delete<T> withDeleted() { return new Delete<>(target.filtering(target.filtering().withDeleted()), byId, physical); }
+
+    /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留原来的创建人和时间。 */
+    public Delete<T> withoutFills() { return new Delete<>(target.withoutFills(), byId, physical); }
 
     /** 允许没有 where 条件，即删除全表。 */
     public Delete<T> all() { return new Delete<>(target.all(), byId, physical); }
@@ -98,7 +108,7 @@ public final class Delete<T extends Entity> implements Write {
         }
         Col column = new Col<>(target.ref(), meta.property(logic.property()));
         List<Assignment> sets = new ArrayList<>();
-        sets.add(logic.timestamp() ? column.to((Expr) Sql.currentTimestamp()) : column.to(logic.deleted()));
+        sets.add(logic.timestamp() ? column.to((Expr) Sql.currentTimestamp()) : column.to(logic.deletedValue()));
         String version = meta.writes().version();
         if (byId != null && version != null) {
             Col v = new Col<>(target.ref(), meta.property(version));

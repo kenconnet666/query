@@ -1,5 +1,9 @@
 package org.dpdns.zerodep.query.type;
 
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -16,6 +20,10 @@ public final class SqlType<T> {
         @Override
         @SuppressWarnings({"unchecked", "rawtypes"})
         protected SqlType<?> computeValue(Class<?> type) {
+            if (type.isEnum() && CodeEnum.class.isAssignableFrom(type)) {
+                EnumCodeConverter codes = new EnumCodeConverter(type);
+                return new SqlType(type, codes.codeType, codes);
+            }
             if (type.isEnum()) return new SqlType(type, String.class, new EnumNameConverter(type));
             return new SqlType<>(type, type, null);
         }
@@ -32,7 +40,7 @@ public final class SqlType<T> {
         this.converter = converter;
     }
 
-    /** Java 类的默认类型；枚举按名字存储。基本类型会先装箱。 */
+    /** Java 类的默认类型；枚举按名字存储，实现了 {@link CodeEnum} 的按编码存储。基本类型会先装箱。 */
     @SuppressWarnings("unchecked")
     public static <T> SqlType<T> of(Class<T> javaType) {
         return (SqlType<T>) PLAIN.get(box(Objects.requireNonNull(javaType, "javaType")));
@@ -98,6 +106,45 @@ public final class SqlType<T> {
         if (type == byte.class) return Byte.class;
         if (type == char.class) return Character.class;
         return Void.class;
+    }
+
+    /** 实现了 {@link CodeEnum} 的枚举与其编码之间的转换；编码的类型取自枚举实现的 {@code CodeEnum<C>}。 */
+    private static final class EnumCodeConverter<E extends Enum<E>> implements Converter<E, Object> {
+        private final Class<E> type;
+        private final Class<?> codeType;
+        private final Map<Object, E> byCode = new HashMap<>();
+
+        EnumCodeConverter(Class<E> type) {
+            this.type = type;
+            this.codeType = codeType(type);
+            for (E constant : type.getEnumConstants()) {
+                Object code = ((CodeEnum<?>) constant).code();
+                if (code == null) throw new IllegalArgumentException(type.getSimpleName() + "." + constant.name() + " has a null code");
+                if (byCode.put(key(code), constant) != null) throw new IllegalArgumentException(type.getSimpleName() + " repeats the code " + code);
+            }
+        }
+
+        @Override public Object toDatabase(E value) { return ((CodeEnum<?>) value).code(); }
+
+        @Override public E fromDatabase(Object value) {
+            E constant = byCode.get(key(value));
+            if (constant == null) throw new IllegalArgumentException(type.getSimpleName() + " has no constant with the code " + value);
+            return constant;
+        }
+
+        /** 编码比较时的键：整数统一成 Long，驱动读出的 Integer、Long、BigDecimal 都能对上。 */
+        private static Object key(Object code) {
+            if (code instanceof Number n && !(code instanceof Double) && !(code instanceof Float)) return n.longValue();
+            return code;
+        }
+
+        /** 枚举实现的 {@code CodeEnum<C>} 里的 C；写成原始类型时报错。 */
+        private static Class<?> codeType(Class<?> type) {
+            for (Type t : type.getGenericInterfaces()) {
+                if (t instanceof ParameterizedType p && p.getRawType() == CodeEnum.class && p.getActualTypeArguments()[0] instanceof Class<?> c) return c;
+            }
+            throw new IllegalArgumentException(type.getSimpleName() + " must implement CodeEnum<C> with a concrete code type, e.g. CodeEnum<String>");
+        }
     }
 
     /** 枚举与其名字之间的转换。 */
