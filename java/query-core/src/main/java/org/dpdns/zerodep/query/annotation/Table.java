@@ -16,4 +16,13 @@ public @interface Table {
 
     /** schema 名；为空表示使用连接当前的 schema。 */
     String schema() default "";
+
+    /**
+     * 不归本库管的表（例如 SAP 表）：{@code db.schema().check(...)} 只核对已声明的列存在且类型相容，
+     * {@code plan(...)} 和迁移从不为它生成 DDL。
+     */
+    boolean external() default false;
+
+    /** 表的注释，建表时写入。 */
+    String comment() default "";
 }

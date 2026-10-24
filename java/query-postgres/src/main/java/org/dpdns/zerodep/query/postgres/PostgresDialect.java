@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.postgres;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.JoinWrite;
@@ -206,4 +207,9 @@ public class PostgresDialect extends Dialect {
         w.sql("DELETE FROM ").render(d.target()).sql("\nUSING ").render(d.source()).sql("\nWHERE ");
         d.renderOnAndWhere(w);
     }
+
+    /** 结构变更的写法，见 {@code db.schema()}。 */
+    private final SchemaSyntax schemaSyntax = new PostgresSchemaSyntax(this);
+
+    @Override public SchemaSyntax schemaSyntax() { return schemaSyntax; }
 }

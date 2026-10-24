@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.dialect;
 
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
@@ -88,6 +89,9 @@ public abstract class Dialect {
         w.sql("CASE WHEN ").render(left).sql(" = ").render(right).sql(" OR (").render(left).sql(" IS NULL AND ").render(right)
             .sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
     }
+
+    /** 结构变更的写法（建表、改表、读系统目录），见 {@code db.schema()}；方言包实现，其他方言报错。 */
+    public SchemaSyntax schemaSyntax() { throw new UnsupportedOperationException(name() + " has no schema syntax"); }
 
     /** 写出紧跟在 SELECT 之后的提示子句，每个后面跟一个空格；MySQL 把优化器提示合并进一个注释（它只认第一个）。 */
     public void hints(SqlWriter w, List<Clause> hints) {

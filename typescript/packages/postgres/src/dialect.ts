@@ -1,9 +1,17 @@
+import { PostgresSchemaSyntax } from "./schema.js";
 import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, DAY, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, HOUR, LOCATE, MINUTE, MONTH, MONTH_START, SECOND, SECONDS_BETWEEN, YEAR, renderOnAndWhere, type CastType, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /** PostgreSQL。未加引号的标识符折叠为小写；参数带编号（$1、$2……）。 */
 export class PostgresDialect extends Dialect {
   /** 方言无状态，全局共用这一个实例。 */
   static readonly instance = new PostgresDialect();
+
+  #schemaSyntax: PostgresSchemaSyntax | undefined;
+
+  /** 结构变更的写法，见 `db.schema()`。 */
+  override get schemaSyntax(): PostgresSchemaSyntax {
+    return (this.#schemaSyntax ??= new PostgresSchemaSyntax(this));
+  }
 
   readonly name = "PostgreSQL";
 

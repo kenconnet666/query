@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.ddl.SchemaPlan;
 import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
@@ -590,6 +591,54 @@ public abstract class LiveScenarios {
                     count().filter(l.quantity().gt(new BigDecimal("2"))).as("big"),
                     stringAgg(l.delivery(), ",", l.delivery().desc()).as("deliveries"))))
             .stream().map(r -> r.get("material") + ":" + plain(r.get("recent")) + ":" + r.get("big") + ":" + r.get("deliveries")).toList());
+    }
+
+    /** 结构变更的测试表先删掉；S_ITEM 引用 S_OWNER，所以先删它。 */
+    private void dropSchemaTables() throws SQLException {
+        live.execute(List.of("-DROP TABLE " + t("S_ITEM"), "-DROP TABLE " + t("S_OWNER")));
+    }
+
+    @Test
+    void 结构变更按声明建表后与实库一致() throws SQLException {
+        dropSchemaTables();
+        SchemaPlan create = db.schema().plan(Schemas.SItem.class, Schemas.SOwner.class);
+        assertTrue(create.changes().stream().allMatch(c -> c.risk() == SchemaPlan.Risk.SAFE), create::toString);
+        List<String> statements = create.statements();
+        assertTrue(statements.get(statements.size() - 1).contains("FOREIGN KEY"), "foreign keys come last: " + statements);
+        create.apply();
+        SchemaPlan again = db.schema().check(Schemas.SItem.class, Schemas.SOwner.class);
+        assertTrue(again.isEmpty(), again::toString);
+    }
+
+    @Test
+    void 结构变更自动执行安全的差异且有风险的要显式允许() throws SQLException {
+        dropSchemaTables();
+        db.schema().plan(Schemas.SItem.class, Schemas.SOwner.class).apply();
+        SchemaPlan safe = db.schema().plan(Schemas.SItemV2.class);
+        assertTrue(safe.changes().stream().allMatch(c -> c.risk() == SchemaPlan.Risk.SAFE), safe::toString);
+        assertEquals(5, safe.changes().size(), safe::toString);
+        safe.apply();
+        SchemaPlan clean = db.schema().check(Schemas.SItemV2.class);
+        assertTrue(clean.isEmpty(), clean::toString);
+        SchemaPlan risky = db.schema().plan(Schemas.SItemV3.class);
+        // HANA 不能缩短列，那一项只报告；其余两库是有风险的语句。
+        assertTrue(risky.changes().size() == 2 && risky.changes().stream().noneMatch(c -> c.risk() == SchemaPlan.Risk.SAFE), risky::toString);
+        assertEquals(List.of(), risky.statements());
+        assertEquals(2, risky.pending().size());
+        risky.allowDestructive().apply();
+        SchemaPlan done = db.schema().check(Schemas.SItemV3.class);
+        assertTrue(done.changes().stream().allMatch(c -> c.risk() == SchemaPlan.Risk.REPORT), done::toString);
+        SchemaPlan back = db.schema().check(Schemas.SItem.class);
+        assertTrue(back.changes().stream().anyMatch(c -> c.risk() == SchemaPlan.Risk.REPORT && c.message().contains("NOTE is not declared")), back::toString);
+    }
+
+    @Test
+    void 外部表只核对已声明的列() {
+        assertTrue(db.schema().check(Schemas.LipsExternal.class).isEmpty());
+        SchemaPlan broken = db.schema().check(Schemas.LipsBroken.class);
+        assertEquals(2, broken.changes().size(), broken::toString);
+        assertTrue(broken.changes().stream().allMatch(c -> c.risk() == SchemaPlan.Risk.REPORT && c.statements().isEmpty()));
+        assertThrows(IllegalArgumentException.class, () -> db.schema().createTable(Schemas.LipsExternal.class));
     }
 
     @Test

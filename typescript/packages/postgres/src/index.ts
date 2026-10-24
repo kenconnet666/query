@@ -33,3 +33,4 @@ export class PostgresDatabase extends Database {
 export function database(source: Pool | PoolClient | Client, options?: DatabaseOptions): PostgresDatabase {
   return new PostgresDatabase(pgDriver(source), options);
 }
+export { PostgresSchemaSyntax } from "./schema.js";

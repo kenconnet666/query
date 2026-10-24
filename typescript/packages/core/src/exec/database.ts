@@ -1,7 +1,8 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
 import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata.js";
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
-import { integer, untyped, type SqlType } from "../schema/types.js";
+import { integer, typeOf, untyped, type SqlType } from "../schema/types.js";
+import { SchemaTools } from "../ddl/tools.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 
@@ -543,6 +544,30 @@ export abstract class Database {
     const rows = statements.length > 1 && this.#current() === this.#driver && this.#driver.transaction !== undefined ? await this.transaction(run) : await run();
     this.#cache?.clear();
     return rows;
+  }
+
+  // ---------- 结构变更 ----------
+
+  /** 结构变更：比较实体类的声明与实库并生成 DDL，例如 `await (await db.schema().plan(Note)).apply()`；见 {@link SchemaTools}。 */
+  schema(): SchemaTools {
+    const syntax = this.dialect.schemaSyntax;
+    return new SchemaTools(syntax, this.naming, this.#settings.schema ?? ((s: string) => s), (sql, ...parameters) => this.#catalog(sql, parameters), (statements) => this.#runStatements(statements, syntax.transactionalDdl));
+  }
+
+  /** 系统目录查询：每行是小写列标签到值的映射。 */
+  async #catalog(sql: string, parameters: readonly unknown[]): Promise<Record<string, unknown>[]> {
+    const result = await this.#execute(new Rendered(sql, parameters.map((value) => ({ value, type: typeOf(value) })), this.dialect), undefined);
+    return result.rows.map((row) => Object.fromEntries(result.columns.map((c, i) => [c.toLowerCase(), row[i]])));
+  }
+
+  /** 执行手写的语句（DDL 等），一条一次；transactional 时在一个事务里执行。执行后清空结果缓存。 */
+  async #runStatements(statements: readonly string[], transactional: boolean): Promise<void> {
+    const run = async () => {
+      for (const s of statements) await this.#execute(new Rendered(s, [], this.dialect), undefined);
+    };
+    if (transactional && this.#current() === this.#driver && this.#driver.transaction !== undefined) await this.transaction(run);
+    else await run();
+    this.#cache?.clear();
   }
 
   /** 本库未显式指定列名的字段所用的命名策略。 */

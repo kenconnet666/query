@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { LipsBroken, LipsExternal, SItem, SItemV2, SItemV3, SOwner } from "../fixtures/schemas.js";
 import { after, before, describe, it } from "node:test";
 import {
   caseWhen,
@@ -646,6 +647,48 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.equal(r.sign, -1);
     });
 
+    it("结构变更按声明建表后与实库一致", async () => {
+      const { db } = live();
+      await dropSchemaTables(db);
+      const create = await db.schema().plan(SItem, SOwner);
+      assert.ok(create.changes.every((c) => c.risk === "SAFE"), create.toString());
+      assert.ok(create.statements.at(-1)!.includes("FOREIGN KEY"));
+      await create.apply();
+      const again = await db.schema().check(SItem, SOwner);
+      assert.ok(again.isEmpty, again.toString());
+    });
+
+    it("结构变更自动执行安全的差异且有风险的要显式允许", async () => {
+      const { db } = live();
+      await dropSchemaTables(db);
+      await (await db.schema().plan(SItem, SOwner)).apply();
+      const safe = await db.schema().plan(SItemV2);
+      assert.ok(safe.changes.every((c) => c.risk === "SAFE"), safe.toString());
+      assert.equal(safe.changes.length, 5, safe.toString());
+      await safe.apply();
+      const clean = await db.schema().check(SItemV2);
+      assert.ok(clean.isEmpty, clean.toString());
+      // HANA 不能缩短列，那一项只报告；其余两库是有风险的语句。
+      const risky = await db.schema().plan(SItemV3);
+      assert.ok(risky.changes.length === 2 && risky.changes.every((c) => c.risk !== "SAFE"), risky.toString());
+      assert.deepEqual(risky.statements, []);
+      assert.equal(risky.pending.length, 2);
+      await risky.allowDestructive().apply();
+      const done = await db.schema().check(SItemV3);
+      assert.ok(done.changes.every((c) => c.risk === "REPORT"), done.toString());
+      const back = await db.schema().check(SItem);
+      assert.ok(back.changes.some((c) => c.risk === "REPORT" && c.message.includes("NOTE is not declared")), back.toString());
+    });
+
+    it("外部表只核对已声明的列", async () => {
+      const { db } = live();
+      assert.ok((await db.schema().check(LipsExternal)).isEmpty);
+      const broken = await db.schema().check(LipsBroken);
+      assert.equal(broken.changes.length, 2, broken.toString());
+      assert.ok(broken.changes.every((c) => c.risk === "REPORT" && c.statements.length === 0));
+      assert.throws(() => db.schema().createTable(LipsExternal), /external/);
+    });
+
     it("交集与差集按调用顺序求值", async () => {
       const other = from(Mara).where((m) => m.materialType.eq("ZOTH")).select((m) => m.material);
       const delivered = from(Lips).select((l) => l.material);
@@ -1081,4 +1124,12 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     extra?.(live);
   });
+}
+
+/** 结构变更的测试表先删掉；S_ITEM 引用 S_OWNER，所以先删它。表不存在时忽略错误。 */
+async function dropSchemaTables(db: Database): Promise<void> {
+  for (const t of ["S_ITEM", "S_OWNER"]) {
+    const name = db.dialect.quote("QUERY_IT") + "." + db.dialect.quote(t);
+    await db.sql(`DROP TABLE ${name}`).list().catch(() => undefined);
+  }
 }

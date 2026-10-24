@@ -702,3 +702,27 @@ await db.execute(deleteJoin(Note, Doc, (n, d) => n.id.eq(d.id)).where((_n, d) =>
 | 按编码存的枚举 | 实现 `CodeEnum<C>` | 字段直接声明成编码的字面量联合（如 `"A" \| "C"`），不需要转换 |
 | 表数 | 最多 16 张，`row(...)` 最多 22 个参数 | 不限 |
 | 执行 | 同步，JDBC | Promise，各库的 Node 驱动 |
+
+## 17. 结构变更
+
+与 Java 版第 16 节相同，声明写在装饰器的选项里：
+
+```ts
+@table("S_ITEM", {
+  schema: "APP",
+  comment: "items",
+  indexes: [{ name: "IX_S_ITEM_CODE", columns: ["code"], unique: true }],
+  foreignKeys: [{ name: "FK_S_ITEM_OWNER", columns: ["ownerId"], references: () => Owner }],
+})
+export class Item {
+  @id @generated @column("ID", bigint) id!: bigint;
+  @column("CODE", text, { length: 20, nullable: false }) code!: string;
+  @column("PRICE", decimal, { precision: 13, scale: 3 }) price!: string | null;
+  @column("STATUS", text, { length: 10, nullable: false, default: "'open'" }) status!: string;
+  @column("OWNER_ID", bigint) ownerId!: bigint | null;
+}
+```
+
+- `@column` 的第三个参数：`length`、`precision` / `scale`、`nullable`、`default`、`lob`、`comment`、`previousName`；外部表写 `@table(name, { external: true })`。
+- `await db.schema().check(Item)`、`await db.schema().plan(Item)`（`statements`、`toSql()`、`await plan.apply()`、`plan.allowDestructive()`）、`db.schema().createTable(Item)`、`await db.schema().read(schema, table)`。
+- 主键列在前，其余列按字段名排序，生成的建表语句与 Java 完全相同。

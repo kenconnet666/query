@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.mysql;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
@@ -171,4 +172,9 @@ public class MysqlDialect extends Dialect {
         w.sql("DELETE ").render(d.targetAlias()).sql(" FROM ").render(d.target()).sql("\nJOIN ").render(d.source()).sql(" ON ").render(d.on());
         if (d.where() != null) w.sql("\nWHERE ").render(d.where());
     }
+
+    /** 结构变更的写法，见 {@code db.schema()}。 */
+    private final SchemaSyntax schemaSyntax = new MysqlSchemaSyntax(this);
+
+    @Override public SchemaSyntax schemaSyntax() { return schemaSyntax; }
 }

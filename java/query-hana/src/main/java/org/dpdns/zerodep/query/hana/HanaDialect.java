@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.hana;
 
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.JoinWrite;
 import org.dpdns.zerodep.query.dialect.Lock;
@@ -192,4 +193,9 @@ public class HanaDialect extends Dialect {
         d.renderOnAndWhere(w);
         w.sql(")");
     }
+
+    /** 结构变更的写法，见 {@code db.schema()}。 */
+    private final SchemaSyntax schemaSyntax = new HanaSchemaSyntax(this);
+
+    @Override public SchemaSyntax schemaSyntax() { return schemaSyntax; }
 }

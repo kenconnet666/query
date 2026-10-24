@@ -65,4 +65,14 @@ class MysqlRenderTest {
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class)
             .with(maxExecutionTime(10)).select(l -> l.delivery()).toSql(new TestDialect()));
     }
+
+    @Test
+    void 按声明建表的语句() {
+        java.util.List<String> statements = Mysql.database(org.dpdns.zerodep.query.exec.ConnectionProvider.dryRun(), null).schema()
+            .createTable(org.dpdns.zerodep.query.testing.Schemas.SItem.class);
+        assertEquals(java.util.List.of(
+            "CREATE TABLE `QUERY_IT`.`S_ITEM` (`ID` BIGINT NOT NULL AUTO_INCREMENT, `CODE` VARCHAR(20) NOT NULL, `CREATED_ON` DATE, `OWNER_ID` BIGINT, `PRICE` DECIMAL(13,3), `STATUS` VARCHAR(10) NOT NULL DEFAULT 'open', `TITLE` VARCHAR(40) COMMENT 'title', PRIMARY KEY (`ID`)) COMMENT='items'",
+            "CREATE UNIQUE INDEX `IX_S_ITEM_CODE` ON `QUERY_IT`.`S_ITEM` (`CODE`)",
+            "ALTER TABLE `QUERY_IT`.`S_ITEM` ADD CONSTRAINT `FK_S_ITEM_OWNER` FOREIGN KEY (`OWNER_ID`) REFERENCES `QUERY_IT`.`S_OWNER` (`ID`)"), statements);
+    }
 }

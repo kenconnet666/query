@@ -21,6 +21,10 @@ export {
   column,
   columnName,
   entityMeta,
+  type ColumnOptions,
+  type ForeignKeyOptions,
+  type IndexOptions,
+  type TableOptions,
   generated,
   id,
   ignore,
@@ -225,3 +229,6 @@ export {
   formatQueryEvent,
 } from "./exec/database.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
+export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef } from "./ddl/model.js";
+export { catalogNumber, catalogText, groupRows, SchemaSyntax, type Catalog } from "./ddl/syntax.js";
+export { SchemaPlan, SchemaTools, type Change, type Risk } from "./ddl/tools.js";

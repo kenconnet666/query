@@ -22,3 +22,4 @@ export class MysqlDatabase extends Database {
 export function database(source: Pool | PoolConnection | Connection, options?: DatabaseOptions): MysqlDatabase {
   return new MysqlDatabase(mysqlDriver(source), options);
 }
+export { MysqlSchemaSyntax } from "./schema.js";

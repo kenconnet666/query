@@ -45,6 +45,51 @@ interface FieldMeta {
   readonly logicDelete?: { readonly active: unknown; readonly deleted: unknown; readonly epochMillis: boolean };
   readonly readOnly?: true;
   readonly writeOnce?: true;
+  readonly ddl?: ColumnOptions;
+}
+
+/** 只用于结构变更（`db.schema()`）的列声明，查询和写入不读它们；对应 Java 的 `@Column` 属性。 */
+export interface ColumnOptions {
+  /** 文本或字节列的长度；缺省时文本 255。 */
+  readonly length?: number;
+  /** 小数的总位数；缺省时 DECIMAL(18,2)。 */
+  readonly precision?: number;
+  /** 小数的小数位，与 precision 一起写。 */
+  readonly scale?: number;
+  /** 是否可以为 NULL，缺省 true；主键列总是 NOT NULL。 */
+  readonly nullable?: boolean;
+  /** 默认值的 SQL 文本，例如 `"0"`、`"'open'"`、`"CURRENT_TIMESTAMP"`。 */
+  readonly default?: string;
+  /** 不限长度的文本或字节（NCLOB / TEXT / LONGTEXT 等）。 */
+  readonly lob?: boolean;
+  readonly comment?: string;
+  /** 改名前的列名：库里没有新列名、但有这个旧名时，计划写成 RENAME COLUMN。 */
+  readonly previousName?: string;
+}
+
+/** 表上的索引，写在 `@table` 的选项里；columns 是字段名。 */
+export interface IndexOptions {
+  readonly name: string;
+  readonly columns: readonly string[];
+  readonly unique?: boolean;
+}
+
+/** 表上的外键，写在 `@table` 的选项里；columns 是本表的字段名，referencedColumns 缺省为被引用表的 `@id`。 */
+export interface ForeignKeyOptions {
+  readonly name: string;
+  readonly columns: readonly string[];
+  readonly references: () => Table<unknown>;
+  readonly referencedColumns?: readonly string[];
+}
+
+/** `@table` 的选项。 */
+export interface TableOptions {
+  readonly schema?: string;
+  /** 不归本库管的表（例如 SAP 表）：`db.schema().check(...)` 只核对已声明的列，从不生成 DDL。 */
+  readonly external?: boolean;
+  readonly comment?: string;
+  readonly indexes?: readonly IndexOptions[];
+  readonly foreignKeys?: readonly ForeignKeyOptions[];
 }
 
 /**
@@ -130,12 +175,14 @@ export interface PropertyMeta {
   readonly column: string | undefined;
   /** 读取该列所用的 `readAs` 模板，`{0}` 代表带限定的列。 */
   readonly read: string | undefined;
+  /** 结构变更用的列声明，没有时为 undefined。 */
+  readonly ddl?: ColumnOptions | undefined;
 }
 
 /** 一个类的字段，由它的装饰器和实例共同描述。 */
 export interface EntityMeta {
   readonly type: Ctor<unknown>;
-  readonly table: { readonly name: string; readonly schema: string | undefined } | undefined;
+  readonly table: (TableOptions & { readonly name: string; readonly schema: string | undefined }) | undefined;
   /** 装饰过的列，基类的在前。 */
   readonly properties: readonly PropertyMeta[];
   /** 没有被 ignore 的全部字段。 */
@@ -177,9 +224,9 @@ function record(context: ClassFieldDecoratorContext, field: Omit<FieldMeta, "nam
 }
 
 /** 标记表实体。基类的字段也算它的列。 */
-export function table(name: string, options: { schema?: string } = {}) {
+export function table(name: string, options: TableOptions = {}) {
   return (_target: Ctor<unknown>, context: ClassDecoratorContext): void => {
-    bag(context)[TABLE] = { name, schema: options.schema };
+    bag(context)[TABLE] = { ...options, name, schema: options.schema };
   };
 }
 
@@ -192,10 +239,13 @@ type FieldDecorator<V> = <F extends V>(value: undefined, context: ClassFieldDeco
 export function column(name?: string): FieldDecorator<string | null>;
 export function column<T>(type: SqlType<T>): FieldDecorator<T | null>;
 export function column<T>(name: string, type: SqlType<T>): FieldDecorator<T | null>;
-export function column(nameOrType?: string | SqlType<unknown>, type?: SqlType<unknown>): FieldDecorator<unknown> {
+/** 声明一列，另带结构变更用的选项：`@column("TITLE", text, { length: 40, nullable: false })`。 */
+export function column<T>(name: string, type: SqlType<T>, options: ColumnOptions): FieldDecorator<T | null>;
+export function column(nameOrType?: string | SqlType<unknown>, type?: SqlType<unknown>, options?: ColumnOptions): FieldDecorator<unknown> {
   const name = typeof nameOrType === "string" ? nameOrType : undefined;
   const sqlType = typeof nameOrType === "object" ? nameOrType : (type ?? (text as SqlType<unknown>));
-  return (_value, context) => record(context, name === undefined ? { type: sqlType } : { column: name, type: sqlType });
+  const ddl = options === undefined ? {} : { ddl: Object.freeze({ ...options }) };
+  return (_value, context) => record(context, name === undefined ? { type: sqlType, ...ddl } : { column: name, type: sqlType, ...ddl });
 }
 
 /**
@@ -323,10 +373,10 @@ function describe(type: Ctor<unknown>): EntityMeta {
   const fields = (meta?.[FIELDS] as FieldMeta[] | undefined) ?? [];
   // 自己没有装饰器的类会继承基类的元数据对象，但不继承基类的表。
   const own = Object.hasOwn(type, METADATA) && meta !== undefined && Object.hasOwn(meta, TABLE);
-  const table = own ? (meta[TABLE] as { name: string; schema: string | undefined }) : undefined;
+  const table = own ? (meta[TABLE] as TableOptions & { name: string; schema: string | undefined }) : undefined;
   const properties: PropertyMeta[] = fields
     .filter((f) => f.type !== undefined && !f.ignore)
-    .map((f) => Object.freeze({ name: f.name, type: f.type!, column: f.column, read: f.read }));
+    .map((f) => Object.freeze({ name: f.name, type: f.type!, column: f.column, read: f.read, ddl: f.ddl }));
   const byName = new Map(properties.map((p) => [p.name, p]));
   const fieldsByName = new Map(fields.map((f) => [f.name, f]));
   return Object.freeze({

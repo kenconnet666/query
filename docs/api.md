@@ -859,3 +859,40 @@ db.execute(deleteJoin(Note.class, Doc.class, (n, d) -> n.id().eq(d.id())).where(
 ### 执行与测试
 
 监听器、`printSql`、`db.capture(...)` 和空跑连接都覆盖写语句；空跑时影响的行数为 0，不检查 `expect`。
+
+## 16. 结构变更
+
+设计见 [0008](decisions/0008-schema-tracking-sharding.md)。表接口除了查询需要的列名，还可以声明建表需要的信息：
+
+```java
+@Table(schema = "APP", value = "S_ITEM", comment = "items")
+@Index(name = "IX_S_ITEM_CODE", columns = "code", unique = true)
+@ForeignKey(name = "FK_S_ITEM_OWNER", columns = "ownerId", references = Owner.class)
+public interface Item extends Entity {
+    @Id @Generated @Column("ID") Col<Long> id();
+    @Column(value = "CODE", length = 20, nullable = false) Col<String> code();
+    @Column(value = "PRICE", precision = 13, scale = 3) Col<BigDecimal> price();
+    @Column(value = "STATUS", length = 10, nullable = false, defaultValue = "'open'") Col<String> status();
+    @Column("OWNER_ID") Col<Long> ownerId();
+}
+```
+
+- `@Column` 的 `length`（文本默认 255）、`precision` / `scale`（小数默认 `DECIMAL(18,2)`）、`nullable`（主键总是 NOT NULL）、`defaultValue`（SQL 文本）、`lob`（不限长度）、`comment`、`previousName`（改名前的列名）只用于结构变更，查询不读它们。
+- 类型按存储类型（经过转换器之后）推断：文本、整数、长整数、小数、浮点、布尔、日期、时间戳、字节；`@Generated` 的列建成 IDENTITY / AUTO_INCREMENT。
+- 不归本库管的表（SAP 表）标 `@Table(external = true)`：只核对已声明的列存在、类型相容，从不生成 DDL。
+
+| 写法 | 说明 |
+| --- | --- |
+| `db.schema().check(Item.class, ...)` | 声明与实库的差异（`SchemaPlan`），`isEmpty()` 为真表示一致；适合在启动时或 CI 里调用 |
+| `db.schema().plan(...)` | 差异和消除差异的语句：`statements()`、`toSql()`（每条以分号结尾，交给 DBA 或 Flyway）、`apply()` 执行 |
+| `plan.allowDestructive().apply()` | 连有风险的语句一起执行 |
+| `db.schema().createTable(Item.class)` | 只渲染建表语句，不连库 |
+| `db.schema().read("APP", "S_ITEM")` | 读出实库的结构（`TableDef`） |
+
+每项差异分三类：
+
+- **安全的**，`apply()` 自动执行：建表（HANA 建列存表）、加列、放宽类型（同族加长、整数加宽、小数位数不减）、按 `previousName` 改名、允许 NULL、改默认值、加索引和外键（外键排在最后）。
+- **有风险的**，`allowDestructive()` 之后才执行：缩短或改变类型、改成 NOT NULL、给已有的表加没有默认值的 NOT NULL 列（有行时会失败，应先加可空列、回填，再改 NOT NULL）。HANA 不能就地缩短列，这一项只报告。
+- **只报告的**，从不生成语句：库里多出来的列和索引、主键或自增不同、外部表的问题。本库不删列。
+
+一条语句执行一次。PostgreSQL 的整个计划在一个事务里执行；MySQL 的每条 DDL 隐式提交，HANA 的 DDL 默认自动提交，中途失败时已执行的语句不会回滚。

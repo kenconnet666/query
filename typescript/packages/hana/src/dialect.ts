@@ -1,9 +1,17 @@
+import { HanaSchemaSyntax } from "./schema.js";
 import { type CastType, type JoinWrite, type Lock, type SqlWriter, type Upsert, columnList, Dialect, doNothing, renderOnAndWhere } from "@zerodep-dev/query-core";
 
 /** SAP HANA 2.0。未加引号的标识符折叠为大写。 */
 export class HanaDialect extends Dialect {
   /** 方言无状态，全局共用这一个实例。 */
   static readonly instance = new HanaDialect();
+
+  #schemaSyntax: HanaSchemaSyntax | undefined;
+
+  /** 结构变更的写法，见 `db.schema()`。 */
+  override get schemaSyntax(): HanaSchemaSyntax {
+    return (this.#schemaSyntax ??= new HanaSchemaSyntax(this));
+  }
 
   readonly name = "SAP HANA";
 

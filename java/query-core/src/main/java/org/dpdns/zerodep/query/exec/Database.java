@@ -1,5 +1,8 @@
 package org.dpdns.zerodep.query.exec;
 
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
+import org.dpdns.zerodep.query.ddl.SchemaTools;
+import org.dpdns.zerodep.query.dialect.Binding;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.FunctionRenderer;
@@ -319,6 +322,47 @@ public abstract class Database {
         List<V> out = new ArrayList<>();
         for (int from = 0; from < keys.size(); from += ATTACH_BATCH) out.addAll(list(load.apply(keys.subList(from, Math.min(keys.size(), from + ATTACH_BATCH)))));
         return out;
+    }
+
+    // ---------- 结构变更 ----------
+
+    /**
+     * 结构变更：比较表接口的声明与实库并生成 DDL，例如 {@code db.schema().plan(Note.class).apply()}；
+     * 见 {@link SchemaTools}。方言的写法来自 {@link Dialect#schemaSyntax()}。
+     */
+    @SuppressWarnings("unchecked")
+    public SchemaTools schema() {
+        SchemaSyntax syntax = dialect.schemaSyntax();
+        UnaryOperator<String> schemas = (UnaryOperator<String>) settings.attributes().get(SqlWriter.SCHEMAS);
+        return new SchemaTools(syntax, settings.naming(), schemas, this::catalogRows, statements -> runStatements(statements, syntax.transactionalDdl()));
+    }
+
+    /** 执行手写的语句（DDL 等），一条一次；transactional 时在一个事务里执行。执行后清空结果缓存。 */
+    void runStatements(List<String> statements, boolean transactional) {
+        List<Rendered> rendered = statements.stream().map(s -> executor.intercept(new Rendered(s, List.of(), dialect))).toList();
+        Runnable run = () -> {
+            for (Rendered r : rendered) executor.update(List.of(r), null);
+        };
+        if (transactional && executor.canStartTransaction()) transaction(run);
+        else run.run();
+        clearCache();
+    }
+
+    /** 系统目录查询：带 {@code ?} 参数的 SELECT，每行是小写列标签到值的映射。 */
+    List<Map<String, Object>> catalogRows(String sql, Object... parameters) {
+        List<Binding> bindings = new ArrayList<>();
+        for (Object p : parameters) bindings.add(new Binding(p, SqlType.of(p.getClass())));
+        Rendered statement = executor.intercept(new Rendered(sql, bindings, dialect));
+        return executor.query(statement, rs -> {
+            java.sql.ResultSetMetaData meta = rs.getMetaData();
+            List<Map<String, Object>> rows = new ArrayList<>();
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= meta.getColumnCount(); i++) row.put(meta.getColumnLabel(i).toLowerCase(java.util.Locale.ROOT), rs.getObject(i));
+                rows.add(row);
+            }
+            return rows;
+        }, List::size, null);
     }
 
     /** 清空查询结果缓存；没有配置缓存时什么也不做。 */

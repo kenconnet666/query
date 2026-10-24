@@ -22,3 +22,4 @@ export class HanaDatabase extends Database {
 export function database(source: ConnectionPool | Connection, options?: DatabaseOptions): HanaDatabase {
   return new HanaDatabase(hanaDriver(source), options);
 }
+export { HanaSchemaSyntax } from "./schema.js";

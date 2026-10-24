@@ -1,3 +1,4 @@
+import { MysqlSchemaSyntax } from "./schema.js";
 import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type Clause, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /**
@@ -7,6 +8,13 @@ import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_
 export class MysqlDialect extends Dialect {
   /** 方言无状态，全局共用这一个实例。 */
   static readonly instance = new MysqlDialect();
+
+  #schemaSyntax: MysqlSchemaSyntax | undefined;
+
+  /** 结构变更的写法，见 `db.schema()`。 */
+  override get schemaSyntax(): MysqlSchemaSyntax {
+    return (this.#schemaSyntax ??= new MysqlSchemaSyntax(this));
+  }
 
   readonly name = "MySQL";
 
