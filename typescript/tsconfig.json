@@ -17,6 +17,9 @@
       "path": "packages/sqlite"
     },
     {
+      "path": "packages/idb"
+    },
+    {
       "path": "test"
     }
   ]

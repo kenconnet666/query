@@ -16,6 +16,8 @@
     "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
+    "@zerodep-dev/idb": "workspace:*",
+    "fake-indexeddb": "6.2.5",
     "mysql2": "3.24.6",
     "pg": "8.23.1",
     "playwright-core": "1.64.0"
