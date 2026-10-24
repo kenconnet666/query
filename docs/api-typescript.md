@@ -129,6 +129,7 @@ export class DeliveryVO {                                       // DTO：不需�
 | --- | --- | --- |
 | `text`（默认） | `string` | |
 | `integer` | `number` | 超出安全整数范围时报错 |
+| `smallint` | `number` | 与 `integer` 相同，只在结构变更里建成 SMALLINT |
 | `bigint` | `bigint` | |
 | `double` | `number` | 也可用于 DECIMAL 列，按浮点数读取 |
 | `decimal` | `string` | 精确，例如 `'3.000'` |
@@ -742,3 +743,25 @@ await migrator.verify();
 ```
 
 `plan()`、`pending()`、`history()`、`baseline(version)`、`repair(version)`、`migrateTo(version)` 都是异步的；手写的 SQL 用 `?` 作占位符，PostgreSQL 上自动换成 `$n`。
+
+**从数据库生成列**：每个方言包带一个 bin（`query-pull-hana`、`query-pull-postgres`、`query-pull-mysql`），读 `query-pull.json`，在 `src/generated` 里生成只有列的基类，自己的表类继承它：
+
+```json
+{
+  "connection": { "host": "db", "port": 5432, "database": "erp", "user": "report" },
+  "passwordEnv": "ERP_DB_PASSWORD",
+  "schema": "public",
+  "outDir": "src/generated",
+  "tables": [{ "name": "S_ITEM" }, { "name": "LIPS", "typeName": "LipsColumns", "columns": ["VBELN", "MATNR", "LFIMG"] }]
+}
+```
+
+```ts
+// npx query-pull-postgres（或 query-pull-postgres other.json --only=LIPS）生成 src/generated/SItemColumns.ts
+@table("S_ITEM", { schema: "public" })
+export class Item extends SItemColumns {
+  @one(() => Owner, (i, o) => o.id.eq(i.ownerId)) owner!: One<Owner>;
+}
+```
+
+`connection` 原样交给驱动（pg 的 PoolConfig、mysql2 的连接参数、@sap/hana-client 的 `serverNode` / `uid`），密码从 `passwordEnv` 指定的环境变量读，不写进配置文件。属性名、可选项和类型与 Java 的 `query:pull` 一致；SMALLINT 列生成为 `smallint`。也可以在代码里调用 `pullTables(db, schema, tables)` 或 `typescriptSource(tableDef, typeName)`。

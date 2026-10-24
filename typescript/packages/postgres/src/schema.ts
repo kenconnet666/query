@@ -1,4 +1,4 @@
-import { catalogNumber, catalogText, columnType, groupRows, SchemaSyntax, type Catalog, type ColumnType, type TableDef } from "@zerodep-dev/query-core";
+import { catalogNumber, catalogText, columnType, withoutCast, groupRows, SchemaSyntax, type Catalog, type ColumnType, type TableDef } from "@zerodep-dev/query-core";
 
 /** PostgreSQL 的结构变更写法：类型名、ALTER COLUMN 的写法，以及从 information_schema 和 pg_catalog 读表结构；与 Java 端一致。 */
 export class PostgresSchemaSyntax extends SchemaSyntax {
@@ -38,7 +38,8 @@ export class PostgresSchemaSyntax extends SchemaSyntax {
     const key = schema === "" ? [table] : [schema, table];
     const columns = await catalog(
       "SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, " +
-        `column_default, is_identity FROM information_schema.columns WHERE table_schema = ${s} AND table_name = ${t} ORDER BY ordinal_position`,
+        "column_default, is_identity, col_description(format('%I.%I', table_schema, table_name)::regclass, ordinal_position) AS column_comment " +
+        `FROM information_schema.columns WHERE table_schema = ${s} AND table_name = ${t} ORDER BY ordinal_position`,
       ...key,
     );
     if (columns.length === 0) return undefined;
@@ -58,6 +59,10 @@ export class PostgresSchemaSyntax extends SchemaSyntax {
         `WHERE c.contype = 'f' AND n.nspname = ${s} AND t.relname = ${t} ORDER BY c.conname, k.ord`,
       ...key,
     );
+    const [described] = await catalog(
+      `SELECT obj_description(t.oid, 'pg_class') AS table_comment FROM pg_class t JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = ${s} AND t.relname = ${t}`,
+      ...key,
+    );
     return {
       schema,
       name: table,
@@ -65,9 +70,9 @@ export class PostgresSchemaSyntax extends SchemaSyntax {
         name: catalogText(c.column_name),
         type: pgType(catalogText(c.data_type), catalogNumber(c.character_maximum_length), catalogNumber(c.numeric_precision), catalogNumber(c.numeric_scale)),
         nullable: c.is_nullable === "YES",
-        defaultValue: catalogText(c.column_default),
+        defaultValue: withoutCast(c.column_default),
         identity: c.is_identity === "YES",
-        comment: "",
+        comment: catalogText(c.column_comment),
         previousName: "",
       })),
       primaryKey: indexRows.filter((i) => i.is_primary === true).map((i) => catalogText(i.column_name)),
@@ -83,7 +88,7 @@ export class PostgresSchemaSyntax extends SchemaSyntax {
         referencedTable: catalogText(rows[0]!.ref_table),
         referencedColumns: rows.map((r) => catalogText(r.ref_column)),
       })),
-      comment: "",
+      comment: catalogText(described?.table_comment),
       external: false,
     };
   }

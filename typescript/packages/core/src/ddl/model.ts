@@ -167,7 +167,7 @@ function typeOf(table: Table<unknown>, p: PropertyMeta): ColumnType {
     case "decimal":
       return o.precision !== undefined ? columnType("DECIMAL", o.precision, o.scale ?? 0) : columnType("DECIMAL", 18, 2);
     case "integer":
-      return columnType("INTEGER");
+      return columnType(p.type.name === "smallint" ? "SMALLINT" : "INTEGER");
     case "bigint":
       return columnType("BIGINT");
     case "double":

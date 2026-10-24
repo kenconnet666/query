@@ -83,8 +83,8 @@ final class HanaSchemaSyntax extends SchemaSyntax {
         if (columns.isEmpty()) return null;
         List<TableDef.Column> out = new ArrayList<>();
         for (Map<String, Object> c : columns) {
-            out.add(new TableDef.Column(text(c.get("column_name")), type(text(c.get("data_type_name")), number(c.get("length")), number(c.get("scale"))),
-                "TRUE".equals(c.get("is_nullable")), text(c.get("default_value")), text(c.get("generation_type")).contains("IDENTITY"), text(c.get("comments")), ""));
+            ColumnType type = type(text(c.get("data_type_name")), number(c.get("length")), number(c.get("scale")));
+            out.add(new TableDef.Column(text(c.get("column_name")), type, "TRUE".equals(c.get("is_nullable")), sqlDefault(text(c.get("default_value")), type), text(c.get("generation_type")).contains("IDENTITY"), text(c.get("comments")), ""));
         }
         List<String> primaryKey = new ArrayList<>();
         Map<String, List<String>> indexColumns = new LinkedHashMap<>();
@@ -110,7 +110,8 @@ final class HanaSchemaSyntax extends SchemaSyntax {
             refs.add(text(f.get("referenced_column_name")));
             foreignKeys.put(name, new TableDef.ForeignKey(name, cols, text(f.get("referenced_schema_name")), text(f.get("referenced_table_name")), refs));
         }
-        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), "", false);
+        String comment = text(catalog.rows("SELECT COMMENTS FROM SYS.TABLES WHERE SCHEMA_NAME = " + s + " AND TABLE_NAME = ?", key).get(0).get("comments"));
+        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), comment, false);
     }
 
     /** SYS.TABLE_COLUMNS 的 DATA_TYPE_NAME 读回列类型；裸 DECIMAL（浮点小数）的 SCALE 为 NULL，读成小数位 0。 */

@@ -124,7 +124,7 @@ export abstract class SchemaSyntax {
     if (value == null) return "";
     let v = value.trim();
     while (v.startsWith("(") && v.endsWith(")")) v = v.slice(1, -1).trim();
-    v = v.replace(/::[a-zA-Z ]+(\(\d+(,\d+)?\))?(\[])?$/, "");
+    v = withoutCast(v);
     if (v.startsWith("'") && v.endsWith("'") && v.length >= 2) v = v.slice(1, -1).replaceAll("''", "'");
     return v.toUpperCase();
   }
@@ -150,6 +150,22 @@ export abstract class SchemaSyntax {
   protected literal(text: string): string {
     return `'${text.replaceAll("'", "''")}'`;
   }
+}
+
+/**
+ * 目录里去掉了引号的默认值（HANA、MySQL 的写法）还原成 SQL：文本、日期和时间列的常量加单引号，
+ * 数字和 `CURRENT_*` 这类函数原样；没有默认值时返回空串。读回的模型因此与声明的写法一致，生成代码时三库相同。
+ */
+export function catalogDefault(raw: unknown, type: ColumnType): string {
+  const v = catalogText(raw);
+  if (v === "") return "";
+  const quoted = ["TEXT", "CLOB", "DATE", "TIMESTAMP"].includes(type.kind) && !/^CURRENT_\w+(\(\d*\))?$/i.test(v);
+  return quoted ? `'${v.replaceAll("'", "''")}'` : v;
+}
+
+/** PostgreSQL 目录里的默认值去掉 `::类型` 后缀，例如 `'open'::character varying` 读成 `'open'`。 */
+export function withoutCast(raw: unknown): string {
+  return catalogText(raw).replace(/::[a-zA-Z ]+(\(\d+(,\d+)?\))?(\[])?$/, "");
 }
 
 /** 目录里的数值（number、bigint、数字字符串都可能）转成 number；null 为 0。 */

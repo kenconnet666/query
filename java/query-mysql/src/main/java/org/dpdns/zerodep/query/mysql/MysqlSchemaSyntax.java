@@ -69,9 +69,13 @@ final class MysqlSchemaSyntax extends SchemaSyntax {
         if (columns.isEmpty()) return null;
         List<TableDef.Column> out = new ArrayList<>();
         for (Map<String, Object> c : columns) {
-            out.add(new TableDef.Column(text(c.get("column_name")), type(text(c.get("data_type")), text(c.get("column_type")), number(c.get("character_maximum_length")),
-                number(c.get("numeric_precision")), number(c.get("numeric_scale"))), "YES".equals(c.get("is_nullable")), text(c.get("column_default")),
-                text(c.get("extra")).contains("auto_increment"), text(c.get("column_comment")), ""));
+            ColumnType type = type(text(c.get("data_type")), text(c.get("column_type")), number(c.get("character_maximum_length")), number(c.get("numeric_precision")),
+                number(c.get("numeric_scale")));
+            String extra = text(c.get("extra"));
+            // 表达式默认值（EXTRA 带 DEFAULT_GENERATED）在目录里就是 SQL；常量则去掉了引号。
+            String defaultValue = extra.contains("DEFAULT_GENERATED") ? text(c.get("column_default")) : sqlDefault(text(c.get("column_default")), type);
+            out.add(new TableDef.Column(text(c.get("column_name")), type, "YES".equals(c.get("is_nullable")), defaultValue, extra.contains("auto_increment"),
+                text(c.get("column_comment")), ""));
         }
         Map<String, TableDef.ForeignKey> foreignKeys = new LinkedHashMap<>();
         for (Map<String, Object> f : catalog.rows("SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME "
@@ -100,7 +104,8 @@ final class MysqlSchemaSyntax extends SchemaSyntax {
             }
         }
         List<TableDef.Index> indexes = indexColumns.entrySet().stream().map(e -> new TableDef.Index(e.getKey(), e.getValue(), unique.get(e.getKey()))).toList();
-        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), "", false);
+        String comment = text(catalog.rows("SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = " + s + " AND TABLE_NAME = ?", key).get(0).get("table_comment"));
+        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), comment, false);
     }
 
     /** information_schema 的 DATA_TYPE 读回列类型；tinyint(1) 是 BOOLEAN。 */

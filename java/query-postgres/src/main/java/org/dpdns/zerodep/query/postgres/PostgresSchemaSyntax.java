@@ -40,12 +40,13 @@ final class PostgresSchemaSyntax extends SchemaSyntax {
         String s = schema.isEmpty() ? "current_schema()" : "?";
         Object[] key = schema.isEmpty() ? new Object[] {table} : new Object[] {schema, table};
         List<Map<String, Object>> columns = catalog.rows("SELECT column_name, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, "
-            + "column_default, is_identity FROM information_schema.columns WHERE table_schema = " + s + " AND table_name = ? ORDER BY ordinal_position", key);
+            + "column_default, is_identity, col_description(format('%I.%I', table_schema, table_name)::regclass, ordinal_position) AS column_comment "
+            + "FROM information_schema.columns WHERE table_schema = " + s + " AND table_name = ? ORDER BY ordinal_position", key);
         if (columns.isEmpty()) return null;
         List<TableDef.Column> out = new ArrayList<>();
         for (Map<String, Object> c : columns) {
             out.add(new TableDef.Column(text(c.get("column_name")), type(text(c.get("data_type")), number(c.get("character_maximum_length")), number(c.get("numeric_precision")),
-                number(c.get("numeric_scale"))), "YES".equals(c.get("is_nullable")), text(c.get("column_default")), "YES".equals(c.get("is_identity")), "", ""));
+                number(c.get("numeric_scale"))), "YES".equals(c.get("is_nullable")), withoutCast(text(c.get("column_default"))), "YES".equals(c.get("is_identity")), text(c.get("column_comment")), ""));
         }
         List<String> primaryKey = new ArrayList<>();
         Map<String, List<String>> indexColumns = new LinkedHashMap<>();
@@ -76,7 +77,9 @@ final class PostgresSchemaSyntax extends SchemaSyntax {
             refs.add(text(f.get("ref_column")));
             foreignKeys.put(name, new TableDef.ForeignKey(name, cols, text(f.get("ref_schema")), text(f.get("ref_table")), refs));
         }
-        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), "", false);
+        String comment = text(catalog.rows("SELECT obj_description(t.oid, 'pg_class') AS table_comment FROM pg_class t JOIN pg_namespace n ON n.oid = t.relnamespace "
+            + "WHERE n.nspname = " + s + " AND t.relname = ?", key).get(0).get("table_comment"));
+        return new TableDef(schema, table, out, primaryKey, indexes, List.copyOf(foreignKeys.values()), comment, false);
     }
 
     /** information_schema 的 data_type 读回列类型。 */

@@ -925,3 +925,47 @@ migrator.verify();           // 已执行的迁移被改过、历史里有未知
 - `baseline(version)` 把这个版本之前的迁移记为已执行而不执行，用于接管手工建好的库；`migrateTo(version)` 只执行到这个版本。
 - 只向前，没有回滚迁移；要撤销就再写一个新的迁移。迁移适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
 - 已经在用 Flyway、Liquibase 的项目不必用它：`db.schema().plan(...).toSql()` 生成的脚本交给它们，`check(...)` 在启动时核对。
+
+### 从数据库生成列（query:pull）
+
+已有的表（SAP 宽表、别的系统建的表）不必手写每一列：Maven 插件从数据库读出结构，生成只有列的父接口，自己的表接口继承它，再写关系、过滤器和覆盖的注解。
+
+```xml
+<plugin>
+  <groupId>org.dpdns.zerodep</groupId>
+  <artifactId>query-maven-plugin</artifactId>
+  <version>2.0.0</version>
+  <configuration>
+    <dialect>hana</dialect>                       <!-- hana、postgres 或 mysql -->
+    <url>jdbc:sap://host:39041</url>
+    <user>${env.HANA_USER}</user>
+    <password>${env.HANA_PASSWORD}</password>   <!-- 用环境变量，不写明文 -->
+    <schema>SAPHANADB</schema>
+    <packageName>com.example.erp.generated</packageName>
+    <tables>
+      <table><name>LIPS</name><columns>VBELN,POSNR,MATNR,LFIMG</columns></table>
+      <table><name>MARA</name><typeName>MaterialColumns</typeName></table>
+    </tables>
+  </configuration>
+</plugin>
+```
+
+```java
+// mvn query:pull 生成 src/generated/java/com/example/erp/generated/LipsColumns.java：
+public interface LipsColumns extends Entity {
+    /** VBELN：TEXT(10)，主键 */
+    @Id @Column(value = "VBELN", length = 10) Col<String> vbeln();
+    // ...
+}
+
+// 自己写的表接口
+@Table(schema = "SAPHANADB", value = "LIPS", external = true)
+public interface Lips extends LipsColumns {
+    default One<Mara> mara() { return one(Mara.class, (l, m) -> m.matnr().eq(l.matnr())); }
+}
+```
+
+- 插件带着三个 JDBC 驱动，只在运行 `query:pull` 时连库，构建本身不连库；生成的文件提交进版本库，生成目录加进编译的源码根目录。
+- `columns` 只生成列出的列（宽表通常只用几列），不写时生成全部列；`typeName` 缺省由表名推导（`S_ITEM` → `SItemColumns`），列方法名是列名的驼峰写法，与 Java 关键字或 `Entity` 的方法重名时加 `Column`。
+- `mvn query:pull -Dquery.only=LIPS` 只重新生成某几张表；内容没变的文件不重写。
+- 生成的注解带长度、精度、可空、默认值和注释，所以继承它的表接口可以直接用 `db.schema().check(...)` 核对。三个库读回同一张表时生成的源码完全相同（默认值统一成 SQL 写法，例如 `'open'`）。

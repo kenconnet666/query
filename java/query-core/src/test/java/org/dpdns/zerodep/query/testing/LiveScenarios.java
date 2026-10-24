@@ -3,6 +3,8 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.ddl.Migration;
 import org.dpdns.zerodep.query.ddl.Migrator;
 import org.dpdns.zerodep.query.ddl.SchemaPlan;
+import org.dpdns.zerodep.query.ddl.SourceGenerator;
+import org.dpdns.zerodep.query.ddl.TableDef;
 import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
@@ -30,7 +32,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -610,6 +616,18 @@ public abstract class LiveScenarios {
         create.apply();
         SchemaPlan again = db.schema().check(Schemas.SItem.class, Schemas.SOwner.class);
         assertTrue(again.isEmpty(), again::toString);
+    }
+
+    @Test
+    void 从实库读回的表生成的父接口在三个库上相同() throws SQLException, IOException {
+        // 期望的源码就放在测试源码里，编译通过即证明生成的代码可用；QUERY_SPEC_WRITE=1 时重写它。
+        dropSchemaTables();
+        db.schema().plan(Schemas.SItem.class, Schemas.SOwner.class).apply();
+        TableDef table = db.schema().read("QUERY_IT", "S_ITEM");
+        String source = SourceGenerator.java(table, "org.dpdns.zerodep.query.testing.generated", SourceGenerator.typeName(table.name()), List.of());
+        Path file = RenderSpec.repositoryRoot().resolve("java/query-core/src/test/java/org/dpdns/zerodep/query/testing/generated/SItemColumns.java");
+        if (System.getenv("QUERY_SPEC_WRITE") != null) Files.writeString(file, source, StandardCharsets.UTF_8);
+        assertEquals(Files.readString(file, StandardCharsets.UTF_8), source);
     }
 
     @Test

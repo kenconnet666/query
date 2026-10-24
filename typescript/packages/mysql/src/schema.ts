@@ -1,4 +1,4 @@
-import { catalogNumber, catalogText, columnType, groupRows, SchemaSyntax, type Catalog, type ColumnDef, type ColumnType, type TableDef } from "@zerodep-dev/query-core";
+import { catalogDefault, catalogNumber, catalogText, columnType, groupRows, SchemaSyntax, type Catalog, type ColumnDef, type ColumnType, type TableDef } from "@zerodep-dev/query-core";
 
 /**
  * MySQL 的结构变更写法：列定义里写 NOT NULL、DEFAULT、AUTO_INCREMENT 和注释，改列用 MODIFY COLUMN 重写整列定义，
@@ -87,18 +87,24 @@ export class MysqlSchemaSyntax extends SchemaSyntax {
     // MySQL 为每个外键自动建一个同名索引，不算作声明之外的索引。
     const foreignNames = new Set(foreignKeys.map((f) => f.name));
     const indexRows = await catalog(`SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ${s} AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, ...key);
+    const [described] = await catalog(`SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ${s} AND TABLE_NAME = ?`, ...key);
     return {
       schema,
       name: table,
-      columns: columns.map((c) => ({
+      columns: columns.map((c) => {
+        const type = mysqlType(catalogText(c.data_type), catalogText(c.column_type), catalogNumber(c.character_maximum_length), catalogNumber(c.numeric_precision), catalogNumber(c.numeric_scale));
+        const extra = catalogText(c.extra);
+        return {
         name: catalogText(c.column_name),
-        type: mysqlType(catalogText(c.data_type), catalogText(c.column_type), catalogNumber(c.character_maximum_length), catalogNumber(c.numeric_precision), catalogNumber(c.numeric_scale)),
+        type,
         nullable: c.is_nullable === "YES",
-        defaultValue: catalogText(c.column_default),
-        identity: catalogText(c.extra).includes("auto_increment"),
+        // 表达式默认值（EXTRA 带 DEFAULT_GENERATED）在目录里就是 SQL；常量则去掉了引号。
+        defaultValue: extra.includes("DEFAULT_GENERATED") ? catalogText(c.column_default) : catalogDefault(c.column_default, type),
+        identity: extra.includes("auto_increment"),
         comment: catalogText(c.column_comment),
         previousName: "",
-      })),
+      };
+      }),
       primaryKey: indexRows.filter((i) => i.index_name === "PRIMARY").map((i) => catalogText(i.column_name)),
       indexes: groupRows(
         indexRows.filter((i) => i.index_name !== "PRIMARY" && !foreignNames.has(catalogText(i.index_name))),
@@ -106,7 +112,7 @@ export class MysqlSchemaSyntax extends SchemaSyntax {
         (rows) => ({ name: catalogText(rows[0]!.index_name), columns: rows.map((r) => catalogText(r.column_name)), unique: catalogNumber(rows[0]!.non_unique) === 0 }),
       ),
       foreignKeys,
-      comment: "",
+      comment: catalogText(described?.table_comment),
       external: false,
     };
   }

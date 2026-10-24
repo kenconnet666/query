@@ -107,17 +107,22 @@ public abstract class RenderSpec {
         assertEquals(List.of(), missing);
     }
 
-    /** spec/render at the repository root, found from the module directory Maven runs tests in. */
-    private static Path directory() {
+    /** spec/render at the repository root. */
+    private static Path directory() { return specDirectory("render"); }
+
+    /** spec/<name> at the repository root; created when missing. */
+    private static Path specDirectory(String name) {
+        try {
+            return Files.createDirectories(repositoryRoot().resolve("spec").resolve(name));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The repository root (the directory holding spec/), found from the module directory Maven runs tests in. */
+    static Path repositoryRoot() {
         for (Path p = Path.of("").toAbsolutePath(); p != null; p = p.getParent()) {
-            if (Files.isDirectory(p.resolve("spec"))) {
-                Path render = p.resolve("spec").resolve("render");
-                try {
-                    return Files.createDirectories(render);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            }
+            if (Files.isDirectory(p.resolve("spec"))) return p;
         }
         throw new IllegalStateException("No spec directory above " + Path.of("").toAbsolutePath());
     }

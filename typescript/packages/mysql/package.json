@@ -25,6 +25,9 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "query-pull-mysql": "./dist/pull.js"
+  },
   "files": [
     "dist",
     "src"

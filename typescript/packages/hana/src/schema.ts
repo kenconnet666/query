@@ -1,4 +1,4 @@
-import { catalogNumber, catalogText, columnType, groupRows, SchemaSyntax, type Catalog, type ColumnDef, type ColumnType, type IndexDef, type TableDef } from "@zerodep-dev/query-core";
+import { catalogDefault, catalogNumber, catalogText, columnType, groupRows, SchemaSyntax, type Catalog, type ColumnDef, type ColumnType, type IndexDef, type TableDef } from "@zerodep-dev/query-core";
 
 /** NVARCHAR 的最大长度。 */
 const MAX_NVARCHAR = 5000;
@@ -88,18 +88,22 @@ export class HanaSchemaSyntax extends SchemaSyntax {
         `FROM SYS.REFERENTIAL_CONSTRAINTS WHERE SCHEMA_NAME = ${s} AND TABLE_NAME = ? ORDER BY CONSTRAINT_NAME, POSITION`,
       ...key,
     );
+    const [described] = await catalog(`SELECT COMMENTS FROM SYS.TABLES WHERE SCHEMA_NAME = ${s} AND TABLE_NAME = ?`, ...key);
     return {
       schema,
       name: table,
-      columns: columns.map((c) => ({
+      columns: columns.map((c) => {
+        const type = hanaType(catalogText(c.data_type_name), catalogNumber(c.length), catalogNumber(c.scale));
+        return {
         name: catalogText(c.column_name),
-        type: hanaType(catalogText(c.data_type_name), catalogNumber(c.length), catalogNumber(c.scale)),
+        type,
         nullable: c.is_nullable === "TRUE",
-        defaultValue: catalogText(c.default_value),
+        defaultValue: catalogDefault(c.default_value, type),
         identity: catalogText(c.generation_type).includes("IDENTITY"),
         comment: catalogText(c.comments),
         previousName: "",
-      })),
+      };
+      }),
       primaryKey: indexRows.filter((i) => i.kind === "PRIMARY KEY").map((i) => catalogText(i.column_name)),
       indexes: groupRows(
         indexRows.filter((i) => i.kind !== "PRIMARY KEY"),
@@ -113,7 +117,7 @@ export class HanaSchemaSyntax extends SchemaSyntax {
         referencedTable: catalogText(rows[0]!.referenced_table_name),
         referencedColumns: rows.map((r) => catalogText(r.referenced_column_name)),
       })),
-      comment: "",
+      comment: catalogText(described?.comments),
       external: false,
     };
   }

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { ADD_PRIORITY, ADD_PRIORITY_CHANGED, BROKEN, CREATE_TASK, LipsBroken, LipsExternal, MTask, SItem, SItemV2, SItemV3, SOwner } from "../fixtures/schemas.js";
-import { MIGRATION_HISTORY, MIGRATION_LOCK } from "@zerodep-dev/query-core";
+import { generatedTypeName, MIGRATION_HISTORY, MIGRATION_LOCK, typescriptSource } from "@zerodep-dev/query-core";
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import {
   caseWhen,
@@ -657,6 +659,19 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await create.apply();
       const again = await db.schema().check(SItem, SOwner);
       assert.ok(again.isEmpty, again.toString());
+    });
+
+    it("从实库读回的表生成的基类在三个库上相同", async () => {
+      const { db } = live();
+      await dropSchemaTables(db);
+      await (await db.schema().plan(SItem, SOwner)).apply();
+      const table = await db.schema().read("QUERY_IT", "S_ITEM");
+      assert.ok(table !== undefined);
+      const source = typescriptSource(table, generatedTypeName(table.name));
+      // 期望的源码就是测试夹具，编译通过即证明生成的代码可用；QUERY_SPEC_WRITE=1 时重写它。
+      const file = fileURLToPath(new URL("../../src/fixtures/generated/SItemColumns.ts", import.meta.url));
+      if (process.env.QUERY_SPEC_WRITE !== undefined) writeFileSync(file, source, "utf8");
+      assert.equal(source, readFileSync(file, "utf8").replace(/\r\n/g, "\n"));
     });
 
     it("结构变更自动执行安全的差异且有风险的要显式允许", async () => {

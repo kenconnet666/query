@@ -113,6 +113,9 @@ export const integer: SqlType<number> = type(
   },
 );
 
+/** 小整数：查询和写入与 {@link integer} 相同，只在结构变更里写成 SMALLINT。 */
+export const smallint: SqlType<number> = Object.freeze({ ...integer, name: "smallint" });
+
 /** 任意大小的整数，对应 JavaScript 的 bigint。 */
 export const bigint: SqlType<bigint> = type(
   "bigint",
