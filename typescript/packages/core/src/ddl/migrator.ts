@@ -1,7 +1,7 @@
 import type { Dialect, DialectClass } from "../sql/dialect.js";
 import type { Rendered } from "../sql/writer.js";
 import type { Write } from "../write/write.js";
-import { columnType, type ColumnDef, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef } from "./model.js";
+import { columnType, type ColumnDef, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./model.js";
 import type { SchemaSyntax } from "./syntax.js";
 
 /** Node 的 crypto，只取用到的部分；核心包不依赖 Node 的类型声明。 */
@@ -39,6 +39,7 @@ export class TableBuilder {
   readonly #indexes: IndexDef[] = [];
   readonly #foreignKeys: ForeignKeyDef[] = [];
   #comment = "";
+  readonly #options: TableOption[] = [];
 
   constructor(
     readonly schema: string,
@@ -96,9 +97,15 @@ export class TableBuilder {
     return this;
   }
 
+  /** 只在 dialect 上加在建表语句末尾的选项，例如分区：`option(PostgresDialect, 'PARTITION BY RANGE ("DAY")')`。 */
+  option(dialect: DialectClass, sql: string): this {
+    this.#options.push({ dialect, sql });
+    return this;
+  }
+
   /** 完成。 */
   build(): TableDef {
-    return { schema: this.schema, name: this.name, columns: [...this.#columns], primaryKey: [...this.#primaryKey], indexes: [...this.#indexes], foreignKeys: [...this.#foreignKeys], comment: this.#comment, external: false };
+    return { schema: this.schema, name: this.name, columns: [...this.#columns], primaryKey: [...this.#primaryKey], indexes: [...this.#indexes], foreignKeys: [...this.#foreignKeys], comment: this.#comment, external: false, options: [...this.#options] };
   }
 
   /** 改最近加的一列。 */

@@ -10,7 +10,6 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
-import org.dpdns.zerodep.query.table.Filtering;
 import org.dpdns.zerodep.query.table.Ref;
 
 import java.util.List;
@@ -65,7 +64,7 @@ public final class JoinDelete<T extends Entity, S extends Entity> implements Wri
     public JoinDelete<T, S> physically() { return new JoinDelete<>(target, source, on, true); }
 
     /** 两张表都不套用全局过滤器，也不加逻辑删除的条件。 */
-    public JoinDelete<T, S> unfiltered() { return new JoinDelete<>(target.filtering(Filtering.OFF), source, on, physical); }
+    public JoinDelete<T, S> unfiltered() { return new JoinDelete<>(target.filtering(target.filtering().off()), source, on, physical); }
 
     /** 两张表都不套用这些名字的全局过滤器。 */
     public JoinDelete<T, S> unfiltered(String filter, String... more) {

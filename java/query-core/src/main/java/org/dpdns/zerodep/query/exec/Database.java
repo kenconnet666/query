@@ -21,6 +21,9 @@ import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.table.Col;
+import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.ShardRule;
+import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
@@ -83,6 +86,7 @@ public abstract class Database {
         attributes.put(SourceFilters.class, filters);
         attributes.put(NamingStrategy.class, config.naming);
         attributes.put(Fills.class, new Fills(config.fills, config.generators));
+        attributes.put(Sharding.class, config.shards.isEmpty() ? Sharding.NONE : new Sharding(config.shards));
         Map<String, String> schemas = Map.copyOf(config.schemas);
         UnaryOperator<String> schemaMapping = config.schemaMapping;
         attributes.put(SqlWriter.SCHEMAS, (UnaryOperator<String>) schema -> schemas.getOrDefault(schema, schemaMapping.apply(schema)));
@@ -371,7 +375,8 @@ public abstract class Database {
     public SchemaTools schema() {
         SchemaSyntax syntax = dialect.schemaSyntax();
         UnaryOperator<String> schemas = (UnaryOperator<String>) settings.attributes().get(SqlWriter.SCHEMAS);
-        return new SchemaTools(syntax, settings.naming(), schemas, this::catalogRows, statements -> runStatements(statements, syntax.transactionalDdl()));
+        return new SchemaTools(syntax, settings.naming(), schemas, (Sharding) settings.attributes().get(Sharding.class), this::catalogRows,
+            statements -> runStatements(statements, syntax.transactionalDdl()));
     }
 
     /**
@@ -504,6 +509,9 @@ public abstract class Database {
         /** 按名字替换的 schema。 */
         private final Map<String, String> schemas = new HashMap<>();
 
+        /** 同库分表的表和规则。 */
+        private final Map<Class<?>, ShardRule> shards = new HashMap<>();
+
         /** 其余 schema 的替换规则，默认不变。 */
         private UnaryOperator<String> schemaMapping = UnaryOperator.identity();
 
@@ -579,6 +587,16 @@ public abstract class Database {
         /** 同上，按规则替换没有用 {@link #schema(String, String)} 单独指定的 schema，例如 {@code schema(s -> s + "_TEST")}。 */
         public Config schema(UnaryOperator<String> mapping) {
             this.schemaMapping = Objects.requireNonNull(mapping, "mapping");
+            return this;
+        }
+
+        /**
+         * 把 table 分成同库的多张物理表，例如按月：{@code shard(Event.class, ShardRule.monthly("createdOn", YearMonth.of(2025, 1), YearMonth.of(2026, 12)))}。
+         * 之后查询按 WHERE 里分表键的条件选表、写成 UNION ALL，写入按行或按条件写到对应的表；推不出来时报错，
+         * 除非语句写了 {@code allShards()} 或 {@code onShards(...)}。{@code db.schema()} 按物理表建表和比较。
+         */
+        public Config shard(Class<? extends Entity> table, ShardRule rule) {
+            shards.put(Objects.requireNonNull(table, "table"), Objects.requireNonNull(rule, "rule"));
             return this;
         }
 

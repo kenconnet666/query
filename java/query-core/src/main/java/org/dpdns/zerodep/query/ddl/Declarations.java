@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.ddl;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ForeignKey;
 import org.dpdns.zerodep.query.annotation.Index;
+import org.dpdns.zerodep.query.annotation.TableOption;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
@@ -61,7 +62,8 @@ public final class Declarations {
             foreignKeys.add(new TableDef.ForeignKey(f.name(), columnNames(meta, f.columns(), naming), schema(target.schema(), schemas), target.table(),
                 columnNames(target, referenced, naming)));
         }
-        return new TableDef(schema(meta.schema(), schemas), meta.table(), columns, primaryKey, indexes, foreignKeys, t.comment(), t.external());
+        List<TableDef.Option> options = Arrays.stream(table.getAnnotationsByType(TableOption.class)).map(o -> new TableDef.Option(o.dialect(), o.value())).toList();
+        return new TableDef(schema(meta.schema(), schemas), meta.table(), columns, primaryKey, indexes, foreignKeys, t.comment(), t.external(), options);
     }
 
     /** 声明的 schema 换成实际的名字；没有 schema 时为空串。 */

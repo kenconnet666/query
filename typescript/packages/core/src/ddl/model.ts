@@ -1,4 +1,5 @@
 import { columnName, entityMeta, type NamingStrategy, type PropertyMeta, type Table } from "../schema/metadata.js";
+import type { DialectClass } from "../sql/dialect.js";
 
 /** 类型族。TEXT、BYTES 有长度，DECIMAL 有精度和小数位，CLOB、BLOB 不限长度。 */
 export type ColumnKind = "TEXT" | "CLOB" | "DECIMAL" | "SMALLINT" | "INTEGER" | "BIGINT" | "DOUBLE" | "BOOLEAN" | "DATE" | "TIMESTAMP" | "BYTES" | "BLOB";
@@ -93,6 +94,14 @@ export interface TableDef {
   readonly comment: string;
   /** 是否不归本库管，见 `@table(name, { external: true })`。 */
   readonly external: boolean;
+  /** 各方言加在建表语句末尾的选项（`@table` 的 `options`），只在声明里有。 */
+  readonly options?: readonly TableOption[];
+}
+
+/** 只在 dialect（含子类）上加在建表语句末尾的 sql，例如原生分区。 */
+export interface TableOption {
+  readonly dialect: DialectClass;
+  readonly sql: string;
 }
 
 /** 按列名（不分大小写）找列。 */
@@ -153,6 +162,7 @@ export function declaredTable(table: Table<unknown>, naming: NamingStrategy, sch
     foreignKeys,
     comment: meta.table.comment ?? "",
     external: meta.table.external ?? false,
+    options: meta.table.options ?? [],
   });
 }
 

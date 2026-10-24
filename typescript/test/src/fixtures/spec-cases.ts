@@ -71,6 +71,7 @@ import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
 import * as writes from "./writes.js";
+import { ShEvent, ShOrder } from "./shards.js";
 import { insertInto, update, type Write } from "@zerodep-dev/query-core";
 import { allOf, anyOf, avgDistinct, bool, cumeDist, keys, nthValue, percentRank, stddevPop, stddevSamp, sumDistinct, varPop, varSamp } from "@zerodep-dev/query-core";
 
@@ -286,6 +287,28 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "subquery-comparisons": { filtered: true, query: () => subqueryComparisons() },
   statistics: plain(() => statistics()),
   "distribution-windows": plain(() => distributionWindows()),
+  "shard-month-range": plain(() =>
+    from(ShEvent)
+      .where((e) => e.day.range("2026-01-15", "2026-03-01"))
+      .groupBy((e) => e.note)
+      .select((e) => ({ note: e.note, total: sum(e.amount) })),
+  ),
+  "shard-single": plain(() =>
+    from(ShEvent)
+      .where((e) => all(e.day.eq("2026-02-10"), like(e.note, "a%")))
+      .select((e) => e.id),
+  ),
+  "shard-modulo-in": plain(() =>
+    from(ShOrder)
+      .where((o) => any(o.customer.in([1, 3]), o.customer.eq(5)))
+      .select((o) => ({ customer: o.customer, total: o.total })),
+  ),
+  "shard-all": plain(() => from(ShOrder).allShards().select(() => count())),
+  "shard-update": plain(() =>
+    update(ShEvent)
+      .set(() => ({ note: "x" }))
+      .where((e) => e.day.between("2026-03-01", "2026-03-31")),
+  ),
   "group-join": { filtered: true, query: () => groupJoin() },
   "workflow-todo": plain(() => wf.todo("alice", ["managers", "leads"], Object.assign(new wf.TodoSearch(), { process: "leave", name: "app" }))),
   "workflow-variables": plain(() => wf.instancesByVariables()),

@@ -90,8 +90,7 @@ export abstract class Expr<T> implements Renderable {
     if (!(low instanceof Expr) && !(high instanceof Expr) && (skips(low) || skips(high))) {
       return all(this.ge(low as NonNullable<T> | null | undefined), this.le(high as NonNullable<T> | null | undefined));
     }
-    const [lo, hi] = [this.#operand(low), this.#operand(high)];
-    return condition((w) => w.render(this).sql(" BETWEEN ").render(lo).sql(" AND ").render(hi));
+    return new Between(this, this.#operand(low), this.#operand(high));
   }
 
   /**
@@ -330,11 +329,37 @@ export function any(...conds: readonly Cond[]): Cond {
   const list = kept(conds);
   if (list.length === 0) return Cond.EMPTY;
   if (list.length === 1) return list[0]!;
-  return condition((w) => {
+  return new Disjunction(list);
+}
+
+/** 用 OR 连接的多个条件；保留各项，分表按它选表。 */
+export class Disjunction extends Cond {
+  constructor(readonly parts: readonly Cond[]) {
+    super();
+  }
+
+  /** 写出 `((a) OR (b) ...)`：每个操作数都加括号，OR 里的 AND 才保持原意。 */
+  render(w: SqlWriter): void {
     w.sql("(");
-    list.forEach((c, i) => w.sql(i > 0 ? " OR (" : "(").render(c).sql(")"));
+    this.parts.forEach((c, i) => w.sql(i > 0 ? " OR (" : "(").render(c).sql(")"));
     w.sql(")");
-  });
+  }
+}
+
+/** `e BETWEEN low AND high`；保留各部分，分表按它选表。 */
+export class Between extends Cond {
+  constructor(
+    readonly e: Renderable,
+    readonly low: Renderable,
+    readonly high: Renderable,
+  ) {
+    super();
+  }
+
+  /** 写出 `e BETWEEN low AND high`。 */
+  render(w: SqlWriter): void {
+    w.render(this.e).sql(" BETWEEN ").render(this.low).sql(" AND ").render(this.high);
+  }
 }
 
 /** 条件取反：NOT (c)。 */
@@ -370,20 +395,34 @@ export class Comparison extends Cond {
 /** IN / NOT IN 值列表；超过方言上限时拆成多个谓词，IN 用 OR 连接，NOT IN 用 AND 连接。 */
 function inList(e: Expr<unknown>, values: readonly Expr<unknown>[], negate: boolean): Cond {
   if (values.length === 0) return negate ? TRUE : FALSE;
-  const keyword = negate ? " NOT IN (" : " IN (";
-  return condition((w) => {
+  return new InList(e, values, negate);
+}
+
+/** IN / NOT IN 值列表；保留各部分，分表按它选表。 */
+export class InList extends Cond {
+  constructor(
+    readonly e: Expr<unknown>,
+    readonly values: readonly Expr<unknown>[],
+    readonly negate: boolean,
+  ) {
+    super();
+  }
+
+  /** 写出 `e IN (...)`；超过方言上限时拆成多个谓词，IN 用 OR 连接，NOT IN 用 AND 连接。 */
+  render(w: SqlWriter): void {
+    const keyword = this.negate ? " NOT IN (" : " IN (";
     const max = Math.max(1, w.dialect.maxInListSize);
-    if (values.length <= max) {
-      w.render(e).sql(keyword).join(values, ", ").sql(")");
+    if (this.values.length <= max) {
+      w.render(this.e).sql(keyword).join(this.values, ", ").sql(")");
       return;
     }
     w.sql("(");
-    for (let from = 0; from < values.length; from += max) {
-      if (from > 0) w.sql(negate ? " AND " : " OR ");
-      w.render(e).sql(keyword).join(values.slice(from, from + max), ", ").sql(")");
+    for (let from = 0; from < this.values.length; from += max) {
+      if (from > 0) w.sql(this.negate ? " AND " : " OR ");
+      w.render(this.e).sql(keyword).join(this.values.slice(from, from + max), ", ").sql(")");
     }
     w.sql(")");
-  });
+  }
 }
 
 /** IN / NOT IN 子查询。 */
@@ -473,7 +512,7 @@ export function toOrder(item: OrderItem): Order {
 // ---------- 表达式节点 ----------
 
 /** 绑定参数；写入器内联取值且方言有对应字面量时写成字面量。 */
-class Param<T> extends Expr<T> {
+export class Param<T> extends Expr<T> {
   constructor(
     type: SqlType<NonNullable<T>>,
     readonly value: T,

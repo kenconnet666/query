@@ -65,8 +65,8 @@ public abstract class RenderSpec {
 
     @TestFactory
     Stream<DynamicTest> 渲染结果与金样例一致() {
-        Database filtered = database(NO_CONNECTIONS, c -> c.filter(Client.class, r -> r.client().eq("100")));
-        Database plain = database(NO_CONNECTIONS, null);
+        Database filtered = database(NO_CONNECTIONS, c -> Shards.configure(c.filter(Client.class, r -> r.client().eq("100"))));
+        Database plain = database(NO_CONNECTIONS, Shards::configure);
         boolean write = System.getenv("QUERY_SPEC_WRITE") != null;
         return cases().entrySet().stream().map(e -> DynamicTest.dynamicTest(dialect() + " 渲染 " + e.getKey() + " 与金样例一致", () -> {
             Database db = e.getValue().filtered() ? filtered : plain;

@@ -165,6 +165,20 @@ public final class SpecCases {
         cases.put("subquery-comparisons", SpecCase.filtered(SpecCases::subqueryComparisons));
         cases.put("statistics", SpecCase.plain(SpecCases::statistics));
         cases.put("distribution-windows", SpecCase.plain(SpecCases::distributionWindows));
+        cases.put("shard-month-range", SpecCase.plain(() -> from(Shards.ShEvent.class)
+            .where(e -> e.day().range(LocalDate.of(2026, 1, 15), LocalDate.of(2026, 3, 1)))
+            .groupBy(e -> e.note())
+            .select(e -> cols(e.note(), sum(e.amount()).as("total")))));
+        cases.put("shard-single", SpecCase.plain(() -> from(Shards.ShEvent.class)
+            .where(e -> all(e.day().eq(LocalDate.of(2026, 2, 10)), like(e.note(), "a%")))
+            .select(e -> e.id())));
+        cases.put("shard-modulo-in", SpecCase.plain(() -> from(Shards.ShOrder.class)
+            .where(o -> any(o.customer().in(List.of(1, 3)), o.customer().eq(5)))
+            .select(o -> cols(o.customer(), o.total()))));
+        cases.put("shard-all", SpecCase.plain(() -> from(Shards.ShOrder.class).allShards().select(o -> count())));
+        cases.put("shard-update", SpecCase.plain(() -> update(Shards.ShEvent.class)
+            .set(e -> e.note().to("x"))
+            .where(e -> e.day().between(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31)))));
         return cases;
     }
 

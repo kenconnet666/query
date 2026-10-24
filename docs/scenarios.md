@@ -91,7 +91,7 @@
 | 事务 | 自带事务管理，或接入 Spring | 只通过 `ConnectionProvider` 取连接；`query-spring` 用 `DataSourceUtils` 加入外层的 `@Transactional`（Java）；TS 把事务中的连接交给驱动适配 | 1 |
 | 结果缓存 | `sql-cache` 模块 | `QueryCache` SPI，自带进程内的 TTL 实现；缓存解码后的原始行 | 1 |
 | SQL 日志与测试 | `SQLParameterPrintFormat`、监听器 | `QueryListener`；`printSql` 按 MyBatis 格式打印；`debugSql()` 写回参数；`db.capture(...)` 收集语句；空跑连接 | 1 / 2.0 |
-| 分库分表 | sharding 模块 | — | — |
+| 分库分表 | sharding 模块：结果归并、跨库路由 | 原生分区用 `@TableOption`（TS `options`）写方言的分区子句；同库物理分表注册 `ShardRule`（按月、取模、自定义），按 WHERE 选表、写成 `UNION ALL`，写入按行路由，推不出来时报错；跨库交给 ShardingSphere | 2.0 |
 | 插入、更新、删除 | `insertable`、`updatable`、`deletable` | `insertInto(T).values(rows)` / `.from(query)`、`update(T).set(...).where(...)`、`deleteFrom(T).where(...)`；没有 WHERE 报错，`.all()` 放行；`expect(n)` 校验行数；见 [0007](decisions/0007-writes.md) | 2.0 |
 | 按主键写、乐观锁 | `@Version`、按实体更新 | `byId(rows)`：WHERE 主键加旧版本，SET 版本加一，冲突时抛异常；`skipEmpty().byId` 只更新非空属性 | 2.0 |
 | 主键生成 | `@Column(generatedKey)`、主键生成器 | `@Generated` 加 `db.insertKeys(insert)` 取回数据库生成的值；不做应用侧的主键生成器 | 2.0 |

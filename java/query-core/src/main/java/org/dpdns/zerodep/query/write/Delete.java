@@ -10,7 +10,6 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
-import org.dpdns.zerodep.query.table.Filtering;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,7 +71,7 @@ public final class Delete<T extends Entity> implements Write {
     public Delete<T> skipEmpty() { return new Delete<>(target.skipEmpty(), byId, physical); }
 
     /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件。 */
-    public Delete<T> unfiltered() { return new Delete<>(target.filtering(Filtering.OFF), byId, physical); }
+    public Delete<T> unfiltered() { return new Delete<>(target.filtering(target.filtering().off()), byId, physical); }
 
     /** 不套用这些名字的全局过滤器，其余照常。 */
     public Delete<T> unfiltered(String filter, String... more) { return new Delete<>(target.filtering(target.filtering().without(filter, more)), byId, physical); }
@@ -94,9 +93,26 @@ public final class Delete<T extends Entity> implements Write {
 
     /** {@code DELETE FROM 表 别名 WHERE ...}，byId 时每行一条；有逻辑删除列时改写成把它设为已删除的 UPDATE。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
-        if (byId == null) return List.of(statement(writers.get(), Cond.EMPTY));
-        return byId.rows().stream().map(row -> statement(writers.get(), byId.locate(target.ref(), row))).toList();
+        SqlWriter probe = writers.get();
+        if (byId == null) {
+            List<String> shards = target.shards(probe);
+            if (shards == null) return List.of(statement(probe, Cond.EMPTY));
+            return shards.stream().map(t -> statement(target.on(writers.get(), t), Cond.EMPTY)).toList();
+        }
+        List<Rendered> out = new ArrayList<>();
+        for (Object row : byId.rows()) {
+            List<String> shards = target.shards(probe, byId, row);
+            if (shards == null) out.add(statement(writers.get(), byId.locate(target.ref(), row)));
+            else for (String t : shards) out.add(statement(target.on(writers.get(), t), byId.locate(target.ref(), row)));
+        }
+        return out;
     }
+
+    /** 本语句写全部分表，不按条件选表（见 {@code Config.shard(...)}）。 */
+    public Delete<T> allShards() { return new Delete<>(target.filtering(target.filtering().allShards()), byId, physical); }
+
+    /** 本语句只写分表的这些物理表。 */
+    public Delete<T> onShards(String table, String... more) { return new Delete<>(target.filtering(target.filtering().onShards(table, more)), byId, physical); }
 
     /** 写出一条 DELETE 或逻辑删除的 UPDATE；located 是 byId 定位一行的条件。 */
     @SuppressWarnings({"unchecked", "rawtypes"})

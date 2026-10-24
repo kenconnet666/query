@@ -11,8 +11,8 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
-import org.dpdns.zerodep.query.table.Filtering;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
@@ -82,7 +82,7 @@ public final class JoinUpdate<T extends Entity, S extends Entity> implements Wri
     }
 
     /** 两张表都不套用全局过滤器，也不加逻辑删除的条件。 */
-    public JoinUpdate<T, S> unfiltered() { return new JoinUpdate<>(target.filtering(Filtering.OFF), source, on, sets); }
+    public JoinUpdate<T, S> unfiltered() { return new JoinUpdate<>(target.filtering(target.filtering().off()), source, on, sets); }
 
     /** 两张表都不套用这些名字的全局过滤器。 */
     public JoinUpdate<T, S> unfiltered(String filter, String... more) {
@@ -117,6 +117,10 @@ public final class JoinUpdate<T extends Entity, S extends Entity> implements Wri
      * 没有 where 条件又没有 all() 时报错；条件或值用到导航关系时报错。statement 用于报错。
      */
     static JoinWrite parts(SqlWriter w, Target<?> target, Ref<?> source, Cond on, List<Assignment> assignments, String statement) {
+        Sharding sharding = Sharding.of(w);
+        if (sharding.rule(target.ref().entity()) != null || sharding.rule(source.entity()) != null) {
+            throw new UnsupportedOperationException(statement + " cannot use a sharded table; update or delete each shard with update(...) or deleteFrom(...)");
+        }
         Cond own = Nodes.all(target.where());
         if (own.isEmpty() && !target.everyRow()) {
             throw new IllegalStateException(statement + " without where(...) would touch every joined row of " + target.ref().entity().getSimpleName()

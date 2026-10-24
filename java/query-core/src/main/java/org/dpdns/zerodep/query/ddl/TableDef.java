@@ -1,5 +1,7 @@
 package org.dpdns.zerodep.query.ddl;
 
+import org.dpdns.zerodep.query.dialect.Dialect;
+
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -16,9 +18,19 @@ import java.util.Optional;
  * @param foreignKeys 外键
  * @param comment     表的注释，没有时为空串
  * @param external    是否不归本库管，见 {@code @Table(external = true)}
+ * @param options     各方言加在建表语句末尾的选项（{@code @TableOption}），只在声明里有
  */
 public record TableDef(String schema, String name, List<Column> columns, List<String> primaryKey, List<Index> indexes,
-                       List<ForeignKey> foreignKeys, String comment, boolean external) {
+                       List<ForeignKey> foreignKeys, String comment, boolean external, List<Option> options) {
+    /** 没有建表选项的表，例如从系统目录读回的。 */
+    public TableDef(String schema, String name, List<Column> columns, List<String> primaryKey, List<Index> indexes, List<ForeignKey> foreignKeys,
+                    String comment, boolean external) {
+        this(schema, name, columns, primaryKey, indexes, foreignKeys, comment, external, List.of());
+    }
+
+    /** 只在 dialect（含子类）上加在建表语句末尾的 sql。 */
+    public record Option(Class<? extends Dialect> dialect, String sql) { }
+
     /**
      * 一列。
      *
@@ -43,6 +55,7 @@ public record TableDef(String schema, String name, List<Column> columns, List<St
         primaryKey = List.copyOf(primaryKey);
         indexes = List.copyOf(indexes);
         foreignKeys = List.copyOf(foreignKeys);
+        options = List.copyOf(options);
     }
 
     /** 按列名（不分大小写）找列。 */

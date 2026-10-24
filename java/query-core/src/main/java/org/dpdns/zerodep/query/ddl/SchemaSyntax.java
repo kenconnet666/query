@@ -56,6 +56,9 @@ public abstract class SchemaSyntax {
         }
         if (!t.primaryKey().isEmpty()) sql.append(", PRIMARY KEY (").append(names(t.primaryKey())).append(")");
         sql.append(")").append(tableOptions(t));
+        for (TableDef.Option o : t.options()) {
+            if (o.dialect().isInstance(dialect)) sql.append(" ").append(o.sql());
+        }
         out.add(sql.toString());
         out.addAll(comments(t));
         for (TableDef.Index i : t.indexes()) out.add(createIndex(t, i));
@@ -65,7 +68,7 @@ public abstract class SchemaSyntax {
     /** CREATE TABLE 的关键字；HANA 写成 {@code CREATE COLUMN TABLE}。 */
     protected String createKeyword() { return "CREATE TABLE"; }
 
-    /** 建表语句末尾的选项，例如 MySQL 的表注释；默认没有。 */
+    /** 建表语句末尾、各方言的 {@code @TableOption} 之前的选项，例如 MySQL 的表注释；默认没有。 */
     protected String tableOptions(TableDef t) { return ""; }
 
     /** 表和列的注释语句；默认写成 {@code COMMENT ON ... IS '...'}，MySQL 写在列定义和表选项里。 */

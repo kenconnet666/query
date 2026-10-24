@@ -178,13 +178,19 @@ public final class SelectSpec {
     }
 
     /** 本条 SELECT 不套用全局过滤器，也不加逻辑删除的条件。 */
-    public SelectSpec unfiltered() { return filtering(Filtering.OFF); }
+    public SelectSpec unfiltered() { return filtering(filtering.off()); }
 
     /** 本条 SELECT 不套用这些名字的全局过滤器，其余照常。 */
     public SelectSpec unfiltered(String first, String... more) { return filtering(filtering.without(first, more)); }
 
     /** 本条 SELECT 不加逻辑删除的条件，能看到已删除的行；全局过滤器照常。 */
     public SelectSpec withDeleted() { return filtering(filtering.withDeleted()); }
+
+    /** 本条 SELECT 读全部分表，不按条件选表。 */
+    public SelectSpec allShards() { return filtering(filtering.allShards()); }
+
+    /** 本条 SELECT 只读这些物理表。 */
+    public SelectSpec onShards(String first, String... more) { return filtering(filtering.onShards(first, more)); }
 
     /** 换一个过滤开关的副本。 */
     private SelectSpec filtering(Filtering f) {

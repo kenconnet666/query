@@ -41,6 +41,7 @@ import { dateFunctions, numberTextFunctions, timeFunctions, DeliverySearch, grou
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 import * as wf from "../fixtures/workflow.js";
 import * as writes from "../fixtures/writes.js";
+import { SHARDS, ShEvent } from "../fixtures/shards.js";
 
 /**
  * Connection settings for live tests, from the JDBC-style QUERY_{NAME}_URL / _USER / _PASSWORD the
@@ -968,6 +969,37 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await db.execute(insertInto(writes.Code).values({ id: "C2", code: "A" }));
       assert.deepEqual(await db.list(from(writes.Code).select((c) => c.id)), ["C2"]);
       assert.equal(await db.count(from(writes.Code).withDeleted().select((c) => c.id)), 2);
+    });
+
+    it("分表按条件读写各月的物理表", async () => {
+      const sharded = target.database(live().driver, { shards: SHARDS });
+      const plan = await sharded.schema().plan(ShEvent);
+      if (!plan.isEmpty) {
+        assert.equal(plan.changes.length, 3, plan.toString());
+        await plan.apply();
+      }
+      assert.ok((await sharded.schema().check(ShEvent)).isEmpty, "every month has its table");
+      await sharded.execute(deleteFrom(ShEvent).allShards().all());
+      await sharded.execute(
+        insertInto(ShEvent).values(
+          { id: 1n, day: "2026-01-05", amount: "1.50", note: "a" },
+          { id: 2n, day: "2026-01-20", amount: "2.00", note: "b" },
+          { id: 3n, day: "2026-02-03", amount: "4.00", note: "a" },
+          { id: 4n, day: "2026-03-09", amount: "8.00", note: "a" },
+        ),
+      );
+      const january = await sharded.one(from(ShEvent).onShards("SH_EVENT_202601").select(() => count()));
+      const march = await sharded.one(from(ShEvent).onShards("SH_EVENT_202603").select(() => count()));
+      assert.deepEqual([Number(january), Number(march)], [2, 1], "rows land in the table of their month");
+      const total = await sharded.one(from(ShEvent).where((e) => all(e.day.range("2026-01-01", "2026-03-01"), e.note.eq("a"))).select((e) => sum(e.amount)));
+      assert.equal(Number(total), 5.5);
+      assert.deepEqual(await sharded.list(from(ShEvent).allShards().where((e) => e.note.eq("a")).orderBy((e) => e.id).select((e) => e.id)), [1n, 3n, 4n]);
+      assert.equal(await sharded.execute(update(ShEvent).set(() => ({ note: "c" })).where((e) => e.day.eq("2026-02-03"))), 1);
+      assert.equal(await sharded.execute(update(ShEvent).byId({ id: 4n, day: "2026-03-09", amount: "9.00", note: "a" })), 1);
+      assert.equal(await sharded.execute(deleteFrom(ShEvent).where((e) => e.day.between("2026-01-01", "2026-01-31"))), 2);
+      const rows = await sharded.list(from(ShEvent).allShards().orderBy((e) => e.id).select((e) => ({ id: e.id, note: e.note, amount: e.amount })));
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.note}:${Number(r.amount).toFixed(2)}`), ["3:c:4.00", "4:a:9.00"]);
+      await assert.rejects(sharded.list(from(ShEvent).where((e) => e.note.eq("a")).select((e) => e.id)), /Cannot tell which shards/);
     });
 
     it("追踪范围结束时只写回变了的行并把新版本写回对象", async () => {

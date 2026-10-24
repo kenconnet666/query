@@ -28,6 +28,9 @@ public final class Nodes {
             this.value = value;
         }
 
+        /** 绑定的值（转换前）；分表按它选表。 */
+        public T value() { return value; }
+
         /** 写入器内联常量且方言能表示该值时写字面量（取转换后的存储值），否则写绑定参数。 */
         @Override public void render(SqlWriter w) {
             Object stored = type().toDatabase(value);
@@ -45,6 +48,9 @@ public final class Nodes {
             super(type);
             this.value = value;
         }
+
+        /** 字面量的值（转换前）；分表按它选表。 */
+        public T value() { return value; }
 
         /** 写出转换后的存储值，所以类型转换器对字面量和对参数的作用一致。 */
         @Override public void render(SqlWriter w) { w.literal(type().toDatabase(value)); }
@@ -284,8 +290,25 @@ public final class Nodes {
     }
 
     /** {@code e BETWEEN low AND high}。 */
-    public static Cond between(Expr<?> e, Expr<?> low, Expr<?> high) {
-        return of(w -> w.render(e).sql(" BETWEEN ").render(low).sql(" AND ").render(high));
+    public static Cond between(Expr<?> e, Expr<?> low, Expr<?> high) { return new Between(e, low, high); }
+
+    /** {@code e BETWEEN low AND high}；保留各部分，分表按它选表。 */
+    public static final class Between extends Cond {
+        /** 被比较的表达式。 */
+        public final Expr<?> e;
+        /** 下界（含）。 */
+        public final Expr<?> low;
+        /** 上界（含）。 */
+        public final Expr<?> high;
+
+        Between(Expr<?> e, Expr<?> low, Expr<?> high) {
+            this.e = e;
+            this.low = low;
+            this.high = high;
+        }
+
+        /** 写出 {@code e BETWEEN low AND high}。 */
+        @Override public void render(SqlWriter w) { w.render(e).sql(" BETWEEN ").render(low).sql(" AND ").render(high); }
     }
 
     /** 后缀条件，如 {@code e IS NULL}：在 {@code e} 后面接 {@code suffix}。 */
@@ -302,7 +325,26 @@ public final class Nodes {
      */
     public static <T> Cond in(Expr<T> e, List<Expr<T>> values, boolean negate) {
         if (values.isEmpty()) return negate ? TRUE : FALSE;
-        return of(w -> {
+        return new InList(e, List.copyOf(values), negate);
+    }
+
+    /** IN / NOT IN 一组值；保留各部分，分表按它选表。 */
+    public static final class InList extends Cond {
+        /** 被比较的表达式。 */
+        public final Expr<?> e;
+        /** 各个值，不为空。 */
+        public final List<? extends Expr<?>> values;
+        /** 是否 NOT IN。 */
+        public final boolean negate;
+
+        InList(Expr<?> e, List<? extends Expr<?>> values, boolean negate) {
+            this.e = e;
+            this.values = values;
+            this.negate = negate;
+        }
+
+        /** 写出 {@code e IN (...)}；超过方言的单个 IN 上限时拆成多段。 */
+        @Override public void render(SqlWriter w) {
             int max = Math.max(1, w.dialect().maxInListSize());
             if (values.size() <= max) {
                 w.render(e).sql(negate ? " NOT IN (" : " IN (").join(values, ", ").sql(")");
@@ -314,7 +356,7 @@ public final class Nodes {
                 w.render(e).sql(negate ? " NOT IN (" : " IN (").join(values.subList(from, Math.min(values.size(), from + max)), ", ").sql(")");
             }
             w.sql(")");
-        });
+        }
     }
 
     /** {@code e IN (子查询)} 或 {@code e NOT IN (子查询)}。 */
@@ -385,15 +427,25 @@ public final class Nodes {
         }
         if (kept.isEmpty()) return Cond.EMPTY;
         if (kept.size() == 1) return kept.get(0);
-        // 每个操作数单独加括号，OR 里的 AND 才不会改变含义
-        return of(w -> {
+        return new Disjunction(kept);
+    }
+
+    /** 用 OR 连接的多个条件；保留各项，分表按它选表。 */
+    public static final class Disjunction extends Cond {
+        /** 各项条件，都不是空条件。 */
+        public final List<Cond> parts;
+
+        Disjunction(List<Cond> parts) { this.parts = List.copyOf(parts); }
+
+        /** 写出 {@code ((a) OR (b) ...)}：每个操作数单独加括号，OR 里的 AND 才不会改变含义。 */
+        @Override public void render(SqlWriter w) {
             w.sql("(");
-            for (int i = 0; i < kept.size(); i++) {
+            for (int i = 0; i < parts.size(); i++) {
                 if (i > 0) w.sql(" OR ");
-                w.sql("(").render(kept.get(i)).sql(")");
+                w.sql("(").render(parts.get(i)).sql(")");
             }
             w.sql(")");
-        });
+        }
     }
 
     /** 取反：{@code NOT (c)}；空条件取反后仍然是空条件。 */

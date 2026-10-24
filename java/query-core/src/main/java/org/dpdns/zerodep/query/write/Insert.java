@@ -18,6 +18,8 @@ import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.ShardRule;
+import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
@@ -204,7 +206,10 @@ public final class Insert<T extends Entity> implements Write {
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
         if (source != null) {
             SqlWriter w = writers.get();
-            head(w, source.labels().stream().map(l -> RowColumns.column(table, l, "the query's column")).toList());
+            if (Sharding.of(w).rule(table.type()) != null) {
+                throw new UnsupportedOperationException("insertInto(" + table.type().getSimpleName() + ").from(query) cannot pick a shard; insert rows with values(...)");
+            }
+            head(w, null, source.labels().stream().map(l -> RowColumns.column(table, l, "the query's column")).toList());
             w.sql("\n");
             QueryRenderer.named(w, source);
             return List.of(w.statement());
@@ -213,12 +218,13 @@ public final class Insert<T extends Entity> implements Write {
         for (Object row : rows) {
             SqlWriter w = writers.get();
             Values v = values(w, row);
+            String shard = shard(w, v);
             if (conflict != null) {
-                w.dialect().upsert(w, upsert(w, v));
+                w.dialect().upsert(w, upsert(w, v, shard));
                 out.add(w.statement());
                 continue;
             }
-            head(w, v.columns());
+            head(w, shard, v.columns());
             w.sql(" VALUES (").join(v.values(), ", ").sql(")");
             out.add(w.statement());
         }
@@ -227,6 +233,17 @@ public final class Insert<T extends Entity> implements Write {
 
     /** 一行要写的列和值，一一对应。 */
     private record Values(List<PropertyMeta> columns, List<Renderable> values) { }
+
+    /** 分表时这一行写到的物理表（按要写的分表键的值）；不分表时为 null。 */
+    private String shard(SqlWriter w, Values v) {
+        Sharding sharding = Sharding.of(w);
+        ShardRule rule = sharding.rule(table.type());
+        if (rule == null) return null;
+        for (int i = 0; i < v.columns().size(); i++) {
+            if (v.columns().get(i).name().equals(rule.key()) && v.values().get(i) instanceof Nodes.Param<?> p) return sharding.routeValue(table.type(), p.value());
+        }
+        throw new IllegalArgumentException("A row inserted into " + table.type().getSimpleName() + " needs its shard key " + rule.key() + " as a value");
+    }
 
     /**
      * 一行要写的列和值：行里的属性，加上数据库实例的插入时填充（覆盖同名的属性），以及行里没有逻辑删除列时它的"未删除"值
@@ -267,7 +284,7 @@ public final class Insert<T extends Entity> implements Write {
     }
 
     /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列；更新时的填充作为另外更新的列。 */
-    private Upsert upsert(SqlWriter w, Values v) {
+    private Upsert upsert(SqlWriter w, Values v, String shard) {
         NamingStrategy naming = naming(w);
         List<String> names = v.columns().stream().map(PropertyMeta::name).toList();
         for (String k : conflict.keys()) {
@@ -278,13 +295,13 @@ public final class Insert<T extends Entity> implements Write {
         List<String> updates = (conflict.updates() != null ? conflict.updates()
                 : names.stream().filter(n -> !conflict.keys().contains(n) && !table.writes().writeOnce().contains(n)).toList())
             .stream().map(u -> table.property(u).columnName(naming)).filter(c -> !assignments.containsKey(c)).toList();
-        return new Upsert(this::tableName, v.columns().stream().map(p -> p.columnName(naming)).toList(), v.values(),
+        return new Upsert(x -> tableName(x, shard), v.columns().stream().map(p -> p.columnName(naming)).toList(), v.values(),
             conflict.keys().stream().map(k -> table.property(k).columnName(naming)).toList(), updates, assignments);
     }
 
-    /** 写出 {@code schema.表名}。 */
-    private void tableName(SqlWriter w) {
-        w.table(table.schema(), table.table());
+    /** 写出 {@code schema.表名}；shard 不为 null 时写这张物理表。 */
+    private void tableName(SqlWriter w, String shard) {
+        w.table(table.schema(), shard == null ? table.table() : shard);
     }
 
     /** 写入器上的命名策略。 */
@@ -293,10 +310,10 @@ public final class Insert<T extends Entity> implements Write {
         return naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming;
     }
 
-    /** 写出 {@code INSERT INTO 表 (列, ...)}。 */
-    private void head(SqlWriter w, List<PropertyMeta> written) {
+    /** 写出 {@code INSERT INTO 表 (列, ...)}；shard 不为 null 时写这张物理表。 */
+    private void head(SqlWriter w, String shard, List<PropertyMeta> written) {
         w.sql("INSERT INTO ");
-        tableName(w);
+        tableName(w, shard);
         w.sql(" (");
         NamingStrategy naming = naming(w);
         for (int i = 0; i < written.size(); i++) {

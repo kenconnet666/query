@@ -7,6 +7,7 @@ import { Migrator, type Migration } from "../ddl/migrator.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 import { Tracker } from "./tracker.js";
+import { Sharding, type ShardConfig } from "../query/sharding.js";
 
 // ---------- 驱动 ----------
 
@@ -282,6 +283,11 @@ export interface DatabaseOptions {
   /** 执行前依次改写或拦截语句的钩子，见 {@link StatementInterceptor}。 */
   readonly interceptors?: readonly StatementInterceptor[];
   /**
+   * 同库分表，例如按月：`[shard(Event, monthly("day", "2025-01", "2026-12"))]`。之后查询按 WHERE 里分表键的条件选表、写成 UNION ALL，
+   * 写入按行或按条件写到对应的表；推不出来时报错，除非语句写了 `allShards()` 或 `onShards(...)`。`db.schema()` 按物理表建表和比较。
+   */
+  readonly shards?: readonly ShardConfig[];
+  /**
    * 表声明里的 schema 换成实际的名字，例如 SAP 各环境的 schema 不同：`{ ERP: "SAPHANADB" }`，或按规则 `(s) => s + "_TEST"`。
    * 查询、写语句和关系里的表都换；原生 SQL 文本不换。
    */
@@ -339,6 +345,7 @@ export abstract class Database {
     this.#settings = Object.freeze({
       filters: options.filters ?? [],
       fills: options.fills ?? [],
+      sharding: options.shards === undefined || options.shards.length === 0 ? Sharding.NONE : new Sharding(options.shards),
       ...(options.schemas === undefined ? {} : { schema: schemaMapping(options.schemas) }),
       ...(options.naming === undefined ? {} : { naming: options.naming }),
       ...(options.functions === undefined ? {} : { functions: options.functions }),
@@ -568,7 +575,7 @@ export abstract class Database {
   /** 结构变更：比较实体类的声明与实库并生成 DDL，例如 `await (await db.schema().plan(Note)).apply()`；见 {@link SchemaTools}。 */
   schema(): SchemaTools {
     const syntax = this.dialect.schemaSyntax;
-    return new SchemaTools(syntax, this.naming, this.#settings.schema ?? ((s: string) => s), (sql, ...parameters) => this.#catalog(sql, parameters), (statements) => this.#runStatements(statements, syntax.transactionalDdl));
+    return new SchemaTools(syntax, this.naming, this.#settings.schema ?? ((s: string) => s), (this.#settings.sharding as Sharding | undefined) ?? Sharding.NONE, (sql, ...parameters) => this.#catalog(sql, parameters), (statements) => this.#runStatements(statements, syntax.transactionalDdl));
   }
 
   /**

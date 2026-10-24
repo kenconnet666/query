@@ -1,6 +1,7 @@
 import type { NamingStrategy, Table } from "../schema/metadata.js";
 import { declaredTable, describeType, findColumn, integral, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnType, type IndexDef, type TableDef } from "./model.js";
 import type { Catalog, SchemaSyntax } from "./syntax.js";
+import type { Sharding } from "../query/sharding.js";
 
 /** 差异的处理方式：SAFE 自动执行，DESTRUCTIVE 要 {@link SchemaPlan.allowDestructive}，REPORT 只报告。 */
 export type Risk = "SAFE" | "DESTRUCTIVE" | "REPORT";
@@ -74,6 +75,7 @@ export class SchemaTools {
     readonly syntax: SchemaSyntax,
     readonly naming: NamingStrategy,
     readonly schemas: (schema: string) => string,
+    readonly sharding: Sharding,
     readonly catalog: Catalog,
     readonly executor: (statements: readonly string[]) => Promise<void>,
   ) {}
@@ -88,11 +90,34 @@ export class SchemaTools {
     return this.syntax.read(this.catalog, schema, table);
   }
 
-  /** 按声明建表的语句（不连库），外键在最后；外部表报错。 */
-  createTable(table: Table<unknown>): string[] {
+  /**
+   * 实际存在库里的表：分表时是每张物理表（表名换成物理表名，索引和外键名加上同样的后缀，免得在 schema 里重名），否则就是声明本身。
+   */
+  physical(table: Table<unknown>): TableDef[] {
     const t = this.declared(table);
-    if (t.external) throw new Error(`${table.name} is an external table; its DDL is not ours to write`);
-    return [...this.syntax.createTable(t), ...t.foreignKeys.map((f) => this.syntax.addForeignKey(t, f))];
+    const shards = this.sharding.tables(table);
+    if (shards.length === 0) return [t];
+    return shards.map((name) => {
+      const suffix = name.startsWith(t.name) ? name.slice(t.name.length) : `_${name}`;
+      return {
+        ...t,
+        name,
+        indexes: t.indexes.map((i) => ({ ...i, name: i.name + suffix })),
+        foreignKeys: t.foreignKeys.map((f) => ({ ...f, name: f.name + suffix })),
+      };
+    });
+  }
+
+  /** 按声明建表的语句（不连库），外键在最后；分表时每张物理表一份；外部表报错。 */
+  createTable(table: Table<unknown>): string[] {
+    const out: string[] = [];
+    const foreignKeys: string[] = [];
+    for (const t of this.physical(table)) {
+      if (t.external) throw new Error(`${table.name} is an external table; its DDL is not ours to write`);
+      out.push(...this.syntax.createTable(t));
+      foreignKeys.push(...t.foreignKeys.map((f) => this.syntax.addForeignKey(t, f)));
+    }
+    return [...out, ...foreignKeys];
   }
 
   /** 只检查不改：声明与实库的差异，外部表只核对已声明的列存在、类型相容。 */
@@ -104,10 +129,11 @@ export class SchemaTools {
   async plan(...tables: Table<unknown>[]): Promise<SchemaPlan> {
     const changes: Change[] = [];
     for (const table of tables) {
-      const declared = this.declared(table);
-      const actual = await this.read(declared.schema, declared.name);
-      if (declared.external) external(declared, actual, changes);
-      else this.#managed(declared, actual, changes);
+      for (const declared of this.physical(table)) {
+        const actual = await this.read(declared.schema, declared.name);
+        if (declared.external) external(declared, actual, changes);
+        else this.#managed(declared, actual, changes);
+      }
     }
     return new SchemaPlan(changes, false, this.executor);
   }

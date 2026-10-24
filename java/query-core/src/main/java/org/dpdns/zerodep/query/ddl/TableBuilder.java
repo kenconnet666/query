@@ -1,5 +1,7 @@
 package org.dpdns.zerodep.query.ddl;
 
+import org.dpdns.zerodep.query.dialect.Dialect;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -25,6 +27,7 @@ public final class TableBuilder {
     private final List<TableDef.Index> indexes = new ArrayList<>();
     private final List<TableDef.ForeignKey> foreignKeys = new ArrayList<>();
     private String comment = "";
+    private final List<TableDef.Option> options = new ArrayList<>();
 
     private TableBuilder(String schema, String name) {
         this.schema = schema == null ? "" : schema;
@@ -80,8 +83,14 @@ public final class TableBuilder {
         return this;
     }
 
+    /** 只在 dialect 上加在建表语句末尾的选项，例如分区：{@code option(PostgresDialect.class, "PARTITION BY RANGE (\"DAY\")")}。 */
+    public TableBuilder option(Class<? extends Dialect> dialect, String sql) {
+        options.add(new TableDef.Option(dialect, sql));
+        return this;
+    }
+
     /** 完成。 */
-    public TableDef build() { return new TableDef(schema, name, columns, primaryKey, indexes, foreignKeys, comment, false); }
+    public TableDef build() { return new TableDef(schema, name, columns, primaryKey, indexes, foreignKeys, comment, false, options); }
 
     /** 替换最近加的一列。 */
     private TableBuilder last(java.util.function.UnaryOperator<TableDef.Column> change) {

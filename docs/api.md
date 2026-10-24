@@ -987,3 +987,55 @@ public interface Lips extends LipsColumns {
 - `columns` 只生成列出的列（宽表通常只用几列），不写时生成全部列；`typeName` 缺省由表名推导（`S_ITEM` → `SItemColumns`），列方法名是列名的驼峰写法，与 Java 关键字或 `Entity` 的方法重名时加 `Column`。
 - `mvn query:pull -Dquery.only=LIPS` 只重新生成某几张表；内容没变的文件不重写。
 - 生成的注解带长度、精度、可空、默认值和注释，所以继承它的表接口可以直接用 `db.schema().check(...)` 核对。三个库读回同一张表时生成的源码完全相同（默认值统一成 SQL 写法，例如 `'open'`）。
+
+## 17. 分区与分表
+
+设计见 [0008](decisions/0008-schema-tracking-sharding.md) 第 6 条。按时间或客户把大表拆开有三种做法，本库支持前两种：
+
+### 原生分区
+
+表还是一张，由数据库按分区键裁剪；查询和写入完全不变，只在建表时加上方言的分区子句：
+
+```java
+@Table(schema = "APP", value = "EVENT_LOG")
+@TableOption(dialect = PostgresDialect.class, value = "PARTITION BY RANGE (\"DAY\")")
+@TableOption(dialect = MysqlDialect.class, value = "PARTITION BY RANGE COLUMNS(DAY) (PARTITION p2026 VALUES LESS THAN ('2027-01-01'), PARTITION pmax VALUES LESS THAN (MAXVALUE))")
+@TableOption(dialect = HanaDialect.class, value = "PARTITION BY RANGE (DAY) (PARTITION '2026-01-01' <= VALUES < '2027-01-01', PARTITION OTHERS)")
+public interface EventLog extends Entity {
+    @Id @Column("ID") Col<Long> id();
+    @Id @Column("DAY") Col<LocalDate> day();      // 三个库都要求分区键在主键里
+    @Column("AMOUNT") Col<BigDecimal> amount();
+}
+```
+
+- `@TableOption` 的文本原样加在 CREATE TABLE 末尾，只在对应的方言（含子类）上生效；迁移里用 `TableBuilder.option(dialect, sql)`。比较实库时不核对它。
+- PostgreSQL 的分区要另外建：`CREATE TABLE ... PARTITION OF ... FOR VALUES FROM (...) TO (...)` 或 `DEFAULT`，写在迁移的 `sql(PostgresDialect.class, ...)` 里。MySQL 分区表不能有外键。
+- 按时间拆表时优先用它。
+
+### 同库物理分表
+
+已经拆成多张表（例如每月一张 `EVENT_202601`）时，在数据库实例上注册规则，查询和写入照常写逻辑表：
+
+```java
+Database db = Postgres.database(dataSource, c -> c
+    .shard(Event.class, ShardRule.monthly("day", YearMonth.of(2025, 1), YearMonth.of(2026, 12)))   // EVENT_202501 .. EVENT_202612
+    .shard(Order.class, ShardRule.modulo("customer", 8)));                                       // ORDER_0 .. ORDER_7
+
+db.list(from(Event.class).where(e -> e.day().range(LocalDate.of(2026, 1, 15), LocalDate.of(2026, 3, 1))).select(...));
+// FROM (SELECT 列 FROM EVENT_202601 UNION ALL SELECT 列 FROM EVENT_202602) event WHERE event.DAY >= ? AND event.DAY < ?
+db.execute(insertInto(Event.class).values(rows));     // 每行写到它那个月的表
+```
+
+| 写法 | 说明 |
+| --- | --- |
+| `ShardRule.monthly(key, first, last)` | 每月一张 `表名_yyyyMM`；键是 `LocalDate` / `LocalDateTime`；等值、IN、范围都能选表 |
+| `ShardRule.modulo(key, n)` | `表名_0` 到 `表名_(n-1)`；整数键取模；等值、IN 能选表 |
+| `ShardRule.custom(key, tables, value -> table)` | 自己给出物理表和映射 |
+| `from(...).allShards()` / `.onShards("EVENT_202601")` | 不按条件、读全部或指定的分表；子查询没有自己的选择时沿用 |
+| `update(...)` / `deleteFrom(...)` 的 `allShards()`、`onShards(...)` | 同上，用于写语句 |
+
+- **选表**：只认 WHERE 里分表键与常量或参数的 `=`、`IN`、`BETWEEN`、`<`、`<=`、`>`、`>=`，AND 取交、OR 取并。推不出来时报错，提示加分表键条件或 `allShards()`，免得悄悄扫全部分表。选中一张时直接写那张表，多张时写成 `UNION ALL` 派生表，聚合、排序、分页都交给数据库；三个库都会把外层的其余条件推进各分支（见 0008 的验证）。选不出任何表时写成取不到行的派生表。
+- **写入**：插入按行的分表键写到对应的表；`update` / `deleteFrom` 按条件选表，每张表一条语句，期望行数按总数核对；`byId` 按行里分表键的值选表（行里没有分表键属性时要 `allShards()`）。改分表键报错（要先删再插）；`insertInto(...).from(query)` 和联表更新、删除不支持分表。
+- **限制**：一段 SELECT 里最多一张分表（另一张放进 CTE 或单独查询）；所有分表在同一个库，事务不变。
+- **建表**：`db.schema().plan(Event.class)` 按规则里的每张物理表比较和建表，索引和外键名加上同样的后缀；新的月份加进规则后再 `plan` 就会建出来。
+- **跨库分片**交给 ShardingSphere-JDBC 之类的数据源，本库无感知。

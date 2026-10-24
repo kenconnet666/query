@@ -2,6 +2,7 @@ import type { Many } from "../query/many.js";
 import type { Ref } from "../query/source.js";
 import type { Cond, Expr } from "../sql/expr.js";
 import { text, type SqlType } from "./types.js";
+import type { DialectClass } from "../sql/dialect.js";
 
 // 标准装饰器把元数据记录在 Symbol.metadata 上，而 Node 还没有定义它。编译后的类在
 // Symbol.metadata 已定义时才会读取它；实体模块总是先导入本包，所以在这里及时定义就够了。
@@ -90,6 +91,11 @@ export interface TableOptions {
   readonly comment?: string;
   readonly indexes?: readonly IndexOptions[];
   readonly foreignKeys?: readonly ForeignKeyOptions[];
+  /**
+   * 只在某个方言上加在 CREATE TABLE 末尾的选项，最常见的是原生分区：
+   * `options: [{ dialect: PostgresDialect, sql: 'PARTITION BY RANGE ("DAY")' }]`。比较实库时不核对它。
+   */
+  readonly options?: readonly { readonly dialect: DialectClass; readonly sql: string }[];
 }
 
 /**

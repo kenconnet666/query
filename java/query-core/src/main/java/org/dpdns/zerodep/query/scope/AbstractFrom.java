@@ -39,6 +39,12 @@ public abstract class AbstractFrom<S extends AbstractFrom<S>> {
     /** 本查询不加逻辑删除的条件，能看到已删除的行；全局过滤器照常，例如仍限定在当前租户。 */
     public final S withDeleted() { return rebuild(spec.withDeleted()); }
 
+    /** 本查询读分表的全部物理表，不按条件选表（见 {@code Config.shard(...)}）；子查询没有自己的选择时沿用。 */
+    public final S allShards() { return rebuild(spec.allShards()); }
+
+    /** 本查询只读分表的这些物理表，例如 {@code onShards("EVENT_202601")}；子查询没有自己的选择时沿用。 */
+    public final S onShards(String table, String... more) { return rebuild(spec.onShards(table, more)); }
+
     /**
      * 之后写的 WHERE、HAVING、连接条件里，与 null、空白字符串或空集合比较的条件直接省略，
      * 适合按请求参数筛选：{@code from(Likp.class).skipEmpty().where(h -> h.customer().eq(req.customer))}。

@@ -86,9 +86,11 @@ public final class Ref<E> {
         else Nodes.renderTemplate(w, property.read(), List.of(qualified));
     }
 
-    /** 写出 FROM 或 JOIN 里的来源及其别名。 */
+    /** 写出 FROM 或 JOIN 里的来源及其别名；分表时写出渲染器为这次出现选好的物理表（见 {@link Sharding}）。 */
+    @SuppressWarnings("unchecked")
     public void renderSource(SqlWriter w) {
-        source.renderSource(w);
+        if (w.state(this) instanceof List<?> shards) Sharding.renderSource(w, this, (List<String>) shards);
+        else source.renderSource(w);
         w.sql(" ").alias(alias(w));
     }
 

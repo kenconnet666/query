@@ -88,9 +88,17 @@ db.tracking(t -> {
    - 所有分表在同一个库，事务不变。新分表的建表语句由第 3 条的计划生成。
 3. **跨库分片**：交给 ShardingSphere-JDBC 之类的数据源，本库无感知。文档只承诺"按分片键过滤的简单查询"。
 
+实现时的取舍：
+
+- 原生分区不做方言包里的类型化写法，而是核心的 `@TableOption(dialect, sql)`（TS 是 `@table` 的 `options`）：三库的分区子句差别太大（PostgreSQL 的分区要另外建、MySQL 不能有外键、HANA 有 OTHERS），类型化写法只会是一层薄包装。它与迁移的 `sql(dialect, ...)` 同一个模式。
+- 分表规则注册在数据库实例上（`Config.shard` / 选项 `shards`），不写在表声明上：物理表清单随环境变化（新的月份、测试库只有几张表）。
+- 分表的显式选择放进 `Filtering`（与 `unfiltered()`、`withDeleted()` 同一处），查询和写语句都能用，也不用改生成的作用域类；子查询沿用外层的选择，这样导航到分表的一对多关系也能 `allShards()`。
+- 选表要读条件的结构，所以 `IN`、`BETWEEN`、`OR` 从渲染函数改成保留各部分的节点（`InList`、`Between`、`Disjunction`），渲染结果不变，金样例没有变化。
+- `UNION ALL` 的列按属性名排序，两端一致；分表的金样例 `shard-*` 两端逐字节相同。
+
 ## 代价与风险
 
 - 定位从"查询构建器"扩大到"带写入、结构变更和工作单元的数据访问库"，但仍不做级联、懒加载和对象图保存，范围要继续守住。
 - 实库读取和类型比较是三库差异最集中的地方，必须每个方言在实库上验证。
 - HANA 的 DDL 自动提交意味着迁移中途失败时库处于半完成状态，只能靠逐条记录状态和人工处理。
-- 物理分表的 `UNION ALL` 依赖数据库把条件推进各分支；条件推不进去的库（需实测）要在每个分支里重复条件。
+- 物理分表的 `UNION ALL` 依赖数据库把条件推进各分支。2026-10-24 在三个库上看了执行计划：外层 `WHERE x.NOTE = 'a'` 在 PostgreSQL 17（Append 下每个 Seq Scan 的 Filter）、MySQL 8.4（`Union all materialize` 下每个分支的 Filter）、HANA 2.0 SPS08（每个 TABLE SCAN 的 FILTER CONDITION）都推进了每个分支，所以不需要在分支里重复条件。

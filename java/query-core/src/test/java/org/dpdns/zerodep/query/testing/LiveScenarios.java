@@ -944,6 +944,37 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 分表按条件读写各月的物理表() {
+        Database sharded = database(live.connections(), Shards::configure);
+        SchemaPlan plan = sharded.schema().plan(Shards.ShEvent.class);
+        if (!plan.isEmpty()) {
+            assertEquals(3, plan.changes().size(), plan::toString);
+            plan.apply();
+        }
+        assertTrue(sharded.schema().check(Shards.ShEvent.class).isEmpty(), "every month has its table");
+        sharded.execute(deleteFrom(Shards.ShEvent.class).allShards().all());
+        sharded.execute(insertInto(Shards.ShEvent.class).values(
+            new Shards.ShEventRow(1L, LocalDate.of(2026, 1, 5), new BigDecimal("1.50"), "a"),
+            new Shards.ShEventRow(2L, LocalDate.of(2026, 1, 20), new BigDecimal("2.00"), "b"),
+            new Shards.ShEventRow(3L, LocalDate.of(2026, 2, 3), new BigDecimal("4.00"), "a"),
+            new Shards.ShEventRow(4L, LocalDate.of(2026, 3, 9), new BigDecimal("8.00"), "a")));
+        long january = sharded.one(from(Shards.ShEvent.class).onShards("SH_EVENT_202601").select(e -> count()));
+        long march = sharded.one(from(Shards.ShEvent.class).onShards("SH_EVENT_202603").select(e -> count()));
+        assertEquals(List.of(2L, 1L), List.of(january, march), "rows land in the table of their month");
+        assertEquals(0, new BigDecimal("5.50").compareTo(sharded.one(from(Shards.ShEvent.class)
+            .where(e -> all(e.day().range(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 1)), e.note().eq("a")))
+            .select(e -> sum(e.amount())))));
+        assertEquals(List.of(1L, 3L, 4L), sharded.list(from(Shards.ShEvent.class).allShards().where(e -> e.note().eq("a")).orderBy(e -> e.id()).select(e -> e.id())));
+        assertEquals(1, sharded.execute(update(Shards.ShEvent.class).set(e -> e.note().to("c")).where(e -> e.day().eq(LocalDate.of(2026, 2, 3)))));
+        assertEquals(1, sharded.execute(update(Shards.ShEvent.class).byId(new Shards.ShEventRow(4L, LocalDate.of(2026, 3, 9), new BigDecimal("9.00"), "a"))));
+        assertEquals(2, sharded.execute(deleteFrom(Shards.ShEvent.class).where(e -> e.day().between(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)))));
+        assertEquals(List.of("3:c:4.00", "4:a:9.00"), sharded.list(from(Shards.ShEvent.class).allShards().orderBy(e -> e.id())
+            .select(e -> cols(e.id(), e.note(), e.amount()))).stream()
+            .map(r -> r.get("id") + ":" + r.get("note") + ":" + ((BigDecimal) r.get("amount")).setScale(2)).toList());
+        assertThrows(IllegalStateException.class, () -> sharded.list(from(Shards.ShEvent.class).where(e -> e.note().eq("a")).select(e -> e.id())));
+    }
+
+    @Test
     void 具名过滤器与schema映射和按编码的枚举在实库上生效() {
         Database scoped = database(live.connections(), c -> c.filter("tenant", Writes.Tenanted.class, t -> t.tenant().eq("T9")).schema("APP", "QUERY_IT"));
         scoped.execute(deleteFrom(Writes.Note.class).unfiltered().all());

@@ -91,6 +91,8 @@ export interface RenderSettings {
   readonly fills?: unknown;
   /** 把表声明里的 schema 换成实际名字的规则，见 `DatabaseOptions.schemas`。 */
   readonly schema?: (schema: string) => string;
+  /** 数据库级的分表；写入器不解读，由查询渲染器和写语句读取。 */
+  readonly sharding?: unknown;
 }
 
 /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联引用不会被遮蔽。 */
@@ -99,6 +101,8 @@ class Aliases {
   readonly used = new Set<string>();
   /** 探查用的写入器记下渲染过程中引用到的数据源；普通写入器为 undefined。 */
   touched: Set<object> | undefined;
+  /** 一条语句内共享的渲染状态，见 {@link SqlWriter.state}。 */
+  readonly state = new Map<unknown, unknown>();
 }
 
 /** 文本块中参数占位符的标记；编号要到 {@link SqlWriter.statement} 时才定。 */
@@ -125,6 +129,17 @@ export class SqlWriter {
   /** 本次渲染的列命名策略，默认原样。 */
   get naming(): NamingStrategy {
     return this.settings.naming ?? NamingStrategy.AS_IS;
+  }
+
+  /** 一条语句内共享的渲染状态（例如分表的路由），子查询的写入器也看得到；没有时为 undefined。 */
+  state(key: unknown): unknown {
+    return this.#aliases.state.get(key);
+  }
+
+  /** 设置一条语句内共享的渲染状态，value 为 undefined 时删除。 */
+  setState(key: unknown, value: unknown): void {
+    if (value === undefined) this.#aliases.state.delete(key);
+    else this.#aliases.state.set(key, value);
   }
 
   /** 来源在整条语句中的别名；首选名已被占用时加数字后缀。 */

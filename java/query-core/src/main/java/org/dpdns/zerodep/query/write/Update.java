@@ -7,7 +7,6 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.table.Entity;
-import org.dpdns.zerodep.query.table.Filtering;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -107,13 +106,19 @@ public final class Update<T extends Entity> implements Write {
     public Update<T> skipEmpty() { return new Update<>(target.skipEmpty(), sets, byId); }
 
     /** 不套用数据库实例的全局过滤器，也不加逻辑删除的条件。 */
-    public Update<T> unfiltered() { return new Update<>(target.filtering(Filtering.OFF), sets, byId); }
+    public Update<T> unfiltered() { return new Update<>(target.filtering(target.filtering().off()), sets, byId); }
 
     /** 不套用这些名字的全局过滤器，其余照常。 */
     public Update<T> unfiltered(String filter, String... more) { return new Update<>(target.filtering(target.filtering().without(filter, more)), sets, byId); }
 
     /** 不加逻辑删除的条件，已删除的行也会被改到；全局过滤器照常。 */
     public Update<T> withDeleted() { return new Update<>(target.filtering(target.filtering().withDeleted()), sets, byId); }
+
+    /** 本语句写全部分表，不按条件选表（见 {@code Config.shard(...)}）。 */
+    public Update<T> allShards() { return new Update<>(target.filtering(target.filtering().allShards()), sets, byId); }
+
+    /** 本语句只写分表的这些物理表。 */
+    public Update<T> onShards(String table, String... more) { return new Update<>(target.filtering(target.filtering().onShards(table, more)), sets, byId); }
 
     /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留原来的创建人和时间。 */
     public Update<T> withoutFills() { return new Update<>(target.withoutFills(), sets, byId); }
@@ -132,7 +137,14 @@ public final class Update<T extends Entity> implements Write {
 
     /** {@code UPDATE 表 别名 SET 列 = 值, ... WHERE ...}，byId 时每行一条；没有 SET 项时没有语句。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
-        if (byId == null) return sets.isEmpty() ? List.of() : List.of(statement(writers.get(), sets, Cond.EMPTY));
+        SqlWriter probe = writers.get();
+        target.keepsShardKey(probe, sets, "update(...)");
+        if (byId == null) {
+            if (sets.isEmpty()) return List.of();
+            List<String> shards = target.shards(probe);
+            if (shards == null) return List.of(statement(probe, sets, Cond.EMPTY));
+            return shards.stream().map(t -> statement(target.on(writers.get(), t), sets, Cond.EMPTY)).toList();
+        }
         List<Rendered> out = new ArrayList<>();
         for (int i = 0; i < byId.rows().size(); i++) {
             int index = i;
@@ -144,7 +156,11 @@ public final class Update<T extends Entity> implements Write {
             }
             List<Assignment> all = new ArrayList<>(sets);
             all.addAll(changed.stream().filter(a -> !a.skipped()).toList());
-            out.add(statement(writers.get(), all, byId.locate(target.ref(), byId.rows().get(i))));
+            Object row = byId.rows().get(i);
+            if (byId.originals() != null) target.keepsShardKey(probe, byId.changedKeys(target.ref(), i), "update(...).diffFrom(...)");
+            List<String> shards = target.shards(probe, byId, row);
+            if (shards == null) out.add(statement(writers.get(), all, byId.locate(target.ref(), row)));
+            else for (String t : shards) out.add(statement(target.on(writers.get(), t), all, byId.locate(target.ref(), row)));
         }
         return out;
     }

@@ -3,9 +3,9 @@ import { it } from "node:test";
 import mysql from "mysql2/promise";
 import { date, daysBetween, decimal, from, greatest, least, stringAgg, lit, maxExecutionTime, MysqlDatabase, mysqlDriver, nullOf } from "@zerodep-dev/query-mysql";
 import * as mysqlx from "@zerodep-dev/query-mysql";
-import { Bound, count, plus } from "@zerodep-dev/query-mysql";
+import { Bound, count, insertInto, plus } from "@zerodep-dev/query-mysql";
 import { Event, Lips, Mara } from "../fixtures/erp.js";
-import { Article } from "../fixtures/dialect-tables.js";
+import { Article, PartLogMysql } from "../fixtures/dialect-tables.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -138,6 +138,16 @@ liveScenarios(
       assert.deepEqual(await db.list(from(Article).where((a) => mysqlx.matchBoolean("+valve", a.title, a.body)).orderBy((a) => a.id).select((a) => a.id)), [2, 3]);
       assert.deepEqual(await db.list(from(Article).where((a) => mysqlx.matchBoolean("+valve -found", a.title, a.body)).select((a) => a.id)), [2]);
       assert.equal((await db.list(from(Article).orderBy((a) => [mysqlx.matchScore("pump", a.title, a.body).desc(), a.id]).select((a) => a.id)))[0], 1);
+    });
+
+    it("按 options 建原生分区表且查询不变", async () => {
+      const { db, driver } = live();
+      await driver.query("DROP TABLE `QUERY_IT`.`PART_LOG`", []).catch(() => undefined);
+      await (await db.schema().plan(PartLogMysql)).apply();
+      await db.execute(insertInto(PartLogMysql).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
+      assert.deepEqual(await db.list(from(PartLogMysql).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+      const result = await driver.query("SELECT COUNT(*) FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = 'QUERY_IT' AND TABLE_NAME = 'PART_LOG'", []);
+      assert.equal(Number(result.rows[0]![0]), 3, "partitions of PART_LOG");
     });
   },
 );

@@ -7,6 +7,7 @@ import { Children, isGrouped, Many, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
 import { double, integer, typeOf, type SqlType } from "../schema/types.js";
 import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
+import { Sharding, type ShardChoice } from "./sharding.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
 declare const rowType: unique symbol;
@@ -33,24 +34,29 @@ export function filter<E>(...args: [Ctor<E>, (ref: Ref<E>) => Cond] | [string, C
 }
 
 /**
- * 一条查询或写语句对全局过滤器和逻辑删除的开关。默认全部生效；`unfiltered()` 全部关闭；`unfiltered("tenant")`
- * 只关闭这些名字的过滤器；`withDeleted()` 只关闭逻辑删除，能看到已删除的行。
+ * 一条查询或写语句看得到哪些行：全局过滤器、逻辑删除和分表。默认过滤器全部生效、分表按条件选表；`unfiltered()` 关闭过滤器和逻辑删除；
+ * `unfiltered("tenant")` 只关闭这些名字的过滤器；`withDeleted()` 只关闭逻辑删除；`allShards()` 读写全部分表，`onShards(...)` 只读写列出的分表。
  */
-export interface Filtering {
+export interface Filtering extends ShardChoice {
   readonly enabled: boolean;
   readonly disabled: readonly string[];
   readonly logicDelete: boolean;
 }
 
-/** 全部生效。 */
-export const FILTERING_ON: Filtering = Object.freeze({ enabled: true, disabled: Object.freeze([]), logicDelete: true });
+/** 全部生效，分表按条件选表。 */
+export const FILTERING_ON: Filtering = Object.freeze({ enabled: true, disabled: Object.freeze([]), logicDelete: true, allShards: false, onShards: Object.freeze([]) });
 
-/** 全部关闭。 */
-export const FILTERING_OFF: Filtering = Object.freeze({ enabled: false, disabled: Object.freeze([]), logicDelete: false });
-
-/** 在 f 的基础上关闭这些名字的过滤器；没有名字时全部关闭。 */
+/** 在 f 的基础上关闭这些名字的过滤器；没有名字时关闭全部过滤器和逻辑删除。分表的选择不变。 */
 export function unfilteredBy(f: Filtering, names: readonly string[]): Filtering {
-  return names.length === 0 ? FILTERING_OFF : Object.freeze({ ...f, disabled: Object.freeze([...f.disabled, ...names]) });
+  if (names.length === 0) return Object.freeze({ ...f, enabled: false, disabled: Object.freeze([]), logicDelete: false });
+  return Object.freeze({ ...f, disabled: Object.freeze([...f.disabled, ...names]) });
+}
+
+/** 在 f 的基础上读写全部分表，或只读写 tables 列出的分表。 */
+export function shardsBy(f: Filtering, tables: readonly string[] | "all"): Filtering {
+  if (tables === "all") return Object.freeze({ ...f, allShards: true, onShards: Object.freeze([]) });
+  if (tables.length === 0) throw new Error("onShards(...) needs at least one table");
+  return Object.freeze({ ...f, allShards: false, onShards: Object.freeze([...tables]) });
 }
 
 /** 一条语句实际套用的过滤器：全局过滤器和是否加逻辑删除条件；undefined 表示全部关闭。 */
@@ -667,6 +673,16 @@ function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean)
  * @param ordered 为 false 时，对没有 LIMIT 或 OFFSET 的分支去掉 ORDER BY
  */
 function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: boolean, ordered: boolean): void {
+  const shards = Sharding.enter(w, arm.spec.filtering);
+  try {
+    renderSelect(w, arm, labels, labeled, ordered);
+  } finally {
+    Sharding.leave(w, shards);
+  }
+}
+
+/** {@link renderArm} 的主体；分表的选择已经登记在写入器上。 */
+function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: boolean, ordered: boolean): void {
   const s = arm.spec;
   if (!all(...s.qualify).isEmpty) return renderQualified(w, arm, labels, labeled, ordered);
   // 按连接顺序分配别名，这样即使 SELECT 先提到被连接的表，FROM 的表仍得到最简单的名字。
@@ -720,6 +736,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
   let pending: Cond[] = [];
   const implicit = usedRelations(w, arm, groupBy, orderBy);
+  Sharding.of(w).routeSelect(w, [...s.joins.map((j) => ownerOf(j.ref)), ...[...implicit].map((r) => ownerOf(r.ref))], s.where, s.filtering);
   for (const j of s.joins) {
     const extra = conditionsFor(filters, j.ref);
     const owner = ownerOf(j.ref);
@@ -1109,6 +1126,16 @@ export class From<T extends readonly unknown[]> {
   /** 本查询不加逻辑删除的条件，能看到已删除的行；全局过滤器照常，例如仍限定在当前租户。 */
   withDeleted(): From<T> {
     return this.#with({ filtering: { ...this.#spec.filtering, logicDelete: false } });
+  }
+
+  /** 本查询读分表的全部物理表，不按条件选表（见数据库选项 `shards`）；子查询没有自己的选择时沿用。 */
+  allShards(): From<T> {
+    return this.#with({ filtering: shardsBy(this.#spec.filtering, "all") });
+  }
+
+  /** 本查询只读分表的这些物理表，例如 `onShards("EVENT_202601")`；子查询没有自己的选择时沿用。 */
+  onShards(...tables: string[]): From<T> {
+    return this.#with({ filtering: shardsBy(this.#spec.filtering, tables) });
   }
 
   /**

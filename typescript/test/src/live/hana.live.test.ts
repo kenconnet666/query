@@ -3,7 +3,7 @@ import { it } from "node:test";
 import hana from "@sap/hana-client";
 import { addDays, addMonths, count, deleteFrom, insertInto, QueryExecutionError, updateJoin, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
 import * as hanax from "@zerodep-dev/query-hana";
-import { LipsByUnit, orgSource } from "../fixtures/dialect-tables.js";
+import { LipsByUnit, orgSource, PartLogHana } from "../fixtures/dialect-tables.js";
 import { Lips, Mara } from "../fixtures/erp.js";
 import * as writes from "../fixtures/writes.js";
 import { liveScenarios } from "./live.js";
@@ -182,6 +182,16 @@ liveScenarios(
       assert.equal(fuzzy[0]!.delivery, "D1");
       assert.equal(fuzzy[0]!.score, 1);
       assert.equal(await db.one(from(Lips).limit(1).select(() => hanax.jsonValue(lit('{"a":{"b":"x"}}'), "$.a.b"))), "x");
+    });
+
+    it("按 options 建原生分区表且查询不变", async () => {
+      const { db, driver } = live();
+      await driver.query("DROP TABLE QUERY_IT.PART_LOG", []).catch(() => undefined);
+      await (await db.schema().plan(PartLogHana)).apply();
+      await db.execute(insertInto(PartLogHana).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
+      assert.deepEqual(await db.list(from(PartLogHana).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+      const result = await driver.query("SELECT COUNT(*) FROM SYS.TABLE_PARTITIONS WHERE SCHEMA_NAME = 'QUERY_IT' AND TABLE_NAME = 'PART_LOG'", []);
+      assert.equal(Number(result.rows[0]![0]), 3, "partitions of PART_LOG");
     });
   },
 );

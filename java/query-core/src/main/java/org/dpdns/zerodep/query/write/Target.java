@@ -10,6 +10,8 @@ import org.dpdns.zerodep.query.select.SelectSpec;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Filtering;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.ShardRule;
+import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
@@ -94,6 +96,45 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
     SourceFilters filters(SqlWriter w) {
         SourceFilters configured = (SourceFilters) w.attribute(SourceFilters.class);
         return (configured == null ? SourceFilters.NONE : configured).select(filtering);
+    }
+
+    /** 按 where 条件要写的物理表；表不分表时为 null。 */
+    List<String> shards(SqlWriter w) { return Sharding.of(w).route(ref, where, filtering); }
+
+    /**
+     * byId 的一行要写的物理表：行里有分表键属性时是它的值所在的表；没有时要语句显式选了分表（{@code allShards()}、{@code onShards(...)}），
+     * 否则报错。表不分表时为 null。
+     */
+    List<String> shards(SqlWriter w, ById byId, Object row) {
+        Sharding sharding = Sharding.of(w);
+        ShardRule rule = sharding.rule(ref.entity());
+        if (rule == null) return null;
+        for (RowColumns.Column c : byId.columns()) {
+            if (c.name().equals(rule.key())) return List.of(sharding.routeValue(ref.entity(), c.value(row)));
+        }
+        if (!filtering.choosesShards()) {
+            throw new IllegalArgumentException(row.getClass().getSimpleName() + " has no shard key property '" + rule.key() + "', so byId(...) cannot tell its shard;"
+                + " add it to the row or use allShards()");
+        }
+        return sharding.route(ref, List.of(), filtering);
+    }
+
+    /** 分表键不能改：SET 里有它时报错（换表要先删再插）。 */
+    void keepsShardKey(SqlWriter w, List<Assignment> assignments, String statement) {
+        ShardRule rule = Sharding.of(w).rule(ref.entity());
+        if (rule == null) return;
+        for (Assignment a : assignments) {
+            if (a.column().property().name().equals(rule.key())) {
+                throw new IllegalArgumentException(statement + " cannot change the shard key " + ref.entity().getSimpleName() + "." + rule.key()
+                    + "; delete the row and insert it again");
+            }
+        }
+    }
+
+    /** 在 w 上登记这条语句写的物理表，之后 {@code ref.renderSource} 写出它。 */
+    SqlWriter on(SqlWriter w, String table) {
+        w.state(ref, List.of(table));
+        return w;
     }
 
     /** 这条语句套用的写入填充；{@code withoutFills()} 时没有。 */

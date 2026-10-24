@@ -11,6 +11,7 @@ import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.expr.Order;
 import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
@@ -80,6 +81,16 @@ public final class QueryRenderer {
      * labeled 为 false 时列不带名字；有 QUALIFY 时交给 {@link #qualified}。
      */
     private static void arm(SqlWriter w, Query.Arm arm, List<String> labels, boolean labeled, boolean ordered) {
+        Object shards = Sharding.enter(w, arm.spec().filtering);
+        try {
+            select(w, arm, labels, labeled, ordered);
+        } finally {
+            Sharding.leave(w, shards);
+        }
+    }
+
+    /** {@link #arm} 的主体；分表的选择已经登记在写入器上。 */
+    private static void select(SqlWriter w, Query.Arm arm, List<String> labels, boolean labeled, boolean ordered) {
         SelectSpec s = arm.spec();
         if (!Nodes.all(s.qualify).isEmpty()) {
             qualified(w, arm, labels, labeled, ordered);
@@ -139,6 +150,10 @@ public final class QueryRenderer {
         // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
         List<Cond> pending = new ArrayList<>();
         Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy);
+        List<Ref<?>> sources = new ArrayList<>();
+        for (SelectSpec.Join j : s.joins) sources.add(j.ref());
+        for (Ref.Relation r : implicit) sources.add(r.target());
+        Sharding.of(w).routeSelect(w, sources, s.where, s.filtering);
         for (SelectSpec.Join j : s.joins) {
             List<Cond> extra = filters.conditionsFor(j.ref());
             switch (j.kind()) {

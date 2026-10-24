@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.ddl;
 import org.dpdns.zerodep.query.ddl.SchemaPlan.Change;
 import org.dpdns.zerodep.query.ddl.SchemaPlan.Risk;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
+import org.dpdns.zerodep.query.table.Sharding;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,14 +20,17 @@ public final class SchemaTools {
     private final SchemaSyntax syntax;
     private final NamingStrategy naming;
     private final UnaryOperator<String> schemas;
+    private final Sharding sharding;
     private final SchemaSyntax.Catalog catalog;
     private final Consumer<List<String>> executor;
 
-    /** 由数据库实例创建：catalog 执行系统目录查询，executor 执行 DDL。 */
-    public SchemaTools(SchemaSyntax syntax, NamingStrategy naming, UnaryOperator<String> schemas, SchemaSyntax.Catalog catalog, Consumer<List<String>> executor) {
+    /** 由数据库实例创建：sharding 是实例上注册的分表，catalog 执行系统目录查询，executor 执行 DDL。 */
+    public SchemaTools(SchemaSyntax syntax, NamingStrategy naming, UnaryOperator<String> schemas, Sharding sharding, SchemaSyntax.Catalog catalog,
+                       Consumer<List<String>> executor) {
         this.syntax = syntax;
         this.naming = naming;
         this.schemas = schemas;
+        this.sharding = sharding;
         this.catalog = catalog;
         this.executor = executor;
     }
@@ -40,12 +44,34 @@ public final class SchemaTools {
     /** 实库里表的结构；表不存在时为 null。 */
     public TableDef read(String schema, String table) { return syntax.read(catalog, schema, table); }
 
-    /** 按声明建表的语句（不连库），外键在最后；外部表报错。 */
-    public List<String> createTable(Class<?> table) {
+    /**
+     * 实际存在库里的表：分表时是每张物理表（表名换成物理表名，索引和外键名加上同样的后缀，免得在 schema 里重名），否则就是声明本身。
+     */
+    public List<TableDef> physical(Class<?> table) {
         TableDef t = declared(table);
-        if (t.external()) throw new IllegalArgumentException(table.getSimpleName() + " is @Table(external = true); its DDL is not ours to write");
-        List<String> out = new ArrayList<>(syntax.createTable(t));
-        for (TableDef.ForeignKey f : t.foreignKeys()) out.add(syntax.addForeignKey(t, f));
+        List<String> shards = sharding.tables(table);
+        if (shards.isEmpty()) return List.of(t);
+        List<TableDef> out = new ArrayList<>();
+        for (String name : shards) {
+            String suffix = name.startsWith(t.name()) ? name.substring(t.name().length()) : "_" + name;
+            out.add(new TableDef(t.schema(), name, t.columns(), t.primaryKey(),
+                t.indexes().stream().map(i -> new TableDef.Index(i.name() + suffix, i.columns(), i.unique())).toList(),
+                t.foreignKeys().stream().map(f -> new TableDef.ForeignKey(f.name() + suffix, f.columns(), f.referencedSchema(), f.referencedTable(), f.referencedColumns())).toList(),
+                t.comment(), t.external(), t.options()));
+        }
+        return out;
+    }
+
+    /** 按声明建表的语句（不连库），外键在最后；分表时每张物理表一份；外部表报错。 */
+    public List<String> createTable(Class<?> table) {
+        List<String> out = new ArrayList<>();
+        List<String> foreignKeys = new ArrayList<>();
+        for (TableDef t : physical(table)) {
+            if (t.external()) throw new IllegalArgumentException(table.getSimpleName() + " is @Table(external = true); its DDL is not ours to write");
+            out.addAll(syntax.createTable(t));
+            for (TableDef.ForeignKey f : t.foreignKeys()) foreignKeys.add(syntax.addForeignKey(t, f));
+        }
+        out.addAll(foreignKeys);
         return out;
     }
 
@@ -59,10 +85,11 @@ public final class SchemaTools {
     public SchemaPlan plan(Class<?>... tables) {
         List<Change> changes = new ArrayList<>();
         for (Class<?> table : tables) {
-            TableDef declared = declared(table);
-            TableDef actual = read(declared.schema(), declared.name());
-            if (declared.external()) external(declared, actual, changes);
-            else managed(declared, actual, changes);
+            for (TableDef declared : physical(table)) {
+                TableDef actual = read(declared.schema(), declared.name());
+                if (declared.external()) external(declared, actual, changes);
+                else managed(declared, actual, changes);
+            }
         }
         return new SchemaPlan(changes, false, executor);
     }

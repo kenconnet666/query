@@ -5,6 +5,8 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.postgres.PgTables.PartLog;
+import org.dpdns.zerodep.query.postgres.PgTables.PartLogRow;
 import org.dpdns.zerodep.query.postgres.PgTables.Tagged;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
@@ -24,6 +26,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -284,5 +287,20 @@ class PostgresLiveTest extends LiveScenarios {
         assertEquals(List.of(1), db.list(from(Tagged.class).where(t -> textMatches("simple", t.body(), "pump")).select(t -> t.id())));
         assertEquals(List.of(2), db.list(from(Tagged.class).where(t -> webMatches("simple", t.body(), "valve -found")).select(t -> t.id())));
         assertEquals(List.of(1, 2, 3), db.list(from(Tagged.class).orderBy(t -> orders(textRank("simple", t.body(), "pump").desc(), t.id())).select(t -> t.id())));
+    }
+
+    @Test
+    void 按TableOption建原生分区表且查询不变() throws SQLException {
+        live.execute(List.of("-DROP TABLE \"QUERY_IT\".\"PART_LOG\""));
+        db.schema().plan(PartLog.class).apply();
+        // PostgreSQL 的分区要另外建，通常写在迁移里。
+        live.execute(List.of("CREATE TABLE \"QUERY_IT\".\"PART_LOG_2025\" PARTITION OF \"QUERY_IT\".\"PART_LOG\" FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')",
+            "CREATE TABLE \"QUERY_IT\".\"PART_LOG_REST\" PARTITION OF \"QUERY_IT\".\"PART_LOG\" DEFAULT"));
+        db.execute(insertInto(PartLog.class).values(new PartLogRow(1L, LocalDate.of(2025, 6, 1), BigDecimal.ONE), new PartLogRow(2L, LocalDate.of(2026, 6, 1), BigDecimal.TEN)));
+        assertEquals(List.of(2L), db.list(from(PartLog.class).where(p -> p.day().ge(LocalDate.of(2026, 1, 1))).select(p -> p.id())));
+        try (Connection c = live.open(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'QUERY_IT' AND c.relname = 'PART_LOG'")) {
+            rs.next();
+            assertEquals(2, rs.getInt(1), "partitions of PART_LOG");
+        }
     }
 }

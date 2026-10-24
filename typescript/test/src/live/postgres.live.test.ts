@@ -6,7 +6,7 @@ import * as pgx from "@zerodep-dev/query-postgres";
 import { all, Bound, deleteFrom, insertInto, plus } from "@zerodep-dev/query-postgres";
 import { Event, Lips, Mara } from "../fixtures/erp.js";
 import { Note } from "../fixtures/writes.js";
-import { Tagged } from "../fixtures/dialect-tables.js";
+import { PartLogPg, Tagged } from "../fixtures/dialect-tables.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -206,6 +206,19 @@ liveScenarios(
       assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.textMatches("simple", t.body, "pump")).select((t) => t.id)), [1]);
       assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.webMatches("simple", t.body, "valve -found")).select((t) => t.id)), [2]);
       assert.deepEqual(await db.list(from(Tagged).orderBy((t) => [pgx.textRank("simple", t.body, "pump").desc(), t.id]).select((t) => t.id)), [1, 2, 3]);
+    });
+
+    it("按 options 建原生分区表且查询不变", async () => {
+      const { db, driver } = live();
+      await driver.query("DROP TABLE \"QUERY_IT\".\"PART_LOG\"", []).catch(() => undefined);
+      await (await db.schema().plan(PartLogPg)).apply();
+      // PostgreSQL 的分区要另外建，通常写在迁移里。
+      await driver.query('CREATE TABLE "QUERY_IT"."PART_LOG_2025" PARTITION OF "QUERY_IT"."PART_LOG" FOR VALUES FROM (\'2025-01-01\') TO (\'2026-01-01\')', []);
+      await driver.query('CREATE TABLE "QUERY_IT"."PART_LOG_REST" PARTITION OF "QUERY_IT"."PART_LOG" DEFAULT', []);
+      await db.execute(insertInto(PartLogPg).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
+      assert.deepEqual(await db.list(from(PartLogPg).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+      const result = await driver.query("SELECT COUNT(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'QUERY_IT' AND c.relname = 'PART_LOG'", []);
+      assert.equal(Number(result.rows[0]![0]), 2, "partitions of PART_LOG");
     });
   },
 );

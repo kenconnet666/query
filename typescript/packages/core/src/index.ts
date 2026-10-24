@@ -231,8 +231,9 @@ export {
 } from "./exec/database.js";
 export { Tracker } from "./exec/tracker.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
-export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef } from "./ddl/model.js";
+export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./ddl/model.js";
 export { catalogDefault, catalogNumber, catalogText, groupRows, SchemaSyntax, withoutCast, type Catalog } from "./ddl/syntax.js";
 export { generatedTypeName, propertyName, pullTables, runPull, typescriptSource, type PullConfig, type PulledFile, type PullTable } from "./ddl/generate.js";
+export { customShards, modulo, monthly, shard, type ShardConfig, type ShardRule } from "./query/sharding.js";
 export { SchemaPlan, SchemaTools, type Change, type Risk } from "./ddl/tools.js";
 export { migration, MigrationSteps, Migrator, MIGRATION_HISTORY, MIGRATION_LOCK, namedTable, TableBuilder, tableBuilder, type Applied, type Migration, type MigrationBackend } from "./ddl/migrator.js";

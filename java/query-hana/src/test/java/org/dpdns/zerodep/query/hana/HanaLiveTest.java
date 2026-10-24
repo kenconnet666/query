@@ -5,6 +5,8 @@ import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.hana.HanaTables.LipsByUnit;
 import org.dpdns.zerodep.query.hana.HanaTables.OrgNode;
+import org.dpdns.zerodep.query.hana.HanaTables.PartLog;
+import org.dpdns.zerodep.query.hana.HanaTables.PartLogRow;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -16,7 +18,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -181,5 +186,17 @@ class HanaLiveTest extends LiveScenarios {
         assertEquals("D1", fuzzy.get(0).get("delivery"));
         assertEquals(1.0, (Double) fuzzy.get(0).get("score"), 1e-9);
         assertEquals("x", db.one(from(Lips.class).limit(1).select(l -> jsonValue(lit("{\"a\":{\"b\":\"x\"}}"), "$.a.b"))));
+    }
+
+    @Test
+    void 按TableOption建原生分区表且查询不变() throws SQLException {
+        live.execute(List.of("-DROP TABLE QUERY_IT.PART_LOG"));
+        db.schema().plan(PartLog.class).apply();
+        db.execute(insertInto(PartLog.class).values(new PartLogRow(1L, LocalDate.of(2025, 6, 1), BigDecimal.ONE), new PartLogRow(2L, LocalDate.of(2026, 6, 1), BigDecimal.TEN)));
+        assertEquals(List.of(2L), db.list(from(PartLog.class).where(p -> p.day().ge(LocalDate.of(2026, 1, 1))).select(p -> p.id())));
+        try (Connection c = live.open(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM SYS.TABLE_PARTITIONS WHERE SCHEMA_NAME = 'QUERY_IT' AND TABLE_NAME = 'PART_LOG'")) {
+            rs.next();
+            assertEquals(3, rs.getInt(1), "partitions of PART_LOG");
+        }
     }
 }

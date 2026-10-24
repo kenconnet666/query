@@ -1,10 +1,11 @@
 import { columnName, deletedValue, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
-import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
+import { all, bindValue, Column, Cond, Expr, Param, skips, withSkipEmpty } from "../sql/expr.js";
 import type { Renderable, Rendered, SqlWriter } from "../sql/writer.js";
 import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
-import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
+import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, shardsBy, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
+import { choosesShards, Sharding } from "../query/sharding.js";
 import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
 import type { Clause, JoinWrite, Lock, Upsert } from "../sql/dialect.js";
 
@@ -98,8 +99,8 @@ function matchingFills(w: SqlWriter, ref: object, insert: boolean, generated: bo
 }
 
 /** 写出 `schema.表名`。 */
-function tableName(w: SqlWriter, meta: EntityMeta): void {
-  w.table(meta.table!.schema, meta.table!.name);
+function tableName(w: SqlWriter, meta: EntityMeta, shard?: string): void {
+  w.table(meta.table!.schema, shard ?? meta.table!.name);
 }
 
 /**
@@ -215,12 +216,13 @@ export class Insert<T> extends Write {
     return entityMeta(this.#table).property(name)!;
   }
 
-  /** 每行一条 `INSERT INTO 表 (列, ...) VALUES (?, ...)`；INSERT ... SELECT 是一条。 */
+  /** 每行一条 `INSERT INTO 表 (列, ...) VALUES (?, ...)`；INSERT ... SELECT 是一条。分表时每行写到它的分表键所在的表。 */
   render(writer: () => SqlWriter): Rendered[] {
     const source = this.#source;
     if (source !== undefined) {
       const w = writer();
-      this.#head(w, source.labels.map((l) => this.#column(l, "the query's column")));
+      if (Sharding.of(w).rule(this.#table) !== undefined) throw new Error(`insertInto(${this.#table.name}).from(query) cannot pick a shard; insert rows with values(...)`);
+      this.#head(w, undefined, source.labels.map((l) => this.#column(l, "the query's column")));
       w.sql("\n");
       renderNamed(w, source);
       return [w.statement()];
@@ -228,11 +230,12 @@ export class Insert<T> extends Write {
     return this.#rows.map((row) => {
       const w = writer();
       const values = this.#values(w, row);
+      const shard = this.#shard(w, values);
       if (this.#conflict !== undefined) {
-        w.dialect.upsert(w, this.#upsert(w, values, this.#conflict));
+        w.dialect.upsert(w, this.#upsert(w, values, this.#conflict, shard));
         return w.statement();
       }
-      this.#head(w, values.map(([c]) => c));
+      this.#head(w, shard, values.map(([c]) => c));
       w.sql(" VALUES (").join(values.map(([, v]) => v), ", ").sql(")");
       return w.statement();
     });
@@ -264,8 +267,18 @@ export class Insert<T> extends Write {
     return out;
   }
 
+  /** 分表时这一行写到的物理表（按要写的分表键的值）；不分表时为 undefined。 */
+  #shard(w: SqlWriter, values: readonly (readonly [PropertyMeta, Expr<unknown>])[]): string | undefined {
+    const sharding = Sharding.of(w);
+    const rule = sharding.rule(this.#table);
+    if (rule === undefined) return undefined;
+    const value = values.find(([c]) => c.name === rule.key)?.[1];
+    if (!(value instanceof Param)) throw new Error(`A row inserted into ${this.#table.name} needs its shard key ${rule.key} as a value`);
+    return sharding.routeValue(this.#table, value.value);
+  }
+
   /** 一行的插入或更新交给方言的内容：列名按命名策略，键必须是插入的列；更新时的填充作为另外更新的列。 */
-  #upsert(w: SqlWriter, values: readonly (readonly [PropertyMeta, Expr<unknown>])[], conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined }): Upsert {
+  #upsert(w: SqlWriter, values: readonly (readonly [PropertyMeta, Expr<unknown>])[], conflict: { readonly keys: readonly string[]; readonly updates: readonly string[] | undefined }, shard: string | undefined): Upsert {
     const names = values.map(([c]) => c.name);
     for (const k of conflict.keys) if (!names.includes(k)) throw new Error(`onConflict(...) key '${k}' must be one of the inserted columns ${names.join(", ")}`);
     const meta = entityMeta(this.#table);
@@ -273,7 +286,7 @@ export class Insert<T> extends Write {
     const assignments = (this.#fills ? fillsFor(w, createRef(tableSource(this.#table)) as object, false) : []).map(([c, v]) => [columnName(c.column as PropertyMeta, w.naming), v] as const);
     const assigned = new Set(assignments.map(([c]) => c));
     return {
-      table: { render: (x: SqlWriter) => tableName(x, meta) },
+      table: { render: (x: SqlWriter) => tableName(x, meta, shard) },
       columns: values.map(([c]) => columnName(c, w.naming)),
       values: values.map(([, v]) => v),
       keys: conflict.keys.map(name),
@@ -282,10 +295,10 @@ export class Insert<T> extends Write {
     };
   }
 
-  /** 写出 `INSERT INTO 表 (列, ...)`。 */
-  #head(w: SqlWriter, columns: readonly PropertyMeta[]): void {
+  /** 写出 `INSERT INTO 表 (列, ...)`；shard 不为 undefined 时写这张物理表。 */
+  #head(w: SqlWriter, shard: string | undefined, columns: readonly PropertyMeta[]): void {
     w.sql("INSERT INTO ");
-    tableName(w, entityMeta(this.#table));
+    tableName(w, entityMeta(this.#table), shard);
     w.sql(" (");
     columns.forEach((c, i) => {
       if (i > 0) w.sql(", ");
@@ -412,6 +425,41 @@ export class Target<T> {
     const filters = this.filters(w);
     const where = all(...conditionsFor(filters, this.ref as object), this.#navigated(w, own, filters));
     if (!where.isEmpty) w.sql("\nWHERE ").render(where);
+  }
+
+  /** 按 where 条件要写的物理表；表不分表时为 undefined。 */
+  shards(w: SqlWriter): readonly string[] | undefined {
+    return Sharding.of(w).route(ownerOf(this.ref as object), this.conditions, this.filtering);
+  }
+
+  /**
+   * byId 的一行要写的物理表：行里有分表键字段时是它的值所在的表；没有时要语句显式选了分表（`allShards()`、`onShards(...)`），
+   * 否则报错。表不分表时为 undefined。
+   */
+  rowShards(w: SqlWriter, row: object): readonly string[] | undefined {
+    const sharding = Sharding.of(w);
+    const rule = sharding.rule(this.table);
+    if (rule === undefined) return undefined;
+    const value = (row as Record<string, unknown>)[rule.key];
+    if (value !== undefined) return [sharding.routeValue(this.table, value)];
+    if (!choosesShards(this.filtering)) {
+      throw new Error(`A ${this.table.name} row has no shard key field '${rule.key}', so byId(...) cannot tell its shard; add it to the row or use allShards()`);
+    }
+    return sharding.route(ownerOf(this.ref as object), [], this.filtering);
+  }
+
+  /** 分表键不能改：要 SET 的列里有它时报错（换表要先删再插）。 */
+  keepsShardKey(w: SqlWriter, columns: readonly string[], statement: string): void {
+    const rule = Sharding.of(w).rule(this.table);
+    if (rule !== undefined && columns.includes(rule.key)) {
+      throw new Error(`${statement} cannot change the shard key ${this.table.name}.${rule.key}; delete the row and insert it again`);
+    }
+  }
+
+  /** 在 w 上登记这条语句写的物理表，之后 `renderSource` 写出它。 */
+  on(w: SqlWriter, table: string): SqlWriter {
+    w.setState(ownerOf(this.ref as object), [table]);
+    return w;
   }
 
   /** 这条语句套用的过滤器：数据库实例配置的，再按 `filtering` 取舍；全部关闭时为 undefined。 */
@@ -553,8 +601,15 @@ export class Update<T> extends Write {
   /** `UPDATE 表 别名 SET 列 = 值, ... WHERE ...`，byId 时每行一条；没有 SET 项时没有语句。 */
   render(writer: () => SqlWriter): Rendered[] {
     const byId = this.#byId;
-    if (byId === undefined) return this.#sets.length === 0 ? [] : [this.#statement(writer(), this.#sets, Cond.EMPTY)];
     const t = this.#target;
+    const probe = writer();
+    t.keepsShardKey(probe, this.#sets.map(([c]) => c.column.name), "update(...)");
+    if (byId === undefined) {
+      if (this.#sets.length === 0) return [];
+      const shards = t.shards(probe);
+      if (shards === undefined) return [this.#statement(probe, this.#sets, Cond.EMPTY)];
+      return shards.map((s) => this.#statement(t.on(writer(), s), this.#sets, Cond.EMPTY));
+    }
     const out: Rendered[] = [];
     byId.rows.forEach((row, i) => {
       const changed = withSkipEmpty(t.skipping, () => byId.sets(t.ref, i));
@@ -562,9 +617,22 @@ export class Update<T> extends Write {
         if (byId.originals !== undefined) return; // diffFrom：这一行没有变化
         throw new Error(`update(...).byId(...) has nothing to SET: the row holds only key, version or non-updatable fields`);
       }
-      out.push(this.#statement(writer(), [...this.#sets, ...changed], byId.locate(t.ref, row)));
+      if (byId.originals !== undefined) t.keepsShardKey(probe, byId.changedFields(i), "update(...).diffFrom(...)");
+      const shards = t.rowShards(probe, row);
+      if (shards === undefined) out.push(this.#statement(writer(), [...this.#sets, ...changed], byId.locate(t.ref, row)));
+      else for (const s of shards) out.push(this.#statement(t.on(writer(), s), [...this.#sets, ...changed], byId.locate(t.ref, row)));
     });
     return out;
+  }
+
+  /** 本语句写全部分表，不按条件选表（见数据库选项 `shards`）。 */
+  allShards(): Update<T> {
+    return new Update(this.#target.with({ filtering: shardsBy(this.#target.filtering, "all") }), this.#sets, this.#byId);
+  }
+
+  /** 本语句只写分表的这些物理表。 */
+  onShards(...tables: string[]): Update<T> {
+    return new Update(this.#target.with({ filtering: shardsBy(this.#target.filtering, tables) }), this.#sets, this.#byId);
   }
 
   /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
@@ -655,8 +723,28 @@ export class Delete<T> extends Write {
   /** `DELETE FROM 表 别名 WHERE ...`，byId 时每行一条。 */
   render(writer: () => SqlWriter): Rendered[] {
     const byId = this.#byId;
-    if (byId === undefined) return [this.#statement(writer(), Cond.EMPTY)];
-    return byId.rows.map((row) => this.#statement(writer(), byId.locate(this.#target.ref, row)));
+    const t = this.#target;
+    const probe = writer();
+    if (byId === undefined) {
+      const shards = t.shards(probe);
+      if (shards === undefined) return [this.#statement(probe, Cond.EMPTY)];
+      return shards.map((s) => this.#statement(t.on(writer(), s), Cond.EMPTY));
+    }
+    return byId.rows.flatMap((row) => {
+      const shards = t.rowShards(probe, row);
+      if (shards === undefined) return [this.#statement(writer(), byId.locate(t.ref, row))];
+      return shards.map((s) => this.#statement(t.on(writer(), s), byId.locate(t.ref, row)));
+    });
+  }
+
+  /** 本语句写全部分表，不按条件选表（见数据库选项 `shards`）。 */
+  allShards(): Delete<T> {
+    return new Delete(this.#target.with({ filtering: shardsBy(this.#target.filtering, "all") }), this.#byId, this.#physical);
+  }
+
+  /** 本语句只写分表的这些物理表。 */
+  onShards(...tables: string[]): Delete<T> {
+    return new Delete(this.#target.with({ filtering: shardsBy(this.#target.filtering, tables) }), this.#byId, this.#physical);
   }
 
   /** 写出一条 DELETE 或逻辑删除的 UPDATE；located 是 byId 定位一行的条件。 */
@@ -718,6 +806,14 @@ export class ById {
       }
     });
     return new ById(this.rows, this.meta, before);
+  }
+
+  /** 第 i 行与修改前相比值变了的字段（不论能否更新），用于检查分表键没有改；没有 diffFrom 时为空。 */
+  changedFields(i: number): string[] {
+    const row = this.rows[i] as Record<string, unknown>;
+    const old = this.originals?.[i] as Record<string, unknown> | undefined;
+    if (old === undefined) return [];
+    return Object.keys(row).filter((name) => row[name] !== undefined && !same(row[name], old[name], this.meta.property(name)?.type.kind));
   }
 
   /** 要写的行，按原顺序：有 diffFrom 时只含有变化的行，否则是全部行。 */
@@ -980,6 +1076,10 @@ function joinParts(
   assignments: readonly (readonly [Column<unknown>, Expr<unknown>])[],
   statement: string,
 ): JoinWrite {
+  const sharding = Sharding.of(w);
+  if (sharding.rule(target.table) !== undefined || sharding.rule(ownerOf(source as object).source.entity) !== undefined) {
+    throw new Error(`${statement} cannot use a sharded table; update or delete each shard with update(...) or deleteFrom(...)`);
+  }
   const own = all(...target.conditions);
   if (own.isEmpty && !target.everyRow) {
     throw new Error(`${statement} without where(...) would touch every joined row of ${target.table.name}; add .all() if that is intended`);

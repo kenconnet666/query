@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.dialect;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -34,6 +35,8 @@ public final class SqlWriter {
         final Set<String> used = new HashSet<>();
         /** 探查用的写入器记下渲染过程中引用到的数据源；普通写入器为 null。 */
         Set<Object> touched;
+        /** 一条语句内共享的渲染状态，见 {@link SqlWriter#state(Object)}。 */
+        final Map<Object, Object> state = new HashMap<>();
     }
 
     /** 使用方言的默认设置，没有函数覆盖和渲染属性。 */
@@ -78,6 +81,12 @@ public final class SqlWriter {
         fresh.touched = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         return new SqlWriter(dialect, functionOverrides, attributes, fresh);
     }
+
+    /** 一条语句内共享的渲染状态（例如分表的路由），子查询的写入器也看得到；没有时为 null。探查写入器各有一份。 */
+    public Object state(Object key) { return aliases.state.get(key); }
+
+    /** 设置一条语句内共享的渲染状态，value 为 null 时删除；返回之前的值。 */
+    public Object state(Object key, Object value) { return value == null ? aliases.state.remove(key) : aliases.state.put(key, value); }
 
     /** 探查写入器记下的数据源；普通写入器返回空集合。 */
     public Set<Object> touched() { return aliases.touched == null ? Set.of() : aliases.touched; }

@@ -5,6 +5,7 @@ import { Many } from "./many.js";
 import type { Query } from "./query.js";
 import type { DialectClass } from "../sql/dialect.js";
 import type { CteDefinition, SqlWriter } from "../sql/writer.js";
+import { renderShards, type Sharding } from "./sharding.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
 export declare const rowType: unique symbol;
@@ -90,9 +91,11 @@ export class RefOwner implements ColumnOwner {
     });
   }
 
-  /** 写出 `来源 别名`。 */
+  /** 写出 `来源 别名`；分表时写出渲染器为这次出现选好的物理表（见 {@link Sharding}）。 */
   renderSource(w: SqlWriter): void {
-    this.source.renderSource(w);
+    const shards = w.state(this);
+    if (Array.isArray(shards)) renderShards(w, this, shards as string[]);
+    else this.source.renderSource(w);
     w.sql(" ").alias(this.alias(w));
   }
 }

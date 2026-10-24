@@ -44,6 +44,7 @@ export abstract class SchemaSyntax {
     let sql = `${this.createKeyword} ${this.table(t)} (${t.columns.map((c) => this.columnDefinition(c)).join(", ")}`;
     if (t.primaryKey.length > 0) sql += `, PRIMARY KEY (${this.names(t.primaryKey)})`;
     sql += ")" + this.tableOptions(t);
+    for (const o of t.options ?? []) if (this.dialect instanceof o.dialect) sql += " " + o.sql;
     return [sql, ...this.comments(t), ...t.indexes.map((i) => this.createIndex(t, i))];
   }
 

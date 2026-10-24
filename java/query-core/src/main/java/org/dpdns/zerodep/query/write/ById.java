@@ -103,6 +103,17 @@ record ById(List<Object> rows, List<RowColumns.Column> columns, WriteMeta writes
         return out;
     }
 
+    /** 第 i 行与修改前相比值变了的列（作为 SET 项），用于检查分表键没有改；没有 diffFrom 时为空。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    List<Assignment> changedKeys(Ref<?> ref, int i) {
+        if (originals == null) return List.of();
+        List<Assignment> out = new ArrayList<>();
+        for (RowColumns.Column c : columns) {
+            if (!same(c.value(rows.get(i)), c.value(originals.get(i)))) out.add(((Col) new Col<>(ref, c.column())).to(c.value(rows.get(i))));
+        }
+        return out;
+    }
+
     /** 要写的行，按原顺序：有 diffFrom 时只含有变化的行，否则是全部行。 */
     List<Object> changed() {
         List<Object> out = new ArrayList<>();

@@ -779,3 +779,27 @@ export class Item extends SItemColumns {
 ```
 
 `connection` 原样交给驱动（pg 的 PoolConfig、mysql2 的连接参数、@sap/hana-client 的 `serverNode` / `uid`），密码从 `passwordEnv` 指定的环境变量读，不写进配置文件。属性名、可选项和类型与 Java 的 `query:pull` 一致；SMALLINT 列生成为 `smallint`。也可以在代码里调用 `pullTables(db, schema, tables)` 或 `typescriptSource(tableDef, typeName)`。
+
+## 18. 分区与分表
+
+与 Java 版第 17 节相同。原生分区写在 `@table` 的 `options` 里，只在对应的方言上加到建表语句末尾：
+
+```ts
+@table("EVENT_LOG", { schema: "APP", options: [{ dialect: PostgresDialect, sql: 'PARTITION BY RANGE ("DAY")' }] })
+export class EventLog {
+  @id @column("ID", bigint) id!: bigint;
+  @id @column("DAY", date) day!: string;
+}
+```
+
+同库物理分表在数据库选项里注册：
+
+```ts
+const db = new PostgresDatabase(pgDriver(pool), {
+  shards: [shard(Event, monthly("day", "2025-01", "2026-12")), shard(Order, modulo("customer", 8))],
+});
+await db.list(from(Event).where((e) => e.day.range("2026-01-15", "2026-03-01")).select((e) => e.id));
+```
+
+`monthly(key, "YYYY-MM", "YYYY-MM")`（键是 'YYYY-MM-DD' 日期或时间戳文本）、`modulo(key, n)`（number 或 bigint）、`customShards(key, tables, router)`；
+查询和 `update` / `deleteFrom` 有 `allShards()`、`onShards(...tables)`；迁移里用 `tableBuilder(...).option(dialect, sql)`。规则、选表和渲染出的 SQL 与 Java 完全相同（金样例 `shard-*`）。

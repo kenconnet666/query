@@ -8,6 +8,7 @@ import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { ClientEntity } from "../fixtures/erp.js";
 import { dialectCases, sharedCases } from "../fixtures/spec-cases.js";
+import { SHARDS } from "../fixtures/shards.js";
 
 /**
  * Golden SQL shared with the Java tests: spec/render/<case>.<dialect>.sql holds the parameters on
@@ -37,8 +38,8 @@ function golden(file: string): { parameters: unknown; sql: string } {
 describe("渲染金样例", () => {
   for (const dialect of Object.keys(databases) as (keyof typeof databases)[]) {
     const cases = { ...sharedCases, ...dialectCases[dialect] };
-    const filtered = databases[dialect]({ filters: [filter(ClientEntity, (r) => r.client.eq("100"))] });
-    const unfiltered = databases[dialect]({});
+    const filtered = databases[dialect]({ filters: [filter(ClientEntity, (r) => r.client.eq("100"))], shards: SHARDS });
+    const unfiltered = databases[dialect]({ shards: SHARDS });
 
     for (const [name, spec] of Object.entries(cases)) {
       it(`${dialect} 渲染 ${name} 与金样例一致`, () => {
