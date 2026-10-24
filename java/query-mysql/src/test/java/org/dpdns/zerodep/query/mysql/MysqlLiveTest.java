@@ -148,6 +148,17 @@ public class MysqlLiveTest extends LiveScenarios {
     }
 
     @Test
+    void UPDATE与DELETE带优化器提示() {
+        assertThrows(IllegalStateException.class, () -> db.transaction(() -> {
+            assertEquals(1L, db.execute(update(Lips.class).with(l -> noIndex(l)).set(l -> l.unit().to("KG")).where(l -> l.delivery().eq("D1"))));
+            assertEquals("KG", db.one(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.unit())));
+            assertEquals(0L, db.execute(deleteFrom(Lips.class).with(l -> noIndex(l)).where(l -> l.delivery().eq("D9"))));
+            throw new IllegalStateException("roll back the change");
+        }));
+        assertEquals("EA", db.one(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.unit())));
+    }
+
+    @Test
     void JSON的包含与路径文本() throws java.sql.SQLException {
         createArticles();
         List<Map<String, Object>> rows = db.list(from(Article.class).where(a -> jsonContains(a.doc(), "{\"status\":\"open\"}")).orderBy(a -> a.id())

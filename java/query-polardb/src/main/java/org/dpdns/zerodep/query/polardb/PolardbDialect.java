@@ -4,7 +4,7 @@ import org.dpdns.zerodep.query.mysql.MysqlDialect;
 
 /**
  * PolarDB for MySQL。写法与 MySQL 8 方言完全相同：MySQL 方言的全部实库场景在开源的 PolarDB-X 引擎
- * （MySQL 8.0.42 内核，表名不区分大小写）上原样通过（决定 0012）。PolarDB 专属的闪回查询在 {@link Polardb} 里，
+ * （MySQL 8.0.42 内核，表名不区分大小写）上原样通过（决定 0012）。PolarDB 专属的闪回查询和库存提示在 {@link Polardb} 里，
  * 只能在本方言上渲染；MySQL 方言的专属函数在本方言上照常可用。
  */
 public class PolardbDialect extends MysqlDialect {

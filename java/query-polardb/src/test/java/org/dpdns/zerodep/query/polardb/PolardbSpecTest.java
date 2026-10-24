@@ -33,6 +33,11 @@ class PolardbSpecTest extends MysqlSpecTest {
             .where(l -> l.material().eq("M1"))
             .orderBy(l -> l.delivery())
             .select(l -> cols(l.delivery(), l.quantity()))));
+        cases.put("polardb-inventory", SpecCase.plain(() -> update(Lips.class)
+            .with(l -> inventory(1))
+            .with(l -> noIndex(l))
+            .set(l -> l.quantity().to(minus(l.quantity(), val(java.math.BigDecimal.ONE))))
+            .where(l -> all(l.delivery().eq("D1"), l.quantity().gt(java.math.BigDecimal.ZERO)))));
         return cases;
     }
 }

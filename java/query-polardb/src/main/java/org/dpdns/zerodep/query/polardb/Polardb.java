@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.polardb;
 
+import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.mysql.Mysql;
@@ -12,7 +13,7 @@ import java.util.function.Consumer;
 import javax.sql.DataSource;
 
 /**
- * PolarDB 门面：包含 {@link Mysql} 的全部能力（核心加 MySQL 专属的函数和子句），外加 PolarDB 专属的闪回查询。
+ * PolarDB 门面：包含 {@link Mysql} 的全部能力（核心加 MySQL 专属的函数和子句），外加 PolarDB 专属的闪回查询和热点行的库存提示。
  * 一次静态导入即可使用全部词汇：
  * <pre>{@code import static org.dpdns.zerodep.query.polardb.Polardb.*;}</pre>
  * PolarDB 专属的写法在其他方言上渲染时会报错。
@@ -47,5 +48,19 @@ public final class Polardb extends Mysql {
     public static <T extends Entity> From1<T> fromAsOf(Class<T> table, LocalDateTime at) {
         Ref<T> ref = Ref.of(new PolardbSources.AsOf<>(table, at));
         return From1.start(ref, ref.param());
+    }
+
+    // ---------- 热点行 ----------
+
+    /**
+     * 热点行的库存提示 {@code COMMIT_ON_SUCCESS ROLLBACK_ON_FAIL TARGET_AFFECT_ROW(n)}，写在 update、deleteFrom 上：
+     * {@code update(Stock.class).with(s -> inventory(1)).set(...).where(...)}。必须在事务里执行（自动提交时数据库报错）；
+     * 语句正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务。所以让它单独占一个事务，或者放在事务的最后一句：
+     * {@code db.transaction(() -> db.execute(...))}。云上的 PolarDB 与社区版写法相同。
+     */
+    public static Clause inventory(int targetRows) {
+        if (targetRows < 1) throw new IllegalArgumentException("inventory needs at least one target row");
+        String body = "COMMIT_ON_SUCCESS ROLLBACK_ON_FAIL TARGET_AFFECT_ROW(" + targetRows + ")";
+        return hint(PolardbDialect.class, w -> w.sql(body));
     }
 }

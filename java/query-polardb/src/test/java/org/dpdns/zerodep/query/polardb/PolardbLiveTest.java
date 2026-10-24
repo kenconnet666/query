@@ -70,8 +70,26 @@ class PolardbLiveTest extends MysqlLiveTest {
     }
 
     @Test
+    void 库存提示改到预期行数时提交整个事务否则整个事务回滚() throws SQLException {
+        live.execute(List.of("-DROP TABLE " + table("P_STOCK"), "CREATE TABLE " + table("P_STOCK") + " (ID BIGINT PRIMARY KEY, QTY INT NOT NULL)",
+            "INSERT INTO " + table("P_STOCK") + " VALUES (1, 1), (2, 5)"));
+        // 扣到 0 为止：第一次改到一行，提交；第二次条件不满足，改到 0 行，数据库报错并回滚同一事务里之前的改动
+        db.transaction(() -> db.execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(minus(s.qty(), val(1))))
+            .where(s -> all(s.id().eq(1L), s.qty().gt(0)))));
+        assertThrows(RuntimeException.class, () -> db.transaction(() -> {
+            db.execute(update(Stock.class).set(s -> s.qty().to(0)).where(s -> s.id().eq(2L)));
+            db.execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(minus(s.qty(), val(1))))
+                .where(s -> all(s.id().eq(1L), s.qty().gt(0))));
+        }));
+        assertEquals(List.of(0, 5), db.list(from(Stock.class).orderBy(s -> s.id()).select(s -> s.qty())));
+        // 自动提交时不能用
+        assertThrows(RuntimeException.class, () -> db.execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(9)).where(s -> s.id().eq(2L))));
+    }
+
+    @Test
     void 专属写法在别的方言上报错() {
         Database mysql = org.dpdns.zerodep.query.mysql.Mysql.database(ConnectionProvider.dryRun(), null);
         assertThrows(UnsupportedOperationException.class, () -> mysql.render(fromAsOf(Stock.class, LocalDateTime.of(2026, 1, 1, 0, 0)).select(s -> s.id())));
+        assertThrows(UnsupportedOperationException.class, () -> mysql.render(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(1)).where(s -> s.id().eq(1L))));
     }
 }

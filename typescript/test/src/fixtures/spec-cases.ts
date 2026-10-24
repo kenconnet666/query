@@ -73,7 +73,8 @@ import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
 import * as writes from "./writes.js";
 import { ShEvent, ShOrder } from "./shards.js";
-import { insertInto, update, type Write } from "@zerodep-dev/query-core";
+import { deleteFrom, insertInto, update, type Write } from "@zerodep-dev/query-core";
+import { fromAsOf, inventory } from "@zerodep-dev/query-polardb";
 import { allOf, anyOf, avgDistinct, bool, cumeDist, keys, nthValue, percentRank, stddevPop, stddevSamp, sumDistinct, varPop, varSamp } from "@zerodep-dev/query-core";
 
 /**
@@ -880,6 +881,22 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
           deliveries: stringAgg(l.delivery, "|", l.delivery.asc()),
         })),
     ),
+    "mysql-update-hints": {
+      filtered: true,
+      query: () =>
+        update(Lips)
+          .with((l) => mysqlx.noIndex(l, "IX_LIPS"))
+          .with(() => maxExecutionTime(2000))
+          .set(() => ({ unit: "KG" }))
+          .where((l) => l.delivery.eq("D1")),
+    },
+    "mysql-delete-hints": {
+      filtered: true,
+      query: () =>
+        deleteFrom(Lips)
+          .with((l) => mysqlx.index(l, "PRIMARY"))
+          .where((l) => l.delivery.eq("D9")),
+    },
   },
   sqlite: {
     "sqlite-functions": plain(() =>
@@ -896,6 +913,29 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
         })),
     ),
   },
+};
+
+/**
+ * PolarDB 的用例：写法沿用 MySQL，共享用例和 MySQL 方言的用例都和 MySQL 的金样例比对（见 spec.test.ts 的 fallbacks），
+ * 只有 PolarDB 专属的写法有 `*.polardb.sql`；与 Java 的 PolardbSpecTest 一致。
+ */
+export const polardbCases: Readonly<Record<string, SpecCase>> = {
+  ...dialectCases.mysql,
+  "polardb-flashback": {
+    filtered: true,
+    query: () =>
+      fromAsOf(Lips, "2026-01-15 08:30:00")
+        .where((l) => l.material.eq("M1"))
+        .orderBy((l) => l.delivery)
+        .select((l) => ({ delivery: l.delivery, quantity: l.quantity })),
+  },
+  "polardb-inventory": plain(() =>
+    update(Lips)
+      .with(() => inventory(1))
+      .with((l) => mysqlx.noIndex(l))
+      .set((l) => ({ quantity: minus(l.quantity, val("1", decimal)) }))
+      .where((l) => all(l.delivery.eq("D1"), l.quantity.gt("0"))),
+  ),
 };
 
 /** 某个单位的交货行的物料。 */

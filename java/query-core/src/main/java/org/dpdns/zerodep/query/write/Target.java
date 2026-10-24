@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.write;
 
+import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Nodes;
@@ -29,10 +30,12 @@ import java.util.function.Function;
  * @param fills     是否套用数据库实例的写入填充
  * @param everyRow  是否允许没有 where 条件（改动或删除全表）
  * @param expected  期望影响的总行数，null 表示不检查
+ * @param hints     写在 UPDATE、DELETE 关键字后面的提示（方言的优化器提示）
  */
-record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, Filtering filtering, boolean fills, boolean everyRow, Long expected) {
+record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, Filtering filtering, boolean fills, boolean everyRow, Long expected,
+                               List<Clause> hints) {
     /** 以 table 的一次新出现开始。 */
-    static <T extends Entity> Target<T> of(Class<T> table) { return new Target<>(Ref.table(table), List.of(), false, Filtering.ON, true, false, null); }
+    static <T extends Entity> Target<T> of(Class<T> table) { return new Target<>(Ref.table(table), List.of(), false, Filtering.ON, true, false, null, List.of()); }
 
     /** 目标表的表接口实例，传给各个 lambda。 */
     T row() { return ref.param(); }
@@ -51,25 +54,46 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
     Target<T> withWhere(Cond c) {
         List<Cond> all = new ArrayList<>(where);
         all.add(c);
-        return new Target<>(ref, List.copyOf(all), skipping, filtering, fills, everyRow, expected);
+        return new Target<>(ref, List.copyOf(all), skipping, filtering, fills, everyRow, expected, hints);
     }
 
     /** 之后的 where 与 SET 里，与空值比较的条件和值为空的 SET 项被省略。 */
-    Target<T> skipEmpty() { return new Target<>(ref, where, true, filtering, fills, everyRow, expected); }
+    Target<T> skipEmpty() { return new Target<>(ref, where, true, filtering, fills, everyRow, expected, hints); }
 
     /** 换一个过滤开关。 */
-    Target<T> filtering(Filtering f) { return new Target<>(ref, where, skipping, f, fills, everyRow, expected); }
+    Target<T> filtering(Filtering f) { return new Target<>(ref, where, skipping, f, fills, everyRow, expected, hints); }
 
     /** 不套用写入填充。 */
-    Target<T> withoutFills() { return new Target<>(ref, where, skipping, filtering, false, everyRow, expected); }
+    Target<T> withoutFills() { return new Target<>(ref, where, skipping, filtering, false, everyRow, expected, hints); }
 
     /** 允许没有 where 条件。 */
-    Target<T> all() { return new Target<>(ref, where, skipping, filtering, fills, true, expected); }
+    Target<T> all() { return new Target<>(ref, where, skipping, filtering, fills, true, expected, hints); }
 
     /** 期望影响 rows 行。 */
     Target<T> expect(long rows) {
         if (rows < 0) throw new IllegalArgumentException("expect needs a non-negative row count");
-        return new Target<>(ref, where, skipping, filtering, fills, everyRow, rows);
+        return new Target<>(ref, where, skipping, filtering, fills, everyRow, rows, hints);
+    }
+
+    /** 追加一个提示；只接受写在关键字后面的那种（{@link Clause.Position#HINT}），例如 MySQL 的优化器提示。 */
+    Target<T> hint(Function<T, Clause> clause) {
+        Clause c = clause.apply(row());
+        if (c == null || c.position() != Clause.Position.HINT) {
+            throw new IllegalArgumentException("UPDATE and DELETE take only optimizer hints right after the keyword, got " + c);
+        }
+        List<Clause> all = new ArrayList<>(hints);
+        all.add(c);
+        return new Target<>(ref, where, skipping, filtering, fills, everyRow, expected, List.copyOf(all));
+    }
+
+    /** 写出提示（每个后面跟一个空格，同一方言的合并由方言决定）；提示属于别的方言时报错。 */
+    void renderHints(SqlWriter w) {
+        for (Clause c : hints) {
+            if (c.dialect() != null && !c.dialect().isInstance(w.dialect())) {
+                throw new UnsupportedOperationException("A " + c.dialect().getSimpleName() + " clause cannot run on " + w.dialect().name());
+            }
+        }
+        if (!hints.isEmpty()) w.dialect().hints(w, hints);
     }
 
     /**

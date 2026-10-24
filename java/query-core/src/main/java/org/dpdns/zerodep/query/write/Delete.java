@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.write;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
@@ -88,6 +89,9 @@ public final class Delete<T extends Entity> implements Write {
     /** 期望影响 rows 行，不符时 {@code db.execute} 抛出 {@code UnexpectedRowCountException}。 */
     public Delete<T> expect(long rows) { return new Delete<>(target.expect(rows), byId, physical); }
 
+    /** 加一个写在 DELETE（逻辑删除时是 UPDATE）后面的提示，规则同 {@code update(...).with(...)}。 */
+    public Delete<T> with(Function<T, Clause> hint) { return new Delete<>(target.hint(hint), byId, physical); }
+
     /** {@code expect(n)} 写明的行数；没有写而用了 byId 时是行数。 */
     @Override public Long expected() { return target.expected() != null || byId == null ? target.expected() : byId.expected(); }
 
@@ -120,7 +124,9 @@ public final class Delete<T extends Entity> implements Write {
         EntityMeta<?> meta = Metadata.entity(target.ref().entity());
         WriteMeta.LogicDeleteMeta logic = meta.writes().logicDelete();
         if (logic == null || physical) {
-            w.sql("DELETE FROM ");
+            w.sql("DELETE ");
+            target.renderHints(w);
+            w.sql("FROM ");
             target.ref().renderSource(w);
             target.renderWhere(w, "deleteFrom(...)", located);
             return w.statement();
