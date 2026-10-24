@@ -4,16 +4,19 @@ import type { Write } from "../write/write.js";
 import { columnType, type ColumnDef, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./model.js";
 import type { SchemaSyntax } from "./syntax.js";
 
-/** Node 的 crypto，只取用到的部分；核心包不依赖 Node 的类型声明。 */
-interface NodeCrypto {
-  createHash(algorithm: string): { update(text: string): { digest(encoding: "hex"): string } };
+/** Web Crypto（Node 19 起和浏览器都有），只取用到的部分；核心包不依赖 DOM 或 Node 的类型声明。 */
+interface WebCrypto {
+  readonly subtle: { digest(algorithm: string, data: Uint8Array): Promise<ArrayBuffer> };
   randomUUID(): string;
 }
 
-/** 取 Node 的 crypto；不在 Node 上时迁移不可用。 */
-function nodeCrypto(): NodeCrypto {
-  const crypto = (globalThis as { process?: { getBuiltinModule?(id: string): unknown } }).process?.getBuiltinModule?.("node:crypto") as NodeCrypto | undefined;
-  if (crypto === undefined) throw new Error("Migrations need the node:crypto module (Node 22.3 or later)");
+/** 文本编码器（Node 和浏览器都有）；核心包不依赖 DOM 的类型声明。 */
+const utf8 = new (globalThis as unknown as { TextEncoder: new () => { encode(text: string): Uint8Array } }).TextEncoder();
+
+/** 取 Web Crypto；浏览器里只在安全上下文（https、localhost）中有。 */
+function webCrypto(): WebCrypto {
+  const crypto = (globalThis as { crypto?: WebCrypto }).crypto;
+  if (crypto?.subtle === undefined) throw new Error("Migrations need Web Crypto (Node 19 or later, or a secure browser context)");
   return crypto;
 }
 
@@ -225,7 +228,8 @@ export interface MigrationBackend {
   run(statements: readonly string[]): Promise<void>;
   render(write: Write): readonly Rendered[];
   execute(write: Write): Promise<unknown>;
-  transaction<R>(work: () => Promise<R>): Promise<R>;
+  /** 在一个事务里执行 work，work 收到经由事务执行的能力。 */
+  transaction<R>(work: (backend: MigrationBackend) => Promise<R>): Promise<R>;
 }
 
 /** 此刻的时间戳文本 'YYYY-MM-DD HH:MM:SS.mmm'（本地时间）。 */
@@ -240,7 +244,7 @@ function now(): string {
  * 锁表 QUERY_MIGRATION_LOCK 的一行让多个实例互斥；PostgreSQL 每个迁移一个事务，MySQL、HANA 失败时记为 failed，修好后 {@link repair}。
  */
 export class Migrator {
-  readonly #owner = nodeCrypto().randomUUID();
+  readonly #owner = webCrypto().randomUUID();
 
   constructor(
     readonly migrations: readonly Migration[],
@@ -294,7 +298,7 @@ export class Migrator {
 
   /** 检查历史与迁移列表是否一致；不一致时抛错，列出全部问题。 */
   async verify(): Promise<void> {
-    const problems = this.#problems(byVersion(await this.history()));
+    const problems = await this.#problems(byVersion(await this.history()));
     if (problems.length > 0) throw new Error(`Migration history does not match the migrations:\n${problems.join("\n")}`);
   }
 
@@ -310,7 +314,7 @@ export class Migrator {
     await this.#lock();
     try {
       const applied = byVersion(await this.history());
-      const problems = this.#problems(applied);
+      const problems = await this.#problems(applied);
       if (problems.length > 0) throw new Error(`Migration history does not match the migrations:\n${problems.join("\n")}`);
       const done: string[] = [];
       for (const m of this.migrations) {
@@ -340,7 +344,7 @@ export class Migrator {
             "INSERT INTO " + this.#table(MIGRATION_HISTORY) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
             m.version,
             m.description,
-            checksum(this.#record(m)),
+            await checksum(this.#record(m)),
             "baseline",
             t,
             t,
@@ -366,29 +370,29 @@ export class Migrator {
       "INSERT INTO " + this.#table(MIGRATION_HISTORY) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
       m.version,
       m.description,
-      checksum(steps),
+      await checksum(steps),
       "started",
       now(),
     );
-    const work = async () => {
+    const work = async (backend: MigrationBackend) => {
       for (const s of steps.steps) {
-        if ("sql" in s) await this.backend.run([s.sql]);
-        else await this.backend.execute(s.write);
+        if ("sql" in s) await backend.run([s.sql]);
+        else await backend.execute(s.write);
       }
-      await this.#mark(m.version, "success");
+      await this.#mark(backend, m.version, "success");
     };
     try {
       if (this.syntax.transactionalDdl) await this.backend.transaction(work);
-      else await work();
+      else await work(this.backend);
     } catch (e) {
-      await this.#mark(m.version, "failed");
+      await this.#mark(this.backend, m.version, "failed");
       throw new Error(`Migration ${m.version} (${m.description}) failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
     }
   }
 
-  /** 改历史表里一个版本的状态和结束时间。 */
-  async #mark(version: string, status: string): Promise<void> {
-    await this.backend.update("UPDATE " + this.#table(MIGRATION_HISTORY) + this.#cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
+  /** 经由 backend 改历史表里一个版本的状态和结束时间。 */
+  async #mark(backend: MigrationBackend, version: string, status: string): Promise<void> {
+    await backend.update("UPDATE " + this.#table(MIGRATION_HISTORY) + this.#cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
   }
 
   /** 让迁移登记它的步骤。 */
@@ -399,7 +403,7 @@ export class Migrator {
   }
 
   /** 历史与列表的不一致：失败或未完成的版本、未知的版本、校验和不同、中间有空缺。 */
-  #problems(applied: Map<string, Applied>): string[] {
+  async #problems(applied: Map<string, Applied>): Promise<string[]> {
     const out: string[] = [];
     const known = new Set<string>();
     let gap = false;
@@ -412,7 +416,7 @@ export class Migrator {
       }
       if (gap) out.push(`${m.version} was applied although an earlier migration was not`);
       if (a.status === "failed" || a.status === "started") out.push(`${m.version} is ${a.status}; fix the database by hand, then call repair("${m.version}")`);
-      else if (a.checksum !== checksum(this.#record(m))) out.push(`${m.version} was changed after it was applied (checksum differs); write a new migration instead`);
+      else if (a.checksum !== (await checksum(this.#record(m)))) out.push(`${m.version} was changed after it was applied (checksum differs); write a new migration instead`);
     }
     for (const v of applied.keys()) if (!known.has(v)) out.push(`${v} is in the history but not among the migrations`);
     return out;
@@ -473,9 +477,10 @@ export class Migrator {
   }
 }
 
-/** 步骤语句的 SHA-256。 */
-function checksum(steps: MigrationSteps): string {
-  return nodeCrypto().createHash("sha256").update(steps.statements.join("\n")).digest("hex");
+/** 步骤语句（UTF-8）的 SHA-256，十六进制小写。 */
+async function checksum(steps: MigrationSteps): Promise<string> {
+  const digest = await webCrypto().subtle.digest("SHA-256", utf8.encode(steps.statements.join("\n")));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** 按版本号索引历史。 */

@@ -8,8 +8,8 @@ export interface TrackerHost {
   one<R>(q: Query<R>): Promise<R>;
   optional<R>(q: Query<R>): Promise<R | undefined>;
   execute(write: Update<unknown>): Promise<number>;
-  /** 在一个事务里执行 run；已经在事务里或驱动不支持事务时直接执行。 */
-  atomically<R>(run: () => Promise<R>): Promise<R>;
+  /** 在一个事务里执行 run，run 收到经由事务执行的能力；已经在事务里或驱动不支持事务时直接执行。 */
+  atomically<R>(run: (host: TrackerHost) => Promise<R>): Promise<R>;
 }
 
 /** 一个登记的行：表、行对象和修改前的快照。 */
@@ -99,8 +99,8 @@ export class Tracker {
       if (u.changedRows.length > 0) updates.push(u as Update<unknown>);
     }
     if (updates.length === 0) return;
-    await this.#db.atomically(async () => {
-      for (const u of updates) await this.#db.execute(u);
+    await this.#db.atomically(async (db) => {
+      for (const u of updates) await db.execute(u);
     });
     for (const u of updates) {
       for (const row of u.changedRows) {

@@ -3,10 +3,10 @@ import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, typeOf, untyped, type SqlType } from "../schema/types.js";
 import { SchemaTools } from "../ddl/tools.js";
-import { Migrator, type Migration } from "../ddl/migrator.js";
+import { Migrator, type Migration, type MigrationBackend } from "../ddl/migrator.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
-import { Tracker } from "./tracker.js";
+import { Tracker, type TrackerHost } from "./tracker.js";
 import { Sharding, type ShardConfig } from "../query/sharding.js";
 
 // ---------- 驱动 ----------
@@ -166,7 +166,8 @@ function printToConsole(text: string): void {
 
 /** 惰性创建跨异步调用传递捕获状态的存储；不在 Node 上时 capture 不可用。 */
 function captures(): AsyncStorage<Capture> {
-  activeCapture ??= asyncStorage("capture()");
+  activeCapture ??= asyncStorage();
+  if (activeCapture === undefined) throw new Error("capture() needs Node's AsyncLocalStorage (Node 22.3 or later)");
   return activeCapture;
 }
 
@@ -179,25 +180,33 @@ interface TrackingScope {
 
 let activeTracking: AsyncStorage<TrackingScope> | undefined;
 
-/** 惰性创建跨异步调用传递追踪范围的存储；不在 Node 上时 tracking 不可用。 */
-function trackers(): AsyncStorage<TrackingScope> {
-  activeTracking ??= asyncStorage("tracking()");
+/** 惰性创建跨异步调用传递追踪范围的存储；不在 Node 上时为 undefined，嵌套的追踪范围各自写回。 */
+function trackers(): AsyncStorage<TrackingScope> | undefined {
+  activeTracking ??= asyncStorage();
   return activeTracking;
 }
 
-/** 惰性创建跨异步调用传递事务的存储；不在 Node 上时 transaction 不可用。 */
-function transactions(): AsyncStorage<Transaction> {
-  activeTransaction ??= asyncStorage("transaction()");
+/** 惰性创建跨异步调用传递事务的存储；不在 Node 上时为 undefined，事务里的语句要经由 work 收到的 tx 执行。 */
+function transactions(): AsyncStorage<Transaction> | undefined {
+  activeTransaction ??= asyncStorage();
   return activeTransaction;
 }
 
-/** 新建 Node 的 AsyncLocalStorage；what 是需要它的功能，用于报错。 */
-function asyncStorage<T>(what: string): AsyncStorage<T> {
+/** 新建 Node 的 AsyncLocalStorage；不在 Node 上（浏览器、Worker）时返回 undefined。 */
+function asyncStorage<T>(): AsyncStorage<T> | undefined {
   const hooks = (globalThis as { process?: { getBuiltinModule?(id: string): unknown } }).process?.getBuiltinModule?.("node:async_hooks") as
     | { AsyncLocalStorage: new () => AsyncStorage<T> }
     | undefined;
-  if (hooks === undefined) throw new Error(`${what} needs Node's AsyncLocalStorage (Node 22.3 or later)`);
-  return new hooks.AsyncLocalStorage();
+  return hooks === undefined ? undefined : new hooks.AsyncLocalStorage();
+}
+
+/** 绑定在事务上的视图：{@link Database} 的构造函数看到这个键时从 database 复制全部状态，并固定用 transaction 的连接。 */
+const BIND = Symbol("bind");
+
+/** 构造事务视图时经由选项传入的内容，见 {@link BIND}。 */
+interface Binding {
+  readonly database: Database;
+  readonly transaction: Transaction;
 }
 
 /** 查询结果缓存的键：数据库名、SQL 文本和参数。 */
@@ -336,12 +345,32 @@ export abstract class Database {
   readonly #listener: QueryListener | undefined;
   readonly #timeout: number | undefined;
   readonly #interceptors: readonly StatementInterceptor[];
+  /** 事务视图所在的事务；普通实例为 undefined。 */
+  readonly #transaction: Transaction | undefined;
+  /** 事务视图来自的实例；普通实例是自己。 */
+  readonly #root: Database;
 
   protected constructor(
     readonly dialect: Dialect,
     driver: Driver,
     options: DatabaseOptions = {},
   ) {
+    const binding = (options as { [BIND]?: Binding })[BIND];
+    if (binding !== undefined) {
+      const parent = binding.database;
+      this.name = parent.name;
+      this.#driver = parent.#driver;
+      this.#settings = parent.#settings;
+      this.#cache = parent.#cache;
+      this.#listener = parent.#listener;
+      this.#timeout = parent.#timeout;
+      this.#interceptors = parent.#interceptors;
+      this.#transaction = binding.transaction;
+      this.#root = parent;
+      return;
+    }
+    this.#transaction = undefined;
+    this.#root = this;
     this.#driver = driver;
     this.name = options.name ?? `${dialect.name}#${++instances}`;
     this.#settings = Object.freeze({
@@ -478,12 +507,12 @@ export abstract class Database {
   /**
    * 运行 work，返回它（包括其中的异步调用）通过本数据库执行的全部语句，按执行顺序，含缓存命中，
    * 便于在测试里断言 SQL 和参数：`const sqls = await db.capture(() => service.load(req))`。
-   * 配合 {@link dryRunDriver} 可以不连数据库。可以嵌套，内层捕获的语句不再计入外层。需要 Node 的 AsyncLocalStorage。
+   * 配合 {@link dryRunDriver} 可以不连数据库。可以嵌套，内层捕获的语句不再计入外层。需要 Node 的 AsyncLocalStorage，浏览器里报错。
    */
   async capture(work: () => unknown): Promise<QueryEvent[]> {
     const events: QueryEvent[] = [];
     const storage = captures();
-    await storage.run({ database: this, events, outer: storage.getStore() }, async () => {
+    await storage.run({ database: this.#root, events, outer: storage.getStore() }, async () => {
       await work();
     });
     return events;
@@ -521,12 +550,12 @@ export abstract class Database {
   async execute(write: Write): Promise<number> {
     const statements = this.render(write);
     if (statements.length === 0) return 0;
-    const run = async () => {
+    const run = async (db: Database) => {
       let rows = 0;
-      for (const s of statements) rows += (await this.#execute(s, undefined)).affected ?? 0;
+      for (const s of statements) rows += (await db.#execute(s, undefined)).affected ?? 0;
       return rows;
     };
-    const rows = statements.length > 1 ? await this.#atomically(run) : await run();
+    const rows = statements.length > 1 ? await this.#atomically(run) : await run(this);
     this.#cache?.clear();
     const expected = write.expected;
     if (expected !== undefined && !DRY_RUN.has(this.#driver) && rows !== expected) throw new UnexpectedRowCountError(this.name, statements[0]!, expected, rows);
@@ -543,12 +572,12 @@ export abstract class Database {
     if (statements.length === 0) return [];
     const returning = this.dialect.returning(columnName(column, this.#writer().naming));
     const identity = this.dialect.identityQuery;
-    const keys = await this.transaction(async () => {
+    const keys = await this.transaction(async (tx) => {
       const out: unknown[] = [];
       for (const s of statements) {
-        const result = await this.#execute(returning === undefined ? s : new Rendered(s.sql + returning, s.bindings, s.dialect), undefined);
+        const result = await tx.#execute(returning === undefined ? s : new Rendered(s.sql + returning, s.bindings, s.dialect), undefined);
         const raw =
-          returning !== undefined ? result.rows[0]?.[0] : identity !== undefined ? (await this.#execute(new Rendered(identity, [], this.dialect), undefined)).rows[0]?.[0] : result.insertId;
+          returning !== undefined ? result.rows[0]?.[0] : identity !== undefined ? (await tx.#execute(new Rendered(identity, [], this.dialect), undefined)).rows[0]?.[0] : result.insertId;
         out.push(raw == null ? null : column.type.decode(raw));
       }
       return out;
@@ -563,12 +592,12 @@ export abstract class Database {
    */
   protected async writeReturning<R>(statements: readonly Rendered[], decode: (row: readonly unknown[]) => R): Promise<R[]> {
     if (statements.length === 0) return [];
-    const run = async () => {
+    const run = async (db: Database) => {
       const out: R[] = [];
-      for (const s of statements) out.push(...(await this.#execute(s, undefined)).rows.map(decode));
+      for (const s of statements) out.push(...(await db.#execute(s, undefined)).rows.map(decode));
       return out;
     };
-    const rows = statements.length > 1 ? await this.#atomically(run) : await run();
+    const rows = statements.length > 1 ? await this.#atomically(run) : await run(this);
     this.#cache?.clear();
     return rows;
   }
@@ -586,14 +615,19 @@ export abstract class Database {
    * 适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
    */
   migrator(migrations: readonly Migration[]): Migrator {
-    return new Migrator(migrations, this.dialect, this.dialect.schemaSyntax, {
+    return new Migrator(migrations, this.dialect, this.dialect.schemaSyntax, this.#migrationBackend());
+  }
+
+  /** 迁移器经由的数据库能力；事务里换成事务视图的。 */
+  #migrationBackend(): MigrationBackend {
+    return {
       query: (sql, ...parameters) => this.#catalog(sql, parameters),
       update: async (sql, ...parameters) => (await this.#execute(this.#native(sql, parameters), undefined)).affected ?? 0,
       run: (statements) => this.#runStatements(statements, false),
       render: (write) => this.render(write),
       execute: (write) => this.execute(write),
-      transaction: (work) => this.transaction(work),
-    });
+      transaction: (work) => this.transaction((tx) => work(tx.#migrationBackend())),
+    };
   }
 
   /** 手写的 SQL：问号按顺序换成方言的占位符，参数按值推断类型。 */
@@ -610,11 +644,11 @@ export abstract class Database {
 
   /** 执行手写的语句（DDL 等），一条一次；transactional 时在一个事务里执行。执行后清空结果缓存。 */
   async #runStatements(statements: readonly string[], transactional: boolean): Promise<void> {
-    const run = async () => {
-      for (const s of statements) await this.#execute(new Rendered(s, [], this.dialect), undefined);
+    const run = async (db: Database) => {
+      for (const s of statements) await db.#execute(new Rendered(s, [], this.dialect), undefined);
     };
     if (transactional) await this.#atomically(run);
-    else await run();
+    else await run(this);
     this.#cache?.clear();
   }
 
@@ -624,50 +658,73 @@ export abstract class Database {
   }
 
   /**
-   * 在一个事务里执行 work 并返回它的结果：其中通过这个数据库执行的查询和写语句用同一个连接，正常结束时提交，
-   * 抛出异常时回滚；嵌套调用加入外层事务。驱动不支持事务时报错。
+   * 在一个事务里执行 work 并返回它的结果：正常结束时提交，抛出异常时回滚；嵌套调用加入外层事务。驱动不支持事务时报错。
+   * work 收到绑定在这个事务上的同一种数据库 tx，经由 tx 执行的语句都用事务的连接：
+   * `await db.transaction(async (tx) => { await tx.execute(a); await tx.execute(b); })`。
+   * 在 Node 上事务也跟着异步上下文走（AsyncLocalStorage），其中直接用 db 执行的语句同样在事务里；
+   * 浏览器和 Worker 里没有异步上下文，必须用 tx（用 db 的语句不在事务里，单连接的驱动上会一直等到事务结束）。
    */
-  async transaction<R>(work: () => Promise<R>): Promise<R> {
+  async transaction<R>(work: (tx: this) => Promise<R>): Promise<R> {
     const outer = this.#bound();
-    if (outer !== undefined) return work();
+    if (outer !== undefined) return work(this.#transaction === undefined ? this.#bind(outer) : this);
     const driver = this.#driver;
     if (driver.transaction === undefined) throw new Error(`${this.name}: the driver does not support transactions`);
     const storage = transactions();
-    return driver.transaction((bound) => storage.run({ database: this, driver: bound, outer: storage.getStore() }, work));
+    return driver.transaction((bound) => {
+      const t: Transaction = { database: this.#root, driver: bound, outer: storage?.getStore() };
+      const tx = this.#bind(t);
+      return storage === undefined ? work(tx) : storage.run(t, () => work(tx));
+    });
   }
 
-  /** 在一个事务里执行 run；已经在事务里、或驱动不支持事务时直接执行。 */
-  #atomically<R>(run: () => Promise<R>): Promise<R> {
-    return this.#current() === this.#driver && this.#driver.transaction !== undefined ? this.transaction(run) : run();
+  /**
+   * 绑定在事务 t 上的同类实例：原型是本实例的类，但只运行 Database 的构造函数，经由 {@link BIND} 复制本实例的状态
+   * （子类的构造参数各不相同，也不需要再运行）。
+   */
+  #bind(t: Transaction): this {
+    const binding: Binding = { database: this.#root, transaction: t };
+    return Reflect.construct(Database as unknown as new (...args: unknown[]) => this, [this.dialect, this.#driver, { [BIND]: binding }], this.constructor);
+  }
+
+  /** 在一个事务里执行 run，run 收到经由事务执行的数据库；已经在事务里、或驱动不支持事务时直接用本实例执行。 */
+  #atomically<R>(run: (db: Database) => Promise<R>): Promise<R> {
+    return this.#current() === this.#driver && this.#driver.transaction !== undefined ? this.transaction(run) : run(this);
   }
 
   /**
    * 在一个追踪范围里执行 work：用 {@link Tracker} 读到并登记的行，范围正常结束时把变了的按主键写回
-   * （`update(表).byId(行).diffFrom(快照)`，同一个事务），抛出异常时什么也不写。范围跟着异步上下文走（AsyncLocalStorage），
-   * 嵌套调用加入外层，由最外层写回。写回成功后行的版本字段变成库里的新值；外层事务之后回滚时，已写回的版本不会撤销。
+   * （`update(表).byId(行).diffFrom(快照)`，同一个事务），抛出异常时什么也不写。在 Node 上范围跟着异步上下文走（AsyncLocalStorage），
+   * 嵌套调用加入外层，由最外层写回；浏览器里没有异步上下文，每次调用是独立的范围，读写都经由 t。
+   * 写回成功后行的版本字段变成库里的新值；外层事务之后回滚时，已写回的版本不会撤销。
    * 例如 `await db.tracking(async (t) => { const d = await t.one(Doc, q); d.title = "x"; })`。
    */
   async tracking<R>(work: (t: Tracker) => Promise<R>): Promise<R> {
     const storage = trackers();
-    let scope = storage.getStore();
-    while (scope !== undefined && scope.database !== this) scope = scope.outer;
+    let scope = storage?.getStore();
+    while (scope !== undefined && scope.database !== this.#root) scope = scope.outer;
     if (scope !== undefined) return work(scope.tracker);
-    const tracker = new Tracker({
-      list: (q) => this.list(q),
-      one: (q) => this.one(q),
-      optional: (q) => this.optional(q),
-      execute: (w) => this.execute(w),
-      atomically: (run) => this.#atomically(run),
-    });
-    const result = await storage.run({ database: this, tracker, outer: storage.getStore() }, () => work(tracker));
+    const tracker = new Tracker(this.#trackerHost());
+    const result = storage === undefined ? await work(tracker) : await storage.run({ database: this.#root, tracker, outer: storage.getStore() }, () => work(tracker));
     await tracker.flush();
     return result;
   }
 
-  /** 当前异步上下文里这个数据库所在的事务。 */
+  /** Tracker 经由的数据库能力；写回的事务里换成事务视图的。 */
+  #trackerHost(): TrackerHost {
+    return {
+      list: (q) => this.list(q),
+      one: (q) => this.one(q),
+      optional: (q) => this.optional(q),
+      execute: (w) => this.execute(w),
+      atomically: (run) => this.#atomically((db) => run(db.#trackerHost())),
+    };
+  }
+
+  /** 这个数据库所在的事务：事务视图固定的那个，否则是当前异步上下文里的。 */
   #bound(): Transaction | undefined {
+    if (this.#transaction !== undefined) return this.#transaction;
     let t = activeTransaction?.getStore();
-    while (t !== undefined && t.database !== this) t = t.outer;
+    while (t !== undefined && t.database !== this.#root) t = t.outer;
     return t;
   }
 
@@ -753,7 +810,7 @@ export abstract class Database {
   /** 把一次执行报告给监听器。 */
   #notify(statement: Rendered, start: number, rows: number, error: unknown, cached: boolean): void {
     let capture = activeCapture?.getStore();
-    while (capture !== undefined && capture.database !== this) capture = capture.outer;
+    while (capture !== undefined && capture.database !== this.#root) capture = capture.outer;
     if (this.#listener === undefined && capture === undefined) return;
     const event: QueryEvent = { database: this.name, statement, elapsedMs: Date.now() - start, rows, error, cached };
     capture?.events.push(event);

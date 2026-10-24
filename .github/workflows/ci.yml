@@ -264,3 +264,8 @@ jobs:
       - name: 运行 SQLite 实库场景（node:sqlite 与 WASM，不需要数据库容器）
         working-directory: typescript
         run: node --test --test-concurrency=1 test/dist/live/sqlite.live.test.js test/dist/live/sqlite-wasm.live.test.js
+      - name: 在 Chrome 里运行浏览器测试（runner 预装的 Chrome，Worker 里的 SQLite WASM 与 OPFS）
+        working-directory: typescript
+        env:
+          QUERY_REQUIRE_BROWSER: '1'
+        run: node --test "test/dist/browser/**/*.test.js"
