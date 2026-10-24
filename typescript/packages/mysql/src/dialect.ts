@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, SECONDS_BETWEEN, STRING_AGG, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /**
  * 默认 SQL 模式下的 MySQL 8。标识符一律用反引号引用（RANK 等窗口函数名是保留字），
@@ -22,6 +22,9 @@ export class MysqlDialect extends Dialect {
     this.register(ADD_MONTHS, (w, args) => dateAdd(w, args, "MONTH"));
     this.register(ADD_YEARS, (w, args) => dateAdd(w, args, "YEAR"));
     this.register(DAYS_BETWEEN, (w, args) => FunctionDef.call(w, "DATEDIFF", [args[1]!, args[0]!]));
+    this.register(SECOND, (w, args) => FunctionDef.call(w, "SECOND", args));
+    this.register(ADD_SECONDS, (w, args) => void w.sql("TIMESTAMPADD(SECOND, ").render(args[1]!).sql(", ").render(args[0]!).sql(")"));
+    this.register(MONTH_START, (w, args) => void w.sql("DATE_SUB(").render(args[0]!).sql(", INTERVAL DAYOFMONTH(").render(args[0]!).sql(") - 1 DAY)"));
     this.register(SECONDS_BETWEEN, (w, args) => void w.sql("TIMESTAMPDIFF(SECOND, ").render(args[0]!).sql(", ").render(args[1]!).sql(")"));
     this.register(STRING_AGG, (w, args) => {
       w.sql("GROUP_CONCAT(").render(args[0]!);

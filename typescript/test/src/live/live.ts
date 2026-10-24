@@ -31,7 +31,7 @@ import {
   type Ref,
 } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
-import { dateFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
+import { dateFunctions, numberTextFunctions, timeFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 import * as wf from "../fixtures/workflow.js";
 import * as writes from "../fixtures/writes.js";
@@ -624,6 +624,24 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
         rows.map((r) => `${r.id}:${r.y}:${r.m}:${r.d}:${r.plusDays}:${r.minusMonth}:${r.plusYear}:${r.days}`),
         ["1:2024:3:31:2024-04-03:2024-02-29:2025-03-31:30", `2:2011:12:30:2012-01-02:2011-11-30:2012-12-30:${days}`],
       );
+    });
+
+    it("时间部分与加减小时分钟秒和月初在三个库上结果相同", async () => {
+      const rows = await live().db.list(timeFunctions());
+      assert.deepEqual(
+        rows.map((r) => `${r.id}:${r.h}:${r.mi}:${r.s}:${r.plusHours}:${r.minusMinutes}:${r.plusSeconds}:${r.monthStart}`),
+        ["1:2:30:0:2024-04-01 03:30:00:2024-03-31 01:59:00:2024-03-31 02:30:59:2024-03-01", "2:0:0:0:2011-12-31 01:00:00:2011-12-29 23:29:00:2011-12-30 00:00:59:2011-12-01"],
+      );
+    });
+
+    it("补齐、余数、乘方、开方与符号在三个库上结果相同", async () => {
+      const r = await live().db.one(numberTextFunctions());
+      assert.equal(r.padded, "000M1");
+      assert.equal(r.unit, "EA**");
+      assert.equal(Number(r.remainder), 1);
+      assert.ok(Math.abs(r.squared! - 9) < 1e-9, String(r.squared));
+      assert.ok(Math.abs(r.root! - Math.sqrt(3)) < 1e-9, String(r.root));
+      assert.equal(r.sign, -1);
     });
 
     it("条件聚合只聚合满足条件的行且文本按指定顺序拼接", async () => {

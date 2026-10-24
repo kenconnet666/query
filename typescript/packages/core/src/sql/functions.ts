@@ -24,7 +24,7 @@ import {
 } from "./expr.js";
 import type { Query } from "../query/query.js";
 import { SqlCond, SqlExpr } from "./template.js";
-import { date, decimal, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "../schema/types.js";
+import { date, decimal, double, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "../schema/types.js";
 
 /**
  * 核心函数：在所有受支持的数据库上语义一致的函数。这里的泛型函数只接受一个泛型操作数；
@@ -60,6 +60,21 @@ export const DAYS_BETWEEN = FunctionDef.of("DAYS_BETWEEN");
 
 /** `SECONDS_BETWEEN(from, to)`；PostgreSQL 写成 EXTRACT(EPOCH ...)，MySQL 写成 TIMESTAMPDIFF(SECOND, from, to)。 */
 export const SECONDS_BETWEEN = FunctionDef.of("SECONDS_BETWEEN");
+
+/** `HOUR(t)`；PostgreSQL 写成 EXTRACT，下面的 MINUTE 相同。 */
+export const HOUR = FunctionDef.of("HOUR");
+
+/** `MINUTE(t)`。 */
+export const MINUTE = FunctionDef.of("MINUTE");
+
+/** 秒的整数部分：HANA 的 SECOND 带小数，写成 `CAST(FLOOR(SECOND(t)) AS INTEGER)`；PostgreSQL、MySQL 注册自己的写法。 */
+export const SECOND = FunctionDef.of("SECOND", (w, args) => void w.sql("CAST(FLOOR(SECOND(").render(args[0]!).sql(")) AS INTEGER)"));
+
+/** `ADD_SECONDS(t, n)`；PostgreSQL 加 INTERVAL，MySQL 写成 TIMESTAMPADD。加小时、分钟也换算成秒用它。 */
+export const ADD_SECONDS = FunctionDef.of("ADD_SECONDS");
+
+/** 当月第一天：`ADD_DAYS(d, 1 - DAYOFMONTH(d))`；PostgreSQL 写成 DATE_TRUNC，MySQL 写成 DATE_SUB。 */
+export const MONTH_START = FunctionDef.of("MONTH_START", (w, args) => void w.sql("ADD_DAYS(").render(args[0]!).sql(", 1 - DAYOFMONTH(").render(args[0]!).sql("))"));
 
 /** `STRING_AGG(value, separator ORDER BY ...)`，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
 export const STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) => {
@@ -310,6 +325,30 @@ export function round<T extends Numeric>(e: Expr<T>, scale: number): Expr<T> {
   return functionCall(e.type, "ROUND", [e, lit(scale)]);
 }
 
+/** 余数，符号与被除数相同：`mod(-7, 3)` 是 -1。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 null，与除法相同。 */
+export function mod<T extends Numeric>(e: Expr<T>, divisor: number | Expr<Numeric>): Expr<T> {
+  numeric(e as Expr<unknown>, "MOD");
+  return functionCall(e.type, "MOD", [e, typeof divisor === "number" ? lit(divisor) : divisor]);
+}
+
+/** base 的 exponent 次方，结果是浮点数。 */
+export function power<T extends Numeric>(base: Expr<T>, exponent: number | Expr<Numeric>): Expr<KeepNull<T, number>> {
+  numeric(base as Expr<unknown>, "POWER");
+  return functionCall(double, "POWER", [base, typeof exponent === "number" ? lit(exponent) : exponent]);
+}
+
+/** 平方根，结果是浮点数；负数时报错。 */
+export function sqrt<T extends Numeric>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  numeric(e as Expr<unknown>, "SQRT");
+  return functionCall(double, "SQRT", [e]);
+}
+
+/** 符号：负数为 -1，零为 0，正数为 1。 */
+export function sign<T extends Numeric>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  numeric(e as Expr<unknown>, "SIGN");
+  return functionCall(integer, "SIGN", [e]);
+}
+
 // ---------- 日期 ----------
 
 /** 年份，参数可以是日期或时间戳：`groupBy((l) => [year(l.createdOn), month(l.createdOn)])`。 */
@@ -352,6 +391,52 @@ export function daysBetween(from: Expr<string | null>, to: Expr<string | null>):
   return functionCall(integer, DAYS_BETWEEN, [from, to]);
 }
 
+/** 小时，0 到 23。 */
+export function hour<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "HOUR", TIMESTAMP_ONLY);
+  return functionCall(integer, HOUR, [e]);
+}
+
+/** 分钟，0 到 59。 */
+export function minute<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "MINUTE", TIMESTAMP_ONLY);
+  return functionCall(integer, MINUTE, [e]);
+}
+
+/** 秒，0 到 59，不足一秒的部分舍去。 */
+export function second<T extends string | null>(e: Expr<T>): Expr<KeepNull<T, number>> {
+  temporal(e, "SECOND", TIMESTAMP_ONLY);
+  return functionCall(integer, SECOND, [e]);
+}
+
+/** 时间戳加上 hours 小时，可以为负。 */
+export function addHours<T extends string | null>(time: Expr<T>, hours: number): Expr<T> {
+  return addSeconds(time, whole(hours, "addHours") * 3600);
+}
+
+/** 时间戳加上 minutes 分钟，可以为负。 */
+export function addMinutes<T extends string | null>(time: Expr<T>, minutes: number): Expr<T> {
+  return addSeconds(time, whole(minutes, "addMinutes") * 60);
+}
+
+/** 时间戳加上 seconds 秒，可以为负。 */
+export function addSeconds<T extends string | null>(time: Expr<T>, seconds: number): Expr<T> {
+  temporal(time, "ADD_SECONDS", TIMESTAMP_ONLY);
+  return functionCall(time.type, ADD_SECONDS, [time, lit(whole(seconds, "addSeconds"))]);
+}
+
+/** 当月第一天，用于按月汇总时得到一个日期：`groupBy((l) => monthStart(l.createdOn))`。 */
+export function monthStart<T extends string | null>(day: Expr<T>): Expr<T> {
+  temporal(day, "MONTH_START", DATE_ONLY);
+  return functionCall(day.type, MONTH_START, [day]);
+}
+
+/** 检查 n 是整数并返回它；what 用于报错。 */
+function whole(n: number, what: string): number {
+  if (!Number.isInteger(n)) throw new RangeError(`${what} needs a whole number, got ${n}`);
+  return n;
+}
+
 /** 从 from 到 to 相隔的整秒数（不足一秒的部分舍去），to 较早时为负；任一端为 null 时为 null。 */
 export function secondsBetween(from: Expr<string | null>, to: Expr<string | null>): Expr<number | null> {
   temporal(from, "SECONDS_BETWEEN", TIMESTAMP_ONLY);
@@ -364,6 +449,16 @@ function dateShift<T extends string | null>(fn: FunctionDef, day: Expr<T>, n: nu
   temporal(day, fn.name, DATE_ONLY);
   if (!Number.isInteger(n)) throw new RangeError(`${fn.name} needs a whole number, got ${n}`);
   return functionCall(day.type, fn, [day, lit(n)]);
+}
+
+/** 左边用 pad 补足到 length 个字符，例如物料号补零 `lpad(m.material, 18, "0")`；比 length 长时截断成前 length 个字符。 */
+export function lpad<T extends string | null>(e: Expr<T>, length: number, pad: string): Expr<T> {
+  return functionCall(e.type, "LPAD", [e, lit(whole(length, "lpad")), lit(pad)]);
+}
+
+/** 右边用 pad 补足到 length 个字符；比 length 长时截断成前 length 个字符。 */
+export function rpad<T extends string | null>(e: Expr<T>, length: number, pad: string): Expr<T> {
+  return functionCall(e.type, "RPAD", [e, lit(whole(length, "rpad")), lit(pad)]);
 }
 
 // ---------- 聚合 ----------

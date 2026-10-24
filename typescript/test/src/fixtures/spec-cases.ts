@@ -59,7 +59,7 @@ import {
   type Query,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { addDays, addMonths, addYears, day, daysBetween, firstValue, lastValue, month, ntile, stringAgg, year } from "@zerodep-dev/query-core";
+import { addDays, addHours, addMinutes, addMonths, addSeconds, addYears, day, daysBetween, firstValue, hour, lastValue, lpad, minute, mod, month, monthStart, ntile, power, rpad, second, sign, sqrt, stringAgg, year } from "@zerodep-dev/query-core";
 import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
 import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
 import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg } from "@zerodep-dev/query-postgres";
@@ -271,6 +271,8 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
         })),
   },
   "date-functions": plain(() => dateFunctions()),
+  "time-functions": plain(() => timeFunctions()),
+  "number-text-functions": plain(() => numberTextFunctions()),
   "conditional-aggregates": plain(() => conditionalAggregates()),
   qualify: plain(() => qualify()),
   "window-values": plain(() => windowValues()),
@@ -342,6 +344,36 @@ export function groupJoin() {
 }
 
 /** 日期部分、日期加减和相隔天数，按半开区间筛选。 */
+/** 时间部分、加减小时分钟秒与月初。 */
+export function timeFunctions() {
+  return from(Event)
+    .orderBy((e) => e.id)
+    .select((e) => ({
+      id: e.id,
+      h: hour(e.atTime),
+      mi: minute(e.atTime),
+      s: second(e.atTime),
+      plusHours: addHours(e.atTime, 25),
+      minusMinutes: addMinutes(e.atTime, -31),
+      plusSeconds: addSeconds(e.atTime, 59),
+      monthStart: monthStart(e.onDay),
+    }));
+}
+
+/** 补齐、余数、乘方、开方与符号。 */
+export function numberTextFunctions() {
+  return from(Lips)
+    .where((l) => l.delivery.eq("D1"))
+    .select((l) => ({
+      padded: lpad(l.material, 5, "0"),
+      unit: rpad(l.unit, 4, "*"),
+      remainder: mod(l.quantity, 2),
+      squared: power(l.quantity, 2),
+      root: sqrt(l.quantity),
+      sign: sign(minus(l.quantity, lit("4", decimal))),
+    }));
+}
+
 export function dateFunctions() {
   return from(Event)
     .where((e) => e.onDay.range("2011-01-01", "2025-01-01"))

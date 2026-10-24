@@ -32,7 +32,8 @@ public class PostgresDialect extends Dialect {
     /**
      * PostgreSQL 没有 LOCATE，改写为 STRPOS；日期部分写成 EXTRACT 再转成整数（EXTRACT 返回 numeric），
      * 加天数是 {@code date + n}，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减，
-     * 相隔秒数取两个时间戳之差的 EPOCH 再舍去小数（直接转 BIGINT 会四舍五入）。
+     * 相隔秒数取两个时间戳之差的 EPOCH 再舍去小数（直接转 BIGINT 会四舍五入）；秒取 EXTRACT 的整数部分，
+     * 加秒数乘以 INTERVAL，月初用 DATE_TRUNC。
      */
     protected PostgresDialect() {
         register(Sql.LOCATE, (w, args) -> FunctionDef.call(w, "STRPOS", args));
@@ -43,6 +44,11 @@ public class PostgresDialect extends Dialect {
         register(Sql.ADD_MONTHS, (w, args) -> addInterval(w, args, "month"));
         register(Sql.ADD_YEARS, (w, args) -> addInterval(w, args, "year"));
         register(Sql.DAYS_BETWEEN, (w, args) -> w.sql("(").render(args.get(1)).sql(" - ").render(args.get(0)).sql(")"));
+        register(Sql.HOUR, (w, args) -> extract(w, args, "HOUR"));
+        register(Sql.MINUTE, (w, args) -> extract(w, args, "MINUTE"));
+        register(Sql.SECOND, (w, args) -> w.sql("CAST(FLOOR(EXTRACT(SECOND FROM ").render(args.get(0)).sql(")) AS INTEGER)"));
+        register(Sql.ADD_SECONDS, (w, args) -> w.sql("(").render(args.get(0)).sql(" + ").render(args.get(1)).sql(" * INTERVAL '1 second')"));
+        register(Sql.MONTH_START, (w, args) -> w.sql("CAST(DATE_TRUNC('month', ").render(args.get(0)).sql(") AS DATE)"));
         register(Sql.SECONDS_BETWEEN, (w, args) ->
             w.sql("CAST(TRUNC(EXTRACT(EPOCH FROM (").render(args.get(1)).sql(" - ").render(args.get(0)).sql("))) AS BIGINT)"));
     }

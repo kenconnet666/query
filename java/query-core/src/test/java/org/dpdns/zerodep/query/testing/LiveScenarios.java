@@ -554,6 +554,27 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 时间部分与加减小时分钟秒和月初在三个库上结果相同() {
+        assertEquals(List.of("1:2:30:0:2024-04-01T03:30:2024-03-31T01:59:2024-03-31T02:30:59:2024-03-01",
+                "2:0:0:0:2011-12-31T01:00:2011-12-29T23:29:2011-12-30T00:00:59:2011-12-01"),
+            db.list(SpecCases.timeFunctions()).stream()
+                .map(r -> r.get("id") + ":" + r.get("h") + ":" + r.get("mi") + ":" + r.get("s") + ":" + r.get("plusHours") + ":"
+                    + r.get("minusMinutes") + ":" + r.get("plusSeconds") + ":" + r.get("monthStart"))
+                .toList());
+    }
+
+    @Test
+    void 补齐余数乘方开方与符号在三个库上结果相同() {
+        Map<String, Object> r = db.one(SpecCases.numberTextFunctions());
+        assertEquals("000M1", r.get("padded"));
+        assertEquals("EA**", r.get("unit"));
+        assertEquals(0, BigDecimal.ONE.compareTo((BigDecimal) r.get("remainder")), () -> "remainder " + r.get("remainder"));
+        assertEquals(9.0, (Double) r.get("squared"), 1e-9);
+        assertEquals(Math.sqrt(3), (Double) r.get("root"), 1e-9);
+        assertEquals(-1, r.get("sign"));
+    }
+
+    @Test
     void 条件聚合只聚合满足条件的行且文本按指定顺序拼接() {
         assertEquals(List.of("M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"), db.list(from(Lips.class)
                 .groupBy(l -> l.material())

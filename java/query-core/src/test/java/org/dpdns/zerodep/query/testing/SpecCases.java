@@ -152,6 +152,8 @@ public final class SpecCases {
         cases.put("logic-delete-query", SpecCase.plain(() -> from(Writes.Ticket.class).orderBy(t -> t.id()).select(t -> t.id())));
         cases.put("write-insert-generated", SpecCase.plain(() -> insertInto(Writes.Seq.class).values(new Writes.SeqRow("a"))));
         cases.put("date-functions", SpecCase.plain(SpecCases::dateFunctions));
+        cases.put("time-functions", SpecCase.plain(SpecCases::timeFunctions));
+        cases.put("number-text-functions", SpecCase.plain(SpecCases::numberTextFunctions));
         cases.put("conditional-aggregates", SpecCase.plain(SpecCases::conditionalAggregates));
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));
         cases.put("window-values", SpecCase.plain(SpecCases::windowValues));
@@ -349,6 +351,23 @@ public final class SpecCases {
             .select(e -> cols(e.id(), year(e.onDay()).as("y"), month(e.atTime()).as("m"), day(e.onDay()).as("d"),
                 addDays(e.onDay(), 3).as("plusDays"), addMonths(e.onDay(), -1).as("minusMonth"), addYears(e.onDay(), 1).as("plusYear"),
                 daysBetween(e.onDay(), lit(LocalDate.of(2024, 4, 30))).as("days")));
+    }
+
+    /** 时间部分、加减小时分钟秒与月初。 */
+    public static Query<Map<String, Object>> timeFunctions() {
+        return from(Event.class)
+            .orderBy(e -> e.id())
+            .select(e -> cols(e.id(), hour(e.atTime()).as("h"), minute(e.atTime()).as("mi"), second(e.atTime()).as("s"),
+                addHours(e.atTime(), 25).as("plusHours"), addMinutes(e.atTime(), -31).as("minusMinutes"), addSeconds(e.atTime(), 59).as("plusSeconds"),
+                monthStart(e.onDay()).as("monthStart")));
+    }
+
+    /** 补齐、余数、乘方、开方与符号。 */
+    public static Query<Map<String, Object>> numberTextFunctions() {
+        return from(Lips.class)
+            .where(l -> l.delivery().eq("D1"))
+            .select(l -> cols(lpad(l.material(), 5, "0").as("padded"), rpad(l.unit(), 4, "*").as("unit"), mod(l.quantity(), 2).as("remainder"),
+                power(l.quantity(), 2).as("squared"), sqrt(l.quantity()).as("root"), sign(minus(l.quantity(), lit(new BigDecimal("4")))).as("sign")));
     }
 
     /** 每个物料最新的两张交货单：窗口条件包成派生表，不在结果里的排序列作为额外的列带出来。 */

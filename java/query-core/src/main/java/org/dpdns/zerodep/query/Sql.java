@@ -83,6 +83,22 @@ public class Sql extends Rows {
     /** {@code SECONDS_BETWEEN(from, to)}；PostgreSQL 写成 EXTRACT(EPOCH ...)，MySQL 写成 TIMESTAMPDIFF(SECOND, from, to)。 */
     public static final FunctionDef SECONDS_BETWEEN = FunctionDef.of("SECONDS_BETWEEN");
 
+    /** {@code HOUR(t)}；PostgreSQL 写成 EXTRACT，下面的 MINUTE 相同。 */
+    public static final FunctionDef HOUR = FunctionDef.of("HOUR");
+
+    /** {@code MINUTE(t)}。 */
+    public static final FunctionDef MINUTE = FunctionDef.of("MINUTE");
+
+    /** 秒的整数部分：HANA 的 SECOND 带小数，写成 {@code CAST(FLOOR(SECOND(t)) AS INTEGER)}；PostgreSQL、MySQL 注册自己的写法。 */
+    public static final FunctionDef SECOND = FunctionDef.of("SECOND", (w, args) -> w.sql("CAST(FLOOR(SECOND(").render(args.get(0)).sql(")) AS INTEGER)"));
+
+    /** {@code ADD_SECONDS(t, n)}；PostgreSQL 加 INTERVAL，MySQL 写成 TIMESTAMPADD。加小时、分钟也换算成秒用它。 */
+    public static final FunctionDef ADD_SECONDS = FunctionDef.of("ADD_SECONDS");
+
+    /** 当月第一天：{@code ADD_DAYS(d, 1 - DAYOFMONTH(d))}；PostgreSQL 写成 DATE_TRUNC，MySQL 写成 DATE_SUB。 */
+    public static final FunctionDef MONTH_START = FunctionDef.of("MONTH_START", (w, args) ->
+        w.sql("ADD_DAYS(").render(args.get(0)).sql(", 1 - DAYOFMONTH(").render(args.get(0)).sql("))"));
+
     /** {@code STRING_AGG(value, separator ORDER BY ...)}，参数依次是值、分隔符和排序项；MySQL 写成 GROUP_CONCAT。 */
     public static final FunctionDef STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) -> {
         w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
@@ -385,6 +401,26 @@ public class Sql extends Rows {
     /** 保留 scale 位小数四舍五入。 */
     public static <N extends Number> Expr<N> round(Expr<N> e, int scale) { return Nodes.call(e.type(), "ROUND", List.of(e, lit(scale))); }
 
+    /** 余数，符号与被除数相同：{@code mod(-7, 3)} 是 -1。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 NULL，与除法相同。 */
+    public static <N extends Number> Expr<N> mod(Expr<N> e, Expr<? extends Number> divisor) { return Nodes.call(e.type(), "MOD", List.of(e, divisor)); }
+
+    /** 同上，除数是常量。 */
+    public static <N extends Number> Expr<N> mod(Expr<N> e, int divisor) { return mod(e, lit(divisor)); }
+
+    /** base 的 exponent 次方，结果是浮点数。 */
+    public static Expr<Double> power(Expr<? extends Number> base, Expr<? extends Number> exponent) {
+        return Nodes.call(SqlType.of(Double.class), "POWER", List.of(base, exponent));
+    }
+
+    /** 同上，指数是常量。 */
+    public static Expr<Double> power(Expr<? extends Number> base, int exponent) { return power(base, lit(exponent)); }
+
+    /** 平方根，结果是浮点数；负数时报错。 */
+    public static Expr<Double> sqrt(Expr<? extends Number> e) { return Nodes.call(SqlType.of(Double.class), "SQRT", List.of(e)); }
+
+    /** 符号：负数为 -1，零为 0，正数为 1。 */
+    public static Expr<Integer> sign(Expr<? extends Number> e) { return Nodes.call(SqlType.of(Integer.class), "SIGN", List.of(e)); }
+
     /** 把 first 与 rest 用同一个运算符连成一个算术表达式，类型取 first 的。 */
     private static <N extends Number> Expr<N> arithmetic(String operator, Expr<N> first, Expr<? extends Number>[] rest) {
         List<Expr<?>> operands = new ArrayList<>();
@@ -420,10 +456,39 @@ public class Sql extends Rows {
         return Nodes.call(SqlType.of(Integer.class), DAYS_BETWEEN, List.of(from, to));
     }
 
+    /** 小时，0 到 23。 */
+    public static Expr<Integer> hour(Expr<LocalDateTime> e) { return Nodes.call(SqlType.of(Integer.class), HOUR, List.of(e)); }
+
+    /** 分钟，0 到 59。 */
+    public static Expr<Integer> minute(Expr<LocalDateTime> e) { return Nodes.call(SqlType.of(Integer.class), MINUTE, List.of(e)); }
+
+    /** 秒，0 到 59，不足一秒的部分舍去。 */
+    public static Expr<Integer> second(Expr<LocalDateTime> e) { return Nodes.call(SqlType.of(Integer.class), SECOND, List.of(e)); }
+
+    /** 时间戳加上 hours 小时，可以为负。 */
+    public static Expr<LocalDateTime> addHours(Expr<LocalDateTime> time, int hours) { return addSeconds(time, hours * 3600L); }
+
+    /** 时间戳加上 minutes 分钟，可以为负。 */
+    public static Expr<LocalDateTime> addMinutes(Expr<LocalDateTime> time, int minutes) { return addSeconds(time, minutes * 60L); }
+
+    /** 时间戳加上 seconds 秒，可以为负。 */
+    public static Expr<LocalDateTime> addSeconds(Expr<LocalDateTime> time, long seconds) {
+        return Nodes.call(time.type(), ADD_SECONDS, List.of(time, lit(seconds)));
+    }
+
+    /** 当月第一天，用于按月汇总时得到一个日期：{@code groupBy(l -> monthStart(l.createdOn()))}。 */
+    public static Expr<LocalDate> monthStart(Expr<LocalDate> date) { return Nodes.call(date.type(), MONTH_START, List.of(date)); }
+
     /** 从 from 到 to 相隔的整秒数（不足一秒的部分舍去），to 较早时为负；任一端为 NULL 时为 NULL。 */
     public static Expr<Long> secondsBetween(Expr<LocalDateTime> from, Expr<LocalDateTime> to) {
         return Nodes.call(SqlType.of(Long.class), SECONDS_BETWEEN, List.of(from, to));
     }
+
+    /** 左边用 pad 补足到 length 个字符，例如物料号补零 {@code lpad(m.material(), 18, "0")}；比 length 长时截断成前 length 个字符。 */
+    public static Expr<String> lpad(Expr<String> e, int length, String pad) { return Nodes.call(e.type(), "LPAD", List.of(e, lit(length), lit(pad))); }
+
+    /** 右边用 pad 补足到 length 个字符；比 length 长时截断成前 length 个字符。 */
+    public static Expr<String> rpad(Expr<String> e, int length, String pad) { return Nodes.call(e.type(), "RPAD", List.of(e, lit(length), lit(pad))); }
 
     // ---------- 聚合 ----------
 
