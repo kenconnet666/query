@@ -62,6 +62,12 @@ public final class From12<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> ext
     /** LEFT JOIN 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
     public <E> From13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, Ref<E>> leftJoin(Source<E> source, Fn.F13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.LEFT, Ref.of(source), on); }
 
+    /** RIGHT JOIN 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
+    public <N extends Entity> From13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, N> rightJoin(Class<N> table, Fn.F13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, N, Cond> on) { return next(SelectSpec.JoinKind.RIGHT, Ref.table(table), on); }
+
+    /** RIGHT JOIN 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
+    public <E> From13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, Ref<E>> rightJoin(Source<E> source, Fn.F13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.RIGHT, Ref.of(source), on); }
+
     /** CROSS JOIN 一张表（笛卡尔积）。 */
     public <N extends Entity> From13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, N> crossJoin(Class<N> table) { return next(SelectSpec.JoinKind.CROSS, Ref.table(table), null); }
 

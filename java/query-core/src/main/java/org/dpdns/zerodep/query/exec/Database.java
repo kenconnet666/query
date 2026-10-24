@@ -106,6 +106,13 @@ public abstract class Database {
         return rows.get(0);
     }
 
+    /** 零行或一行：没有时为空，多于一行抛出异常。最多只读取两行。 */
+    public <R> Optional<R> optional(Query<R> q) {
+        List<R> rows = list(q.limitAtMost(2));
+        if (rows.size() > 1) throw new IllegalStateException("Expected at most one row, got more than one");
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.get(0));
+    }
+
     /** 第一行，没有时为空；最多只读取一行。 */
     public <R> Optional<R> first(Query<R> q) {
         List<R> rows = list(q.limitAtMost(1));

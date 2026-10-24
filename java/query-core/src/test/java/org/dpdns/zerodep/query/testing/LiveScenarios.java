@@ -44,6 +44,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.dpdns.zerodep.query.Sql.all;
+import static org.dpdns.zerodep.query.Sql.allOf;
+import static org.dpdns.zerodep.query.Sql.anyOf;
+import static org.dpdns.zerodep.query.Sql.bool;
 import static org.dpdns.zerodep.query.Sql.caseWhen;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
@@ -53,16 +56,18 @@ import static org.dpdns.zerodep.query.Sql.deleteFrom;
 import static org.dpdns.zerodep.query.Sql.forUpdate;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
+import static org.dpdns.zerodep.query.Sql.keys;
 import static org.dpdns.zerodep.query.Sql.left;
 import static org.dpdns.zerodep.query.Sql.negate;
+import static org.dpdns.zerodep.query.Sql.nullOf;
 import static org.dpdns.zerodep.query.Sql.plus;
 import static org.dpdns.zerodep.query.Sql.replace;
 import static org.dpdns.zerodep.query.Sql.right;
 import static org.dpdns.zerodep.query.Sql.row;
-import static org.dpdns.zerodep.query.Sql.substring;
-import static org.dpdns.zerodep.query.Sql.update;
 import static org.dpdns.zerodep.query.Sql.stringAgg;
+import static org.dpdns.zerodep.query.Sql.substring;
 import static org.dpdns.zerodep.query.Sql.sum;
+import static org.dpdns.zerodep.query.Sql.update;
 import static org.dpdns.zerodep.query.Sql.val;
 import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -584,6 +589,60 @@ public abstract class LiveScenarios {
                     count().filter(l.quantity().gt(new BigDecimal("2"))).as("big"),
                     stringAgg(l.delivery(), ",", l.delivery().desc()).as("deliveries"))))
             .stream().map(r -> r.get("material") + ":" + plain(r.get("recent")) + ":" + r.get("big") + ":" + r.get("deliveries")).toList());
+    }
+
+    @Test
+    void 交集与差集按调用顺序求值() {
+        Query<String> other = from(Mara.class).where(m -> m.materialType().eq("ZOTH")).select(m -> m.material());
+        Query<String> delivered = from(Lips.class).select(l -> l.material());
+        Query<String> zmat = from(Mara.class).where(m -> m.materialType().eq("ZMAT")).select(m -> m.material());
+        Query<String> mk1 = from(Mara.class).where(m -> m.manufacturer().eq("MK1")).select(m -> m.material());
+        Query<String> mk2 = from(Mara.class).where(m -> m.manufacturer().eq("MK2")).select(m -> m.material());
+        // ({M3, M4} ∪ {M1, M2}) ∩ {M1, M2} − ({M1, M3} − {M2})；按 PostgreSQL 的优先级不加括号会得到 M1..M4 或空集。
+        assertEquals(List.of("M2"), db.list(other.union(delivered).intersect(zmat).except(mk1.except(mk2))));
+    }
+
+    @Test
+    void RIGHT_JOIN保留右侧的行且子查询比较与NULL安全比较正确() {
+        Query<BigDecimal> d2 = from(Lips.class).where(x -> x.delivery().eq("D2")).select(x -> x.quantity());
+        Query<BigDecimal> m2 = from(Lips.class).where(x -> x.material().eq("M2")).select(x -> x.quantity());
+        List<String> rows = db.list(from(Mara.class)
+                .rightJoin(Lips.class, (m, l) -> m.material().eq(l.material()).and(m.materialType().eq("NONE")))
+                .where((m, l) -> all(
+                    keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material()))),
+                    l.quantity().ge(anyOf(d2)),
+                    l.quantity().lt(allOf(m2)),
+                    m.partNumber().isNotDistinctFrom(nullOf(String.class)),
+                    l.unit().isDistinctFrom(m.partNumber())))
+                .orderBy((m, l) -> l.delivery())
+                .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(l.quantity().gt(new BigDecimal("2"))).as("big"))))
+            .stream().map(r -> r.get("delivery") + ":" + r.get("partNumber") + ":" + r.get("big")).toList();
+        assertEquals(List.of("D1:null:true", "D2:null:false"), rows);
+    }
+
+    @Test
+    void 去重聚合与标准差方差在三个库上结果相同() {
+        assertEquals(List.of("M1:6:2:1.0000:0.8165:1.0000:0.6667", "M2:12:6:1.4142:1.0000:2.0000:1.0000"),
+            db.list(SpecCases.statistics()).stream()
+                .map(r -> r.get("material") + ":" + plain(r.get("distinctTotal")) + ":" + plain(r.get("distinctAverage")) + ":"
+                    + String.format(java.util.Locale.ROOT, "%.4f:%.4f:%.4f:%.4f", r.get("sampleDeviation"), r.get("populationDeviation"),
+                        r.get("sampleVariance"), r.get("populationVariance")))
+                .toList());
+    }
+
+    @Test
+    void 相对排名累计分布与第n行() {
+        assertEquals(List.of("D1:0.50:1.00:D2", "D2:0.25:0.67:D2", "D3:0.75:0.50:D4", "D4:1.00:1.00:D4", "D5:0.00:0.33:D2"),
+            db.list(SpecCases.distributionWindows()).stream()
+                .map(r -> r.get("delivery") + ":" + String.format(java.util.Locale.ROOT, "%.2f:%.2f", r.get("percentRank"), r.get("cumeDist")) + ":" + r.get("second"))
+                .toList());
+    }
+
+    @Test
+    void 零行或一行的查询多于一行时报错() {
+        assertEquals(Optional.of("D1"), db.optional(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.delivery())));
+        assertEquals(Optional.empty(), db.optional(from(Lips.class).where(l -> l.delivery().eq("none")).select(l -> l.delivery())));
+        assertThrows(IllegalStateException.class, () -> db.optional(from(Lips.class).select(l -> l.delivery())));
     }
 
     @Test

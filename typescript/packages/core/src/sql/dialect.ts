@@ -189,6 +189,16 @@ export abstract class Dialect {
     return this.quote(alias);
   }
 
+  /**
+   * NULL 也相等的比较（标准 SQL 的 `IS [NOT] DISTINCT FROM`）。默认写成三个库都支持的
+   * `CASE WHEN a = b OR (a IS NULL AND b IS NULL) THEN 1 ELSE 0 END = 1`，negate 时比较 0；
+   * PostgreSQL 与 MySQL 换成各自的原生写法。
+   */
+  notDistinct(w: SqlWriter, left: Renderable, right: Renderable, negate: boolean): void {
+    w.sql("CASE WHEN ").render(left).sql(" = ").render(right).sql(" OR (").render(left).sql(" IS NULL AND ").render(right);
+    w.sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
+  }
+
   /** 没有表的 SELECT 需要的部分：多数数据库什么都不要，HANA 要 `FROM DUMMY`。 */
   fromNothing(_w: SqlWriter): void {}
 

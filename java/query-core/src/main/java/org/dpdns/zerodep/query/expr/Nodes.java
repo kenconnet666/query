@@ -167,6 +167,46 @@ public final class Nodes {
         }
     }
 
+    /** {@code ANY (子查询)} 或 {@code ALL (子查询)}，只能放在比较的右侧：{@code x.gt(allOf(q))}。 */
+    public static final class Quantified<T> extends Expr<T> {
+        private final String quantifier;
+        private final Query<T> query;
+
+        /** quantifier 是 {@code ANY} 或 {@code ALL}；子查询只选一列，类型取自那一列。 */
+        public Quantified(String quantifier, Query<T> query) {
+            super(query.singleColumnType());
+            this.quantifier = quantifier;
+            this.query = query;
+        }
+
+        /** 写成 {@code ANY (子查询)}。 */
+        @Override public void render(SqlWriter w) {
+            w.sql(quantifier).sql(" (");
+            QueryRenderer.subquery(w, query);
+            w.sql(")");
+        }
+    }
+
+    /**
+     * 条件作为布尔值：{@code CASE WHEN c THEN TRUE WHEN NOT (c) THEN FALSE END}，条件未知时为 NULL。
+     * HANA 不能直接把条件写在 SELECT 列表里，所以三个库都这样写。
+     */
+    public static final class Truth extends Expr<Boolean> {
+        private final Cond condition;
+
+        /** 把 condition 的真假写成布尔列。 */
+        public Truth(Cond condition) {
+            super(SqlType.of(Boolean.class));
+            if (condition.isEmpty()) throw new IllegalArgumentException("bool(...) needs a condition");
+            this.condition = condition;
+        }
+
+        /** 写出 CASE 表达式。 */
+        @Override public void render(SqlWriter w) {
+            w.sql("CASE WHEN ").render(condition).sql(" THEN TRUE WHEN ").render(not(condition)).sql(" THEN FALSE END");
+        }
+    }
+
     /** 原样写出的 SQL 片段，如 {@code NULL}、{@code CURRENT_DATE}；只能放代码里的固定文本。 */
     public static final class Raw<T> extends Expr<T> {
         private final String sql;
@@ -284,6 +324,24 @@ public final class Nodes {
             QueryRenderer.subquery(w, query);
             w.sql(")");
         });
+    }
+
+    /** {@code (a, b) IN (子查询)} 或 {@code NOT IN}；子查询的列数必须与键数相同。 */
+    public static Cond rowInQuery(List<Expr<?>> keys, Query<?> query, boolean negate) {
+        if (keys.size() < 2) throw new IllegalArgumentException("A row IN needs at least two keys; use e.in(query) for one");
+        if (query.columnCount() != keys.size()) {
+            throw new IllegalArgumentException("Row IN compares " + keys.size() + " keys with a subquery of " + query.columnCount() + " columns");
+        }
+        return of(w -> {
+            w.sql("(").join(keys, ", ").sql(negate ? ") NOT IN (" : ") IN (");
+            QueryRenderer.subquery(w, query);
+            w.sql(")");
+        });
+    }
+
+    /** NULL 也相等的比较：两侧都为 NULL 时相等，只有一侧为 NULL 时不等，结果总是真或假。写法由方言决定。 */
+    public static Cond notDistinct(Expr<?> left, Expr<?> right, boolean negate) {
+        return of(w -> w.dialect().notDistinct(w, left, right, negate));
     }
 
     /** {@code EXISTS (子查询)} 或 {@code NOT EXISTS (子查询)}。 */

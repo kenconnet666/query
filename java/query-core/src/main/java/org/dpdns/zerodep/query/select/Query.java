@@ -52,8 +52,9 @@ public final class Query<R> {
     }
 
     /**
-     * 各段怎样合并：除第一段外每段前面的运算符，以及需要加括号的段范围。UNION 与 UNION ALL 从左到右结合，
-     * 只有混用两者的右侧才需要自己的括号。
+     * 各段怎样合并：除第一段外每段前面的运算符，以及需要加括号的段范围。调用顺序就是求值顺序：
+     * {@code a.union(b).intersect(c)} 是 {@code (a ∪ b) ∩ c}。PostgreSQL、MySQL 的 INTERSECT 比 UNION、EXCEPT
+     * 优先，HANA 一律从左到右（实测），所以凡是两种读法结果可能不同的地方都写出括号。
      */
     record Combination(List<String> operators, List<Group> groups) {
         static final Combination NONE = new Combination(List.of(), List.of());
@@ -73,8 +74,12 @@ public final class Query<R> {
             ops.add(operator);
             ops.addAll(right.operators);
             List<Group> all = new ArrayList<>(groups);
+            // 左边有比 INTERSECT 低的运算时，PostgreSQL、MySQL 会先算 INTERSECT。
+            if (operator.equals("INTERSECT") && operators.stream().anyMatch(op -> !op.equals(operator))) all.add(new Group(0, operators.size()));
             for (Group g : right.groups) all.add(new Group(g.first + shift, g.last + shift));
-            if (right.operators.stream().anyMatch(op -> !op.equals(operator))) all.add(new Group(shift, shift + right.operators.size()));
+            // 右边与本运算不同时，或本运算是不满足结合律的 EXCEPT 时，右边自成一组。
+            boolean wrapRight = right.operators.stream().anyMatch(op -> !op.equals(operator) || op.equals("EXCEPT"));
+            if (wrapRight) all.add(new Group(shift, shift + right.operators.size()));
             return new Combination(ops, all);
         }
 
@@ -300,6 +305,12 @@ public final class Query<R> {
     /** UNION（去重），规则同 {@link #unionAll}。 */
     public Query<R> union(Query<R> other) { return combine("UNION", other); }
 
+    /** INTERSECT（两边都有的行，去重），规则同 {@link #unionAll}。 */
+    public Query<R> intersect(Query<R> other) { return combine("INTERSECT", other); }
+
+    /** EXCEPT（左边有、右边没有的行，去重），规则同 {@link #unionAll}。 */
+    public Query<R> except(Query<R> other) { return combine("EXCEPT", other); }
+
     /** 合并两个查询：校验列数、LIMIT 和 ORDER BY 的位置，按名的查询把右侧列按列名对齐到左侧。 */
     private Query<R> combine(String operator, Query<R> other) {
         if (other.columnCount() != columnCount()) {
@@ -518,7 +529,7 @@ public final class Query<R> {
     }
 
     /** 列数；各段列数相同，取第一段。 */
-    int columnCount() { return arms.get(0).items().size(); }
+    public int columnCount() { return arms.get(0).items().size(); }
 
     /** 各列的类型，执行时按它读取。 */
     public List<SqlType<?>> columnTypes() {

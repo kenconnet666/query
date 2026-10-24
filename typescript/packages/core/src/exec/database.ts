@@ -323,6 +323,13 @@ export abstract class Database {
     return rows[0]!;
   }
 
+  /** 零行或一行：没有时返回 `undefined`，多于一行抛错；至多读取两行。 */
+  async optional<R>(q: Query<R>): Promise<R | undefined> {
+    const rows = await this.list(limitAtMost(q, 2));
+    if (rows.length > 1) throw new Error("Expected at most one row, got more than one");
+    return rows[0];
+  }
+
   /** 第一行，至多读取一行；没有结果时返回 `undefined`。 */
   async first<R>(q: Query<R>): Promise<R | undefined> {
     return (await this.list(limitAtMost(q, 1)))[0];

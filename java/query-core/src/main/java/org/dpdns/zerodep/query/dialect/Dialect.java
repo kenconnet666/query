@@ -79,6 +79,16 @@ public abstract class Dialect {
         if (nullsFirst != null) w.sql(nullsFirst ? " NULLS FIRST" : " NULLS LAST");
     }
 
+    /**
+     * NULL 也相等的比较（标准 SQL 的 {@code IS [NOT] DISTINCT FROM}）。默认写成三个库都支持的
+     * {@code CASE WHEN a = b OR (a IS NULL AND b IS NULL) THEN 1 ELSE 0 END = 1}，negate 时比较 0；
+     * PostgreSQL 与 MySQL 换成各自的原生写法。
+     */
+    public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
+        w.sql("CASE WHEN ").render(left).sql(" = ").render(right).sql(" OR (").render(left).sql(" IS NULL AND ").render(right)
+            .sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
+    }
+
     /** 没有数据表的 SELECT 需要补的内容：多数数据库什么都不用写，HANA 要写 {@code FROM DUMMY}。 */
     public void fromNothing(SqlWriter w) { }
 

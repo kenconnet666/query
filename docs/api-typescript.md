@@ -29,11 +29,11 @@
 | `SELECT` 同名列到类 | `.selectAs(Dto)`；改名或计算列用 `.select(...).into(Dto)` |
 | 用户选择的列、排序 | `.exclude("unit")`、`.only(names)`、`.sortBy("total desc")` |
 | `WITH x AS (...)` | `const x = cte("x", query)`，然后 `from(x)` |
-| `UNION ALL` | `q1.unionAll(q2)` |
+| `UNION ALL`、`INTERSECT`、`EXCEPT` | `q1.unionAll(q2)`、`q1.intersect(q2)`、`q1.except(q2)` |
 | `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.delivery.desc()))` |
 | 每组取前 N 行（`QUALIFY`） | `.qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(3))` |
 | 原生 SQL 片段 | `` sql(text)`LPAD(${l.material}, ${18}, '0')` ``、`` sqlCond`...` ``、`` sqlTable({ ... })`...` `` |
-| 执行 | `await db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
+| 执行 | `await db.list(q)`、`db.one(q)`、`db.optional(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
 | `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T).values(rows))`、`update(T).set((t) => ({ x: v })).where(...)`、`deleteFrom(T).where(...)`；按主键 `.byId(row)`，见第 15 节 |
 | 联表 `UPDATE` / `DELETE` | 方言包的 `updateJoin(T, S, (t, s) => on).set(...).where(...)`、`deleteJoin(...)`，见第 15 节 |
 
@@ -168,7 +168,7 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 
 | 方法 | 说明 |
 | --- | --- |
-| `join` / `leftJoin(实体类或 Source, (…) => cond)` | 连接条件里可以用到作用域内所有的表；`leftJoin` 之后该参数的列都可能为 null |
+| `join` / `leftJoin` / `rightJoin(实体类或 Source, (…) => cond)` | 连接条件里可以用到作用域内所有的表；`leftJoin` 之后该参数的列都可能为 null，`rightJoin` 之后之前各参数的列都可能为 null。`rightJoin` 时左侧各表的全局过滤条件放进它的 ON，补出来的行不会被 WHERE 过滤掉 |
 | `crossJoin(...)` | 笛卡尔积 |
 | `where((…) => cond)` | 条件；多次调用之间是 AND，值为空而省略的条件（`Cond.EMPTY`）会被自动丢弃 |
 | `where(条件对象)` | 按请求对象筛选，见第 6 节 |
@@ -180,6 +180,12 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 | `unfiltered()`、`unfiltered("tenant")`、`withDeleted()` | 不加全局过滤器和逻辑删除条件；只关掉这些名字的过滤器（名字没配置过时报错）；只关掉逻辑删除（看已删除的行） |
 | `with(clause)` / `with((…) => clause)` | 方言子句，例如 `hint("NO_CS_JOIN")` |
 | `pipe(fragment)` | 套用可复用的片段：`(scope) => scope.where(...)` |
+
+**比较的其他写法**：
+
+- NULL 也相等：`a.isNotDistinctFrom(b)`、`a.isDistinctFrom(b)`，结果总是真或假；PostgreSQL 写成 `IS [NOT] DISTINCT FROM`，MySQL 写成 `<=>`，HANA 写成等价的 CASE。
+- 子查询：多列 `keys(l.delivery, l.material).in(q)` / `notIn(q)`（子查询选同样多的列）；与任一行或每一行比较 `l.quantity.gt(allOf(q))`、`x.eq(anyOf(q))`（`ANY` 遇到空子查询为假，`ALL` 为真）。
+- 条件作为列：`bool(l.quantity.gt("0"))`，写成 `CASE WHEN ... THEN TRUE WHEN NOT (...) THEN FALSE END`，类型是 `boolean | null`（HANA 不能把条件直接写在 SELECT 里）。
 
 **可选条件**：不开 `skipEmpty()` 时，`eq(null)` 会抛 `TypeError`（与 NULL 比较永远不成立，多半是漏了值），要判空用 `isNull()`。开启后，`eq`、`ne`、`gt`、`ge`、`lt`、`le`、`in`、`notIn`、`like`、`contains` 等遇到空值就不产生条件，`between` 缺一边时只留下另一边。需要自己控制时用 `ifPresent(x, (v) => cond)` 或 `onlyIf(flag, () => cond)`。
 
@@ -372,8 +378,8 @@ from(scope).join(Lips, (ms, l) => l.material.eq(ms.material))...   // ms 的字�
 
 - **CTE**：只有扁平对象投影的查询能作为 CTE。无论被引用多深，渲染时都只在语句开头的 `WITH` 里出现一次。
 - **派生表**：`from(query.asTable())`。
-- **UNION**：`q1.unionAll(q2)` 或 `union`。两段的行类型必须相同，否则编译失败。对象投影按键名对齐各段的列，键的书写顺序不同也不会错位。各段不能自带排序或分页，分页和排序加在合并之后（要排序先包成 CTE）。右侧是混用 UNION 与 UNION ALL 的组合时自动加括号，保持原来的分组。
-- **窗口**：`rowNumber().over((w) => w.partitionBy(a).orderBy(b.desc()))`。聚合也可以 `.over(...)`，ROWS 框架写作 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。另有 `lag`、`lead`（第三个参数是越界时的默认值）、`firstValue`、`lastValue`（取整个分区的末行要写 ROWS 框架）、`ntile(n)`。
+- **UNION、INTERSECT、EXCEPT**：`q1.unionAll(q2)`、`union`、`intersect`、`except`（后两者去重）。两段的行类型必须相同，否则编译失败。对象投影按键名对齐各段的列，键的书写顺序不同也不会错位。各段不能自带排序或分页，分页和排序加在合并之后（要排序先包成 CTE）。调用顺序就是求值顺序：`a.union(b).intersect(c)` 是 `(a ∪ b) ∩ c`。PostgreSQL、MySQL 的 INTERSECT 优先于 UNION，HANA 从左到右，所以读法可能不同的地方都自动加括号。`INTERSECT ALL`、`EXCEPT ALL` 只有 PostgreSQL、MySQL 支持，在方言包。
+- **窗口**：`rowNumber().over((w) => w.partitionBy(a).orderBy(b.desc()))`。聚合也可以 `.over(...)`，ROWS 框架写作 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`。另有 `lag`、`lead`（第三个参数是越界时的默认值）、`firstValue`、`lastValue`、`nthValue(e, n)`（取整个分区里的行要写 ROWS 框架）、`ntile(n)`、`percentRank()`、`cumeDist()`。
 - **窗口条件（QUALIFY）**：`qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).le(3))` 每组取前 3 行。HANA 没有 QUALIFY 子句，三个库都渲染成派生表：窗口函数和不在结果里的排序项作为额外的列，外层过滤、排序和分页。条件只能比较窗口函数，其他条件写在 `where` 或 `having` 里，否则报错。
 - **常量行**（码表）：`values([{ name: "未逾期", ord: 1 }, ...])` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`。列类型按值推断（文本、整数、小数），日期或精确小数用第二个参数指定，例如 `values(rows, { day: date })`。可以用 `cte(...)` 包成 CTE，再参与连接。
 
@@ -414,9 +420,11 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))`。`lpad(e, n, pad)`、`rpad(e, n, pad)` 补足到 n 个字符（物料号补零 `lpad(m.material, 18, "0")`），过长时截断 |
 | 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil`、`mod`（符号同被除数）、`power`、`sqrt`（结果是 number）、`sign`。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 null |
 | 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`monthStart(d)`（当月第一天）、`daysBetween(from, to)`；时间戳的 `hour`、`minute`、`second`（整数）、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(from, to)`（整秒）。字符长度各库计法不同，用方言函数，例如 HANA 的 `length` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, ...order)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity).filter(l.unit.eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
-| 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
-| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
+| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`sumDistinct`、`avg`、`avgDistinct`、`min`、`max`、`stringAgg(e, sep, ...order)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity).filter(l.unit.eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
+| 统计 | `stddevSamp`、`stddevPop`、`varSamp`、`varPop`（`number | null`；样本的只有一行时为 NULL）。参数先转成 DOUBLE，三库结果一致；不提供不带后缀的 `stddev`，因为 MySQL 的 STDDEV 是总体标准差 |
+| 窗口 | `rowNumber`、`rank`、`denseRank`、`percentRank`、`cumeDist`、`lag`、`lead`、`firstValue`、`lastValue`、`nthValue`、`ntile`，再加 `.over(...)` |
+| 子查询与条件 | `scalar(query)`、`anyOf(query)`、`allOf(query)`、`bool(cond)`、`keys(a, b).in(query)` |
+| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`currentDate`、`currentTimestamp` |
 | 兜底 | `sql(type)` 与 `sqlCond`，见第 9 节 |
 
 `sum`、`avg` 等数值函数和 `year`、`addDays` 等日期函数在构造时检查列的类型，用在文本列上会立刻报错。TS 的类型系统区分不了 decimal 字符串和文本，所以这一项只能在运行时检查。
@@ -513,6 +521,7 @@ console.log(events[0]!.statement.debugSql());
 | --- | --- |
 | `db.list(q)` | 全部行；带 `list(...)` 子数组时，每一层再多一条批量查询 |
 | `db.one(q)` | 恰好一行，否则报错；最多读 2 行 |
+| `db.optional(q)` | 零行或一行：没有时为 `undefined`，多于一行报错；最多读 2 行 |
 | `db.first(q)` | 第一行或 `undefined`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, fn)` | 在一个游标上逐行读取：HANA 用 ResultSet，PostgreSQL 用服务端游标（需要连接池），MySQL 用流式查询（需要连接池）；提前 `break` 会释放游标。带 `list(...)` 的查询先读完全部行再交付 |
 | `db.count(q)` | 外包 `COUNT(*)` |

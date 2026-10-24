@@ -121,6 +121,12 @@ export class MysqlDialect extends Dialect {
     w.render(expr).sql(descending ? " DESC" : " ASC");
   }
 
+  /** NULL 也相等的比较写成 MySQL 的 `<=>`，否定时加 NOT。 */
+  override notDistinct(w: SqlWriter, left: Renderable, right: Renderable, negate: boolean): void {
+    if (negate) w.sql("NOT (").render(left).sql(" <=> ").render(right).sql(")");
+    else w.render(left).sql(" <=> ").render(right);
+  }
+
   /** MySQL 的 CAST 目标类型名；它不支持 CAST 成 BOOLEAN。 */
   override castType(type: CastType<unknown>): string {
     switch (type.kind) {

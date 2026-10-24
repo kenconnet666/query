@@ -68,6 +68,7 @@ import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
 import * as writes from "./writes.js";
 import { insertInto, update, type Write } from "@zerodep-dev/query-core";
+import { allOf, anyOf, avgDistinct, bool, cumeDist, keys, nthValue, percentRank, stddevPop, stddevSamp, sumDistinct, varPop, varSamp } from "@zerodep-dev/query-core";
 
 /**
  * The golden-SQL cases of spec/render, built the TypeScript way. The Java tests build the same
@@ -277,6 +278,10 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   qualify: plain(() => qualify()),
   "window-values": plain(() => windowValues()),
   "many-text": { filtered: true, query: () => manyText() },
+  "set-operations": plain(() => setOperations()),
+  "subquery-comparisons": { filtered: true, query: () => subqueryComparisons() },
+  statistics: plain(() => statistics()),
+  "distribution-windows": plain(() => distributionWindows()),
   "group-join": { filtered: true, query: () => groupJoin() },
   "workflow-todo": plain(() => wf.todo("alice", ["managers", "leads"], Object.assign(new wf.TodoSearch(), { process: "leave", name: "app" }))),
   "workflow-variables": plain(() => wf.instancesByVariables()),
@@ -411,6 +416,67 @@ export function windowValues() {
       last: lastValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery).rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())),
       previous: lag(l.quantity, 1, "0").over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
       half: ntile(2).over((w) => w.orderBy(l.delivery)),
+    }));
+}
+
+/**
+ * INTERSECT、EXCEPT 与 UNION 混用：`(交货的物料 ∪ 主数据的物料) ∩ ZMAT 物料 − (X − Y)`，
+ * 先算的部分都写出括号，三库读法一致。
+ */
+export function setOperations() {
+  const delivered = from(Lips).select((l) => l.material);
+  const master = from(Mara).select((m) => m.material);
+  const zmat = from(Mara).where((m) => m.materialType.eq("ZMAT")).select((m) => m.material);
+  const x = from(Mara).where((m) => m.manufacturer.eq("X")).select((m) => m.material);
+  const y = from(Mara).where((m) => m.manufacturer.eq("Y")).select((m) => m.material);
+  return delivered.union(master).intersect(zmat).except(x.except(y));
+}
+
+/**
+ * RIGHT JOIN 与子查询比较：主数据的过滤条件挪进 RIGHT JOIN 的 ON；多列 IN、ANY、ALL、
+ * NULL 也相等的比较，以及条件作为布尔列。
+ */
+export function subqueryComparisons() {
+  return from(Mara)
+    .rightJoin(Lips, (m, l) => m.material.eq(l.material))
+    .where((m, l) =>
+      all(
+        keys(l.delivery, l.material).in(from(Lips).where((x) => x.unit.eq("EA")).select((x) => ({ delivery: x.delivery, material: x.material }))),
+        l.quantity.ge(anyOf(from(Lips).where((x) => x.unit.eq("KG")).select((x) => x.quantity))),
+        l.quantity.lt(allOf(from(Lips).where((x) => x.unit.eq("PC")).select((x) => x.quantity))),
+        m.manufacturer.isNotDistinctFrom(m.partNumber).not(),
+        l.unit.isDistinctFrom(m.materialType),
+      ),
+    )
+    .orderBy((m, l) => l.delivery)
+    .select((m, l) => ({ delivery: l.delivery, partNumber: m.partNumber, big: bool(l.quantity.gt("1")) }));
+}
+
+/** 去重的求和与平均、样本与总体的标准差和方差。 */
+export function statistics() {
+  return from(Lips)
+    .groupBy((l) => l.material)
+    .orderBy((l) => l.material)
+    .select((l) => ({
+      material: l.material,
+      distinctTotal: sumDistinct(l.quantity),
+      distinctAverage: avgDistinct(l.quantity),
+      sampleDeviation: stddevSamp(l.quantity),
+      populationDeviation: stddevPop(l.quantity),
+      sampleVariance: varSamp(l.quantity),
+      populationVariance: varPop(l.quantity),
+    }));
+}
+
+/** 相对排名、累计分布和窗口里的第 n 行。 */
+export function distributionWindows() {
+  return from(Lips)
+    .orderBy((l) => l.delivery)
+    .select((l) => ({
+      delivery: l.delivery,
+      percentRank: percentRank().over((w) => w.orderBy(l.quantity)),
+      cumeDist: cumeDist().over((w) => w.partitionBy(l.material).orderBy(l.quantity)),
+      second: nthValue(l.delivery, 2).over((w) => w.partitionBy(l.material).orderBy(l.delivery).rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())),
     }));
 }
 

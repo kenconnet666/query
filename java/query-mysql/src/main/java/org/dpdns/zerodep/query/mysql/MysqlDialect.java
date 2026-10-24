@@ -120,6 +120,12 @@ public class MysqlDialect extends Dialect {
         w.render(expr).sql(descending ? " DESC" : " ASC");
     }
 
+    /** NULL 也相等的比较写成 MySQL 的 {@code <=>}，否定时加 NOT。 */
+    @Override public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
+        if (negate) w.sql("NOT (").render(left).sql(" <=> ").render(right).sql(")");
+        else w.render(left).sql(" <=> ").render(right);
+    }
+
     /** CAST 的目标类型：文本用 CHAR，整数用 SIGNED，时间戳用 DATETIME(6)；MySQL 不能 CAST 成 BOOLEAN。 */
     @Override public String castType(CastType<?> type) {
         return switch (type.kind()) {

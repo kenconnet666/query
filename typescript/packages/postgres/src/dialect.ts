@@ -98,6 +98,11 @@ export class PostgresDialect extends Dialect {
     return s.includes("\\") ? `E'${s.replaceAll("\\", "\\\\").replaceAll("'", "''")}'` : super.stringLiteral(s);
   }
 
+  /** NULL 也相等的比较写成原生的 `IS [NOT] DISTINCT FROM`。 */
+  override notDistinct(w: SqlWriter, left: Renderable, right: Renderable, negate: boolean): void {
+    w.render(left).sql(negate ? " IS DISTINCT FROM " : " IS NOT DISTINCT FROM ").render(right);
+  }
+
   /** decimal 用 NUMERIC，其余用通用写法。 */
   override castType(type: CastType<unknown>): string {
     if (type.kind === "decimal") return `NUMERIC(${type.length},${type.scale})`;

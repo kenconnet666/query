@@ -15,7 +15,9 @@ import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.testing.Erp.Client;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Makt;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
+import org.dpdns.zerodep.query.testing.Erp.Vbkd;
 import org.dpdns.zerodep.query.testing.Scenarios;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.dpdns.zerodep.query.Sql.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -328,6 +331,46 @@ class RenderTest {
         assertEquals("S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))", skeleton.apply(arm.get().union(arm.get().unionAll(arm.get().union(arm.get())))));
         assertEquals("S\nUNION ALL\nS\nUNION ALL\nS", skeleton.apply(arm.get().unionAll(arm.get().unionAll(arm.get()))));
         assertEquals("S\nUNION\nS\nUNION ALL\nS", skeleton.apply(arm.get().union(arm.get()).unionAll(arm.get())));
+    }
+
+    @Test
+    void INTERSECT与EXCEPT按调用顺序求值且在读法可能不同处加括号() {
+        java.util.function.Supplier<Query<String>> arm = () -> from(Mara.class).select(m -> m.material());
+        java.util.function.Function<Query<String>, String> skeleton = q -> q.toSql(DIALECT).sql().replaceAll("SELECT[^\n]*\nFROM[^\n)]*", "S");
+        assertEquals("(S\nUNION\nS)\nINTERSECT\nS", skeleton.apply(arm.get().union(arm.get()).intersect(arm.get())));
+        assertEquals("S\nINTERSECT\nS\nUNION\nS", skeleton.apply(arm.get().intersect(arm.get()).union(arm.get())));
+        assertEquals("S\nUNION\n(S\nINTERSECT\nS)", skeleton.apply(arm.get().union(arm.get().intersect(arm.get()))));
+        assertEquals("S\nEXCEPT\n(S\nEXCEPT\nS)", skeleton.apply(arm.get().except(arm.get().except(arm.get()))));
+        assertEquals("S\nEXCEPT\nS\nEXCEPT\nS", skeleton.apply(arm.get().except(arm.get()).except(arm.get())));
+        assertEquals("S\nINTERSECT\nS\nINTERSECT\nS", skeleton.apply(arm.get().intersect(arm.get().intersect(arm.get()))));
+    }
+
+    @Test
+    void RIGHT_JOIN把左侧各表的过滤条件放进它的ON() {
+        var db = TestDatabase.dryRun(c -> c.filter(Client.class, t -> t.client().eq("100")));
+        String sql = db.render(from(Mara.class)
+            .join(Makt.class, (m, t) -> t.material().eq(m.material()))
+            .rightJoin(Lips.class, (m, t, l) -> l.material().eq(m.material()))
+            .rightJoin(Vbkd.class, (m, t, l, v) -> v.salesOrder().eq(l.delivery()))
+            .select((m, t, l, v) -> v.salesOrder())).sql();
+        assertTrue(sql.contains("JOIN QUERY_IT.MAKT MAKT ON MAKT.MATNR = MARA.MATNR AND MAKT.MANDT = ?"), sql);
+        assertTrue(sql.contains("RIGHT JOIN QUERY_IT.LIPS LIPS ON LIPS.MATNR = MARA.MATNR AND MARA.MANDT = ?\n"), sql);
+        assertTrue(sql.contains("RIGHT JOIN QUERY_IT.VBKD VBKD ON VBKD.VBELN = LIPS.VBELN AND LIPS.MANDT = ?\nWHERE VBKD.MANDT = ?"), sql);
+    }
+
+    @Test
+    void 多列IN的列数必须与子查询相同() {
+        Query<Map<String, Object>> two = from(Lips.class).select(l -> cols(l.delivery(), l.material()));
+        var e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class)
+            .where(l -> keys(l.delivery(), l.material(), l.unit()).in(two)).select(l -> l.delivery()));
+        assertTrue(e.getMessage().contains("3 keys"), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> keys(lit("a")).in(from(Lips.class).select(l -> l.delivery())));
+    }
+
+    @Test
+    void 条件作为布尔列和窗口第n行的参数要有效() {
+        assertThrows(IllegalArgumentException.class, () -> bool(Cond.EMPTY));
+        assertThrows(IllegalArgumentException.class, () -> nthValue(lit(1), 0));
     }
 
     @Test

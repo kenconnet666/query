@@ -161,6 +161,10 @@ public final class SpecCases {
         cases.put("qualify", SpecCase.plain(SpecCases::qualify));
         cases.put("window-values", SpecCase.plain(SpecCases::windowValues));
         cases.put("many-text", SpecCase.filtered(SpecCases::manyText));
+        cases.put("set-operations", SpecCase.plain(SpecCases::setOperations));
+        cases.put("subquery-comparisons", SpecCase.filtered(SpecCases::subqueryComparisons));
+        cases.put("statistics", SpecCase.plain(SpecCases::statistics));
+        cases.put("distribution-windows", SpecCase.plain(SpecCases::distributionWindows));
         return cases;
     }
 
@@ -391,6 +395,61 @@ public final class SpecCases {
                     .rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())).as("last"),
                 lag(l.quantity(), 1, BigDecimal.ZERO).over(w -> w.partitionBy(l.material()).orderBy(l.delivery())).as("previous"),
                 ntile(2).over(w -> w.orderBy(l.delivery())).as("half")));
+    }
+
+    /**
+     * INTERSECT、EXCEPT 与 UNION 混用：{@code (交货的物料 ∪ 主数据的物料) ∩ ZMAT 物料 − (X − Y)}，
+     * 先算的部分都写出括号，三库读法一致。
+     */
+    public static Query<String> setOperations() {
+        Query<String> delivered = from(Lips.class).select(l -> l.material());
+        Query<String> master = from(Mara.class).select(m -> m.material());
+        Query<String> zmat = from(Mara.class).where(m -> m.materialType().eq("ZMAT")).select(m -> m.material());
+        Query<String> x = from(Mara.class).where(m -> m.manufacturer().eq("X")).select(m -> m.material());
+        Query<String> y = from(Mara.class).where(m -> m.manufacturer().eq("Y")).select(m -> m.material());
+        return delivered.union(master).intersect(zmat).except(x.except(y));
+    }
+
+    /**
+     * RIGHT JOIN 与子查询比较：主数据的过滤条件挪进 RIGHT JOIN 的 ON；多列 IN、ANY、ALL、
+     * NULL 也相等的比较，以及条件作为布尔列。
+     */
+    public static Query<Map<String, Object>> subqueryComparisons() {
+        return from(Mara.class)
+            .rightJoin(Lips.class, (m, l) -> m.material().eq(l.material()))
+            .where((m, l) -> all(
+                keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material()))),
+                l.quantity().ge(anyOf(from(Lips.class).where(x -> x.unit().eq("KG")).select(x -> x.quantity()))),
+                l.quantity().lt(allOf(from(Lips.class).where(x -> x.unit().eq("PC")).select(x -> x.quantity()))),
+                m.manufacturer().isNotDistinctFrom(m.partNumber()).not(),
+                l.unit().isDistinctFrom(m.materialType())))
+            .orderBy((m, l) -> l.delivery())
+            .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(l.quantity().gt(BigDecimal.ONE)).as("big")));
+    }
+
+    /** 去重的求和与平均、样本与总体的标准差和方差。 */
+    public static Query<Map<String, Object>> statistics() {
+        return from(Lips.class)
+            .groupBy(l -> l.material())
+            .orderBy(l -> l.material())
+            .select(l -> cols(l.material(),
+                sumDistinct(l.quantity()).as("distinctTotal"),
+                avgDistinct(l.quantity()).as("distinctAverage"),
+                stddevSamp(l.quantity()).as("sampleDeviation"),
+                stddevPop(l.quantity()).as("populationDeviation"),
+                varSamp(l.quantity()).as("sampleVariance"),
+                varPop(l.quantity()).as("populationVariance")));
+    }
+
+    /** 相对排名、累计分布和窗口里的第 n 行。 */
+    public static Query<Map<String, Object>> distributionWindows() {
+        return from(Lips.class)
+            .orderBy(l -> l.delivery())
+            .select(l -> cols(l.delivery(),
+                percentRank().over(w -> w.orderBy(l.quantity())).as("percentRank"),
+                cumeDist().over(w -> w.partitionBy(l.material()).orderBy(l.quantity())).as("cumeDist"),
+                nthValue(l.delivery(), 2).over(w -> w.partitionBy(l.material()).orderBy(l.delivery())
+                    .rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())).as("second")));
     }
 
     /** 一对多上的去重计数和按顺序拼接的文本。 */

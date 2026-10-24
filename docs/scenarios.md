@@ -16,12 +16,18 @@
 | CTE | `toCteAs`，相同查询自动去重 | `cte(name, query)`，渲染时统一提升到最外层的 `WITH`，以规避 HANA 嵌套 `WITH` 的问题 | 1 |
 | 递归 CTE / 树 | `asTreeCTE` | HANA 2.0 不支持递归 CTE，改用层级函数；PostgreSQL 由方言包提供 | 3 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
+| INTERSECT / EXCEPT | `intersect`、`except` | `q1.intersect(q2)`、`q1.except(q2)`，按调用顺序求值；HANA 的集合运算从左到右，PostgreSQL、MySQL 的 INTERSECT 优先（实测），所以读法可能不同处自动加括号；`ALL` 变体只在 PostgreSQL、MySQL | 2.0 |
+| RIGHT JOIN | `rightJoin` | `rightJoin(T, on)`；左侧各表的全局过滤条件放进它的 ON；TS 中之前各参数的列变成可空 | 2.0 |
+| 多列 IN、ANY / ALL 子查询 | `in(...)` 多列、`gtAll` 一类 | `keys(a, b).in(q)`；`x.gt(allOf(q))`、`x.eq(anyOf(q))` | 2.0 |
+| NULL 安全比较 | `nullSafeEquals` | `a.isNotDistinctFrom(b)` / `isDistinctFrom`：PostgreSQL 原生写法，MySQL `<=>`，HANA 等价的 CASE | 2.0 |
+| 条件作为列 | 投影里的 `predicate` | `bool(cond)`，写成 `CASE WHEN c THEN TRUE WHEN NOT (c) THEN FALSE END`（HANA 不能直接把条件放进 SELECT） | 2.0 |
+| 去重聚合与统计 | `sumDistinct`、`avgDistinct`、`stddev` 等 | `sumDistinct`、`avgDistinct`、`stddevSamp`/`stddevPop`/`varSamp`/`varPop`（参数先转 DOUBLE，三库一致；MySQL 的 `STDDEV` 是总体标准差，所以不提供不带后缀的名字） | 2.0 |
 | 常量行（码表 CTE） | 原生 SQL 片段 | `values(Shape.class, rows)`：每行一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY` | 1 |
 | 分组与 `HAVING` | `groupBy(t -> GroupKeys.of(...))` | `groupBy(l -> l.material())`，多个键用 `keys(...)`；`having(...)` | 1 |
 | ROLLUP / CUBE / GROUPING SETS | 增强包提供 | 核心包 `groupByRollup(...)` 与 `grouping(e)`，MySQL 渲染为 `WITH ROLLUP`；MySQL 不支持的 `cube`、`groupingSets` 由 HANA、PostgreSQL 方言包提供 | 1 |
 | 条件聚合（行转列） | `count().filter(...)`、`sum().filter(...)` | 聚合加 `.filter(cond)`，三个库都写成 `SUM(CASE WHEN ... THEN x END)` | 2.0 |
 | 文本聚合 | `joining(",")` | `stringAgg(e, sep, order...)`，MySQL 写成 `GROUP_CONCAT` | 2.0 |
-| 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`ROWS` 框架进核心包；`RANGE` 框架尚未提供（前身仓库的 `dsl-windows.md` 记录了三库差异） | 1 |
+| 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`percentRank`、`cumeDist`、`nthValue` 也在核心包；`ROWS` 框架进核心包；`RANGE` 框架尚未提供（前身仓库的 `dsl-windows.md` 记录了三库差异） | 1 / 2.0 |
 | `QUALIFY` / 每组取前 N 行 | `Select.PART` 加外层 `where` | `qualify(l -> rowNumber().over(...).le(n))`：HANA 不支持 `QUALIFY`，三个库都自动包成派生表；关系上取第一行用 `many.first(order)` | 2.0 |
 | 分页 | `toPageResult`，可传入已知总数 | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)`；已知总数时 `page(q, page, size, total)` 不计数 | 1 / 2.0 |
 | 分块遍历 | `OffsetChunk` | `db.stream(q)`、`db.forEach(q, ...)`，在一个游标上逐行读取 | 1 |
@@ -88,6 +94,7 @@
 | 列级写入策略 | `@InsertIgnore`、`@UpdateIgnore` | `@ReadOnly`（从不写）、`@WriteOnce`（只在插入时写） | 2.0 |
 | 联表更新、删除 | 导航属性隐式 JOIN（`updatable(...).where(c -> c.user().name()...)`） | 写语句的 WHERE 经过导航时写成 `EXISTS (... LEFT JOIN ...)`，三库语义一致；显式联表写法只在方言包：`updateJoin` / `deleteJoin`，HANA 写成 MERGE 防止一行匹配多行时误写 | 2.0 |
 | 是否存在 | `any()` | `db.exists(q)` | 2.0 |
+| 零行或一行 | `singleOrNull`、`firstNotNull` | `db.optional(q)`（多于一行报错）；必须有值用 `db.first(q).orElseThrow(...)` 或 `db.one(q)` | 2.0 |
 | 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
 | 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照 | 不做线程绑定的跟踪；差异更新写成 `update(T).byId(edited).diffFrom(loaded)`，由调用方给出修改前的行 | 2.0 |
 | 对象图级联保存 | `savable(root)` | 暂不做；随流程引擎再按"显式一层子行同步加中间表"评估 | 3 |

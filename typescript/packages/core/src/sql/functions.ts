@@ -11,8 +11,11 @@ import {
   expression,
   functionCall,
   Literal,
+  not,
   param,
+  quantified,
   raw,
+  rowInQuery,
   renderTemplate,
   skips,
   Scalar,
@@ -24,7 +27,7 @@ import {
 } from "./expr.js";
 import type { Query } from "../query/query.js";
 import { SqlCond, SqlExpr } from "./template.js";
-import { date, decimal, double, integer, text, timestamp, typeOf, untyped, type CastType, type SqlType, type TypeKind } from "../schema/types.js";
+import { boolean, CastType, date, decimal, double, integer, text, timestamp, typeOf, untyped, type SqlType, type TypeKind } from "../schema/types.js";
 
 /**
  * 核心函数：在所有受支持的数据库上语义一致的函数。这里的泛型函数只接受一个泛型操作数；
@@ -479,6 +482,47 @@ export function sum<T extends Numeric>(e: Expr<T>): Aggregate<T | null> {
   return new Aggregate(e.type, "SUM", false, [e as Expr<unknown>]);
 }
 
+/** SUM(DISTINCT e)：相同的值只加一次。 */
+export function sumDistinct<T extends Numeric>(e: Expr<T>): Aggregate<T | null> {
+  numeric(e as Expr<unknown>, "SUM");
+  return new Aggregate(e.type, "SUM", true, [e as Expr<unknown>]);
+}
+
+/** AVG(DISTINCT e)，以精确的 decimal 返回。 */
+export function avgDistinct(e: Expr<Numeric>): Aggregate<string | null> {
+  numeric(e as Expr<unknown>, "AVG");
+  return new Aggregate(decimal, "AVG", true, [e as Expr<unknown>]);
+}
+
+/**
+ * 样本标准差 STDDEV_SAMP，只有一行时为 NULL。参数先转成 DOUBLE：HANA 对整数按定点小数计算，
+ * 只保留 6 位小数，转换后三库结果一致。
+ */
+export function stddevSamp(e: Expr<Numeric>): Aggregate<number | null> {
+  return statistic("STDDEV_SAMP", e);
+}
+
+/** 总体标准差 STDDEV_POP；参数先转成 DOUBLE，见 {@link stddevSamp}。 */
+export function stddevPop(e: Expr<Numeric>): Aggregate<number | null> {
+  return statistic("STDDEV_POP", e);
+}
+
+/** 样本方差 VAR_SAMP，只有一行时为 NULL；参数先转成 DOUBLE，见 {@link stddevSamp}。 */
+export function varSamp(e: Expr<Numeric>): Aggregate<number | null> {
+  return statistic("VAR_SAMP", e);
+}
+
+/** 总体方差 VAR_POP；参数先转成 DOUBLE，见 {@link stddevSamp}。 */
+export function varPop(e: Expr<Numeric>): Aggregate<number | null> {
+  return statistic("VAR_POP", e);
+}
+
+/** 浮点结果的统计聚合。MySQL 的 STDDEV 是总体标准差，与另两库不同，所以只提供带 _SAMP / _POP 的名字。 */
+function statistic(name: string, e: Expr<Numeric>): Aggregate<number | null> {
+  numeric(e as Expr<unknown>, name);
+  return new Aggregate(double, name, false, [cast(e as Expr<unknown>, CastType.double())]);
+}
+
 /** AVG：平均值，以精确的 decimal 返回。 */
 export function avg(e: Expr<Numeric>): Aggregate<string | null> {
   numeric(e as Expr<unknown>, "AVG");
@@ -555,6 +599,25 @@ export function lastValue<T>(e: Expr<T>): WindowFunction<T> {
   return new WindowFunction(e.type, "LAST_VALUE", [e]);
 }
 
+/** PERCENT_RANK：相对排名 `(rank - 1) / (行数 - 1)`，取值 0 到 1。 */
+export function percentRank(): WindowFunction<number> {
+  return new WindowFunction(double, "PERCENT_RANK", []);
+}
+
+/** CUME_DIST：不大于当前行的行数占分区行数的比例，取值大于 0、不超过 1。 */
+export function cumeDist(): WindowFunction<number> {
+  return new WindowFunction(double, "CUME_DIST", []);
+}
+
+/**
+ * NTH_VALUE：窗口里第 n 行（1 起）的值，没有时为 NULL。与 {@link lastValue} 一样，有 ORDER BY 时默认窗口只到当前行，
+ * 要在整个分区里取需写 `w.rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())`。
+ */
+export function nthValue<T>(e: Expr<T>, n: number): WindowFunction<T | null> {
+  if (!Number.isInteger(n) || n < 1) throw new RangeError("nthValue counts rows from 1");
+  return new WindowFunction(e.type, "NTH_VALUE", [e, lit(n)]);
+}
+
 /** NTILE：按窗口的顺序把分区分成 buckets 组，给出组号（1 起），例如四分位。 */
 export function ntile(buckets: number): WindowFunction<number> {
   if (!Number.isInteger(buckets) || buckets < 1) throw new RangeError("ntile needs a whole number of buckets, at least 1");
@@ -604,6 +667,45 @@ export function call<T>(fn: FunctionDef, type: SqlType<NonNullable<T>>, ...args:
 /** 只有一列的查询当作一个值使用；没有行时为 NULL。 */
 export function scalar<T>(subquery: Query<T>): Expr<T | null> {
   return new Scalar(subquery);
+}
+
+/** 与子查询的任一行比较：`x.eq(anyOf(q))` 写成 `x = ANY (子查询)`；子查询没有行时比较为假。 */
+export function anyOf<T>(subquery: Query<T>): Expr<T> {
+  return quantified("ANY", subquery);
+}
+
+/** 与子查询的每一行比较：`x.gt(allOf(q))` 写成 `x > ALL (子查询)`；子查询没有行时比较为真。 */
+export function allOf<T>(subquery: Query<T>): Expr<T> {
+  return quantified("ALL", subquery);
+}
+
+/**
+ * 条件作为布尔列：`CASE WHEN c THEN TRUE WHEN NOT (c) THEN FALSE END`，条件未知时为 NULL。
+ * HANA 不能直接把条件写在 SELECT 列表里，所以三个库都这样写。
+ */
+export function bool(c: Cond): Expr<boolean | null> {
+  if (c.isEmpty) throw new Error("bool(...) needs a condition");
+  return expression(boolean, (w) => void w.sql("CASE WHEN ").render(c).sql(" THEN TRUE WHEN ").render(not(c)).sql(" THEN FALSE END"));
+}
+
+/** 多列 IN 子查询的左侧，由 {@link keys} 得到。 */
+export class KeyTuple {
+  constructor(readonly items: readonly Expr<unknown>[]) {}
+
+  /** `(a, b) IN (子查询)`，子查询的列数必须相同。 */
+  in(subquery: Query<unknown>): Cond {
+    return rowInQuery(this.items, subquery, false);
+  }
+
+  /** `(a, b) NOT IN (子查询)`；子查询里有 NULL 时，与单列 NOT IN 一样整个条件为未知。 */
+  notIn(subquery: Query<unknown>): Cond {
+    return rowInQuery(this.items, subquery, true);
+  }
+}
+
+/** 多个键组成一行，用于多列 IN 子查询：`keys(l.delivery, l.material).in(子查询)`。 */
+export function keys(...items: Expr<unknown>[]): KeyTuple {
+  return new KeyTuple(items);
 }
 
 /** CURRENT_DATE：数据库当前日期。 */

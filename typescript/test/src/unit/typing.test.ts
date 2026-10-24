@@ -46,6 +46,11 @@ export function typeChecks(): unknown[] {
     .select((l, mk) => ({ delivery: l.delivery, text: mk.text, total: { quantity: sum(l.quantity) } }));
   expectType<Equal<typeof joined, Query<{ delivery: string; text: string | null; total: { quantity: string | null } }>>>();
 
+  const rightJoined = from(Makt)
+    .rightJoin(Lips, (mk, l) => mk.material.eq(l.material))
+    .select((mk, l) => ({ text: mk.text, delivery: l.delivery }));
+  expectType<Equal<typeof rightJoined, Query<{ text: string | null; delivery: string }>>>();
+
   // @ts-expect-error the LEFT JOIN side may be missing
   const notNull: Query<{ text: string }> = from(Lips).leftJoin(Makt, (l, mk) => mk.material.eq(l.material)).select((l, mk) => ({ text: mk.text }));
 

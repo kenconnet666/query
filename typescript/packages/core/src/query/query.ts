@@ -98,7 +98,13 @@ export function activeCondition(ref: object): Cond | undefined {
 // ---------- 不含投影的一个 SELECT ----------
 
 /** FROM 子句中的一项连接。 */
-type JoinKind = "FROM" | "JOIN" | "LEFT JOIN" | "CROSS JOIN";
+type JoinKind = "FROM" | "JOIN" | "LEFT JOIN" | "RIGHT JOIN" | "CROSS JOIN";
+
+/** RIGHT JOIN 之后，之前各数据源的列都可能为 null。 */
+type NullableAll<T extends readonly unknown[]> = { [K in keyof T]: NullableColumns<T[K]> };
+
+/** 一个数据源的引用里，列表达式都变成可空的；关系等其他成员不变。 */
+type NullableColumns<R> = { readonly [K in keyof R]: R[K] extends Expr<infer V> ? Expr<V | null> : R[K] };
 
 /** 一个已加入的数据源：连接方式、引用和 ON 条件。 */
 interface Join {
@@ -241,8 +247,9 @@ interface State {
   readonly arms: readonly Arm[];
   readonly operators: readonly string[];
   /**
-   * 需要加括号的分支范围。UNION 与 UNION ALL 从左到右结合，
-   * 所以只有混用两者的右侧才需要自己的括号。
+   * 需要加括号的分支范围。调用顺序就是求值顺序：`a.union(b).intersect(c)` 是 `(a ∪ b) ∩ c`。
+   * PostgreSQL、MySQL 的 INTERSECT 比 UNION、EXCEPT 优先，HANA 一律从左到右（实测），
+   * 所以凡是两种读法结果可能不同的地方都写出括号。
    */
   readonly groups: readonly (readonly [first: number, last: number])[];
   readonly labels: readonly string[];
@@ -298,6 +305,16 @@ export class Query<R> {
     return this.#combine("UNION", other);
   }
 
+  /** INTERSECT（两边都有的行，去重），规则同 {@link unionAll}。 */
+  intersect(other: Query<R>): Query<R> {
+    return this.#combine("INTERSECT", other);
+  }
+
+  /** EXCEPT（左边有、右边没有的行，去重），规则同 {@link unionAll}。 */
+  except(other: Query<R>): Query<R> {
+    return this.#combine("EXCEPT", other);
+  }
+
   /** 用集合运算符合并两个查询，校验列数、排序与分页，并按需重排对象投影的列。 */
   #combine(operator: string, other: Query<R>): Query<R> {
     const a = this.#s;
@@ -315,8 +332,12 @@ export class Query<R> {
       arms = b.arms.map((arm) => ({ spec: arm.spec, items: a.labels.map((l) => arm.items[position.get(l)!]!) }));
     }
     const shift = a.arms.length;
-    const groups = [...a.groups, ...b.groups.map(([first, last]) => [first + shift, last + shift] as const)];
-    if (b.operators.some((op) => op !== operator)) groups.push([shift, shift + b.arms.length - 1]);
+    const groups: (readonly [number, number])[] = [...a.groups];
+    // 左边有比 INTERSECT 低的运算时，PostgreSQL、MySQL 会先算 INTERSECT。
+    if (operator === "INTERSECT" && a.operators.some((op) => op !== operator)) groups.push([0, shift - 1]);
+    groups.push(...b.groups.map(([first, last]) => [first + shift, last + shift] as const));
+    // 右边与本运算不同时，或本运算是不满足结合律的 EXCEPT 时，右边自成一组。
+    if (b.operators.some((op) => op !== operator || op === "EXCEPT")) groups.push([shift, shift + b.arms.length - 1]);
     return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl, timeout: a.timeout });
   }
 
@@ -683,7 +704,9 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
   w.inline(false);
   if (s.joins.length === 0) w.dialect.fromNothing(w);
   const filters = applyFiltering(w.settings.filters as readonly SourceFilter[] | undefined, s.filtering);
-  const where: Cond[] = [];
+  // FROM、CROSS JOIN 的表的过滤条件先记下：后面有 RIGHT JOIN 时它们变成可空的一侧，
+  // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
+  let pending: Cond[] = [];
   const implicit = usedRelations(w, arm, groupBy, orderBy);
   for (const j of s.joins) {
     const extra = conditionsFor(filters, j.ref);
@@ -691,7 +714,12 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
     if (j.kind === "FROM" || j.kind === "CROSS JOIN") {
       w.sql(`\n${j.kind} `);
       owner.renderSource(w);
-      where.push(...extra);
+      pending.push(...extra);
+    } else if (j.kind === "RIGHT JOIN") {
+      w.sql("\nRIGHT JOIN ");
+      owner.renderSource(w);
+      w.sql(" ON ").render(all(j.on, ...pending));
+      pending = [...extra];
     } else {
       w.sql(`\n${j.kind} `);
       owner.renderSource(w);
@@ -701,7 +729,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
     emitRelations(w, owner, implicit, filters);
     for (const g of groupJoins) if (g.owner === owner) emitGroupJoin(w, g);
   }
-  const whereAll = all(...where, ...s.where);
+  const whereAll = all(...pending, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
   w.inline(grouped);
   if (groupBy.length > 0) {
@@ -953,6 +981,11 @@ export class From<T extends readonly unknown[]> {
   /** LEFT JOIN；新数据源的列在回调里是可空的。 */
   leftJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...T, NullableRef<E>]> {
     return this.#join("LEFT JOIN", target, on);
+  }
+
+  /** RIGHT JOIN；之前各数据源的列在之后的回调里是可空的，新数据源的行全部保留。 */
+  rightJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...NullableAll<T>, Ref<E>]> {
+    return this.#join("RIGHT JOIN", target, on);
   }
 
   /** CROSS JOIN（笛卡尔积），不需要条件。 */

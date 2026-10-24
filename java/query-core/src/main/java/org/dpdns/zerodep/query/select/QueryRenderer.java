@@ -137,7 +137,9 @@ public final class QueryRenderer {
         if (s.joins.isEmpty()) w.dialect().fromNothing(w);
         SourceFilters configured = (SourceFilters) w.attribute(SourceFilters.class);
         SourceFilters filters = (configured == null ? SourceFilters.NONE : configured).select(s.filtering);
-        List<Cond> where = new ArrayList<>();
+        // FROM、CROSS JOIN 的表的过滤条件先记下：后面有 RIGHT JOIN 时它们变成可空的一侧，
+        // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
+        List<Cond> pending = new ArrayList<>();
         Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy);
         for (SelectSpec.Join j : s.joins) {
             List<Cond> extra = filters.conditionsFor(j.ref());
@@ -145,12 +147,21 @@ public final class QueryRenderer {
                 case FROM -> {
                     w.sql("\nFROM ");
                     j.ref().renderSource(w);
-                    where.addAll(extra);
+                    pending.addAll(extra);
                 }
                 case CROSS -> {
                     w.sql("\nCROSS JOIN ");
                     j.ref().renderSource(w);
-                    where.addAll(extra);
+                    pending.addAll(extra);
+                }
+                case RIGHT -> {
+                    w.sql("\nRIGHT JOIN ");
+                    j.ref().renderSource(w);
+                    List<Cond> on = new ArrayList<>();
+                    on.add(j.on());
+                    on.addAll(pending);
+                    w.sql(" ON ").render(Nodes.all(on));
+                    pending = new ArrayList<>(extra);
                 }
                 default -> {
                     w.sql("\n").sql(j.kind().sql).sql(" ");
@@ -167,6 +178,7 @@ public final class QueryRenderer {
                 if (g.owner() == j.ref()) emitGroupJoin(w, g);
             }
         }
+        List<Cond> where = new ArrayList<>(pending);
         where.addAll(s.where);
         Cond whereAll = Nodes.all(where);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);

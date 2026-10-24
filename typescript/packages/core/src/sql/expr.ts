@@ -120,6 +120,16 @@ export abstract class Expr<T> implements Renderable {
     return Array.isArray(arg) ? inList(this, arg.map((v) => this.#param(v)), true) : inQuery(this, arg as Query<unknown>, true);
   }
 
+  /** NULL 也相等的比较：两侧都为 NULL 时为真，只有一侧为 NULL 时为假（标准 SQL 的 `IS NOT DISTINCT FROM`）。 */
+  isNotDistinctFrom(other: Expr<NonNullable<T> | null>): Cond {
+    return condition((w) => w.dialect.notDistinct(w, this, other, false));
+  }
+
+  /** {@link isNotDistinctFrom} 的否定：值不同，或只有一侧为 NULL 时为真。 */
+  isDistinctFrom(other: Expr<NonNullable<T> | null>): Cond {
+    return condition((w) => w.dialect.notDistinct(w, this, other, true));
+  }
+
   /** IS NULL。 */
   isNull(): Cond {
     return condition((w) => w.render(this).sql(" IS NULL"));
@@ -380,6 +390,29 @@ function inList(e: Expr<unknown>, values: readonly Expr<unknown>[], negate: bool
 function inQuery(e: Expr<unknown>, query: Query<unknown>, negate: boolean): Cond {
   return condition((w) => {
     w.render(e).sql(negate ? " NOT IN (" : " IN (");
+    query[SUBQUERY](w);
+    w.sql(")");
+  });
+}
+
+/** `(a, b) IN (子查询)` 或 `NOT IN`；子查询的列数必须与键数相同。 */
+export function rowInQuery(keys: readonly Expr<unknown>[], query: Query<unknown>, negate: boolean): Cond {
+  if (keys.length < 2) throw new Error("A row IN needs at least two keys; use e.in(query) for one");
+  const columns = query[COLUMN_TYPES].length;
+  if (columns !== keys.length) throw new Error(`Row IN compares ${keys.length} keys with a subquery of ${columns} columns`);
+  return condition((w) => {
+    w.sql("(").join(keys, ", ").sql(negate ? ") NOT IN (" : ") IN (");
+    query[SUBQUERY](w);
+    w.sql(")");
+  });
+}
+
+/** `ANY (子查询)` 或 `ALL (子查询)`，只能放在比较的右侧；子查询只选一列，类型取自那一列。 */
+export function quantified<T>(quantifier: "ANY" | "ALL", query: Query<T>): Expr<T> {
+  const types = query[COLUMN_TYPES];
+  if (types.length !== 1) throw new Error(`${quantifier} needs a subquery of one column, this one selects ${types.length}`);
+  return expression(types[0] as SqlType<NonNullable<T>>, (w) => {
+    w.sql(quantifier).sql(" (");
     query[SUBQUERY](w);
     w.sql(")");
   });

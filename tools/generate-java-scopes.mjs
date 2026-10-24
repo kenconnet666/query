@@ -88,6 +88,7 @@ function from(n) {
     for (const [method, kind, what] of [
       ["join", "INNER", "INNER JOIN"],
       ["leftJoin", "LEFT", "LEFT JOIN"],
+      ["rightJoin", "RIGHT", "RIGHT JOIN"],
     ]) {
       m.push(`    /** ${what} 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
     public <N extends Entity> ${next}<${tp.join(", ")}, N> ${method}(Class<N> table, ${on("N")} on) { return next(SelectSpec.JoinKind.${kind}, Ref.table(table), on); }`);

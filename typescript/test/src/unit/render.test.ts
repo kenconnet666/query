@@ -25,7 +25,8 @@ import {
   type From,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { ClientEntity, Lips, Mara } from "../fixtures/erp.js";
+import { bool, Cond as Condition, keys, lit, nthValue } from "@zerodep-dev/query-core";
+import { ClientEntity, Lips, Makt, Mara, Vbkd } from "../fixtures/erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "../fixtures/scenarios.js";
 import { TestDatabase, TestDialect } from "../fixtures/support.js";
 
@@ -126,6 +127,41 @@ WHERE MCHBH.LFGJA = ?`,
     assert.equal(skeleton(arm().union(arm().unionAll(arm().union(arm())))), "S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))");
     assert.equal(skeleton(arm().unionAll(arm().unionAll(arm()))), "S\nUNION ALL\nS\nUNION ALL\nS");
     assert.equal(skeleton(arm().union(arm()).unionAll(arm())), "S\nUNION\nS\nUNION ALL\nS");
+  });
+
+  it("INTERSECT 与 EXCEPT 按调用顺序求值且在读法可能不同处加括号", () => {
+    const arm = () => from(Mara).select((m) => m.material);
+    const skeleton = (q: ReturnType<typeof arm>) => q.toSql(DIALECT).sql.replace(/SELECT[^\n]*\nFROM[^\n)]*/g, "S");
+    assert.equal(skeleton(arm().union(arm()).intersect(arm())), "(S\nUNION\nS)\nINTERSECT\nS");
+    assert.equal(skeleton(arm().intersect(arm()).union(arm())), "S\nINTERSECT\nS\nUNION\nS");
+    assert.equal(skeleton(arm().union(arm().intersect(arm()))), "S\nUNION\n(S\nINTERSECT\nS)");
+    assert.equal(skeleton(arm().except(arm().except(arm()))), "S\nEXCEPT\n(S\nEXCEPT\nS)");
+    assert.equal(skeleton(arm().except(arm()).except(arm())), "S\nEXCEPT\nS\nEXCEPT\nS");
+    assert.equal(skeleton(arm().intersect(arm().intersect(arm()))), "S\nINTERSECT\nS\nINTERSECT\nS");
+  });
+
+  it("RIGHT JOIN 把左侧各表的过滤条件放进它的 ON", () => {
+    const sqlText = new TestDatabase({ filters: [clientFilter] }).render(
+      from(Mara)
+        .join(Makt, (m, t) => t.material.eq(m.material))
+        .rightJoin(Lips, (m, t, l) => l.material.eq(m.material))
+        .rightJoin(Vbkd, (m, t, l, v) => v.salesOrder.eq(l.delivery))
+        .select((m, t, l, v) => v.salesOrder),
+    ).sql;
+    assert.ok(sqlText.includes("JOIN QUERY_IT.MAKT MAKT ON MAKT.MATNR = MARA.MATNR AND MAKT.MANDT = ?"), sqlText);
+    assert.ok(sqlText.includes("RIGHT JOIN QUERY_IT.LIPS LIPS ON LIPS.MATNR = MARA.MATNR AND MARA.MANDT = ?\n"), sqlText);
+    assert.ok(sqlText.includes("RIGHT JOIN QUERY_IT.VBKD VBKD ON VBKD.VBELN = LIPS.VBELN AND LIPS.MANDT = ?\nWHERE VBKD.MANDT = ?"), sqlText);
+  });
+
+  it("多列 IN 的列数必须与子查询相同", () => {
+    const two = from(Lips).select((l) => ({ delivery: l.delivery, material: l.material }));
+    assert.throws(() => from(Lips).where((l) => keys(l.delivery, l.material, l.unit).in(two)), /3 keys/);
+    assert.throws(() => keys(lit("a")).in(from(Lips).select((l) => l.delivery)), /at least two keys/);
+  });
+
+  it("条件作为布尔列和窗口第 n 行的参数要有效", () => {
+    assert.throws(() => bool(Condition.EMPTY), /needs a condition/);
+    assert.throws(() => nthValue(lit(1), 0), RangeError);
   });
 
   it("自连接和关联子查询的别名在整条语句内唯一", () => {

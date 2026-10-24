@@ -30,7 +30,9 @@ import {
   type QueryEvent,
   type Ref,
 } from "@zerodep-dev/query-core";
+import { all, allOf, anyOf, bool, keys, nullOf, text } from "@zerodep-dev/query-core";
 import { ClientEntity, Event, LineVO, Lips, Mara, MaraView } from "../fixtures/erp.js";
+import { distributionWindows, statistics } from "../fixtures/spec-cases.js";
 import { dateFunctions, numberTextFunctions, timeFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 import * as wf from "../fixtures/workflow.js";
@@ -642,6 +644,61 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.ok(Math.abs(r.squared! - 9) < 1e-9, String(r.squared));
       assert.ok(Math.abs(r.root! - Math.sqrt(3)) < 1e-9, String(r.root));
       assert.equal(r.sign, -1);
+    });
+
+    it("交集与差集按调用顺序求值", async () => {
+      const other = from(Mara).where((m) => m.materialType.eq("ZOTH")).select((m) => m.material);
+      const delivered = from(Lips).select((l) => l.material);
+      const zmat = from(Mara).where((m) => m.materialType.eq("ZMAT")).select((m) => m.material);
+      const mk1 = from(Mara).where((m) => m.manufacturer.eq("MK1")).select((m) => m.material);
+      const mk2 = from(Mara).where((m) => m.manufacturer.eq("MK2")).select((m) => m.material);
+      // ({M3, M4} ∪ {M1, M2}) ∩ {M1, M2} − ({M1, M3} − {M2})；按 PostgreSQL 的优先级不加括号会得到 M1..M4 或空集。
+      assert.deepEqual(await live().db.list(other.union(delivered).intersect(zmat).except(mk1.except(mk2))), ["M2"]);
+    });
+
+    it("RIGHT JOIN 保留右侧的行且子查询比较与 NULL 安全比较正确", async () => {
+      const d2 = from(Lips).where((x) => x.delivery.eq("D2")).select((x) => x.quantity);
+      const m2 = from(Lips).where((x) => x.material.eq("M2")).select((x) => x.quantity);
+      const rows = await live().db.list(
+        from(Mara)
+          .rightJoin(Lips, (m, l) => m.material.eq(l.material).and(m.materialType.eq("NONE")))
+          .where((m, l) =>
+            all(
+              keys(l.delivery, l.material).in(from(Lips).where((x) => x.unit.eq("EA")).select((x) => ({ delivery: x.delivery, material: x.material }))),
+              l.quantity.ge(anyOf(d2)),
+              l.quantity.lt(allOf(m2)),
+              m.partNumber.isNotDistinctFrom(nullOf(text)),
+              l.unit.isDistinctFrom(m.partNumber),
+            ),
+          )
+          .orderBy((m, l) => l.delivery)
+          .select((m, l) => ({ delivery: l.delivery, partNumber: m.partNumber, big: bool(l.quantity.gt("2")) })),
+      );
+      assert.deepEqual(rows.map((r) => `${r.delivery}:${r.partNumber}:${r.big}`), ["D1:null:true", "D2:null:false"]);
+    });
+
+    it("去重聚合与标准差方差在三个库上结果相同", async () => {
+      const rows = await live().db.list(statistics());
+      const f = (v: number | null) => v!.toFixed(4);
+      assert.deepEqual(
+        rows.map((r) => `${r.material}:${Number(r.distinctTotal)}:${Number(r.distinctAverage)}:${f(r.sampleDeviation)}:${f(r.populationDeviation)}:${f(r.sampleVariance)}:${f(r.populationVariance)}`),
+        ["M1:6:2:1.0000:0.8165:1.0000:0.6667", "M2:12:6:1.4142:1.0000:2.0000:1.0000"],
+      );
+    });
+
+    it("相对排名累计分布与第 n 行", async () => {
+      const rows = await live().db.list(distributionWindows());
+      assert.deepEqual(
+        rows.map((r) => `${r.delivery}:${r.percentRank.toFixed(2)}:${r.cumeDist.toFixed(2)}:${r.second}`),
+        ["D1:0.50:1.00:D2", "D2:0.25:0.67:D2", "D3:0.75:0.50:D4", "D4:1.00:1.00:D4", "D5:0.00:0.33:D2"],
+      );
+    });
+
+    it("零行或一行的查询多于一行时报错", async () => {
+      const db = live().db;
+      assert.equal(await db.optional(from(Lips).where((l) => l.delivery.eq("D1")).select((l) => l.delivery)), "D1");
+      assert.equal(await db.optional(from(Lips).where((l) => l.delivery.eq("none")).select((l) => l.delivery)), undefined);
+      await assert.rejects(db.optional(from(Lips).select((l) => l.delivery)), /at most one row/);
     });
 
     it("条件聚合只聚合满足条件的行且文本按指定顺序拼接", async () => {

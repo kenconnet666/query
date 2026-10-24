@@ -504,6 +504,34 @@ public class Sql extends Rows {
     /** 求和。 */
     public static <N extends Number> Aggregate<N> sum(Expr<N> e) { return new Aggregate<>(e.type(), "SUM", false, List.of(e)); }
 
+    /** SUM(DISTINCT e)：相同的值只加一次。 */
+    public static <N extends Number> Aggregate<N> sumDistinct(Expr<N> e) { return new Aggregate<>(e.type(), "SUM", true, List.of(e)); }
+
+    /** AVG(DISTINCT e)，结果是小数。 */
+    public static Aggregate<BigDecimal> avgDistinct(Expr<? extends Number> e) {
+        return new Aggregate<>(SqlType.of(BigDecimal.class), "AVG", true, List.of(e));
+    }
+
+    /**
+     * 样本标准差 STDDEV_SAMP，只有一行时为 NULL。参数先转成 DOUBLE：HANA 对整数按定点小数计算，
+     * 只保留 6 位小数，转换后三库结果一致。
+     */
+    public static Aggregate<Double> stddevSamp(Expr<? extends Number> e) { return statistic("STDDEV_SAMP", e); }
+
+    /** 总体标准差 STDDEV_POP；参数先转成 DOUBLE，见 {@link #stddevSamp}。 */
+    public static Aggregate<Double> stddevPop(Expr<? extends Number> e) { return statistic("STDDEV_POP", e); }
+
+    /** 样本方差 VAR_SAMP，只有一行时为 NULL；参数先转成 DOUBLE，见 {@link #stddevSamp}。 */
+    public static Aggregate<Double> varSamp(Expr<? extends Number> e) { return statistic("VAR_SAMP", e); }
+
+    /** 总体方差 VAR_POP；参数先转成 DOUBLE，见 {@link #stddevSamp}。 */
+    public static Aggregate<Double> varPop(Expr<? extends Number> e) { return statistic("VAR_POP", e); }
+
+    /** 浮点结果的统计聚合。MySQL 的 STDDEV 是总体标准差，与另两库不同，所以只提供带 _SAMP / _POP 的名字。 */
+    private static Aggregate<Double> statistic(String name, Expr<? extends Number> e) {
+        return new Aggregate<>(SqlType.of(Double.class), name, false, List.of(cast(e, CastType.doublePrecision())));
+    }
+
     /** 平均值，结果是小数。 */
     public static Aggregate<BigDecimal> avg(Expr<? extends Number> e) {
         return new Aggregate<>(SqlType.of(BigDecimal.class), "AVG", false, List.of(e));
@@ -569,6 +597,21 @@ public class Sql extends Rows {
      * {@code w.rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())}。
      */
     public static <T> WindowFunction<T> lastValue(Expr<T> e) { return new WindowFunction<>(e.type(), "LAST_VALUE", List.of(e)); }
+
+    /** 相对排名 {@code (rank - 1) / (行数 - 1)}，取值 0 到 1；再加 .over(...)。 */
+    public static WindowFunction<Double> percentRank() { return new WindowFunction<>(SqlType.of(Double.class), "PERCENT_RANK", List.of()); }
+
+    /** 累计分布：不大于当前行的行数占分区行数的比例，取值大于 0、不超过 1；再加 .over(...)。 */
+    public static WindowFunction<Double> cumeDist() { return new WindowFunction<>(SqlType.of(Double.class), "CUME_DIST", List.of()); }
+
+    /**
+     * 窗口里第 n 行（1 起）的值，没有时为 NULL；再加 .over(...)。与 {@link #lastValue} 一样，有 ORDER BY 时默认窗口只到当前行，
+     * 要在整个分区里取需写 {@code w.rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())}。
+     */
+    public static <T> WindowFunction<T> nthValue(Expr<T> e, int n) {
+        if (n < 1) throw new IllegalArgumentException("nthValue counts rows from 1");
+        return new WindowFunction<>(e.type(), "NTH_VALUE", List.of(e, lit(n)));
+    }
 
     /** 按窗口的顺序把分区分成 buckets 组，给出组号（1 起），例如四分位；再加 .over(...)。 */
     public static WindowFunction<Long> ntile(int buckets) {
@@ -640,6 +683,15 @@ public class Sql extends Rows {
 
     /** 单列查询作为一个值（标量子查询）。 */
     public static <T> Expr<T> scalar(Query<T> subquery) { return new Nodes.Scalar<>(subquery); }
+
+    /** 与子查询的任一行比较：{@code x.eq(anyOf(q))} 写成 {@code x = ANY (子查询)}；子查询没有行时比较为假。 */
+    public static <T> Expr<T> anyOf(Query<T> subquery) { return new Nodes.Quantified<>("ANY", subquery); }
+
+    /** 与子查询的每一行比较：{@code x.gt(allOf(q))} 写成 {@code x > ALL (子查询)}；子查询没有行时比较为真。 */
+    public static <T> Expr<T> allOf(Query<T> subquery) { return new Nodes.Quantified<>("ALL", subquery); }
+
+    /** 条件作为布尔列，例如 {@code row(bool(l.quantity().gt(BigDecimal.ZERO)).as("positive"))}；条件未知时为 NULL。 */
+    public static Expr<Boolean> bool(Cond condition) { return new Nodes.Truth(condition); }
 
     /** 当前日期。 */
     public static Expr<LocalDate> currentDate() { return new Nodes.Raw<>(SqlType.of(LocalDate.class), "CURRENT_DATE"); }

@@ -113,6 +113,11 @@ public class PostgresDialect extends Dialect {
     /** pgjdbc 把超时报告为 query_canceled（57014），因为它通过另一个请求来取消语句。 */
     @Override public boolean isTimeout(SQLException e) { return super.isTimeout(e) || "57014".equals(e.getSQLState()); }
 
+    /** NULL 也相等的比较写成原生的 {@code IS [NOT] DISTINCT FROM}。 */
+    @Override public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
+        w.render(left).sql(negate ? " IS DISTINCT FROM " : " IS NOT DISTINCT FROM ").render(right);
+    }
+
     /** CAST 的目标类型：小数写成 NUMERIC(精度,小数位)，其余沿用默认。 */
     @Override public String castType(CastType<?> type) {
         return switch (type.kind()) {

@@ -116,6 +116,12 @@ public abstract non-sealed class Expr<T> implements Renderable, Keys, OrderItem,
     /** IS NULL。 */
     public final Cond isNull() { return Nodes.postfix(this, " IS NULL"); }
 
+    /** NULL 也相等的比较：两侧都为 NULL 时为真，只有一侧为 NULL 时为假（标准 SQL 的 {@code IS NOT DISTINCT FROM}）。 */
+    public final Cond isNotDistinctFrom(Expr<T> other) { return Nodes.notDistinct(this, other, false); }
+
+    /** {@link #isNotDistinctFrom} 的否定：值不同，或只有一侧为 NULL 时为真。 */
+    public final Cond isDistinctFrom(Expr<T> other) { return Nodes.notDistinct(this, other, true); }
+
     /** IS NOT NULL。 */
     public final Cond isNotNull() { return Nodes.postfix(this, " IS NOT NULL"); }
 
