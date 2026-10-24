@@ -1,7 +1,6 @@
 package org.dpdns.zerodep.query.exec;
 
-import org.dpdns.zerodep.query.Database;
-import org.dpdns.zerodep.query.Query;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;
@@ -84,7 +83,7 @@ class ExecutionSettingsTest {
         Fake(ConnectionProvider connections, Consumer<Config> configure) { super(new TestDialect(), connections, configure); }
     }
 
-    private static Query<String> deliveries() { return from(Lips.class).selectValue(l -> l.col(Lips::getDelivery)); }
+    private static Query<String> deliveries() { return from(Lips.class).select(l -> l.delivery()); }
 
     @Test
     void 没有配置超时时不设置语句超时() {
@@ -136,7 +135,7 @@ class ExecutionSettingsTest {
     @Test
     void 参数个数超过方言上限时在连接数据库之前报错() {
         List<String> many = IntStream.range(0, 70_000).mapToObj(i -> "D" + i).toList();
-        Query<String> q = from(Lips.class).where(l -> l.col(Lips::getDelivery).in(many)).selectValue(l -> l.col(Lips::getDelivery));
+        Query<String> q = from(Lips.class).where(l -> l.delivery().in(many)).select(l -> l.delivery());
         var e = assertThrows(IllegalStateException.class, () -> new TestDatabase(null).list(q));
         assertTrue(e.getMessage().contains("binds 70000 parameters") && e.getMessage().contains("at most 65535"), e.getMessage());
     }

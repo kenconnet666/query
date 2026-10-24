@@ -1,0 +1,18 @@
+-- parameters: ["ZMAT","X","Y"]
+(SELECT `lips`.`MATNR` AS `material`
+FROM `QUERY_IT`.`LIPS` `lips`
+UNION
+SELECT `mara`.`MATNR`
+FROM `QUERY_IT`.`MARA` `mara`)
+INTERSECT
+SELECT `mara2`.`MATNR`
+FROM `QUERY_IT`.`MARA` `mara2`
+WHERE `mara2`.`MTART` = ?
+EXCEPT
+(SELECT `mara3`.`MATNR`
+FROM `QUERY_IT`.`MARA` `mara3`
+WHERE `mara3`.`MFRNR` = ?
+EXCEPT
+SELECT `mara4`.`MATNR`
+FROM `QUERY_IT`.`MARA` `mara4`
+WHERE `mara4`.`MFRNR` = ?)

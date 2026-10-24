@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { filter, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
+import { filter, Write, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { HanaDatabase } from "@zerodep-dev/query-hana";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
-import { ClientEntity } from "../erp.js";
-import { dialectCases, sharedCases } from "../spec-cases.js";
+import { SqliteDatabase } from "@zerodep-dev/query-sqlite";
+import { ClientEntity } from "../fixtures/erp.js";
+import { dialectCases, sharedCases, unsupportedCases } from "../fixtures/spec-cases.js";
+import { SHARDS } from "../fixtures/shards.js";
 
 /**
  * Golden SQL shared with the Java tests: spec/render/<case>.<dialect>.sql holds the parameters on
@@ -24,6 +26,7 @@ const databases: Record<keyof typeof dialectCases, (options: DatabaseOptions) =>
   hana: (options) => new HanaDatabase(never, options),
   postgres: (options) => new PostgresDatabase(never, options),
   mysql: (options) => new MysqlDatabase(never, options),
+  sqlite: (options) => new SqliteDatabase(never, options),
 };
 
 function golden(file: string): { parameters: unknown; sql: string } {
@@ -36,16 +39,29 @@ function golden(file: string): { parameters: unknown; sql: string } {
 
 describe("渲染金样例", () => {
   for (const dialect of Object.keys(databases) as (keyof typeof databases)[]) {
-    const cases = { ...sharedCases, ...dialectCases[dialect] };
-    const filtered = databases[dialect]({ filters: [filter(ClientEntity, (r) => r.client.eq("100"))] });
-    const unfiltered = databases[dialect]({});
+    const unsupported = unsupportedCases[dialect] ?? [];
+    const cases = { ...Object.fromEntries(Object.entries(sharedCases).filter(([name]) => !unsupported.includes(name))), ...dialectCases[dialect] };
+    for (const name of unsupported) {
+      it(`${dialect} 不支持 ${name}`, () => {
+        const statement = sharedCases[name]!.query();
+        const db = databases[dialect]({ shards: SHARDS });
+        assert.throws(() => (statement instanceof Write ? db.render(statement) : db.render(statement)));
+        assert.ok(!existsSync(SPEC + `${name}.${dialect}.sql`), `${name} has a golden file but is unsupported`);
+      });
+    }
+    const filtered = databases[dialect]({ filters: [filter(ClientEntity, (r) => r.client.eq("100"))], shards: SHARDS });
+    const unfiltered = databases[dialect]({ shards: SHARDS });
 
     for (const [name, spec] of Object.entries(cases)) {
       it(`${dialect} 渲染 ${name} 与金样例一致`, () => {
         const file = `${name}.${dialect}.sql`;
         assert.ok(existsSync(SPEC + file), `spec/render/${file} is missing; the Java spec tests write it with QUERY_SPEC_WRITE=1`);
         const expected = golden(file);
-        const rendered = (spec.filtered ? filtered : unfiltered).render(spec.query());
+        const db = spec.filtered ? filtered : unfiltered;
+        const statement = spec.query();
+        const all = statement instanceof Write ? db.render(statement) : [db.render(statement)];
+        assert.equal(all.length, 1, "a write case renders one statement");
+        const rendered = all[0]!;
         assert.equal(rendered.sql.replace(/\$\d+/g, "?"), expected.sql);
         assert.deepEqual(
           rendered.parameters.map((p) => String(p)),

@@ -1,0 +1,5 @@
+-- parameters: []
+SELECT lips.MATNR AS material, SUM(DISTINCT lips.LFIMG) AS distinctTotal, AVG(DISTINCT lips.LFIMG) AS distinctAverage, sqrt(MAX((SUM(CAST(lips.LFIMG AS REAL) * CAST(lips.LFIMG AS REAL)) - SUM(CAST(lips.LFIMG AS REAL)) * SUM(CAST(lips.LFIMG AS REAL)) / COUNT(CAST(lips.LFIMG AS REAL))) / (COUNT(CAST(lips.LFIMG AS REAL)) - 1), 0)) AS sampleDeviation, sqrt(MAX((SUM(CAST(lips.LFIMG AS REAL) * CAST(lips.LFIMG AS REAL)) - SUM(CAST(lips.LFIMG AS REAL)) * SUM(CAST(lips.LFIMG AS REAL)) / COUNT(CAST(lips.LFIMG AS REAL))) / COUNT(CAST(lips.LFIMG AS REAL)), 0)) AS populationDeviation, MAX((SUM(CAST(lips.LFIMG AS REAL) * CAST(lips.LFIMG AS REAL)) - SUM(CAST(lips.LFIMG AS REAL)) * SUM(CAST(lips.LFIMG AS REAL)) / COUNT(CAST(lips.LFIMG AS REAL))) / (COUNT(CAST(lips.LFIMG AS REAL)) - 1), 0) AS sampleVariance, MAX((SUM(CAST(lips.LFIMG AS REAL) * CAST(lips.LFIMG AS REAL)) - SUM(CAST(lips.LFIMG AS REAL)) * SUM(CAST(lips.LFIMG AS REAL)) / COUNT(CAST(lips.LFIMG AS REAL))) / COUNT(CAST(lips.LFIMG AS REAL)), 0) AS populationVariance
+FROM QUERY_IT.LIPS AS lips
+GROUP BY lips.MATNR
+ORDER BY lips.MATNR ASC

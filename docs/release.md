@@ -8,7 +8,7 @@
 | --- | --- |
 | `query-parent` | POM（各模块的父 POM，必须一起发布） |
 | `query-core` | jar、sources、javadoc，以及方言模块测试用的 `tests` jar |
-| `query-hana`、`query-postgres`、`query-mysql`、`query-spring` | jar、sources、javadoc |
+| `query-hana`、`query-postgres`、`query-mysql`、`query-sqlite`、`query-spring`、`query-maven-plugin` | jar、sources、javadoc |
 
 每个文件都附带 `.asc` 签名和校验和。jar 的清单里写了 `Automatic-Module-Name`（例如 `org.dpdns.zerodep.query.hana`），在模块路径上也能使用。
 
@@ -81,7 +81,7 @@
 
 ## TypeScript（npm）
 
-四个包 `@zerodep-dev/query-core|postgres|mysql|hana` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
+六个包 `@zerodep-dev/query-core|postgres|mysql|hana|sqlite` 和 `@zerodep-dev/idb` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
 
 ```powershell
 cd typescript

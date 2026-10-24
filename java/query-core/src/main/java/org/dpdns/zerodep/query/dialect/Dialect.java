@@ -1,11 +1,13 @@
 package org.dpdns.zerodep.query.dialect;
 
+import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -14,29 +16,35 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * An open base class for dialects. It owns only syntax: identifier quoting and case folding,
- * literals, paging, CAST type names, JDBC type handling and what a driver needs to stream rows. Function renderings a dialect knows are
- * registered in its constructor with {@link #register}; nothing switches on a dialect name.
+ * 方言的开放基类，只负责语法：标识符的引号和大小写折叠、字面量、分页、CAST 类型名、
+ * JDBC 类型处理，以及驱动流式读取行所需的设置。方言已知的函数写法在构造函数里用
+ * {@link #register} 登记；任何地方都不按方言名称分支。
  */
 public abstract class Dialect {
     private final Map<FunctionDef, FunctionRenderer> functions = new ConcurrentHashMap<>();
 
+    /** 按名字登记的函数和聚合写法，用于没有 {@link FunctionDef} 的调用（例如 LPAD、STDDEV_SAMP）。 */
+    private final Map<String, FunctionRenderer> calls = new ConcurrentHashMap<>();
+
+    /** 供各方言继承。 */
     protected Dialect() { }
 
+    /** 方言名称，用于错误信息和调试。 */
     public abstract String name();
 
-    /** True when the identifier needs no quotes, e.g. HANA's upper-case names. */
+    /** 标识符无需加引号时返回 true，例如 HANA 的大写名字。 */
     protected abstract boolean isBare(String identifier);
 
-    /** The case unquoted identifiers fold to, so generated aliases stay unquoted. */
+    /** 未加引号的标识符会被折叠成的大小写，使生成的别名可以不加引号。 */
     public abstract String foldCase(String identifier);
 
     /**
-     * Words that must be quoted even in bare form, such as an entity {@code Order} aliased {@code order}.
-     * Reserved words of standard SQL, PostgreSQL and HANA together; quoting one more word is harmless.
+     * 即使本身可以不加引号，也必须加引号的保留字，例如实体 {@code Order} 的别名 {@code order}。
+     * 取标准 SQL、PostgreSQL 和 HANA 保留字的并集；多给一个词加引号没有坏处。
      */
     protected boolean isReserved(String identifier) { return RESERVED.contains(identifier.toUpperCase(java.util.Locale.ROOT)); }
 
+    /** 按需给标识符加双引号，内部的双引号写成两个。 */
     public String quote(String identifier) {
         return isBare(identifier) && !isReserved(identifier) ? identifier : '"' + identifier.replace("\"", "\"\"") + '"';
     }
@@ -54,30 +62,58 @@ public abstract class Dialect {
         "TABLESAMPLE", "THEN", "TO", "TOP", "TRAILING", "TRUE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES", "VARIADIC",
         "VERBOSE", "WHEN", "WHERE", "WHILE", "WINDOW", "WITH");
 
-    /** Aliases come from {@link SqlWriter#aliasFor}, already case-folded. */
+    /** 写出 FROM、JOIN、UPDATE、DELETE 里跟在来源后面的别名：默认 {@code 来源 别名}，SQLite 写 {@code 来源 AS 别名}。 */
+    public void sourceAlias(SqlWriter w, String alias) { w.sql(" ").alias(alias); }
+
+    /** 返回别名在 SQL 中的写法。别名来自 {@link SqlWriter#aliasFor}，已经折叠过大小写。 */
     public String alias(String alias) { return quote(alias); }
 
+    /** 写出分页：{@code limit} 或 {@code offset} 为 null 表示不限；offset 不大于 0 时省略。 */
     public void limit(SqlWriter w, Integer limit, Integer offset) {
         if (limit != null) w.sql("\nLIMIT ").sql(Integer.toString(limit));
         if (offset != null && offset > 0) w.sql(limit == null ? "\nOFFSET " : " OFFSET ").sql(Integer.toString(offset));
     }
 
-    /** The GROUP BY list; with rollup, subtotals for every prefix of the keys and a grand total. */
+    /** 写出 GROUP BY 列表；rollup 为 true 时，会为分组键的每个前缀生成小计，并附加总计。 */
     public void groupBy(SqlWriter w, List<? extends Renderable> keys, boolean rollup) {
         if (rollup) w.sql("ROLLUP(").join(keys, ", ").sql(")");
         else w.join(keys, ", ");
     }
 
-    /** One ORDER BY item; {@code nullsFirst} is null when the query does not specify NULL placement. */
+    /** 写出一个 ORDER BY 项；查询没有指定 NULL 的位置时，{@code nullsFirst} 为 null。 */
     public void orderItem(SqlWriter w, Renderable expr, boolean descending, Boolean nullsFirst) {
         w.render(expr).sql(descending ? " DESC" : " ASC");
         if (nullsFirst != null) w.sql(nullsFirst ? " NULLS FIRST" : " NULLS LAST");
     }
 
-    /** What a SELECT without a table needs: nothing on most databases, {@code FROM DUMMY} on HANA. */
+    /**
+     * NULL 也相等的比较（标准 SQL 的 {@code IS [NOT] DISTINCT FROM}）。默认写成三个库都支持的
+     * {@code CASE WHEN a = b OR (a IS NULL AND b IS NULL) THEN 1 ELSE 0 END = 1}，negate 时比较 0；
+     * PostgreSQL 与 MySQL 换成各自的原生写法。
+     */
+    public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
+        w.sql("CASE WHEN ").render(left).sql(" = ").render(right).sql(" OR (").render(left).sql(" IS NULL AND ").render(right)
+            .sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
+    }
+
+    /** 结构变更的写法（建表、改表、读系统目录），见 {@code db.schema()}；方言包实现，其他方言报错。 */
+    public SchemaSyntax schemaSyntax() { throw new UnsupportedOperationException(name() + " has no schema syntax"); }
+
+    /** 写出紧跟在 SELECT 之后的提示子句，每个后面跟一个空格；MySQL 把优化器提示合并进一个注释（它只认第一个）。 */
+    public void hints(SqlWriter w, List<Clause> hints) {
+        for (Clause c : hints) w.render(c).sql(" ");
+    }
+
+    /** 集合运算在本方言里的写法；不支持的（HANA 的 INTERSECT ALL、EXCEPT ALL）报错。 */
+    public String setOperator(String operator) { return operator; }
+
+    /** 是否支持 FULL JOIN；MySQL 没有。 */
+    public boolean supportsFullJoin() { return true; }
+
+    /** 没有数据表的 SELECT 需要补的内容：多数数据库什么都不用写，HANA 要写 {@code FROM DUMMY}。 */
     public void fromNothing(SqlWriter w) { }
 
-    /** Whether {@link #literal} can write the value; others, such as NaN, stay parameters even when inlining. */
+    /** {@link #literal} 能否写出该值；不能的（例如 NaN）即使在内联时也仍作为参数。 */
     public boolean hasLiteral(Object value) {
         if (value instanceof Double d) return Double.isFinite(d);
         if (value instanceof Float f) return Float.isFinite(f);
@@ -85,6 +121,7 @@ public abstract class Dialect {
             || value instanceof LocalDateTime || value instanceof Enum<?>;
     }
 
+    /** 把值写成字面量；没有字面量形式的值抛出异常，应改为绑定参数。 */
     public void literal(SqlWriter w, Object value) {
         if (value == null) w.sql("NULL");
         else if (!hasLiteral(value)) throw new IllegalArgumentException("No literal form for " + value + " (" + value.getClass().getName() + "); bind it as a parameter");
@@ -98,14 +135,16 @@ public abstract class Dialect {
         else throw new IllegalArgumentException("No literal form for " + value.getClass().getName() + "; bind it as a parameter");
     }
 
+    /** 字符串字面量：单引号包裹，内部的单引号写成两个。 */
     protected String stringLiteral(String s) { return "'" + s.replace("'", "''") + "'"; }
 
-    /** Always with seconds, the fraction without trailing zeros: the form the TypeScript port writes too. */
+    /** 总是带秒，小数部分去掉末尾的零；TypeScript 端写出的也是这种形式。 */
     private static String timestampText(LocalDateTime t) {
         String fraction = t.getNano() == 0 ? "" : ("." + String.format("%09d", t.getNano())).replaceAll("0+$", "");
         return String.format("%s %02d:%02d:%02d%s", t.toLocalDate(), t.getHour(), t.getMinute(), t.getSecond(), fraction);
     }
 
+    /** CAST 目标类型在本方言中的类型名；方言可覆盖。 */
     public String castType(CastType<?> type) {
         return switch (type.kind()) {
             case TEXT -> "VARCHAR(" + type.length() + ")";
@@ -119,19 +158,19 @@ public abstract class Dialect {
         };
     }
 
-    /** Longer IN lists are split into several IN predicates joined by OR. */
+    /** IN 列表的最大长度，更长的会拆成用 OR 连接的多个 IN 谓词。 */
     public int maxInListSize() { return 1000; }
 
-    /** Bound parameters one statement may carry; the wire protocols of HANA and PostgreSQL count them in 16 bits. */
+    /** 一条语句最多能带的绑定参数个数；HANA 和 PostgreSQL 的通信协议用 16 位来计数。 */
     public int maxParameters() { return 65535; }
 
-    /** Whether the database cancelled a statement for running past its query timeout. */
+    /** 数据库是否因为语句超出查询超时而将其取消。 */
     public boolean isTimeout(SQLException e) { return e instanceof java.sql.SQLTimeoutException; }
 
     /**
-     * Where a quoted part of hand-written SQL that starts at {@code start} ends: the index of its last
-     * character, or -1 when none starts there. Native queries look for {@code :name} only outside such
-     * parts. The default knows '...' and "..." with doubled quotes inside.
+     * 手写 SQL 里从 {@code start} 开始的带引号部分在哪里结束：返回其最后一个字符的下标，
+     * 该处没有带引号部分时返回 -1。原生查询只在这类部分之外查找 {@code :name}。
+     * 默认识别 '...' 和 "..."，内部的引号写成两个。
      */
     public int quotedEnd(String sql, int start) {
         char c = sql.charAt(start);
@@ -139,8 +178,8 @@ public abstract class Dialect {
     }
 
     /**
-     * The index of the quote closing the one at {@code start}, past doubled quotes and, with
-     * {@code backslashEscapes}, past escaped characters; the last index when it never closes.
+     * 与 {@code start} 处的引号配对的结束引号的下标，会跳过成对的引号；
+     * {@code backslashEscapes} 为 true 时还会跳过被反斜杠转义的字符；始终没有闭合时返回最后一个下标。
      */
     protected static int closingQuote(String sql, int start, boolean backslashEscapes) {
         char quote = sql.charAt(start);
@@ -153,27 +192,116 @@ public abstract class Dialect {
         return sql.length() - 1;
     }
 
+    /** 本方言使用的 JDBC 类型注册表；默认是通用的 {@link TypeRegistry#defaults()}。 */
     public TypeRegistry types() { return TypeRegistry.defaults(); }
 
-    /** Undoes what {@link #openCursor} changed on a connection; runs when the stream closes. */
+    /** 撤销 {@link #openCursor} 对连接做的改动；流关闭时执行。 */
     @FunctionalInterface
     public interface CursorCleanup {
+        /** 什么都不用做的清理。 */
         CursorCleanup NONE = () -> { };
 
+        /** 执行清理。 */
         void run() throws SQLException;
     }
 
     /**
-     * Readies a statement for {@code Database.stream} so that rows come from a server cursor instead
-     * of a buffer of the whole result. Most drivers need nothing: HANA's fetches in chunks on its own.
+     * 为 {@code Database.stream} 准备语句，让行从服务端游标读取，而不是把整个结果缓冲到内存。
+     * 多数驱动无需处理：HANA 会自行分块获取。
      */
     public CursorCleanup openCursor(Connection connection, PreparedStatement statement) throws SQLException {
         return CursorCleanup.NONE;
     }
 
+    /** 写出加锁读的子句：{@code FOR UPDATE}，加上 {@code NOWAIT} 或 {@code SKIP LOCKED}。 */
+    public void lock(SqlWriter w, Lock lock) {
+        w.sql("FOR UPDATE");
+        if (lock == Lock.NOWAIT) w.sql(" NOWAIT");
+        else if (lock == Lock.SKIP_LOCKED) w.sql(" SKIP LOCKED");
+    }
+
+    /** 写出插入或更新一行的语句；各方言的写法不同，没有实现的方言报错。 */
+    public void upsert(SqlWriter w, Upsert upsert) {
+        throw new UnsupportedOperationException(name() + " has no insert-or-update statement; register one in its dialect");
+    }
+
+    /** 写出联表的 UPDATE；只有方言包实现，见 {@link JoinWrite}。 */
+    public void joinUpdate(SqlWriter w, JoinWrite update) {
+        throw new UnsupportedOperationException(name() + " has no join update; use a subquery in where(...) instead");
+    }
+
+    /** 写出联表的 DELETE；只有方言包实现，见 {@link JoinWrite}。 */
+    public void joinDelete(SqlWriter w, JoinWrite delete) {
+        throw new UnsupportedOperationException(name() + " has no join delete; use a subquery in where(...) instead");
+    }
+
+    /** 写出列名清单 {@code ("A", "B")}。 */
+    protected static void columnList(SqlWriter w, List<String> columns) {
+        w.sql("(");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.identifier(columns.get(i));
+        }
+        w.sql(")");
+    }
+
+    /**
+     * 为插入一行并取回生成值准备语句：默认请求 JDBC 的生成键（MySQL 取 AUTO_INCREMENT）。
+     * column 是生成值的列名（未加引号）。
+     */
+    public PreparedStatement prepareInsert(Connection connection, String sql, String column) throws SQLException {
+        return connection.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS);
+    }
+
+    /** 执行完 {@link #prepareInsert} 的语句后，取回这一行生成的值所在的结果集，光标停在那一行之前。 */
+    public ResultSet generatedKey(Connection connection, PreparedStatement statement) throws SQLException {
+        return statement.getGeneratedKeys();
+    }
+
+    /** 登记本方言对某个函数的渲染，供子类在构造函数中调用。 */
     protected final void register(FunctionDef function, FunctionRenderer renderer) { functions.put(function, renderer); }
 
+    /** 本方言登记的函数渲染器；没有登记则为 null，由 {@link FunctionDef} 退回标准写法。 */
     public final FunctionRenderer renderer(FunctionDef function) { return functions.get(function); }
+
+    /**
+     * 按名字登记一个普通函数或聚合的写法，覆盖 {@code NAME(arg, ...)}，供子类在构造函数中调用。
+     * 聚合带 {@code filter(...)} 时，参数已经换成 {@code CASE WHEN 条件 THEN 参数 END}。
+     */
+    protected final void registerCall(String name, FunctionRenderer renderer) { calls.put(name, renderer); }
+
+    /** 按名字登记的写法；没有登记则为 null，写成 {@code NAME(arg, ...)}。 */
+    public final FunctionRenderer callRenderer(String name) { return calls.get(name); }
+
+    /** 聚合 name 能否加 OVER (...) 当窗口函数用；方言用公式代替的聚合（例如 SQLite 的标准差）不能。 */
+    public boolean windowable(String name) { return true; }
+
+    /** 写出类型转换；默认 {@code CAST(inner AS 类型名)}，类型名见 {@link #castType}。 */
+    public void cast(SqlWriter w, Renderable inner, CastType<?> target) {
+        w.sql("CAST(").render(inner).sql(" AS ").sql(castType(target)).sql(")");
+    }
+
+    /**
+     * 写出与子查询的量化比较 {@code left op ANY (子查询)} / {@code ALL}。subquery 的列不带名字，named 是同一个子查询但列带名字，
+     * column 是那一列的名字；没有 ANY / ALL 的方言（SQLite）用 named 改写成 EXISTS。
+     */
+    public void quantified(SqlWriter w, Renderable left, String operator, String quantifier, Renderable subquery, Renderable named, String column) {
+        w.render(left).sql(" " + operator + " " + quantifier + " (").render(subquery).sql(")");
+    }
+
+    /** 集合运算里一组括号的开头；SQLite 不能给复合查询的一段加括号，写成 {@code SELECT * FROM (}。 */
+    public String groupOpen() { return "("; }
+
+    /** 集合运算里一组括号的结尾。 */
+    public String groupClose() { return ")"; }
+
+    /** 驱动是否按 {@code setQueryTimeout} 取消超时的语句；不按的（sqlite-jdbc）由执行器到时调用 {@code cancel()}。 */
+    public boolean honoursQueryTimeout() { return true; }
+
+    /** 写出算术运算 {@code (a op b op ...)}；括号保证嵌套时优先级不变。 */
+    public void arithmetic(SqlWriter w, String operator, List<? extends Renderable> operands) {
+        w.sql("(").join(operands, " " + operator + " ").sql(")");
+    }
 
     @Override public String toString() { return name(); }
 }

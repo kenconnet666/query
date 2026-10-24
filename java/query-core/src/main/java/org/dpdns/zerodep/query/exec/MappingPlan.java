@@ -27,37 +27,44 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Maps a row, by column label, into a record, a Lombok {@code @Data} bean (chained setters too), a
- * {@code @Builder} class, a plain class with fields, or a scalar. Built once per (target, labels)
- * and cached; construction and setters go through {@link MethodHandle}s.
+ * 按列标签把一行映射成 record、Lombok {@code @Data} 的 bean（含链式 setter）、{@code @Builder} 类、
+ * 带字段的普通类，或者一个标量。每个（目标类型，标签列表）只构建一次并缓存；
+ * 构造和 setter 调用都走 {@link MethodHandle}。
  *
- * <p>Labels match properties ignoring case and underscores, so {@code PART_NUMBER} fills
- * {@code partNumber}. Columns the target lacks are ignored; a target property without a column is
- * an error, so a typo never silently becomes null.
+ * <p>标签与属性名匹配时忽略大小写和下划线，所以 {@code PART_NUMBER} 会填入 {@code partNumber}。
+ * 目标类型没有的列会被忽略；目标属性找不到对应的列则报错，笔误不会悄悄变成 null。
+ *
+ * @param <R> 映射的目标类型
  */
 public final class MappingPlan<R> {
+    /** 缓存键：目标类型加结果集的列标签。 */
     private record Key(Class<?> target, List<String> labels) { }
 
     private static final Map<Key, MappingPlan<?>> CACHE = new ConcurrentHashMap<>();
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
+    /** 把一行已解码的值构造成目标对象。 */
     private interface Strategy { Object map(Object[] values) throws Throwable; }
 
     private final Class<R> target;
     private final Strategy strategy;
+    /** 按列下标排列：目标读取该列所用的类型，目标不用的列为 null。 */
     private final SqlType<?>[] columnTypes;
 
+    /** 由 of 构建并缓存。 */
     private MappingPlan(Class<R> target, Strategy strategy, SqlType<?>[] columnTypes) {
         this.target = target;
         this.strategy = strategy;
         this.columnTypes = columnTypes;
     }
 
+    /** 取得（必要时构建）映射到 {@code target} 的方案；{@code labels} 是结果集的列标签，按列顺序。 */
     @SuppressWarnings("unchecked")
     public static <R> MappingPlan<R> of(Class<R> target, List<String> labels) {
         return (MappingPlan<R>) CACHE.computeIfAbsent(new Key(target, List.copyOf(labels)), k -> build(target, k.labels()));
     }
 
+    /** 把一行已解码的值映射成目标对象；非运行时异常包装为 {@link IllegalStateException}。 */
     public R map(Object[] values) {
         try {
             return target.cast(strategy.map(values));
@@ -68,9 +75,10 @@ public final class MappingPlan<R> {
         }
     }
 
-    /** How the target expects a column to be read (with its converter), or null when the target ignores it. */
+    /** 目标期望如何读取该列（含转换器）；目标不使用这一列时为 null。 */
     public SqlType<?> columnType(int index) { return columnTypes[index]; }
 
+    /** 按目标类型选择映射方式：标量、record、静态 {@code builder()}，其余按 bean 处理。 */
     private static <R> MappingPlan<R> build(Class<R> target, List<String> labels) {
         SqlType<?>[] types = new SqlType<?>[labels.size()];
         if (labels.size() == 1 && isScalar(target)) {
@@ -89,6 +97,7 @@ public final class MappingPlan<R> {
         }
     }
 
+    /** 通过规范构造器构造 record，参数按组件顺序从对应列取值。 */
     private static <R> MappingPlan<R> record(Class<R> target, List<String> labels, Map<String, Integer> index, SqlType<?>[] types)
             throws ReflectiveOperationException {
         RecordComponent[] components = target.getRecordComponents();
@@ -111,6 +120,7 @@ public final class MappingPlan<R> {
         }, types);
     }
 
+    /** 先调用无参构造器，再逐个属性调用 setter；没有 setter 的属性直接写字段。 */
     private static <R> MappingPlan<R> bean(Class<R> target, List<String> labels, Map<String, Integer> index, SqlType<?>[] types)
             throws ReflectiveOperationException {
         Constructor<R> ctor;
@@ -156,6 +166,7 @@ public final class MappingPlan<R> {
         }, types);
     }
 
+    /** 调用静态 {@code builder()}，逐个属性调用同名的链式方法，最后 {@code build()}。 */
     private static <R> MappingPlan<R> builder(Class<R> target, Method factory, List<String> labels, Map<String, Integer> index, SqlType<?>[] types)
             throws ReflectiveOperationException {
         factory.setAccessible(true);
@@ -189,6 +200,7 @@ public final class MappingPlan<R> {
         }, types);
     }
 
+    /** 找到属性对应的列下标；找不到则报错并列出查询产出的列。 */
     private static int column(Class<?> target, List<String> labels, Map<String, Integer> index, String property) {
         Integer i = index.get(normalize(property));
         if (i == null) {
@@ -198,6 +210,7 @@ public final class MappingPlan<R> {
         return i;
     }
 
+    /** 类上的公共静态 {@code builder()} 方法，没有则为 null。 */
     private static Method staticBuilder(Class<?> type) {
         try {
             Method m = type.getMethod("builder");
@@ -207,6 +220,7 @@ public final class MappingPlan<R> {
         }
     }
 
+    /** 沿继承链查找 {@code setXxx} 方法（含链式返回），没有则为 null。 */
     private static Method setter(Class<?> type, String property) {
         String name = "set" + Character.toUpperCase(property.charAt(0)) + property.substring(1);
         for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
@@ -217,15 +231,20 @@ public final class MappingPlan<R> {
         return null;
     }
 
+    /** 去掉下划线并转小写，用于忽略大小写和下划线地匹配标签与属性名。 */
     private static String normalize(String name) { return name.replace("_", "").toLowerCase(Locale.ROOT); }
 
-    static boolean isScalar(Class<?> type) {
+    /** 能直接作为单列结果的类型：字符串、数字、布尔、枚举、java.time 与字节数组。 */
+    public static boolean isScalar(Class<?> type) {
         Class<?> t = SqlType.box(type);
         return t == String.class || Number.class.isAssignableFrom(t) || t == Boolean.class || t == Character.class
             || t.isEnum() || t.getName().startsWith("java.time.") || t == byte[].class;
     }
 
-    /** Lenient value conversion, so one query can feed a VO with Double and a record with BigDecimal. */
+    /**
+     * 宽松的值转换，使同一条查询既能填充 Double 的 VO，也能填充 BigDecimal 的 record。
+     * 数据库值为 null 而目标是基本类型时报错。
+     */
     @SuppressWarnings({"unchecked", "rawtypes"})
     public static Object convert(Object value, Class<?> target, String property) {
         if (value == null) {

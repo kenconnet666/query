@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, decimal, from, integer, lit, mapFrom, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
-import { DeliveryVO, Event, Lips, Makt, Mara } from "../erp.js";
-import { stockArm } from "../scenarios.js";
+import { column, decimal, from, integer, lit, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
+import { DeliveryVO, Event, Lips, Makt, Mara } from "../fixtures/erp.js";
+import { stockArm } from "../fixtures/scenarios.js";
 
 /**
  * Compile-time checks: every `@ts-expect-error` below must be an error, or `tsc -b` fails with an
@@ -17,7 +17,7 @@ export function typeChecks(): unknown[] {
   // ---------- scope ----------
 
   // @ts-expect-error a column of a table that is not in the scope
-  from(Lips).where((l) => l.text.eq("x"));
+  from(Lips).where((l) => l.language.eq("x"));
 
   // @ts-expect-error more callback parameters than tables
   from(Lips).join(Mara, (l, ma) => ma.material.eq(l.material)).where((l, ma, extra) => extra.eq("x"));
@@ -31,13 +31,13 @@ export function typeChecks(): unknown[] {
   from(Lips).join(Event, (l, e) => e.id.eq(l.material));
 
   // @ts-expect-error COALESCE with a value of another type
-  from(Lips).selectValue((l) => l.unit.coalesce(1));
+  from(Lips).select((l) => l.unit.coalesce(1));
 
   // @ts-expect-error IN with values of another type
   from(Event).where((e) => e.id.in(["1"]));
 
   // @ts-expect-error an IN subquery of another type
-  from(Event).where((e) => e.id.in(from(Lips).selectValue((l) => l.delivery)));
+  from(Event).where((e) => e.id.in(from(Lips).select((l) => l.delivery)));
 
   // ---------- results ----------
 
@@ -45,6 +45,11 @@ export function typeChecks(): unknown[] {
     .leftJoin(Makt, (l, mk) => mk.material.eq(l.material))
     .select((l, mk) => ({ delivery: l.delivery, text: mk.text, total: { quantity: sum(l.quantity) } }));
   expectType<Equal<typeof joined, Query<{ delivery: string; text: string | null; total: { quantity: string | null } }>>>();
+
+  const rightJoined = from(Makt)
+    .rightJoin(Lips, (mk, l) => mk.material.eq(l.material))
+    .select((mk, l) => ({ text: mk.text, delivery: l.delivery }));
+  expectType<Equal<typeof rightJoined, Query<{ text: string | null; delivery: string }>>>();
 
   // @ts-expect-error the LEFT JOIN side may be missing
   const notNull: Query<{ text: string }> = from(Lips).leftJoin(Makt, (l, mk) => mk.material.eq(l.material)).select((l, mk) => ({ text: mk.text }));
@@ -55,16 +60,50 @@ export function typeChecks(): unknown[] {
   // @ts-expect-error UNION arms of different row types
   from(Lips).select((l) => ({ a: l.delivery })).unionAll(from(Lips).select((l) => ({ b: l.delivery })));
 
-  // @ts-expect-error mapTo needs the row to provide every field of the class
-  from(Lips).select((l) => ({ partNumber: l.material })).mapTo(DeliveryVO);
+  // @ts-expect-error into needs the row to provide every field of the class
+  from(Lips).select((l) => ({ partNumber: l.material })).into(DeliveryVO);
 
   from(Lips)
     .groupBy((l) => l.material)
     .select((l) => ({ partNumber: l.material, name: max(l.unit), quantity: sum(l.quantity) }))
-    .mapTo(DeliveryVO);
+    .into(DeliveryVO);
 
   // @ts-expect-error a generic template applied to a table without the shared fields
   stockArm(Lips, (h) => h.quantity, "2026");
+
+  // ---------- dynamic columns ----------
+
+  const excluded = from(Lips)
+    .select((l) => ({ delivery: l.delivery, stock: { quantity: l.quantity, unit: l.unit } }))
+    .exclude("stock");
+  expectType<Equal<typeof excluded, Query<{ delivery: string; stock: { quantity: string | null; unit: string | null } }>>>();
+
+  // @ts-expect-error exclude names a key of the result
+  from(Lips).select((l) => ({ delivery: l.delivery })).exclude("plant");
+
+  // ---------- relations ----------
+
+  const navigated = from(Lips).select((l) => ({
+    part: l.mara.partNumber,
+    lines: l.mara.deliveries.count(),
+    latest: l.mara.deliveries.first((d) => d.createdOn.desc()).delivery,
+  }));
+  expectType<Equal<typeof navigated, Query<{ part: string | null; lines: number; latest: string | null }>>>();
+
+  // Spreading a reference keeps only the columns.
+  const spread = from(Makt).select((t) => ({ ...t }));
+  expectType<Equal<typeof spread, Query<{ client: string; material: string; language: string; text: string }>>>();
+  const withoutRelations = from(Mara).select((m) => ({ material: m.material, deliveries: m.deliveries, text: m.text }));
+  expectType<Equal<typeof withoutRelations, Query<{ material: string }>>>();
+
+  const tree = from(Mara).select((m) => ({ material: m.material, lines: m.deliveries.list((l) => ({ delivery: l.delivery })), orders: m.deliveries.list((l) => l.salesOrder) }));
+  expectType<Equal<typeof tree, Query<{ material: string; lines: { delivery: string }[]; orders: string[] }>>>();
+
+  // @ts-expect-error a one-to-many relation is not a column
+  from(Mara).where((m) => m.deliveries.eq("x"));
+
+  // @ts-expect-error a many-to-one relation is a reference, not a column
+  from(Lips).where((l) => l.mara.eq("x"));
 
   // ---------- decorators ----------
 
@@ -74,13 +113,6 @@ export function typeChecks(): unknown[] {
     // @ts-expect-error an integer column on a text field
     @column("B", integer) b!: string;
     @column("C", decimal) c!: string | null;
-  }
-
-  class BadMapping {
-    // @ts-expect-error a key the entity does not have
-    @mapFrom(Lips, "nothing") a!: string;
-    // @ts-expect-error a field that cannot hold the entity's value
-    @mapFrom(Lips, "delivery") b!: number;
   }
 
   // ---------- generic code over a shared shape ----------
@@ -93,7 +125,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, BadMapping, quantityOf, expectType, codes];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded, tree];
 }
 
 describe("编译期类型检查", () => {

@@ -5,34 +5,54 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Table and properties of a class, scanned once (see {@link Metadata#entity(Class)}). */
+/**
+ * 表接口的表名与列，或结果类、行类的属性（见 {@link Metadata#entity(Class)}）。
+ *
+ * @param <E> 描述的类型
+ */
 public final class EntityMeta<E> {
     private final Class<E> type;
     private final String table;
     private final String schema;
     private final List<PropertyMeta> properties;
     private final Map<String, PropertyMeta> byName;
+    private final Map<String, RelationMeta> relations;
+    private final WriteMeta writes;
 
-    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties) {
+    /** 仅由 {@link Metadata} 构造；属性名在同一类型内必须唯一。 */
+    EntityMeta(Class<E> type, String table, String schema, List<PropertyMeta> properties, Map<String, RelationMeta> relations,
+               WriteMeta writes) {
         this.type = type;
         this.table = table;
         this.schema = schema;
         this.properties = List.copyOf(properties);
         this.byName = properties.stream().collect(Collectors.toUnmodifiableMap(PropertyMeta::name, Function.identity()));
+        this.relations = Map.copyOf(relations);
+        this.writes = writes;
     }
 
+    /** 主键、版本、生成列和逻辑删除列；结果类和行类没有。 */
+    public WriteMeta writes() { return writes; }
+
+    /** 用注解声明的关系；name 不是关系时返回 null。 */
+    public RelationMeta relation(String name) { return relations.get(name); }
+
+    /** 被描述的类型。 */
     public Class<E> type() { return type; }
 
-    /** Table name, or null for a class without {@code @Table}. */
+    /** 表名；类型上没有 {@code @Table} 时为 null。 */
     public String table() { return table; }
 
+    /** 表所在的 schema；没有声明时为 null。 */
     public String schema() { return schema; }
 
+    /** 是否是表（声明了 {@code @Table}），而不是结果类或行类。 */
     public boolean isTable() { return table != null; }
 
-    /** Properties in declaration order, base class first. */
+    /** 类的属性按声明顺序排列，父类在前；表的列按名称排序。 */
     public List<PropertyMeta> properties() { return properties; }
 
+    /** 按名称取属性；不存在时抛出异常，并列出所有已知属性名。 */
     public PropertyMeta property(String name) {
         PropertyMeta p = byName.get(name);
         if (p == null) {
@@ -41,5 +61,6 @@ public final class EntityMeta<E> {
         return p;
     }
 
+    /** 是否存在该名称的属性。 */
     public boolean has(String name) { return byName.containsKey(name); }
 }

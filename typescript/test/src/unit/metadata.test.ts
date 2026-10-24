@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { blankAsNull, column, entityMeta, from, ignore, integer, NamingStrategy, readAs, shapeFields, table, trimmed } from "@zerodep-dev/query-core";
-import { ClientEntity, LineVO, Lips, MaraView } from "../erp.js";
-import { TestDatabase } from "../support.js";
+import { ClientEntity, LineVO, Lips, MaraView } from "../fixtures/erp.js";
+import { TestDatabase } from "../fixtures/support.js";
 
 @table("ORDERS")
 class Order {
@@ -43,7 +43,6 @@ describe("元数据", () => {
 
   it("DTO 的字段来自类字段和装饰器，跳过 ignore", () => {
     assert.deepEqual(shapeFields(LineVO), ["delivery", "materialNo", "createdOn", "text"]);
-    assert.deepEqual(entityMeta(LineVO).mapFrom("materialNo"), { entity: Lips, property: "material" });
   });
 
   it("装饰器只用于公开的实例字段", () => {

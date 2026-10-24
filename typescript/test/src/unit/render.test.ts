@@ -13,7 +13,9 @@ import {
   FunctionDef,
   grouping,
   ifPresent,
+  like,
   onlyIf,
+  rowNumber,
   scalar,
   sql,
   text,
@@ -23,9 +25,10 @@ import {
   type From,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { ClientEntity, Lips, Mara } from "../erp.js";
-import { deliveries, latestDeliveries, lines, stock } from "../scenarios.js";
-import { TestDatabase, TestDialect } from "../support.js";
+import { bool, Cond as Condition, keys, lit, nthValue } from "@zerodep-dev/query-core";
+import { ClientEntity, Lips, Makt, Mara, Vbkd } from "../fixtures/erp.js";
+import { deliveries, latestDeliveries, lines, stock } from "../fixtures/scenarios.js";
+import { TestDatabase, TestDialect } from "../fixtures/support.js";
 
 const DIALECT = new TestDialect();
 const clientFilter = filter(ClientEntity, (r) => r.client.eq("100"));
@@ -45,7 +48,7 @@ class OtherDialect extends Dialect {
 const where = (cond: (m: Ref<Mara>) => Cond) =>
   from(Mara)
     .where(cond)
-    .selectValue((m) => m.material)
+    .select((m) => m.material)
     .toSql(DIALECT).sql;
 
 describe("渲染", () => {
@@ -94,7 +97,7 @@ ORDER BY LIPS.VBELN ASC`,
     const r = new TestDatabase({ filters: [clientFilter] }).render(
       from(Lips)
         .unfiltered()
-        .selectValue(() => count()),
+        .select(() => count()),
     );
     assert.equal(r.sql, 'SELECT COUNT(*) AS "value"\nFROM QUERY_IT.LIPS LIPS');
   });
@@ -119,18 +122,53 @@ WHERE MCHBH.LFGJA = ?`,
   });
 
   it("只有混用 UNION 与 UNION ALL 的右侧组合才加括号", () => {
-    const arm = () => from(Mara).selectValue((m) => m.material);
+    const arm = () => from(Mara).select((m) => m.material);
     const skeleton = (q: ReturnType<typeof arm>) => q.toSql(DIALECT).sql.replace(/SELECT[^\n]*\nFROM[^\n)]*/g, "S");
     assert.equal(skeleton(arm().union(arm().unionAll(arm().union(arm())))), "S\nUNION\n(S\nUNION ALL\n(S\nUNION\nS))");
     assert.equal(skeleton(arm().unionAll(arm().unionAll(arm()))), "S\nUNION ALL\nS\nUNION ALL\nS");
     assert.equal(skeleton(arm().union(arm()).unionAll(arm())), "S\nUNION\nS\nUNION ALL\nS");
   });
 
+  it("INTERSECT 与 EXCEPT 按调用顺序求值且在读法可能不同处加括号", () => {
+    const arm = () => from(Mara).select((m) => m.material);
+    const skeleton = (q: ReturnType<typeof arm>) => q.toSql(DIALECT).sql.replace(/SELECT[^\n]*\nFROM[^\n)]*/g, "S");
+    assert.equal(skeleton(arm().union(arm()).intersect(arm())), "(S\nUNION\nS)\nINTERSECT\nS");
+    assert.equal(skeleton(arm().intersect(arm()).union(arm())), "S\nINTERSECT\nS\nUNION\nS");
+    assert.equal(skeleton(arm().union(arm().intersect(arm()))), "S\nUNION\n(S\nINTERSECT\nS)");
+    assert.equal(skeleton(arm().except(arm().except(arm()))), "S\nEXCEPT\n(S\nEXCEPT\nS)");
+    assert.equal(skeleton(arm().except(arm()).except(arm())), "S\nEXCEPT\nS\nEXCEPT\nS");
+    assert.equal(skeleton(arm().intersect(arm().intersect(arm()))), "S\nINTERSECT\nS\nINTERSECT\nS");
+  });
+
+  it("RIGHT JOIN 把左侧各表的过滤条件放进它的 ON", () => {
+    const sqlText = new TestDatabase({ filters: [clientFilter] }).render(
+      from(Mara)
+        .join(Makt, (m, t) => t.material.eq(m.material))
+        .rightJoin(Lips, (m, t, l) => l.material.eq(m.material))
+        .rightJoin(Vbkd, (m, t, l, v) => v.salesOrder.eq(l.delivery))
+        .select((m, t, l, v) => v.salesOrder),
+    ).sql;
+    assert.ok(sqlText.includes("JOIN QUERY_IT.MAKT MAKT ON MAKT.MATNR = MARA.MATNR AND MAKT.MANDT = ?"), sqlText);
+    assert.ok(sqlText.includes("RIGHT JOIN QUERY_IT.LIPS LIPS ON LIPS.MATNR = MARA.MATNR AND MARA.MANDT = ?\n"), sqlText);
+    assert.ok(sqlText.includes("RIGHT JOIN QUERY_IT.VBKD VBKD ON VBKD.VBELN = LIPS.VBELN AND LIPS.MANDT = ?\nWHERE VBKD.MANDT = ?"), sqlText);
+  });
+
+  it("多列 IN 的列数必须与子查询相同", () => {
+    const two = from(Lips).select((l) => ({ delivery: l.delivery, material: l.material }));
+    assert.throws(() => from(Lips).where((l) => keys(l.delivery, l.material, l.unit).in(two)), /3 keys/);
+    assert.throws(() => keys(lit("a")).in(from(Lips).select((l) => l.delivery)), /at least two keys/);
+  });
+
+  it("条件作为布尔列和窗口第 n 行的参数要有效", () => {
+    assert.throws(() => bool(Condition.EMPTY), /needs a condition/);
+    assert.throws(() => nthValue(lit(1), 0), RangeError);
+  });
+
   it("自连接和关联子查询的别名在整条语句内唯一", () => {
     const r = from(Mara)
       .join(Mara, (a, b) => b.partNumber.eq(a.partNumber))
       .where((a, b) => exists(from(Mara).where((c) => c.material.eq(b.material))))
-      .selectValue((a) => a.material)
+      .select((a) => a.material)
       .toSql(DIALECT);
     assert.equal(
       r.sql,
@@ -153,12 +191,12 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     const small = new TestDialect(3);
     const inSql = from(Mara)
       .where((m) => m.material.in(["1", "2", "3", "4", "5", "6", "7"]))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(small).sql;
     assert.ok(inSql.endsWith("WHERE (MARA.MATNR IN (?, ?, ?) OR MARA.MATNR IN (?, ?, ?) OR MARA.MATNR IN (?))"), inSql);
     const notInSql = from(Mara)
       .where((m) => m.material.notIn(["1", "2", "3", "4"]))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(small).sql;
     assert.ok(notInSql.endsWith("WHERE (MARA.MATNR NOT IN (?, ?, ?) AND MARA.MATNR NOT IN (?))"), notInSql);
   });
@@ -168,15 +206,22 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     assert.ok(where((m) => m.material.notIn([])).endsWith("WHERE 1 = 1"));
   });
 
-  it("可选条件为空时整体省略", () => {
-    const s = where((m) =>
-      all(
-        m.material.eqIfPresent(null),
-        m.material.inIfPresent([]),
-        onlyIf(false, () => m.material.eq("x")),
-        ifPresent(undefined, () => m.material.eq("x")),
-      ),
-    );
+  it("skipEmpty 省略与空值比较的条件", () => {
+    const s = from(Mara)
+      .skipEmpty()
+      .where((m) =>
+        all(
+          m.material.eq(null),
+          m.material.ne("  "),
+          m.material.in([]),
+          m.material.notIn(undefined),
+          like(m.partNumber, undefined),
+          onlyIf(false, () => m.material.eq("x")),
+          ifPresent(undefined, () => m.material.eq("x")),
+        ),
+      )
+      .select((m) => m.material)
+      .toSql(DIALECT).sql;
     assert.equal(s, 'SELECT MARA.MATNR AS "material"\nFROM QUERY_IT.MARA MARA');
   });
 
@@ -188,7 +233,7 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
   it("分页的 LIMIT 和 OFFSET", () => {
     const s = from(Mara)
       .orderBy((m) => m.material.asc().nullsLast())
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .limit(10)
       .offset(20)
       .toSql(DIALECT).sql;
@@ -209,26 +254,26 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
     const other: Clause = { position: "end", dialect: OtherDialect, render: (w) => void w.sql("OTHER") };
     const q = from(Mara)
       .with(other)
-      .selectValue((m) => m.material);
+      .select((m) => m.material);
     assert.throws(() => q.toSql(DIALECT), /OtherDialect/);
   });
 
   it("方言专属函数在别的方言上拒绝渲染", () => {
     const onlyOther = FunctionDef.only(OtherDialect, "OTHER_FN");
-    const q = from(Mara).selectValue((m) => call(onlyOther, text, m.material));
+    const q = from(Mara).select((m) => call(onlyOther, text, m.material));
     assert.throws(() => q.toSql(DIALECT), /OTHER_FN is a OtherDialect function/);
   });
 
   it("数据库实例可以覆盖函数渲染", () => {
     const onlyOther = FunctionDef.only(OtherDialect, "OTHER_FN");
     const db = new TestDatabase({ functions: new Map([[onlyOther, (w, args) => void w.sql("MINE(").join(args, ", ").sql(")")]]) });
-    const s = db.render(from(Mara).selectValue((m) => call(onlyOther, text, m.material))).sql;
+    const s = db.render(from(Mara).select((m) => call(onlyOther, text, m.material))).sql;
     assert.ok(s.startsWith("SELECT MINE(MARA.MATNR)"), s);
   });
 
   it("同一个查询在同一个数据库实例上只渲染一次", () => {
     const db = new TestDatabase();
-    const q = from(Mara).selectValue((m) => m.material);
+    const q = from(Mara).select((m) => m.material);
     assert.equal(db.render(q), db.render(q));
     assert.notEqual(db.render(q), new TestDatabase().render(q));
   });
@@ -239,7 +284,7 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
         n: scalar(
           from(Lips)
             .where((l) => l.material.eq("M1"))
-            .selectValue(() => count()),
+            .select(() => count()),
         ),
         material: m.material.coalesce("none"),
       }))
@@ -258,7 +303,7 @@ FROM QUERY_IT.MARA MARA`,
     const r = from(Mara)
       .distinct()
       .orderBy((m) => m.material.coalesce("~"))
-      .selectValue((m) => m.material.coalesce("~"))
+      .select((m) => m.material.coalesce("~"))
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("ORDER BY COALESCE(MARA.MATNR, '~') ASC"), r.sql);
     assert.deepEqual(r.parameters, []);
@@ -277,7 +322,7 @@ FROM QUERY_IT.MARA MARA`,
 
   it("CASE 与类型化原生片段，SELECT 列表里的常量写成字面量", () => {
     const s = from(Mara)
-      .selectValue((m) =>
+      .select((m) =>
         caseWhen(m.materialType.eq("ZMAT"), "material")
           .when(m.materialType.eq("ZOTH"), "other")
           .otherwise(sql(text)`LOWER(${m.materialType})`),
@@ -294,7 +339,7 @@ FROM QUERY_IT.MARA MARA`,
     const r = from(Lips)
       .join(Mara, (l, ma) => ma.material.eq(l.material))
       .pipe(ofClient("100"))
-      .selectValue((l, ma) => ma.partNumber)
+      .select((l, ma) => ma.partNumber)
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE LIPS.MANDT = ?"), r.sql);
     assert.deepEqual(r.parameters, ["100"]);
@@ -303,9 +348,30 @@ FROM QUERY_IT.MARA MARA`,
   it("SQL 片段里的普通值成为参数", () => {
     const r = from(Mara)
       .where((m) => sql(text)`SUBSTRING(${m.material}, ${1}, ${2})`.eq("M1"))
-      .selectValue((m) => m.material)
+      .select((m) => m.material)
       .toSql(DIALECT);
     assert.ok(r.sql.endsWith("WHERE SUBSTRING(MARA.MATNR, ?, ?) = ?"), r.sql);
     assert.deepEqual(r.parameters, [1, 2, "M1"]);
+  });
+
+  it("窗口条件只能比较窗口函数且空条件不包派生表", () => {
+    assert.throws(() => from(Lips).qualify((l) => l.unit.eq("EA")).select((l) => l.delivery).toSql(DIALECT), /only compare window functions/);
+    assert.equal(
+      from(Lips).qualify(() => onlyIf(false, () => rowNumber().over((w) => w).eq(1))).select((l) => l.delivery).toSql(DIALECT).sql,
+      from(Lips).select((l) => l.delivery).toSql(DIALECT).sql,
+    );
+  });
+
+  it("窗口条件与 DISTINCT 一起时排序列必须在结果里", () => {
+    assert.throws(
+      () =>
+        from(Lips)
+          .distinct()
+          .qualify((l) => rowNumber().over((w) => w.orderBy(l.delivery)).le(3))
+          .orderBy((l) => l.createdOn)
+          .select((l) => l.material)
+          .toSql(DIALECT),
+      /order by columns that are selected/,
+    );
   });
 });

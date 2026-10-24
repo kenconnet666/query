@@ -1,0 +1,4 @@
+-- parameters: []
+SELECT `lips`.`VBELN` AS `delivery`, FIRST_VALUE(`lips`.`LFIMG`) OVER (PARTITION BY `lips`.`MATNR` ORDER BY `lips`.`VBELN` ASC) AS `first`, LAST_VALUE(`lips`.`LFIMG`) OVER (PARTITION BY `lips`.`MATNR` ORDER BY `lips`.`VBELN` ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `last`, LAG(`lips`.`LFIMG`, 1, 0) OVER (PARTITION BY `lips`.`MATNR` ORDER BY `lips`.`VBELN` ASC) AS `previous`, NTILE(2) OVER (ORDER BY `lips`.`VBELN` ASC) AS `half`
+FROM `QUERY_IT`.`LIPS` `lips`
+ORDER BY `lips`.`VBELN` ASC
