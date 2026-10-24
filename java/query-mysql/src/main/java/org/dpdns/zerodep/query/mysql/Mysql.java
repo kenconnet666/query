@@ -34,7 +34,7 @@ import javax.sql.DataSource;
  * <pre>{@code import static org.dpdns.zerodep.query.mysql.Mysql.*;}</pre>
  * MySQL 专属函数在其他方言上渲染时会报错。
  */
-public final class Mysql extends Sql {
+public class Mysql extends Sql {
     // 只能在 MySQL 方言上渲染的函数；在其他方言上渲染会报错。
     private static final FunctionDef GREATEST = FunctionDef.only(MysqlDialect.class, "GREATEST");
     private static final FunctionDef LEAST = FunctionDef.only(MysqlDialect.class, "LEAST");
@@ -118,8 +118,8 @@ public final class Mysql extends Sql {
         };
     }
 
-    /** 只放静态方法，不能实例化。 */
-    private Mysql() { }
+    /** 只放静态方法，不能实例化；兼容 MySQL 的方言门面（PolarDB）继承它，一次静态导入拿到 MySQL 的全部词汇。 */
+    protected Mysql() { }
 
     // ---------- 数据库 ----------
 

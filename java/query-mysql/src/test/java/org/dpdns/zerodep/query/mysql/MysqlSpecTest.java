@@ -24,7 +24,7 @@ import java.util.function.Consumer;
 import static org.dpdns.zerodep.query.mysql.Mysql.*;
 
 @DisplayName("MySQL 渲染金样例")
-class MysqlSpecTest extends RenderSpec {
+public class MysqlSpecTest extends RenderSpec {
     @Override protected String dialect() { return "mysql"; }
 
     @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
