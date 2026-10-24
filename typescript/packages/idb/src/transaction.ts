@@ -256,7 +256,8 @@ export class Transaction implements Runner {
       return make(this.#raw.objectStore(meta.name));
     } catch (e) {
       const name = (e as DOMException | undefined)?.name;
-      if (name === "TransactionInactiveError" || (name === "InvalidStateError" && this.#done)) throw new TransactionClosedError(this.stores);
+      // objectStore() 只在事务已结束时报 InvalidStateError；complete 事件可能还没派发到这里，所以不看 #done
+      if (name === "TransactionInactiveError" || name === "InvalidStateError") throw new TransactionClosedError(this.stores);
       if (name === "NotFoundError" && !this.#raw.objectStoreNames.contains(meta.name)) throw new Error(`${meta.name} is not in this transaction on [${this.stores.join(", ")}]`, { cause: e });
       throw e;
     }
