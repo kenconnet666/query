@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.write;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryListener;
+import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.dpdns.zerodep.query.testing.TestDialect;
 import org.dpdns.zerodep.query.testing.Writes;
@@ -143,6 +144,57 @@ class WriteTest {
         assertTrue(org.dpdns.zerodep.query.testing.Workflow.claimable().toSql(DIALECT).sql().endsWith("LIMIT 1\nFOR UPDATE SKIP LOCKED"),
             org.dpdns.zerodep.query.testing.Workflow.claimable().toSql(DIALECT).sql());
         assertTrue(from(Note.class).with(forUpdate()).select(n -> n.id()).toSql(DIALECT).sql().endsWith("\nFOR UPDATE"));
+    }
+
+    @Test
+    void 条件经过导航关系时包成EXISTS而SET经过导航关系时报错() {
+        String sql = update(Lips.class).set(l -> l.unit().to("EA")).where(l -> l.mara().manufacturer().eq("MK1")).toSql(DIALECT).get(0).sql();
+        assertEquals("""
+            UPDATE QUERY_IT.LIPS LIPS
+            SET VRKME = ?
+            WHERE EXISTS (SELECT 1
+            FROM (SELECT 1 AS ONE) SEED
+            LEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT
+            WHERE MARA.MFRNR = ?)""", sql);
+        assertEquals("DELETE FROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VBELN = ?", deleteFrom(Lips.class).where(l -> l.delivery().eq("D1")).toSql(DIALECT).get(0).sql(),
+            "a condition on the table itself stays as it is");
+        var e = assertThrows(IllegalArgumentException.class,
+            () -> update(Lips.class).set(l -> l.unit().to(l.mara().manufacturer())).where(l -> l.delivery().eq("D1")).toSql(DIALECT));
+        assertTrue(e.getMessage().contains("SET reads a related table"), e.getMessage());
+    }
+
+    @Test
+    void diffFrom只更新变了的属性且没有变化时不发语句() {
+        Update<Writes.Doc> changed = update(Writes.Doc.class).byId(new Writes.DocRow("D1", "new", 3)).diffFrom(new Writes.DocRow("D1", "old", 3));
+        assertEquals("UPDATE QUERY_IT.W_DOC DOC\nSET TITLE = ?, VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?",
+            changed.toSql(DIALECT).get(0).sql());
+        Update<Writes.Doc> same = update(Writes.Doc.class).byId(new Writes.DocRow("D1", "a", 3), new Writes.DocRow("D2", "b", 1))
+            .diffFrom(new Writes.DocRow("D1", "a", 3), new Writes.DocRow("D2", "c", 1));
+        assertEquals(1, same.toSql(DIALECT).size(), "the unchanged row sends nothing");
+        assertEquals(1L, same.expected());
+        assertThrows(IllegalArgumentException.class,
+            () -> update(Writes.Doc.class).byId(new Writes.DocRow("D1", "a", 3)).diffFrom(new Writes.DocRow("D1", "a", 2)), "the version must match");
+        assertThrows(IllegalArgumentException.class,
+            () -> update(Writes.Doc.class).byId(new Writes.DocRow("D1", "a", 3)).diffFrom(new Writes.DocRow("D1", "a", 3), new Writes.DocRow("D2", "b", 1)));
+        assertThrows(IllegalStateException.class, () -> update(Writes.Doc.class).diffFrom(new Writes.DocRow("D1", "a", 3)));
+    }
+
+    @Test
+    void 只读列从不写而只在插入时写的列在按主键更新时跳过() {
+        Writes.DocFull full = new Writes.DocFull("D1", "a", 1, "app");
+        assertEquals("INSERT INTO QUERY_IT.W_DOC (ID, TITLE, VERSION) VALUES (?, ?, ?)", insertInto(Writes.Doc.class).values(full).toSql(DIALECT).get(0).sql());
+        assertEquals("UPDATE QUERY_IT.W_DOC DOC\nSET TITLE = ?, VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?",
+            update(Writes.Doc.class).byId(full).toSql(DIALECT).get(0).sql());
+        var e = assertThrows(IllegalArgumentException.class, () -> update(Writes.Doc.class).set(d -> d.source().to("x")).all());
+        assertEquals("Doc.source() is @ReadOnly", e.getMessage());
+        record Dated(String id, String title, java.time.LocalDateTime createdAt) { }
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            update(Writes.Ticket.class).byId(new Dated("T1", "a", Writes.CREATED)).toSql(DIALECT).get(0).sql());
+        assertEquals("INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, CREATED_AT, DELETED) VALUES (?, ?, ?, ?)",
+            insertInto(Writes.Ticket.class).values(new Dated("T1", "a", Writes.CREATED)).toSql(DIALECT).get(0).sql(), "inserts still write it");
+        assertEquals("UPDATE QUERY_IT.W_TICKET TICKET\nSET CREATED_AT = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+            update(Writes.Ticket.class).set(t -> t.createdAt().to(Writes.CREATED)).where(t -> t.id().eq("T1")).toSql(DIALECT).get(0).sql(),
+            "an explicit set(...) may still change it");
     }
 
     @Test

@@ -1,10 +1,10 @@
-import { columnName, entityMeta, type EntityMeta, type One, type PropertyMeta, type Table } from "../schema/metadata.js";
+import { columnName, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
 import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
 import type { Rendered, SqlWriter } from "../sql/writer.js";
 import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
-import { conditionsFor, renderNamed, type Query, type SourceFilter } from "../query/query.js";
+import { conditionsFor, emitRelations, implicitJoins, renderNamed, type Query, type SourceFilter } from "../query/query.js";
 import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
 import type { Clause, Lock, Upsert } from "../sql/dialect.js";
 
@@ -132,6 +132,8 @@ export class Insert<T> extends Write {
   withConflict(keys: readonly string[], updates: ((t: Ref<T>) => Expr<unknown> | readonly Expr<unknown>[]) | readonly string[] | undefined): Insert<T> {
     if (this.#source !== undefined) throw new Error("onConflict(...) needs values(...), not from(query)");
     const names = typeof updates === "function" ? this.#names(updates(createRef(tableSource(this.#table))), "update(...)") : updates;
+    const readOnly = entityMeta(this.#table).writes.readOnly;
+    for (const n of names ?? []) if (readOnly.includes(n)) throw new Error(`onConflict(...).update(...) cannot write @readOnly ${n}`);
     return new Insert(this.#table, this.#rows, this.#columns, undefined, { keys, updates: names });
   }
 
@@ -162,7 +164,11 @@ export class Insert<T> extends Write {
   from(query: Query<unknown>): Insert<T> {
     if (this.#rows.length > 0) throw new Error("insertInto(...) already has values(...)");
     if (this.#conflict !== undefined) throw new Error("onConflict(...) needs values(...), not from(query)");
-    for (const label of query.labels) this.#column(label, "the query's column");
+    const writes = entityMeta(this.#table).writes;
+    for (const label of query.labels) {
+      this.#column(label, "the query's column");
+      if (!inserts(writes, label)) throw new Error(`from(query) writes ${label}, which is @readOnly or @generated`);
+    }
     return new Insert(this.#table, [], [], query);
   }
 
@@ -236,7 +242,7 @@ export class Insert<T> extends Write {
       columns: values.map(([c]) => columnName(c, w.naming)),
       values: values.map(([, v]) => v),
       keys: conflict.keys.map(name),
-      updates: (conflict.updates ?? names.filter((n) => !conflict.keys.includes(n))).map(name).filter((c) => !assigned.has(c)),
+      updates: (conflict.updates ?? names.filter((n) => !conflict.keys.includes(n) && !meta.writes.writeOnce.includes(n))).map(name).filter((c) => !assigned.has(c)),
       assignments,
     };
   }
@@ -253,11 +259,11 @@ export class Insert<T> extends Write {
     w.sql(")");
   }
 
-  /** 行里要写的列：值不为 undefined 的字段，跳过 `@generated` 的列。 */
+  /** 行里要写的列：值不为 undefined 的字段，跳过 `@generated` 和 `@readOnly` 的列。 */
   #columnsOf(row: object): PropertyMeta[] {
-    const generated = entityMeta(this.#table).writes.generated;
+    const writes = entityMeta(this.#table).writes;
     return Object.entries(row)
-      .filter(([name, value]) => value !== undefined && name !== generated)
+      .filter(([name, value]) => value !== undefined && inserts(writes, name))
       .map(([name]) => this.#column(name, `${this.#table.name} row field`));
   }
 
@@ -280,6 +286,9 @@ function renderSet(w: SqlWriter, target: Target<unknown>, sets: readonly (readon
     const i = all.findIndex(([c]) => c.column.name === fill[0].column.name);
     if (i >= 0) all.splice(i, 1);
     all.push(fill);
+  }
+  if (implicitJoins(w, [ownerOf(target.ref as object)], all.map(([, v]) => v)).size > 0) {
+    throw new Error(`${statement} SET reads a related table through navigation; use a scalar subquery or the dialect's join update`);
   }
   w.sql("UPDATE ");
   ownerOf(target.ref as object).renderSource(w);
@@ -362,9 +371,36 @@ export class Target<T> {
   renderWhere(w: SqlWriter, statement: string, located: Cond = Cond.EMPTY): void {
     const own = all(...this.conditions, located);
     if (own.isEmpty && !this.everyRow) throw new Error(`${statement} without where(...) would touch every row of ${this.table.name}; add .all() if that is intended`);
-    const filters = conditionsFor(this.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined, this.ref as object);
-    const where = all(...filters, own);
+    const filters = this.filters(w);
+    const where = all(...conditionsFor(filters, this.ref as object), this.#navigated(w, own, filters));
     if (!where.isEmpty) w.sql("\nWHERE ").render(where);
+  }
+
+  /** 这条语句套用的过滤器：数据库实例配置的；`unfiltered()` 时为 undefined，逻辑删除也不加。 */
+  filters(w: SqlWriter): readonly SourceFilter[] | undefined {
+    return this.filtered ? ((w.settings.filters as readonly SourceFilter[] | undefined) ?? []) : undefined;
+  }
+
+  /**
+   * own 经过导航关系读到别的表时，包成 `EXISTS (SELECT 1 FROM 单行 LEFT JOIN 关联表 ON ... WHERE own)`；没有时原样返回。
+   * UPDATE、DELETE 不能像查询那样直接 LEFT JOIN，三个库的联表写法又各不相同；从单行的种子出发再 LEFT JOIN，
+   * 没有关联行时关联列为 NULL，与查询里导航的语义一致。
+   */
+  #navigated(w: SqlWriter, own: Cond, filters: readonly SourceFilter[] | undefined): Cond {
+    if (own.isEmpty) return own;
+    const owner = ownerOf(this.ref as object);
+    const used = implicitJoins(w, [owner], [own]);
+    if (used.size === 0) return own;
+    const seed = {};
+    return new (class extends Cond {
+      render(x: SqlWriter): void {
+        x.sql("EXISTS (SELECT 1\nFROM (SELECT 1 AS ").identifier("ONE");
+        x.dialect.fromNothing(x);
+        x.sql(") ").alias(x.aliasFor(seed, "seed"));
+        emitRelations(x, owner, used, filters);
+        x.sql("\nWHERE ").render(own).sql(")");
+      }
+    })();
   }
 }
 
@@ -402,6 +438,7 @@ export class Update<T> extends Write {
       for (const [name, value] of Object.entries(assign(target.ref) as object)) {
         const column = (target.ref as Record<string, unknown>)[name];
         if (!(column instanceof Column) || column.owner !== ownerOf(target.ref as object)) throw new Error(`set(...): ${name} is not a column of ${target.table.name}`);
+        if (entityMeta(target.table).writes.readOnly.includes(name)) throw new Error(`set(...): ${target.table.name}.${name} is @readOnly`);
         if (value instanceof Expr) sets.push([column, value]);
         else if (value !== undefined && !skips(value)) sets.push([column, bindValue(column.type, value)]);
       }
@@ -437,9 +474,19 @@ export class Update<T> extends Write {
     return new Update(this.#target.expect(rows), this.#sets, this.#byId);
   }
 
-  /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数。 */
+  /**
+   * 按 `byId(...)` 的行逐一与修改前的行比较，只 SET 值变了的字段；一行完全没变时不发这一行的语句，也不计入期望的行数。
+   * 修改前的行与 byId 的行一一对应，主键和版本必须相等。例如编辑表单提交时：`update(Doc).byId(edited).diffFrom(loaded)`。
+   */
+  diffFrom(...originals: readonly InsertRow<T>[]): Update<T> {
+    if (this.#byId === undefined) throw new Error("diffFrom(...) compares against byId(...) rows; call byId(...) first");
+    return new Update(this.#target, this.#sets, this.#byId.diffFrom(originals as readonly object[]));
+  }
+
+  /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数（有 diffFrom 时只算有变化的行）。 */
   get expected(): number | undefined {
-    return this.#target.expected ?? this.#byId?.rows.length;
+    if (this.#target.expected !== undefined || this.#byId === undefined) return this.#target.expected;
+    return this.#sets.length === 0 ? this.#byId.expected : this.#byId.rows.length;
   }
 
   /** `UPDATE 表 别名 SET 列 = 值, ... WHERE ...`，byId 时每行一条；没有 SET 项时没有语句。 */
@@ -447,7 +494,16 @@ export class Update<T> extends Write {
     const byId = this.#byId;
     if (byId === undefined) return this.#sets.length === 0 ? [] : [this.#statement(writer(), this.#sets, Cond.EMPTY)];
     const t = this.#target;
-    return byId.rows.map((row) => this.#statement(writer(), [...this.#sets, ...withSkipEmpty(t.skipping, () => byId.sets(t.ref, row))], byId.locate(t.ref, row)));
+    const out: Rendered[] = [];
+    byId.rows.forEach((row, i) => {
+      const changed = withSkipEmpty(t.skipping, () => byId.sets(t.ref, i));
+      if (changed.length === 0 && this.#sets.length === 0) {
+        if (byId.originals !== undefined) return; // diffFrom：这一行没有变化
+        throw new Error(`update(...).byId(...) has nothing to SET: the row holds only key, version or non-updatable fields`);
+      }
+      out.push(this.#statement(writer(), [...this.#sets, ...changed], byId.locate(t.ref, row)));
+    });
+    return out;
   }
 
   /** 写出一条 UPDATE；located 是 byId 定位一行的条件。 */
@@ -546,45 +602,101 @@ export class Delete<T> extends Write {
   }
 }
 
-/** `byId(row)` 的行：按 `@id` 的列（有 `@version` 时加上版本）定位每一行，更新时 SET 其余的字段。不对外导出。 */
+/** `byId(row)` 的行：按 `@id` 的列（有 `@version` 时加上版本）定位每一行，更新时 SET 其余可更新的字段。 */
 export class ById {
   constructor(
     readonly rows: readonly object[],
-    readonly ids: readonly string[],
-    readonly version: string | undefined,
-    readonly generated: string | undefined,
+    readonly meta: EntityMeta,
+    /** `diffFrom(...)` 给出的修改前的行，与 rows 一一对应；没有时 SET 全部字段。 */
+    readonly originals?: readonly object[],
   ) {}
+
+  /** 表上的主键、版本、生成列和写入策略。 */
+  get writes(): WriteMeta {
+    return this.meta.writes;
+  }
 
   /** 检查表有主键、每行带有每个主键字段（和版本字段）、字段都是表的列；statement 用于报错。 */
   static of(table: Table<unknown>, rows: readonly object[], statement: string): ById {
     const meta = entityMeta(table);
-    const { ids, version, generated } = meta.writes;
+    const { ids, version } = meta.writes;
     if (ids.length === 0) throw new Error(`${statement} needs @id columns on ${table.name}`);
     if (rows.length === 0) throw new Error(`${statement} needs at least one row`);
     for (const row of rows) {
       for (const name of Object.keys(row)) if (meta.property(name) === undefined) throw new Error(`${statement}: ${name} has no column in ${table.name}`);
-      for (const key of version === undefined ? ids : [...ids, version]) {
+      for (const key of ById.#keys(meta.writes)) {
         if ((row as Record<string, unknown>)[key] == null) throw new Error(`${statement} needs the ${key} of every row`);
       }
     }
-    return new ById(rows, ids, version, generated);
+    return new ById(rows, meta);
+  }
+
+  /** 带上修改前的行：数量与 rows 相同，主键（和版本）相等；之后只 SET 值变了的字段。 */
+  diffFrom(before: readonly object[]): ById {
+    if (before.length !== this.rows.length) throw new Error(`diffFrom(...) needs one original per byId(...) row: got ${before.length} for ${this.rows.length}`);
+    this.rows.forEach((row, i) => {
+      for (const key of ById.#keys(this.writes)) {
+        if ((row as Record<string, unknown>)[key] !== (before[i] as Record<string, unknown>)[key]) {
+          throw new Error(`diffFrom(...) row ${i} has a different ${key}; byId(...) cannot change the key or version`);
+        }
+      }
+    });
+    return new ById(this.rows, this.meta, before);
+  }
+
+  /** 每行影响一行；有 diffFrom 时只算有变化的行。 */
+  get expected(): number {
+    return this.originals === undefined ? this.rows.length : this.rows.filter((_, i) => this.#changedFields(i).length > 0).length;
   }
 
   /** 一行的定位条件：主键相等，有版本列时版本也相等。 */
   locate(ref: object, row: object): Cond {
-    const keys = this.version === undefined ? this.ids : [...this.ids, this.version];
-    return all(...keys.map((k) => ((ref as Record<string, Expr<unknown>>)[k] as Expr<never>).eq((row as Record<string, never>)[k])));
+    return all(...ById.#keys(this.writes).map((k) => ((ref as Record<string, Expr<unknown>>)[k] as Expr<never>).eq((row as Record<string, never>)[k])));
   }
 
-  /** 一行的 SET 项：主键、版本和生成列以外的字段（skipEmpty 下值为空的省略）；有版本列时加上 `version = version + 1`。 */
-  sets(ref: object, row: object): (readonly [Column<unknown>, Expr<unknown>])[] {
-    const out: (readonly [Column<unknown>, Expr<unknown>])[] = [];
+  /**
+   * 第 i 行的 SET 项：可更新的字段（skipEmpty 下值为空的省略），有 diffFrom 时只含值变了的；有 SET 项且表上有版本列时
+   * 加上 `version = version + 1`。没有变化时为空，这一行不发语句。
+   */
+  sets(ref: object, i: number): (readonly [Column<unknown>, Expr<unknown>])[] {
+    const row = this.rows[i] as Record<string, unknown>;
     const column = (name: string) => (ref as Record<string, Column<unknown>>)[name]!;
-    for (const [name, value] of Object.entries(row)) {
-      if (this.ids.includes(name) || name === this.version || name === this.generated || value === undefined || skips(value)) continue;
+    const out: (readonly [Column<unknown>, Expr<unknown>])[] = [];
+    for (const name of this.#changedFields(i)) {
+      const value = row[name];
+      if (skips(value)) continue;
       out.push([column(name), bindValue(column(name).type, value)]);
     }
-    if (this.version !== undefined) out.push([column(this.version), plus(column(this.version) as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
+    if (this.originals !== undefined && out.length === 0) return out;
+    const version = this.writes.version;
+    if (version !== undefined) out.push([column(version), plus(column(version) as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
     return out;
   }
+
+  /** 第 i 行要 SET 的字段：可更新、值不为 undefined，有 diffFrom 时还要与修改前不同。 */
+  #changedFields(i: number): string[] {
+    const row = this.rows[i] as Record<string, unknown>;
+    const old = this.originals?.[i] as Record<string, unknown> | undefined;
+    return Object.keys(row).filter(
+      (name) => row[name] !== undefined && updates(this.writes, name) && (old === undefined || !same(row[name], old[name], this.meta.property(name)?.type.kind)),
+    );
+  }
+
+  /** 定位一行用的字段：主键，有版本列时加上版本。 */
+  static #keys(writes: WriteMeta): readonly string[] {
+    return writes.version === undefined ? writes.ids : [...writes.ids, writes.version];
+  }
+}
+
+/** 两个值是否相同；decimal 列的文本按数值比较（"1.0" 与 "1.00" 相同），Uint8Array 按内容比较。 */
+function same(a: unknown, b: unknown, kind: string | undefined): boolean {
+  if (a === b) return true;
+  if (kind === "decimal" && typeof a === "string" && typeof b === "string") return normalize(a) === normalize(b);
+  if (a instanceof Uint8Array && b instanceof Uint8Array) return a.length === b.length && a.every((x, i) => x === b[i]);
+  return false;
+}
+
+/** 去掉小数末尾的 0 和多余的小数点，用于比较精确小数的文本。 */
+function normalize(decimal: string): string {
+  return decimal.includes(".") ? decimal.replace(/0+$/, "").replace(/\.$/, "") : decimal;
 }

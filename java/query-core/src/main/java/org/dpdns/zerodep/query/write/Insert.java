@@ -122,7 +122,11 @@ public final class Insert<T extends Entity> implements Write {
         /** 冲突时只更新这些列为插入的值，例如 {@code update(d -> keys(d.title(), d.status()))}。 */
         public Insert<T> update(Function<T, ? extends Keys> columns) {
             T row = Ref.table(insert.table.type()).param();
-            return insert.withConflict(new OnConflict(keys, insert.names(KeyList.of(columns.apply(row)), "update(...)")));
+            List<String> names = insert.names(KeyList.of(columns.apply(row)), "update(...)");
+            for (String n : names) {
+                if (insert.table.writes().readOnly().contains(n)) throw new IllegalArgumentException("onConflict(...).update(...) cannot write @ReadOnly " + n);
+            }
+            return insert.withConflict(new OnConflict(keys, names));
         }
 
         /** 冲突时什么也不做，保留已有的行。 */
@@ -158,7 +162,7 @@ public final class Insert<T extends Entity> implements Write {
         if (all.isEmpty()) return this;
         Class<?> type = RowColumns.sameClass(all, "insertInto(...).values(...)");
         List<RowColumns.Column> written = columns.isEmpty()
-            ? RowColumns.of(table, type).stream().filter(c -> !c.name().equals(table.writes().generated())).toList() : columns;
+            ? RowColumns.of(table, type).stream().filter(c -> table.writes().inserts(c.name())).toList() : columns;
         if (written.isEmpty()) throw new IllegalArgumentException(type.getSimpleName() + " has no property to insert into " + table.type().getSimpleName());
         return new Insert<>(table, List.copyOf(all), written, null, conflict);
     }
@@ -167,7 +171,10 @@ public final class Insert<T extends Entity> implements Write {
     public Insert<T> from(Query<?> query) {
         if (!rows.isEmpty()) throw new IllegalStateException("insertInto(...) already has values(...)");
         if (conflict != null) throw new IllegalStateException("onConflict(...) needs values(...), not from(query)");
-        for (String label : query.labels()) RowColumns.column(table, label, "the query's column");
+        for (String label : query.labels()) {
+            RowColumns.column(table, label, "the query's column");
+            if (!table.writes().inserts(label)) throw new IllegalArgumentException("from(query) writes " + label + ", which is @ReadOnly or @Generated");
+        }
         return new Insert<>(table, List.of(), List.of(), query, null);
     }
 
@@ -253,7 +260,8 @@ public final class Insert<T extends Entity> implements Write {
         }
         Map<String, Renderable> assignments = new LinkedHashMap<>();
         for (Assignment a : Fills.of(w).onUpdate(Ref.table(table.type()))) assignments.put(a.column().property().columnName(naming), a.value());
-        List<String> updates = (conflict.updates() != null ? conflict.updates() : names.stream().filter(n -> !conflict.keys().contains(n)).toList())
+        List<String> updates = (conflict.updates() != null ? conflict.updates()
+                : names.stream().filter(n -> !conflict.keys().contains(n) && !table.writes().writeOnce().contains(n)).toList())
             .stream().map(u -> table.property(u).columnName(naming)).filter(c -> !assignments.containsKey(c)).toList();
         return new Upsert(this::tableName, v.columns().stream().map(p -> p.columnName(naming)).toList(), v.values(),
             conflict.keys().stream().map(k -> table.property(k).columnName(naming)).toList(), updates, assignments);

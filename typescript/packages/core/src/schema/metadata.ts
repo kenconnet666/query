@@ -43,10 +43,12 @@ interface FieldMeta {
   readonly version?: true;
   readonly generated?: true;
   readonly logicDelete?: { readonly active: unknown; readonly deleted: unknown };
+  readonly readOnly?: true;
+  readonly writeOnce?: true;
 }
 
 /**
- * 表上与写入有关的列，取自 `@id`、`@version`、`@generated`、`@logicDelete`；没有的为空。
+ * 表上与写入有关的列，取自 `@id`、`@version`、`@generated`、`@logicDelete`、`@readOnly`、`@writeOnce`；没有的为空。
  * ids 按字段名排序，与 Java 的列顺序一致。
  */
 export interface WriteMeta {
@@ -54,6 +56,20 @@ export interface WriteMeta {
   readonly version: string | undefined;
   readonly generated: string | undefined;
   readonly logicDelete: LogicDeleteMeta | undefined;
+  /** 只读列：插入和更新都不写。 */
+  readonly readOnly: readonly string[];
+  /** 只在插入时写的列。 */
+  readonly writeOnce: readonly string[];
+}
+
+/** 插入时是否写这个字段：生成列和只读列不写。 */
+export function inserts(writes: WriteMeta, field: string): boolean {
+  return field !== writes.generated && !writes.readOnly.includes(field);
+}
+
+/** `byId` 更新和插入或更新的更新部分是否写这个字段：主键、版本、生成列、只读列和只在插入时写的列都不写。 */
+export function updates(writes: WriteMeta, field: string): boolean {
+  return !writes.ids.includes(field) && field !== writes.version && inserts(writes, field) && !writes.writeOnce.includes(field);
 }
 
 /** 逻辑删除列：timestamp 为 true 时记录删除时间（未删除为 NULL，删除写当前时间），否则按 active、deleted 两个值。 */
@@ -244,6 +260,22 @@ export function logicDelete(active: unknown = 0, deleted: unknown = 1) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { logicDelete: Object.freeze({ active, deleted }) });
 }
 
+/**
+ * 只读列，例如由数据库默认值、触发器或计算列维护的列：插入、`byId` 更新和插入或更新都不写它，即使行里有这个字段；
+ * 在 `update(...).set(...)` 里显式写它会报错。查询照常读取。
+ */
+export function readOnly(_value: undefined, context: ClassFieldDecoratorContext): void {
+  record(context, { readOnly: true });
+}
+
+/**
+ * 只在插入时写的列，例如创建时间、创建人：`byId` 更新和插入或更新的更新部分不写它，即使行里有这个字段。
+ * 确实要改时用 `update(...).set(...)` 显式写。
+ */
+export function writeOnce(_value: undefined, context: ClassFieldDecoratorContext): void {
+  record(context, { writeOnce: true });
+}
+
 /** 不由任何查询填充的 DTO 字段；在条件对象里表示不作为条件（如分页、排序参数）。 */
 export function ignore(_value: undefined, context: ClassFieldDecoratorContext): void {
   record(context, { ignore: true });
@@ -300,6 +332,11 @@ function writes(type: Ctor<unknown>, fields: readonly FieldMeta[], columns: Read
   }
   const logic = single("logicDelete");
   const timestamp = logic !== undefined && columns.get(logic.name)?.type.kind === "timestamp";
+  const readOnly = fields.filter((f) => f.readOnly).map((f) => f.name);
+  const writeOnce = fields.filter((f) => f.writeOnce).map((f) => f.name);
+  for (const f of fields.filter((x) => x.readOnly)) {
+    if (f.writeOnce || f.id || f.version) throw new Error(`${type.name}.${f.name}: @readOnly cannot be combined with @writeOnce, @id or @version`);
+  }
   return Object.freeze({
     ids: fields.filter((f) => f.id).map((f) => f.name).sort(),
     version: version?.name,
@@ -313,6 +350,8 @@ function writes(type: Ctor<unknown>, fields: readonly FieldMeta[], columns: Read
             deleted: timestamp ? null : logic.logicDelete!.deleted,
             timestamp,
           }),
+    readOnly: Object.freeze(readOnly),
+    writeOnce: Object.freeze(writeOnce),
   });
 }
 

@@ -4,8 +4,10 @@ import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Generated;
 import org.dpdns.zerodep.query.annotation.Id;
 import org.dpdns.zerodep.query.annotation.LogicDelete;
-import org.dpdns.zerodep.query.annotation.Version;
+import org.dpdns.zerodep.query.annotation.ReadOnly;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.annotation.Version;
+import org.dpdns.zerodep.query.annotation.WriteOnce;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.write.Delete;
@@ -58,10 +60,16 @@ public final class Writes {
 
         /** 版本号。 */
         @Version @Column("VERSION") Col<Integer> version();
+
+        /** 来源：由数据库默认值维护，本库从不写。 */
+        @ReadOnly @Column("SOURCE") Col<String> source();
     }
 
     /** 文档的一行。 */
     public record DocRow(String id, String title, Integer version) { }
+
+    /** 带上只读列的文档行，例如从库里读出来的整行。 */
+    public record DocFull(String id, String title, Integer version, String source) { }
 
     /** 编号由数据库生成的表（IDENTITY / AUTO_INCREMENT）。 */
     @Table(schema = SCHEMA, value = "W_SEQ")
@@ -84,8 +92,8 @@ public final class Writes {
 
     /** 带审计列的表：创建时间、修改时间和修改人由数据库实例的 onInsert、onUpdate 自动填。 */
     public interface Audited extends Entity {
-        /** 创建时间。 */
-        @Column("CREATED_AT") Col<LocalDateTime> createdAt();
+        /** 创建时间：只在插入时写。 */
+        @WriteOnce @Column("CREATED_AT") Col<LocalDateTime> createdAt();
 
         /** 修改时间。 */
         @Column("UPDATED_AT") Col<LocalDateTime> updatedAt();

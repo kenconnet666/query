@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
+import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.table.Entity;
 
 import java.util.ArrayList;
@@ -59,12 +60,28 @@ public final class Update<T extends Entity> implements Write {
         return new Update<>(target, sets, ById.of(Metadata.entity(target.ref().entity()), List.copyOf(rows), "update(...).byId(...)"));
     }
 
-    /** 追加一个 SET 项：{@code set(l -> l.unit().to("KG"))}；skipEmpty 下值为空的项被省略。 */
+    /**
+     * 按 {@code byId(...)} 的行逐一与修改前的行比较，只 SET 值变了的属性；一行完全没变时不发这一行的语句，也不计入期望的行数。
+     * 修改前的行与 byId 的行一一对应、类相同，主键和版本必须相等。例如编辑表单提交时：
+     * {@code update(Doc.class).byId(edited).diffFrom(loaded)}。
+     */
+    public Update<T> diffFrom(Object... originals) { return diffFrom(Arrays.asList(originals)); }
+
+    /** 同上，修改前的行在集合里。 */
+    public Update<T> diffFrom(Collection<?> originals) {
+        if (byId == null) throw new IllegalStateException("diffFrom(...) compares against byId(...) rows; call byId(...) first");
+        return new Update<>(target, sets, byId.diffFrom(List.copyOf(originals)));
+    }
+
+    /** 追加一个 SET 项：{@code set(l -> l.unit().to("KG"))}；skipEmpty 下值为空的项被省略；{@code @ReadOnly} 的列不能写。 */
     public Update<T> set(Function<T, Assignment> assignment) {
         Assignment a = SkipEmpty.within(target.skipping(), () -> assignment.apply(target.row()));
         if (a == null) throw new IllegalArgumentException("set(...) returned null; write col.to(value)");
         if (a.skipped()) return this;
         if (a.column().ref() != target.ref()) throw new IllegalArgumentException("set(...) must assign a column of the updated table");
+        if (Metadata.entity(target.ref().entity()).writes().readOnly().contains(a.column().property().name())) {
+            throw new IllegalArgumentException(target.ref().entity().getSimpleName() + "." + a.column().property().name() + "() is @ReadOnly");
+        }
         List<Assignment> all = new ArrayList<>(sets);
         all.add(a);
         return new Update<>(target, List.copyOf(all), byId);
@@ -89,16 +106,26 @@ public final class Update<T extends Entity> implements Write {
     public Update<T> expect(long rows) { return new Update<>(target.expect(rows), sets, byId); }
 
     /** {@code expect(n)} 写明的行数；没有写而用了 byId 时是行数。 */
-    @Override public Long expected() { return target.expected() != null || byId == null ? target.expected() : byId.expected(); }
+    @Override public Long expected() {
+        if (target.expected() != null || byId == null) return target.expected();
+        return sets.isEmpty() ? byId.expected() : (long) byId.rows().size();
+    }
 
     /** {@code UPDATE 表 别名 SET 列 = 值, ... WHERE ...}，byId 时每行一条；没有 SET 项时没有语句。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
         if (byId == null) return sets.isEmpty() ? List.of() : List.of(statement(writers.get(), sets, Cond.EMPTY));
         List<Rendered> out = new ArrayList<>();
-        for (Object row : byId.rows()) {
+        for (int i = 0; i < byId.rows().size(); i++) {
+            int index = i;
+            List<Assignment> changed = SkipEmpty.within(target.skipping(), () -> byId.sets(target.ref(), index));
+            if (changed.isEmpty() && sets.isEmpty()) {
+                if (byId.originals() != null) continue;   // diffFrom：这一行没有变化
+                throw new IllegalArgumentException("update(...).byId(...) has nothing to SET: " + byId.rows().get(i).getClass().getSimpleName()
+                    + " holds only key, version or non-updatable properties");
+            }
             List<Assignment> all = new ArrayList<>(sets);
-            all.addAll(SkipEmpty.within(target.skipping(), () -> byId.sets(target.ref(), row)).stream().filter(a -> !a.skipped()).toList());
-            out.add(statement(writers.get(), all, byId.locate(target.ref(), row)));
+            all.addAll(changed.stream().filter(a -> !a.skipped()).toList());
+            out.add(statement(writers.get(), all, byId.locate(target.ref(), byId.rows().get(i))));
         }
         return out;
     }
@@ -117,6 +144,10 @@ public final class Update<T extends Entity> implements Write {
         for (Assignment fill : Fills.of(w).onUpdate(target.ref())) {
             all.removeIf(a -> a.column().property().name().equals(fill.column().property().name()));
             all.add(fill);
+        }
+        if (!ImplicitJoins.used(w, List.of(target.ref()), all.stream().map(Assignment::value).toList()).isEmpty()) {
+            throw new IllegalArgumentException(statement + " SET reads a related table through navigation; use a scalar subquery"
+                + " or the dialect's join update");
         }
         w.sql("UPDATE ");
         target.ref().renderSource(w);

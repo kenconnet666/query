@@ -9,8 +9,10 @@ import org.dpdns.zerodep.query.annotation.LogicDelete;
 import org.dpdns.zerodep.query.annotation.ManyToOne;
 import org.dpdns.zerodep.query.annotation.OneToMany;
 import org.dpdns.zerodep.query.annotation.ReadAs;
+import org.dpdns.zerodep.query.annotation.ReadOnly;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Version;
+import org.dpdns.zerodep.query.annotation.WriteOnce;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
@@ -116,7 +118,7 @@ public final class Metadata {
                     + "() is neither a column (Col<T> name()) nor a default method");
             }
             columns.put(m.getName(), describeColumn(type, m.getName(), declarations));
-            for (Class<? extends Annotation> a : List.of(Id.class, Version.class, Generated.class, LogicDelete.class)) {
+            for (Class<? extends Annotation> a : List.of(Id.class, Version.class, Generated.class, LogicDelete.class, ReadOnly.class, WriteOnce.class)) {
                 if (declarations.stream().anyMatch(d -> d.isAnnotationPresent(a))) marked.computeIfAbsent(a, k -> new ArrayList<>()).add(m.getName());
             }
         }
@@ -138,7 +140,15 @@ public final class Metadata {
             }
         }
         String logic = single(type, marked, LogicDelete.class);
-        return new WriteMeta(ids, version, single(type, marked, Generated.class), logic == null ? null : logicDelete(type, columns.get(logic)));
+        Set<String> readOnly = Set.copyOf(marked.getOrDefault(ReadOnly.class, List.of()));
+        Set<String> writeOnce = Set.copyOf(marked.getOrDefault(WriteOnce.class, List.of()));
+        for (String name : readOnly) {
+            if (writeOnce.contains(name) || ids.contains(name) || name.equals(version)) {
+                throw new IllegalArgumentException(type.getSimpleName() + "." + name + "(): @ReadOnly cannot be combined with @WriteOnce, @Id or @Version");
+            }
+        }
+        return new WriteMeta(ids, version, single(type, marked, Generated.class), logic == null ? null : logicDelete(type, columns.get(logic)),
+            readOnly, writeOnce);
     }
 
     /** 带注解 a 的唯一一列；没有时为 null，多于一列时报错。 */

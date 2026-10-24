@@ -121,6 +121,13 @@ public abstract class Database {
         }
     }
 
+    /** 查询是否至少有一行：{@code SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END}，不读出任何行。 */
+    public boolean exists(Query<?> q) {
+        Rendered statement = QueryRenderer.exists(writer(), q);
+        List<Object[]> rows = executor.fetch(statement, executor.columns(List.of(SqlType.of(Integer.class))), q.timeout());
+        return !rows.isEmpty() && ((Number) rows.get(0)[0]).intValue() == 1;  // 空跑时没有行
+    }
+
     /** 查询的总行数，即对同一条查询执行 {@code SELECT COUNT(*)}，忽略 ORDER BY。 */
     public long count(Query<?> q) {
         Rendered statement = QueryRenderer.count(writer(), q);

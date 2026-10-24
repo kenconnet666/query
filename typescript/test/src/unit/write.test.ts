@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
+import { Lips } from "../fixtures/erp.js";
 import { claimable } from "../fixtures/workflow.js";
 import { Archive, audit, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
 
@@ -135,6 +136,65 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
         .select((n) => n.id)
         .toSql(new TestDialect())
         .sql.endsWith("\nFOR UPDATE"),
+    );
+  });
+
+  it("条件经过导航关系时包成 EXISTS，而 SET 经过导航关系时报错", () => {
+    const [r] = db.render(
+      update(Lips)
+        .set(() => ({ unit: "EA" }))
+        .where((l) => l.mara.manufacturer.eq("MK1")),
+    );
+    assert.equal(
+      r!.sql,
+      "UPDATE QUERY_IT.LIPS LIPS\nSET VRKME = ?\nWHERE EXISTS (SELECT 1\nFROM (SELECT 1 AS ONE) SEED\nLEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT\nWHERE MARA.MFRNR = ?)",
+    );
+    assert.equal(db.render(deleteFrom(Lips).where((l) => l.delivery.eq("D1")))[0]!.sql, "DELETE FROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VBELN = ?");
+    assert.throws(
+      () =>
+        db.render(
+          update(Lips)
+            .set((l) => ({ unit: l.mara.manufacturer as never }))
+            .where((l) => l.delivery.eq("D1")),
+        ),
+      /SET reads a related table/,
+    );
+  });
+
+  it("diffFrom 只更新变了的字段，没有变化时不发语句", () => {
+    const changed = update(Doc).byId({ id: "D1", title: "new", version: 3 }).diffFrom({ id: "D1", title: "old", version: 3 });
+    assert.equal(db.render(changed)[0]!.sql, "UPDATE QUERY_IT.W_DOC DOC\nSET TITLE = ?, VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?");
+    const same = update(Doc)
+      .byId({ id: "D1", title: "a", version: 3 }, { id: "D2", title: "b", version: 1 })
+      .diffFrom({ id: "D1", title: "a", version: 3 }, { id: "D2", title: "c", version: 1 });
+    assert.equal(db.render(same).length, 1, "the unchanged row sends nothing");
+    assert.equal(same.expected, 1);
+    assert.throws(() => update(Doc).byId({ id: "D1", title: "a", version: 3 }).diffFrom({ id: "D1", title: "a", version: 2 }), /different version/);
+    assert.throws(() => update(Doc).diffFrom({ id: "D1", title: "a", version: 3 }), /call byId/);
+  });
+
+  it("只读列从不写，只在插入时写的列在按主键更新时跳过", () => {
+    const full = { id: "D1", title: "a", version: 1, source: "app" };
+    assert.equal(db.render(insertInto(Doc).values(full))[0]!.sql, "INSERT INTO QUERY_IT.W_DOC (ID, TITLE, VERSION) VALUES (?, ?, ?)");
+    assert.equal(db.render(update(Doc).byId(full))[0]!.sql, "UPDATE QUERY_IT.W_DOC DOC\nSET TITLE = ?, VERSION = (DOC.VERSION + 1)\nWHERE DOC.ID = ? AND DOC.VERSION = ?");
+    assert.throws(() => update(Doc).set(() => ({ source: "x" })), /Doc\.source is @readOnly/);
+    assert.equal(
+      db.render(update(Ticket).byId({ id: "T1", title: "a", createdAt: CREATED }))[0]!.sql,
+      "UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+    );
+    assert.equal(
+      db.render(insertInto(Ticket).values({ id: "T1", title: "a", createdAt: CREATED }))[0]!.sql,
+      "INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, CREATED_AT, DELETED) VALUES (?, ?, ?, ?)",
+      "inserts still write it",
+    );
+    assert.equal(
+      db.render(
+        update(Ticket)
+          .set(() => ({ createdAt: CREATED }))
+          .where((t) => t.id.eq("T1")),
+      )[0]!.sql,
+      "UPDATE QUERY_IT.W_TICKET TICKET\nSET CREATED_AT = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
+      "an explicit set(...) may still change it",
     );
   });
 

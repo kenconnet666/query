@@ -1,6 +1,6 @@
 import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
 import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata.js";
-import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
+import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, untyped, type SqlType } from "../schema/types.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
@@ -344,6 +344,12 @@ export abstract class Database {
   /** 逐行对结果调用 `action`，基于 {@link stream}，会等待每次回调完成。 */
   async forEach<R>(q: Query<R>, action: (row: R) => void | Promise<void>): Promise<void> {
     for await (const row of this.stream(q)) await action(row);
+  }
+
+  /** 查询是否至少有一行：`SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END`，不读出任何行。 */
+  async exists(q: Query<unknown>): Promise<boolean> {
+    const result = await this.#execute(renderExists(this.#writer(), q), timeoutOf(q));
+    return result.rows.length > 0 && integer.decode(result.rows[0]![0]) === 1; // 空跑时没有行
   }
 
   /** 查询的总行数，用 `COUNT(*)` 包住同一个查询得到。 */

@@ -141,7 +141,7 @@ public abstract class LiveScenarios {
             insertRow("EVENTS", "2, DATE '2011-12-30', TIMESTAMP '2011-12-30 00:00:00'")));
         workflow(sql);
         sql.add(table("W_NOTE", c("ID", 10), c("TENANT", 10), c("TITLE", 40), q("QTY") + " INTEGER", c("STATUS", 10)));
-        sql.add(table("W_DOC", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("VERSION") + " INTEGER"));
+        sql.add(table("W_DOC", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("VERSION") + " INTEGER", c("SOURCE", 10) + " DEFAULT 'db'"));
         sql.add(table("W_SEQ", q("ID") + " " + identity(), c("NAME", 20)));
         sql.add(table("W_TICKET", c("ID", 10) + " PRIMARY KEY", c("TITLE", 40), q("DELETED") + " INTEGER", q("CREATED_AT") + " " + timestamp(),
             q("UPDATED_AT") + " " + timestamp(), c("UPDATED_BY", 20)));
@@ -662,6 +662,19 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 差异更新只写变了的列且只读列保留数据库默认值() {
+        db.execute(deleteFrom(Writes.Doc.class).all());
+        db.execute(insertInto(Writes.Doc.class).values(new Writes.DocFull("D1", "a", 1, "app")));
+        assertEquals(0, db.execute(update(Writes.Doc.class).byId(new Writes.DocRow("D1", "a", 1)).diffFrom(new Writes.DocRow("D1", "a", 1))),
+            "nothing changed, so nothing runs and the version stays");
+        assertEquals(1, db.execute(update(Writes.Doc.class).byId(new Writes.DocFull("D1", "b", 1, "app")).diffFrom(new Writes.DocFull("D1", "a", 1, "db"))));
+        assertEquals(List.of("b:2:db"), db.list(from(Writes.Doc.class).select(d -> cols(d.title(), d.version(), d.source()))).stream()
+            .map(r -> r.get("title") + ":" + r.get("version") + ":" + r.get("source")).toList());
+        assertTrue(db.exists(from(Writes.Doc.class).where(d -> d.id().eq("D1")).select(d -> d.id())));
+        assertFalse(db.exists(from(Writes.Doc.class).where(d -> d.id().eq("D9")).select(d -> d.id())));
+    }
+
+    @Test
     void 插入后按行的顺序取回数据库生成的主键() {
         db.execute(deleteFrom(Writes.Seq.class).all());
         List<Integer> keys = db.insertKeys(insertInto(Writes.Seq.class).values(new Writes.SeqRow("a"), new Writes.SeqRow("b")));
@@ -687,6 +700,19 @@ public abstract class LiveScenarios {
         assertEquals(List.of("T1"), db.transaction(() -> db.list(Workflow.claimable())));
         assertEquals(List.of("T1", "T3"), db.transaction(() -> db.list(from(Workflow.Task.class).where(t -> t.assignee().isNull())
             .orderBy(t -> t.id()).with(forUpdate(Lock.NOWAIT)).select(t -> t.id()))));
+    }
+
+    @Test
+    void 更新和删除的条件经过导航关系时只改到关联得上的行() {
+        // 在事务里执行再回滚：PostgreSQL 的 UPDATE 即使值不变也写出新的行版本，会打乱别的测试依赖的扫描顺序
+        class Rollback extends RuntimeException { }
+        assertThrows(Rollback.class, () -> db.transaction(() -> {
+            // 影响的行数是匹配的行数；没有物料描述的 M2 只有 D3、D4
+            assertEquals(2, db.execute(update(Lips.class).set(l -> l.unit().to("EA")).where(l -> l.text().text().isNull())));
+            assertEquals(3, db.execute(update(Lips.class).set(l -> l.unit().to("EA")).where(l -> l.mara().manufacturer().eq("MK1"))));
+            assertEquals(0, db.execute(deleteFrom(Lips.class).where(l -> l.mara().materialType().eq("NONE"))));
+            throw new Rollback();
+        }));
     }
 
     @Test

@@ -67,7 +67,7 @@ import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
 import * as writes from "./writes.js";
-import { insertInto, type Write } from "@zerodep-dev/query-core";
+import { insertInto, update, type Write } from "@zerodep-dev/query-core";
 
 /**
  * The golden-SQL cases of spec/render, built the TypeScript way. The Java tests build the same
@@ -288,6 +288,13 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "write-insert": plain(() => insertInto(writes.Note).values({ id: "N1", tenant: "T1", title: "first", qty: 1, status: "open" })),
   "write-insert-select": plain(() => writes.copyNote()),
   "write-update": plain(() => writes.closeOpenNote("N1")),
+  "write-navigation": {
+    filtered: true,
+    query: () =>
+      update(Lips)
+        .set(() => ({ unit: "EA" }))
+        .where((l) => l.text.text.isNull()),
+  },
   "write-delete": plain(() => writes.deleteClosed()),
   "write-update-by-id": plain(() => writes.renameDoc({ id: "D1", title: "new", version: 3 })),
   "write-delete-by-id": plain(() => writes.deleteDoc({ id: "D1", title: null, version: 3 })),

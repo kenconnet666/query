@@ -500,6 +500,15 @@ export function renderCount(w: SqlWriter, q: Query<unknown>): Rendered {
   return w.statement();
 }
 
+/** `SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END`：总是返回一行，查询找到行时为 1。 */
+export function renderExists(w: SqlWriter, q: Query<unknown>): Rendered {
+  w.sql("SELECT CASE WHEN EXISTS (");
+  renderQuery(w, stateOf(q), true, false);
+  w.sql(") THEN 1 ELSE 0 END");
+  w.dialect.fromNothing(w);
+  return w.statement();
+}
+
 /** 查询在某个数据库实例上的渲染结果，只计算一次。 */
 export function rendered(q: Query<unknown>, key: object, render: () => Rendered): Rendered {
   const memo = memoOf(q);
@@ -801,19 +810,27 @@ function textOf(probe: SqlWriter, node: Renderable): string {
  */
 function usedRelations(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[]): Set<Relation> {
   const s = arm.spec;
-  if (s.joins.every((j) => ownerOf(j.ref).relations.length === 0)) return new Set();
+  const parts: Renderable[] = [...arm.items, ...s.joins.map((j) => j.on), ...s.where, ...s.having, ...groupBy, ...orderBy, ...s.clauses];
+  return implicitJoins(
+    w,
+    s.joins.map((j) => ownerOf(j.ref)),
+    parts,
+  );
+}
+
+/**
+ * roots 出发的导航关系里，parts 渲染时真正用到的那些：先用探查写入器把 parts 试渲染一遍，记下引用到的数据源；
+ * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。查询和写语句共用。
+ */
+export function implicitJoins(w: SqlWriter, roots: readonly RefOwner[], parts: readonly Renderable[]): Set<Relation> {
+  if (roots.every((r) => r.relations.length === 0)) return new Set();
   const probe = w.probe();
-  for (const e of arm.items) probe.render(e);
-  for (const j of s.joins) if (!j.on.isEmpty) probe.render(j.on);
-  for (const c of [...s.where, ...s.having]) if (!c.isEmpty) probe.render(c);
-  for (const g of groupBy) probe.render(g);
-  for (const o of orderBy) probe.render(o);
-  for (const c of s.clauses) probe.render(c);
+  for (const p of parts) if (!(p instanceof Cond && p.isEmpty)) probe.render(p);
   const used = new Set<Relation>();
   let grew = true;
   while (grew) {
     grew = false;
-    for (const j of s.joins) grew = collect(ownerOf(j.ref), probe, used) || grew;
+    for (const root of roots) grew = collect(root, probe, used) || grew;
   }
   return used;
 }
@@ -838,7 +855,7 @@ function reaches(owner: RefOwner, touched: ReadonlySet<object>): boolean {
 }
 
 /** 紧跟在 owner 的 FROM 或 JOIN 之后写出它用到的隐式连接（LEFT JOIN），再写更深的关系；全局过滤器放进 ON。 */
-function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[] | undefined): void {
+export function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<Relation>, filters: readonly SourceFilter[] | undefined): void {
   for (const r of owner.relations) {
     if (!used.has(r)) continue;
     w.sql("\nLEFT JOIN ");

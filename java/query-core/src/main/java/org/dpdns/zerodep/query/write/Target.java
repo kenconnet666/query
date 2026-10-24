@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.FilterObject;
+import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.select.SelectSpec;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
@@ -12,6 +13,7 @@ import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -76,11 +78,38 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
             throw new IllegalStateException(statement + " without where(...) would touch every row of " + ref.entity().getSimpleName()
                 + "; add .all() if that is intended");
         }
-        List<Cond> conds = new ArrayList<>();
-        SourceFilters filters = filtered ? (SourceFilters) w.attribute(SourceFilters.class) : SourceFilters.OFF;
-        conds.addAll((filters == null ? SourceFilters.NONE : filters).conditionsFor(ref));
-        conds.add(own);
+        SourceFilters filters = filters(w);
+        List<Cond> conds = new ArrayList<>(filters.conditionsFor(ref));
+        conds.add(navigated(w, own, filters));
         Cond whereAll = Nodes.all(conds);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
+    }
+
+    /** 这条语句套用的过滤器：数据库实例配置的；没有数据库实例时只有逻辑删除；{@code unfiltered()} 时什么都没有。 */
+    SourceFilters filters(SqlWriter w) {
+        if (!filtered) return SourceFilters.OFF;
+        SourceFilters configured = (SourceFilters) w.attribute(SourceFilters.class);
+        return configured == null ? SourceFilters.NONE : configured;
+    }
+
+    /**
+     * own 经过导航关系读到别的表时，包成 {@code EXISTS (SELECT 1 FROM 单行 LEFT JOIN 关联表 ON ... WHERE own)}；没有时原样返回。
+     * UPDATE、DELETE 不能像查询那样直接 LEFT JOIN，三个库的联表写法又各不相同；从单行的种子出发再 LEFT JOIN，
+     * 没有关联行时关联列为 NULL，与查询里导航的语义一致。
+     */
+    private Cond navigated(SqlWriter w, Cond own, SourceFilters filters) {
+        if (own.isEmpty()) return own;
+        Set<Ref.Relation> used = ImplicitJoins.used(w, List.of(ref), List.of(own));
+        if (used.isEmpty()) return own;
+        Object seed = new Object();
+        return new Cond() {
+            @Override public void render(SqlWriter x) {
+                x.sql("EXISTS (SELECT 1\nFROM (SELECT 1 AS ").identifier("ONE");
+                x.dialect().fromNothing(x);
+                x.sql(") ").alias(x.aliasFor(seed, "seed"));
+                ImplicitJoins.emit(x, ref, used, filters);
+                x.sql("\nWHERE ").render(own).sql(")");
+            }
+        };
     }
 }

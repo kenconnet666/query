@@ -1,4 +1,4 @@
-import { all, column, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, table, timestamp, update, val, version, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
+import { all, column, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
 /** 写入场景的表和语句：单元测试、金样例和三库实库场景共用，与 Java 的 Writes 一一对应。 */
@@ -23,6 +23,8 @@ export class Doc {
   @id @column("ID") id!: string;
   @column("TITLE") title!: string | null;
   @version @column("VERSION", integer) version!: number;
+  /** 来源：由数据库默认值维护，本库从不写。 */
+  @readOnly @column("SOURCE") source!: string | null;
 }
 
 /** 编号由数据库生成的表（IDENTITY / AUTO_INCREMENT）。 */
@@ -34,7 +36,7 @@ export class Seq {
 
 /** 带审计列的表：创建时间、修改时间和修改人由数据库实例的 fills 自动填。 */
 export abstract class Audited {
-  @column("CREATED_AT", timestamp) createdAt!: string | null;
+  @writeOnce @column("CREATED_AT", timestamp) createdAt!: string | null;
   @column("UPDATED_AT", timestamp) updatedAt!: string | null;
   @column("UPDATED_BY") updatedBy!: string | null;
 }
