@@ -39,7 +39,7 @@
   - 更新执行后不论是否改到行都刷新快照（`AbstractClientEntityUpdatable.executeRows` 无条件调用 `refreshTrackEntities`），乐观锁冲突时这次修改会被当作已保存；
   - 新版本号只在绑定参数时算出（`VersionPropertySQLParameter`），不写回对象，同一上下文里第二次更新会因版本不符改不到行（读源码得出，未实跑）。
 
-  因此差异更新改为无状态的 `diffFrom(loaded)`，见下文"之后补上的"。
+  因此差异更新改为无状态的 `diffFrom(loaded)`，见下文"之后补上的"。之后 [0008](0008-schema-tracking-sharding.md) 在 `diffFrom` 之上加了显式范围的实体追踪，避开了上面两个问题；级联写入仍然不做。
 - **按非空列裁剪插入的列**：与取舍 1 相反；需要数据库默认值时不在行里放这个属性即可。
 - **默认禁止物理删除**：与取舍 3 相反；逻辑删除的表已经默认不物理删除。
 - **多行合并成一条 `INSERT ... VALUES (...), (...)`**：参数个数受 65535 的限制，且 HANA 不支持；JDBC 批量已经足够快。

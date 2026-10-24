@@ -68,7 +68,16 @@
 - **第 2 批（已完成）**：`Config.schema(...)` / TS `schemas`（渲染统一走 `SqlWriter.table`）、具名过滤器 `filter("tenant", ...)` 与 `unfiltered("tenant")`、`withDeleted()`、写语句的 `withoutFills()`（查询与写语句共用 `Filtering` 开关）、Java `CodeEnum<C>`、`@LogicDelete(epochMillis = true)`。
 - **第 3 批（已完成）**：`lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours`/`addMinutes`/`addSeconds`（都换算成秒）、`monthStart`；先用临时探针在三库实测再定写法，`length` 留在方言包，周相关函数推后。
 - **第 4 批（已完成）**：方言包的 `updateJoin` / `deleteJoin`（核心只有 `JoinUpdate` / `JoinDelete` 和方言钩子）：PG `UPDATE ... FROM` / `DELETE ... USING`，MySQL `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 按主键的 MERGE（一行匹配多行报错、没有行被改，实库验证）/ `WHERE EXISTS`。实测确认 MySQL 驱动默认返回匹配行数（值没变的行也计入），与另两库一致。
-- **之后（随流程引擎）**：多对多（经过中间表）、显式的一层子行同步与中间表同步（Jimmer 式，不做跟踪）、内存装树、条件作为 SELECT 列、`query:check`（连库核对已声明的列，不生成代码）。
+- **之后（随流程引擎）**：多对多（经过中间表）、显式的一层子行同步与中间表同步（Jimmer 式）、内存装树。
+
+### 进行中：A、B、C 三批与 0008（用户 2026-10-24 确认"按照推荐执行所有步骤"）
+
+顺序：A → B → C → 数据库变更（模型与实库读取、check → DDL、计划、迁移）→ `query:pull` → 实体追踪 → 分表。每批两端、三方言、金样例与实库场景，完成一批提交推送一批。
+
+- **A 批（核心，三库探针已证实都支持）**：`intersect`、`except`、`rightJoin`；多列 `IN` 子查询；`ANY` / `ALL` 子查询比较；`sumDistinct` / `avgDistinct`、`stddev` / `variance`；`percentRank`、`cumeDist`、`nthValue`；条件作为 SELECT 列（CASE 改写）；NULL 安全比较（CASE 改写）；`required` / `firstNotNull` 一类的执行辅助。
+- **B 批（定制能力）**：执行前钩子（改写或拦截语句）；过滤器与填充按实体 `apply` 和顺序；写入行拦截器；可替换的小策略（分页结果、异常、`cols` 的键名、自定义 `@Where` 运算）；`fill`（按键把数据装回结果）。
+- **C 批（方言包，参考前身的 `docs/hana-*.md`、`pgsql-*.md`、`mysql-*.md`）**：HANA 参数化视图、层级、全文、JSON、MEDIAN / PERCENTILE_CONT；PostgreSQL 数组、JSONB、全文、RETURNING、RANGE 窗口框架、递归 CTE、`FOR SHARE` / `FOR UPDATE OF`、`INTERSECT ALL` / `EXCEPT ALL`、FULL JOIN；MySQL JSON、全文、索引提示、`<=>`、RANGE、递归 CTE、`FOR SHARE`。
+- **0008**：见[决定](../docs/decisions/0008-schema-tracking-sharding.md)。
 
 ## 换电脑后的准备
 

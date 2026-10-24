@@ -1,15 +1,15 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
-- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007）。不依赖 EasyQuery，也不做完整 ORM：不做实体跟踪、级联、DDL 和迁移。
+- **定位**：面向分析型复杂查询的 SQL 构建库，Java 与 TypeScript 各一份实现，2.0 起带写入（0007），以及结构变更与迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008）。不依赖 EasyQuery，也不做完整 ORM：不做级联、懒加载和对象图保存。
 - **取舍顺序**：简洁灵活、功能强大、方便扩展优先，其次是类型安全，再次是性能；元数据、映射和渲染必须缓存或惰性计算。
 - **Java**：
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
-  - 不使用注解处理器（APT），也不在使用方生成代码。
+  - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
 - **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.0.2（原生编译器），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql`（包名 `@zerodep-dev/query-*`）和私有测试包 `test`。
 - **首批方言**：SAP HANA、PostgreSQL、MySQL 三者同步推进，任何能力都要在三个方言上一起实现和验证；DuckDB 延后。
 - **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
