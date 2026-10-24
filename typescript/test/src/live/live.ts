@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { ADD_PRIORITY, ADD_PRIORITY_CHANGED, BROKEN, CREATE_TASK, LipsBroken, LipsExternal, MTask, SItem, SItemV2, SItemV3, SOwner } from "../fixtures/schemas.js";
 import { generatedTypeName, MIGRATION_HISTORY, MIGRATION_LOCK, typescriptSource } from "@zerodep-dev/query-core";
+import { SqliteDatabase } from "@zerodep-dev/query-sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
@@ -91,6 +92,12 @@ export interface LiveTarget {
   readonly slowStatement: string;
   /** Statements run after the shared tables exist; one starting with "-" may fail. */
   readonly setup?: readonly string[];
+  /** 不需要连接变量的本地库（SQLite）：总是运行，connect 收到的 config 是占位值。 */
+  readonly local?: boolean;
+  /** 手写种子数据里的 `DATE '...'`、`TIMESTAMP '...'` 字面量在本方言里的写法；SQLite 去掉类型前缀。 */
+  literals?(values: string): string;
+  /** 方言是否支持某项能力（rollup、for-update、lpad、timeout）；不支持的场景改为断言报错或跳过。 */
+  supports?(feature: string): boolean;
 }
 
 export interface LiveContext {
@@ -101,9 +108,21 @@ export interface LiveContext {
   table(name: string): string;
 }
 
+/** 两个 SQLite 驱动共用的设置：不需要连接变量；SQLite 没有 ROLLUP、加锁读、LPAD，驱动不能中途取消语句。 */
+export const sqliteTarget = {
+  local: true,
+  database: (driver: Driver, options: DatabaseOptions): Database => new SqliteDatabase(driver, options),
+  text: (length: number) => `VARCHAR(${length})`,
+  identity: "INTEGER PRIMARY KEY AUTOINCREMENT",
+  slowStatement: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 20000000) SELECT COUNT(*) FROM r",
+  literals: (values: string) => values.replaceAll("TIMESTAMP '", "'").replaceAll("DATE '", "'"),
+  supports: (feature: string) => !["rollup", "for-update", "lpad", "timeout"].includes(feature),
+} as const;
+
 /** The same scenarios on every dialect's real database, as Java's LiveScenarios. */
 export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveContext) => void): void {
-  const config = liveConfig(target.name);
+  const config: LiveConfig | string = target.local ? { host: "", port: 0, database: undefined, user: "", password: "" } : liveConfig(target.name);
+  const supports = (feature: string) => target.supports?.(feature) ?? true;
   describe(`${target.name} 实库场景`, typeof config === "string" ? { skip: config } : {}, () => {
     let context: LiveContext | undefined;
     let close: (() => Promise<void>) | undefined;
@@ -117,7 +136,7 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const t = (name: string) => `${q("QUERY_IT")}.${q(name)}`;
       const c = (name: string, length: number) => `${q(name)} ${target.text(length)}`;
       const create = (name: string, ...columns: string[]) => `CREATE TABLE ${t(name)} (${columns.join(", ")})`;
-      const insert = (name: string, values: string) => `INSERT INTO ${t(name)} VALUES (${values})`;
+      const insert = (name: string, values: string) => `INSERT INTO ${t(name)} VALUES (${target.literals?.(values) ?? values})`;
       const ts = target.timestamp ?? "TIMESTAMP";
       const statements = [
         `-CREATE SCHEMA ${q("QUERY_IT")}`,
@@ -437,6 +456,10 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
     });
 
     it("ROLLUP 给出小计与总计", async () => {
+      if (!supports("rollup")) {
+        await assert.rejects(live().db.list(rollup()), /ROLLUP/);
+        return;
+      }
       const rows = await live().db.list(rollup());
       assert.deepEqual(
         rows.map((r) => `${r.material}/${r.unit}/${Number(r.total)}/${r.level}`),
@@ -608,7 +631,8 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       for (const wildcard of ["%", "_", "P%", "!"]) assert.deepEqual(await find({ keyword: wildcard }), [], wildcard);
     });
 
-    it("原生 SQL 片段在实库上可执行", async () => {
+    it("原生 SQL 片段在实库上可执行", async (t) => {
+      if (!supports("lpad")) return t.skip("the hand-written SQL calls LPAD");
       const rows = await live().db.list(nativeSql());
       assert.deepEqual(
         rows.map((r) => `${r.material}:${r.padded}:${Number(r.total)}`),
@@ -656,7 +680,8 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await dropSchemaTables(db);
       const create = await db.schema().plan(SItem, SOwner);
       assert.ok(create.changes.every((c) => c.risk === "SAFE"), create.toString());
-      assert.ok(create.statements.at(-1)!.includes("FOREIGN KEY"));
+      if (db.dialect.schemaSyntax.inlineForeignKeys) assert.ok(create.statements.some((x) => x.startsWith("CREATE TABLE") && x.includes("FOREIGN KEY")), "foreign keys are inline");
+      else assert.ok(create.statements.at(-1)!.includes("FOREIGN KEY"), "foreign keys come last");
       await create.apply();
       const again = await db.schema().check(SItem, SOwner);
       assert.ok(again.isEmpty, again.toString());
@@ -671,8 +696,12 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       const source = typescriptSource(table, generatedTypeName(table.name));
       // 期望的源码就是测试夹具，编译通过即证明生成的代码可用；QUERY_SPEC_WRITE=1 时重写它。
       const file = fileURLToPath(new URL("../../src/fixtures/generated/SItemColumns.ts", import.meta.url));
-      if (process.env.QUERY_SPEC_WRITE !== undefined) writeFileSync(file, source, "utf8");
-      assert.equal(source, readFileSync(file, "utf8").replace(/\r\n/g, "\n"));
+      const comments = db.dialect.schemaSyntax.storesComments;
+      if (comments && process.env.QUERY_SPEC_WRITE !== undefined) writeFileSync(file, source, "utf8");
+      let expected = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+      // 不保存注释的库（SQLite）读回的表没有注释：期望的源码去掉表和列的注释再比。
+      if (!comments) expected = expected.replace("（items）的列", " 的列").replace(', comment: "title"', "").replace("。title */", " */");
+      assert.equal(source, expected);
     });
 
     it("结构变更自动执行安全的差异且有风险的要显式允许", async () => {
@@ -680,16 +709,21 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await dropSchemaTables(db);
       await (await db.schema().plan(SItem, SOwner)).apply();
       const safe = await db.schema().plan(SItemV2);
-      assert.ok(safe.changes.every((c) => c.risk === "SAFE"), safe.toString());
       assert.equal(safe.changes.length, 5, safe.toString());
+      // SQLite 不能就地改列：放宽标题和价格只报告，改名、加列、加索引照常执行。
+      const alters = db.dialect.schemaSyntax.altersColumns;
+      const reported = alters ? 0 : 2;
+      assert.equal(safe.changes.filter((c) => c.risk === "REPORT").length, reported, safe.toString());
+      assert.ok(safe.changes.every((c) => c.risk !== "DESTRUCTIVE"), safe.toString());
       await safe.apply();
       const clean = await db.schema().check(SItemV2);
-      assert.ok(clean.isEmpty, clean.toString());
-      // HANA 不能缩短列，那一项只报告；其余两库是有风险的语句。
+      assert.ok(clean.changes.length === reported && clean.changes.every((c) => c.risk === "REPORT"), clean.toString());
+      // HANA 不能缩短列，那一项只报告；其余两库是有风险的语句；SQLite 全部只报告（价格的放宽也还在）。
+      const expected = alters ? 2 : 3;
       const risky = await db.schema().plan(SItemV3);
-      assert.ok(risky.changes.length === 2 && risky.changes.every((c) => c.risk !== "SAFE"), risky.toString());
+      assert.ok(risky.changes.length === expected && risky.changes.every((c) => c.risk !== "SAFE"), risky.toString());
       assert.deepEqual(risky.statements, []);
-      assert.equal(risky.pending.length, 2);
+      assert.equal(risky.pending.length, expected);
       await risky.allowDestructive().apply();
       const done = await db.schema().check(SItemV3);
       assert.ok(done.changes.every((c) => c.risk === "REPORT"), done.toString());
@@ -1125,6 +1159,10 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     it("在事务里加锁领取最早的待认领任务", async () => {
       const { db } = live();
+      if (!supports("for-update")) {
+        await assert.rejects(db.list(wf.claimable()), /FOR UPDATE/);
+        return;
+      }
       assert.deepEqual(await db.transaction(() => db.list(wf.claimable())), ["T1"]);
       const locked = await db.transaction(() =>
         db.list(
@@ -1234,7 +1272,8 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       }
     });
 
-    it("超过超时的语句在数据库端被取消且连接仍可用", async () => {
+    it("超过超时的语句在数据库端被取消且连接仍可用", async (t) => {
+      if (!supports("timeout")) return t.skip("the driver cannot interrupt a running statement");
       const { db, driver } = live();
       const start = Date.now();
       const timedOut = (e: unknown) => e instanceof QueryExecutionError && e.timedOut;

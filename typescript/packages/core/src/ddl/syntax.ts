@@ -17,6 +17,21 @@ export abstract class SchemaSyntax {
   /** 读取 schema（空串表示连接当前的 schema）里 table 的结构；表不存在时返回 undefined。 */
   abstract read(catalog: Catalog, schema: string, table: string): Promise<TableDef | undefined>;
 
+  /** 能否就地改列的类型、可空和默认值；SQLite 不能，只能新建表、搬数据、改名，所以这些差异只报告。 */
+  get altersColumns(): boolean {
+    return true;
+  }
+
+  /** 外键是否只能写在建表语句里（SQLite）：建表时内联外键，给已有的表加外键只报告。 */
+  get inlineForeignKeys(): boolean {
+    return false;
+  }
+
+  /** 能否保存表和列的注释；SQLite 不能，建表时略过注释。 */
+  get storesComments(): boolean {
+    return true;
+  }
+
   /** DDL 是否能在事务里回滚（PostgreSQL 能，MySQL 每条隐式提交，HANA 默认自动提交）。 */
   get transactionalDdl(): boolean {
     return false;
@@ -42,10 +57,22 @@ export abstract class SchemaSyntax {
   /** 建表的语句：CREATE TABLE（含主键）、表和列的注释、索引；外键另由 {@link addForeignKey} 在最后建。 */
   createTable(t: TableDef): string[] {
     let sql = `${this.createKeyword} ${this.table(t)} (${t.columns.map((c) => this.columnDefinition(c)).join(", ")}`;
-    if (t.primaryKey.length > 0) sql += `, PRIMARY KEY (${this.names(t.primaryKey)})`;
+    if (t.primaryKey.length > 0 && !this.inlinePrimaryKey(t)) sql += `, PRIMARY KEY (${this.names(t.primaryKey)})`;
+    if (this.inlineForeignKeys) for (const f of t.foreignKeys) sql += ", " + this.foreignKeyClause(f);
     sql += ")" + this.tableOptions(t);
     for (const o of t.options ?? []) if (this.dialect instanceof o.dialect) sql += " " + o.sql;
     return [sql, ...this.comments(t), ...t.indexes.map((i) => this.createIndex(t, i))];
+  }
+
+  /** 主键是否已经写在列定义里（SQLite 的 `INTEGER PRIMARY KEY AUTOINCREMENT`），这时不再写表级的 PRIMARY KEY。 */
+  protected inlinePrimaryKey(_t: TableDef): boolean {
+    return false;
+  }
+
+  /** 外键子句 `CONSTRAINT 名 FOREIGN KEY (列) REFERENCES schema.表 (列)`，内联和 ALTER TABLE 共用。 */
+  protected foreignKeyClause(f: ForeignKeyDef): string {
+    const target = f.referencedSchema === "" ? this.quote(f.referencedTable) : `${this.quote(f.referencedSchema)}.${this.quote(f.referencedTable)}`;
+    return `CONSTRAINT ${this.quote(f.name)} FOREIGN KEY (${this.names(f.columns)}) REFERENCES ${target} (${this.names(f.referencedColumns)})`;
   }
 
   /** CREATE TABLE 的关键字；HANA 写成 `CREATE COLUMN TABLE`。 */
@@ -114,8 +141,7 @@ export abstract class SchemaSyntax {
 
   /** 加外键。 */
   addForeignKey(t: TableDef, f: ForeignKeyDef): string {
-    const target = f.referencedSchema === "" ? this.quote(f.referencedTable) : `${this.quote(f.referencedSchema)}.${this.quote(f.referencedTable)}`;
-    return `ALTER TABLE ${this.table(t)} ADD CONSTRAINT ${this.quote(f.name)} FOREIGN KEY (${this.names(f.columns)}) REFERENCES ${target} (${this.names(f.referencedColumns)})`;
+    return `ALTER TABLE ${this.table(t)} ADD ${this.foreignKeyClause(f)}`;
   }
 
   // ---------- 比较 ----------

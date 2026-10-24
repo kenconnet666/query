@@ -6,8 +6,9 @@ import { filter, Write, type Database, type DatabaseOptions, type Driver } from 
 import { HanaDatabase } from "@zerodep-dev/query-hana";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
+import { SqliteDatabase } from "@zerodep-dev/query-sqlite";
 import { ClientEntity } from "../fixtures/erp.js";
-import { dialectCases, sharedCases } from "../fixtures/spec-cases.js";
+import { dialectCases, sharedCases, unsupportedCases } from "../fixtures/spec-cases.js";
 import { SHARDS } from "../fixtures/shards.js";
 
 /**
@@ -25,6 +26,7 @@ const databases: Record<keyof typeof dialectCases, (options: DatabaseOptions) =>
   hana: (options) => new HanaDatabase(never, options),
   postgres: (options) => new PostgresDatabase(never, options),
   mysql: (options) => new MysqlDatabase(never, options),
+  sqlite: (options) => new SqliteDatabase(never, options),
 };
 
 function golden(file: string): { parameters: unknown; sql: string } {
@@ -37,7 +39,16 @@ function golden(file: string): { parameters: unknown; sql: string } {
 
 describe("渲染金样例", () => {
   for (const dialect of Object.keys(databases) as (keyof typeof databases)[]) {
-    const cases = { ...sharedCases, ...dialectCases[dialect] };
+    const unsupported = unsupportedCases[dialect] ?? [];
+    const cases = { ...Object.fromEntries(Object.entries(sharedCases).filter(([name]) => !unsupported.includes(name))), ...dialectCases[dialect] };
+    for (const name of unsupported) {
+      it(`${dialect} 不支持 ${name}`, () => {
+        const statement = sharedCases[name]!.query();
+        const db = databases[dialect]({ shards: SHARDS });
+        assert.throws(() => (statement instanceof Write ? db.render(statement) : db.render(statement)));
+        assert.ok(!existsSync(SPEC + `${name}.${dialect}.sql`), `${name} has a golden file but is unsupported`);
+      });
+    }
     const filtered = databases[dialect]({ filters: [filter(ClientEntity, (r) => r.client.eq("100"))], shards: SHARDS });
     const unfiltered = databases[dialect]({ shards: SHARDS });
 

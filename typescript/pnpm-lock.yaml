@@ -56,6 +56,19 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  packages/sqlite:
+    dependencies:
+      '@zerodep-dev/query-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.54.1-build1
+        version: 3.54.1-build1
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+
   test:
     dependencies:
       '@zerodep-dev/query-core':
@@ -70,10 +83,16 @@ importers:
       '@zerodep-dev/query-postgres':
         specifier: workspace:*
         version: link:../packages/postgres
+      '@zerodep-dev/query-sqlite':
+        specifier: workspace:*
+        version: link:../packages/sqlite
     devDependencies:
       '@sap/hana-client':
         specifier: 2.30.27
         version: 2.30.27
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.54.1-build1
+        version: 3.54.1-build1
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
@@ -92,6 +111,10 @@ packages:
   '@sap/hana-client@2.30.27':
     resolution: {integrity: sha512-yXkwRcErq4BGfeNCtpkX7ZhZyjfz/IcP0H+QxQQtjrxA/prgm72pv3YC2GbHi5PMpHjjagQZrmaPUKXwYyEIJg==}
     engines: {node: '>=4.0.0'}
+
+  '@sqlite.org/sqlite-wasm@3.54.1-build1':
+    resolution: {integrity: sha512-foW427VBLJ3G87bsnvQTZCc9zYe0Fq1wH0pz1I6BlKLKXcArIAyTkHtq0iT2llmhcMQt9T/p6l5PpQQh+6O8uQ==}
+    engines: {node: '>=22'}
 
   '@types/node@24.19.2':
     resolution: {integrity: sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==}
@@ -341,6 +364,8 @@ snapshots:
       debug: 3.1.0
     transitivePeerDependencies:
       - supports-color
+
+  '@sqlite.org/sqlite-wasm@3.54.1-build1': {}
 
   '@types/node@24.19.2':
     dependencies:

@@ -660,9 +660,9 @@ export function limitAtMost<R>(q: Query<R>, n: number): Query<R> {
 function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean): void {
   s.arms.forEach((arm, i) => {
     if (i > 0) w.sql(`\n${w.dialect.setOperator(s.operators[i - 1]!)}\n`);
-    w.sql("(".repeat(s.groups.filter(([first]) => first === i).length));
+    w.sql(w.dialect.groupOpen.repeat(s.groups.filter(([first]) => first === i).length));
     renderArm(w, arm, s.labels, i === 0 && labeled, ordered);
-    w.sql(")".repeat(s.groups.filter(([, last]) => last === i).length));
+    w.sql(w.dialect.groupClose.repeat(s.groups.filter(([, last]) => last === i).length));
   });
   if (s.arms.length > 1) w.dialect.limit(w, s.limit, s.offset);
 }

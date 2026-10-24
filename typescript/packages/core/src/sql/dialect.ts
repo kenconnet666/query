@@ -162,6 +162,8 @@ const RESERVED = new Set(
  */
 export abstract class Dialect {
   readonly #functions = new Map<FunctionDef, FunctionRenderer>();
+  /** 按名字登记的函数和聚合写法，用于没有 {@link FunctionDef} 的调用（例如 LPAD、STDDEV_SAMP）。 */
+  readonly #calls = new Map<string, FunctionRenderer>();
 
   /** 方言名，出现在错误信息和数据库默认名里。 */
   abstract readonly name: string;
@@ -239,6 +241,44 @@ export abstract class Dialect {
 
   placeholder(_index: number): string {
     return "?";
+  }
+
+  /** 写出 FROM、JOIN、UPDATE、DELETE 里跟在来源后面的别名：默认 `来源 别名`，SQLite 写 `来源 AS 别名`。 */
+  sourceAlias(w: SqlWriter, alias: string): void {
+    w.sql(" ").alias(alias);
+  }
+
+  /**
+   * 写出与子查询的量化比较 `left op ANY (子查询)` / `ALL`。subquery 的列不带名字，named 是同一个子查询但列带名字，
+   * column 是那一列的名字；没有 ANY / ALL 的方言（SQLite）用 named 改写成 EXISTS。
+   */
+  quantified(w: SqlWriter, left: Renderable, operator: string, quantifier: string, subquery: Renderable, _named: Renderable, _column: string): void {
+    w.render(left).sql(` ${operator} ${quantifier} (`).render(subquery).sql(")");
+  }
+
+  /** 集合运算里一组括号的开头；SQLite 不能给复合查询的一段加括号，写成 `SELECT * FROM (`。 */
+  get groupOpen(): string {
+    return "(";
+  }
+
+  /** 集合运算里一组括号的结尾。 */
+  get groupClose(): string {
+    return ")";
+  }
+
+  /** 聚合 name 能否加 OVER (...) 当窗口函数用；方言用公式代替的聚合（例如 SQLite 的标准差）不能。 */
+  windowable(_name: string): boolean {
+    return true;
+  }
+
+  /** 写出类型转换；默认 `CAST(inner AS 类型名)`，类型名见 {@link castType}。 */
+  cast(w: SqlWriter, inner: Renderable, target: CastType<unknown>): void {
+    w.sql("CAST(").render(inner).sql(" AS ").sql(this.castType(target)).sql(")");
+  }
+
+  /** 写出算术运算 `(a op b op ...)`；括号保证嵌套时优先级不变。 */
+  arithmetic(w: SqlWriter, operator: string, operands: readonly Renderable[]): void {
+    w.sql("(").join(operands, ` ${operator} `).sql(")");
   }
 
   /** 写出分页子句 LIMIT / OFFSET；没有 limit 时 OFFSET 单独成行。 */
@@ -395,6 +435,19 @@ export abstract class Dialect {
   }
 
   /** 供子类在构造函数里为函数注册本方言的渲染方式。 */
+  /**
+   * 按名字登记一个普通函数或聚合的写法，覆盖 `NAME(arg, ...)`，供子类在构造函数中调用。
+   * 聚合带 `filter(...)` 时，参数已经换成 `CASE WHEN 条件 THEN 参数 END`。
+   */
+  protected registerCall(name: string, renderer: FunctionRenderer): void {
+    this.#calls.set(name, renderer);
+  }
+
+  /** 按名字登记的写法；没有登记则为 undefined，写成 `NAME(arg, ...)`。 */
+  callRenderer(name: string): FunctionRenderer | undefined {
+    return this.#calls.get(name);
+  }
+
   protected register(fn: FunctionDef, renderer: FunctionRenderer): void {
     this.#functions.set(fn, renderer);
   }

@@ -8,10 +8,12 @@
     "@zerodep-dev/query-core": "workspace:*",
     "@zerodep-dev/query-hana": "workspace:*",
     "@zerodep-dev/query-mysql": "workspace:*",
-    "@zerodep-dev/query-postgres": "workspace:*"
+    "@zerodep-dev/query-postgres": "workspace:*",
+    "@zerodep-dev/query-sqlite": "workspace:*"
   },
   "devDependencies": {
     "@sap/hana-client": "2.30.27",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "mysql2": "3.24.6",

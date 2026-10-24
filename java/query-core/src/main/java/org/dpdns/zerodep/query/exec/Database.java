@@ -87,6 +87,7 @@ public abstract class Database {
         attributes.put(NamingStrategy.class, config.naming);
         attributes.put(Fills.class, new Fills(config.fills, config.generators));
         attributes.put(Sharding.class, config.shards.isEmpty() ? Sharding.NONE : new Sharding(config.shards));
+        attributes.put(SqlWriter.WARNED, java.util.concurrent.ConcurrentHashMap.newKeySet());
         Map<String, String> schemas = Map.copyOf(config.schemas);
         UnaryOperator<String> schemaMapping = config.schemaMapping;
         attributes.put(SqlWriter.SCHEMAS, (UnaryOperator<String>) schema -> schemas.getOrDefault(schema, schemaMapping.apply(schema)));

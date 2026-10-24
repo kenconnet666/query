@@ -145,6 +145,8 @@ export {
   lit,
   locate,
   LOCATE,
+  CURRENT_DATE,
+  CURRENT_TIMESTAMP,
   lower,
   max,
   min,

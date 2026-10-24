@@ -146,14 +146,14 @@ export const decimal: SqlType<string> = type(
   },
 );
 
-/** 布尔值；也接受 0 / 1 和 't' / 'f' 等文本。 */
+/** 布尔值；也接受 0 / 1（含 bigint，SQLite 按整数存布尔）和 't' / 'f' 等文本。 */
 export const boolean: SqlType<boolean> = type(
   "boolean",
   "boolean",
   (v) => v,
   (raw) => {
     if (typeof raw === "boolean") return raw;
-    if (raw === 1 || raw === 0) return raw === 1;
+    if (raw === 1 || raw === 0 || raw === 1n || raw === 0n) return raw === 1 || raw === 1n;
     if (typeof raw === "string") {
       const s = raw.trim().toLowerCase();
       if (s === "t" || s === "true" || s === "1") return true;

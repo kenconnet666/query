@@ -282,6 +282,8 @@ export interface DatabaseOptions {
   readonly fills?: readonly Fill[];
   /** 执行前依次改写或拦截语句的钩子，见 {@link StatementInterceptor}。 */
   readonly interceptors?: readonly StatementInterceptor[];
+  /** 渲染时的警告，例如 SQLite 上需要编译选项的函数（每个数据库实例每种只警告一次）；缺省写到 console.warn。 */
+  readonly warn?: (message: string) => void;
   /**
    * 同库分表，例如按月：`[shard(Event, monthly("day", "2025-01", "2026-12"))]`。之后查询按 WHERE 里分表键的条件选表、写成 UNION ALL，
    * 写入按行或按条件写到对应的表；推不出来时报错，除非语句写了 `allShards()` 或 `onShards(...)`。`db.schema()` 按物理表建表和比较。
@@ -346,6 +348,7 @@ export abstract class Database {
       filters: options.filters ?? [],
       fills: options.fills ?? [],
       sharding: options.shards === undefined || options.shards.length === 0 ? Sharding.NONE : new Sharding(options.shards),
+      ...(options.warn === undefined ? {} : { warn: options.warn }),
       ...(options.schemas === undefined ? {} : { schema: schemaMapping(options.schemas) }),
       ...(options.naming === undefined ? {} : { naming: options.naming }),
       ...(options.functions === undefined ? {} : { functions: options.functions }),

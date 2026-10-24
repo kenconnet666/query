@@ -66,6 +66,7 @@ import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgG
 import * as pgx from "@zerodep-dev/query-postgres";
 import * as mysqlx from "@zerodep-dev/query-mysql";
 import * as hanax from "@zerodep-dev/query-hana";
+import { glob, median as sqliteMedian, percentileCont as sqlitePercentileCont, percentileDisc as sqlitePercentileDisc } from "@zerodep-dev/query-sqlite";
 import { Article, LipsByUnit, orgSource, SalesView, Tagged } from "./dialect-tables.js";
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
@@ -659,7 +660,7 @@ const groupingCases = (sets: typeof hanaGroupingSets, cubeOf: typeof hanaCube, p
   ),
 });
 
-export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readonly<Record<string, SpecCase>>>> = {
+export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqlite", Readonly<Record<string, SpecCase>>>> = {
   hana: {
     ...groupingCases(hanaGroupingSets, hanaCube, "hana"),
     "hana-extremes": plain(() =>
@@ -880,9 +881,29 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         })),
     ),
   },
+  sqlite: {
+    "sqlite-functions": plain(() =>
+      from(Lips)
+        .where((l) => glob(l.unit, "E*"))
+        .groupBy((l) => l.material)
+        .select((l) => ({
+          material: l.material,
+          middle: sqliteMedian(l.quantity),
+          p90: sqlitePercentileCont(0.9, l.quantity),
+          p50: sqlitePercentileDisc(0.5, l.quantity),
+          padded: lpad(l.material, 5, "0"),
+          head: left(l.material, 1),
+        })),
+    ),
+  },
 };
 
 /** 某个单位的交货行的物料。 */
 function materialsOf(unit: string) {
   return from(Lips).where((l) => l.unit.eq(unit)).select((l) => l.material);
 }
+
+/** 方言不支持的共享用例：渲染时必须报错，也不能有金样例文件；与 Java 各方言的 unsupportedCases 一致。 */
+export const unsupportedCases: Readonly<Partial<Record<keyof typeof dialectCases, readonly string[]>>> = {
+  sqlite: ["rollup", "workflow-claim"],
+};

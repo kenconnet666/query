@@ -261,3 +261,6 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm test
+      - name: 运行 SQLite 实库场景（node:sqlite 与 WASM，不需要数据库容器）
+        working-directory: typescript
+        run: node --test --test-concurrency=1 test/dist/live/sqlite.live.test.js test/dist/live/sqlite-wasm.live.test.js

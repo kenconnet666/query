@@ -93,6 +93,8 @@ export interface RenderSettings {
   readonly schema?: (schema: string) => string;
   /** 数据库级的分表；写入器不解读，由查询渲染器和写语句读取。 */
   readonly sharding?: unknown;
+  /** 渲染时的警告（例如 SQLite 需要编译选项的函数），见 {@link SqlWriter.warnOnce}；缺省写到 console.warn。 */
+  readonly warn?: (message: string) => void;
 }
 
 /** 表别名在一条语句内唯一，跨子查询和 CTE 主体也一样，所以关联引用不会被遮蔽。 */
@@ -104,6 +106,9 @@ class Aliases {
   /** 一条语句内共享的渲染状态，见 {@link SqlWriter.state}。 */
   readonly state = new Map<unknown, unknown>();
 }
+
+/** 每组渲染设置（即每个数据库实例）已经警告过的 key。 */
+const WARNED = new WeakMap<RenderSettings, Set<string>>();
 
 /** 文本块中参数占位符的标记；编号要到 {@link SqlWriter.statement} 时才定。 */
 const PARAMETER = Symbol("parameter");
@@ -129,6 +134,16 @@ export class SqlWriter {
   /** 本次渲染的列命名策略，默认原样。 */
   get naming(): NamingStrategy {
     return this.settings.naming ?? NamingStrategy.AS_IS;
+  }
+
+  /** 同一个数据库实例对同一个 key 只警告一次（没有数据库实例时按写入器的设置对象计）；写到 `settings.warn`，缺省 console.warn。 */
+  warnOnce(key: string, message: () => string): void {
+    let seen = WARNED.get(this.settings);
+    if (seen === undefined) WARNED.set(this.settings, (seen = new Set()));
+    if (seen.has(key)) return;
+    seen.add(key);
+    const warn = this.settings.warn ?? ((text: string) => (globalThis as { console?: { warn(text: string): void } }).console?.warn(text));
+    warn(message());
   }
 
   /** 一条语句内共享的渲染状态（例如分表的路由），子查询的写入器也看得到；没有时为 undefined。 */

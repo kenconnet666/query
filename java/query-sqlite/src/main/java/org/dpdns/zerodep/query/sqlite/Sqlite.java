@@ -105,7 +105,7 @@ public final class Sqlite extends Sql {
 
     /** 需要编译选项的方言函数：第一次渲染时警告，再写成 {@code name(args)}。 */
     private static void extension(SqlWriter w, String key, String name, List<? extends org.dpdns.zerodep.query.dialect.Renderable> args) {
-        ((SqliteDialect) w.dialect()).warnOnce(key);
+        ((SqliteDialect) w.dialect()).warnOnce(w, key);
         FunctionDef.call(w, name, args);
     }
 

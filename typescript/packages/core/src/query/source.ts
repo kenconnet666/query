@@ -96,7 +96,7 @@ export class RefOwner implements ColumnOwner {
     const shards = w.state(this);
     if (Array.isArray(shards)) renderShards(w, this, shards as string[]);
     else this.source.renderSource(w);
-    w.sql(" ").alias(this.alias(w));
+    w.dialect.sourceAlias(w, this.alias(w));
   }
 }
 

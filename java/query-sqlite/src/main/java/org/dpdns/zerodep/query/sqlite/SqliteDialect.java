@@ -50,7 +50,7 @@ public class SqliteDialect extends Dialect {
     /** 用公式代替的统计聚合，不能加 OVER (...)。 */
     private static final Set<String> FORMULAS = Set.of("STDDEV_SAMP", "STDDEV_POP", "VAR_SAMP", "VAR_POP");
 
-    /** 已经警告过的函数，每个函数只警告一次。 */
+    /** 没有数据库实例时已经警告过的 key。 */
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
 
     /** 时间戳的文本格式：秒之后的小数去掉末尾的零，与写入的参数、字面量一致。 */
@@ -134,21 +134,27 @@ public class SqliteDialect extends Dialect {
     /** 需要编译选项的函数：照常写成 {@code NAME(args)}，第一次渲染时记一条警告。 */
     private FunctionRenderer extension(String name) {
         return (w, args) -> {
-            warnOnce(name);
+            warnOnce(w, name);
             FunctionDef.call(w, name.toLowerCase(java.util.Locale.ROOT), args);
         };
     }
 
-    /** 函数 name 需要编译选项时，第一次渲染记一条警告；供门面里的方言专属函数使用。 */
-    void warnOnce(String name) {
+    /** 函数 name 需要编译选项时，每个数据库实例第一次渲染记一条警告；供门面里的方言专属函数使用。 */
+    void warnOnce(SqlWriter w, String name) {
         String option = EXTENSIONS.get(name);
-        if (option != null) warn(name, () -> name + "() needs SQLite built with " + option + "; sqlite-jdbc, node:sqlite and the official WASM build have it");
+        if (option == null) return;
+        Set<String> seen = w.attribute(SqlWriter.WARNED) instanceof Set<?> s ? castSet(s) : warned;
+        if (seen.add(name)) LOG.log(System.Logger.Level.WARNING, () -> name + "() needs SQLite built with " + option + "; sqlite-jdbc, node:sqlite and the official WASM build have it");
     }
 
-    /** 同一个 key 只记一次的警告。 */
+    /** 没有数据库实例时（例如结构变更略过注释）按方言实例记一次的警告。 */
     void warn(String key, java.util.function.Supplier<String> message) {
         if (warned.add(key)) LOG.log(System.Logger.Level.WARNING, message);
     }
+
+    /** 数据库实例放在写入器属性里的警告集合。 */
+    @SuppressWarnings("unchecked")
+    private static Set<String> castSet(Set<?> s) { return (Set<String>) s; }
 
     /**
      * 方差的公式 {@code (SUM(x*x) - SUM(x)*SUM(x)/COUNT(x)) / (COUNT(x) - 1)}（总体方差除以 COUNT(x)），
@@ -163,7 +169,7 @@ public class SqliteDialect extends Dialect {
 
     /** 标准差：方差开平方（{@code sqrt} 需要数学函数）。 */
     private void deviation(SqlWriter w, Renderable x, boolean sample) {
-        warnOnce("SQRT");
+        warnOnce(w, "SQRT");
         w.sql("sqrt(");
         variance(w, x, sample);
         w.sql(")");
@@ -235,11 +241,10 @@ public class SqliteDialect extends Dialect {
     /** 公式代替的统计聚合不能当窗口函数用。 */
     @Override public boolean windowable(String name) { return !FORMULAS.contains(name); }
 
-    /** 日期和时间戳写成规整的文本（存的就是文本），布尔写成 1 / 0。 */
+    /** 日期和时间戳写成规整的文本（存的就是文本）。 */
     @Override public void literal(SqlWriter w, Object value) {
         if (value instanceof LocalDate d) w.sql("'" + d + "'");
         else if (value instanceof LocalDateTime t) w.sql("'" + TIMESTAMP.format(t) + "'");
-        else if (value instanceof Boolean b) w.sql(b ? "1" : "0");
         else super.literal(w, value);
     }
 

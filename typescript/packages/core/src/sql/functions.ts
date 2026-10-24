@@ -40,6 +40,12 @@ export const CONCAT = FunctionDef.of("CONCAT", (w, args) => w.sql("(").join(args
 /** `LOCATE(text, search)`；PostgreSQL 和 MySQL 注册自己的写法。 */
 export const LOCATE = FunctionDef.of("LOCATE");
 
+/** 当前日期；SQLite 写成本地时区的 `date('now', 'localtime')`。 */
+export const CURRENT_DATE = FunctionDef.of("CURRENT_DATE", (w) => void w.sql("CURRENT_DATE"));
+
+/** 当前时间戳（会话时区）；SQLite 写成本地时区的 `strftime(..., 'now', 'localtime')`。 */
+export const CURRENT_TIMESTAMP = FunctionDef.of("CURRENT_TIMESTAMP", (w) => void w.sql("CURRENT_TIMESTAMP"));
+
 /** `YEAR(d)`；PostgreSQL 注册 EXTRACT 写法，下面的 MONTH、DAYOFMONTH 相同。 */
 export const YEAR = FunctionDef.of("YEAR");
 
@@ -710,10 +716,10 @@ export function keys(...items: Expr<unknown>[]): KeyTuple {
 
 /** CURRENT_DATE：数据库当前日期。 */
 export function currentDate(): Expr<string> {
-  return raw(date, "CURRENT_DATE");
+  return functionCall(date, CURRENT_DATE, []);
 }
 
 /** CURRENT_TIMESTAMP：数据库当前时间戳。 */
 export function currentTimestamp(): Expr<string> {
-  return raw(timestamp, "CURRENT_TIMESTAMP");
+  return functionCall(timestamp, CURRENT_TIMESTAMP, []);
 }

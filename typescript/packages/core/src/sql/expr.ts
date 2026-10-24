@@ -1,5 +1,5 @@
 import { FunctionDef } from "./dialect.js";
-import { COLUMN_TYPES, SUBQUERY } from "../internal.js";
+import { COLUMN_TYPES, NAMED, SUBQUERY } from "../internal.js";
 import type { From, Query } from "../query/query.js";
 import { typeOf, type CastType, type SqlType } from "../schema/types.js";
 import type { Renderable, SqlWriter } from "./writer.js";
@@ -386,9 +386,12 @@ export class Comparison extends Cond {
     super();
   }
 
-  /** 写出 `left op right`。 */
+  /** 写出 `left op right`；右边是 ANY / ALL 子查询时交给方言（SQLite 改写成 EXISTS）。 */
   render(w: SqlWriter): void {
-    w.render(this.left).sql(` ${this.operator} `).render(this.right);
+    const q = this.right;
+    if (q instanceof Quantified) {
+      w.dialect.quantified(w, this.left, this.operator, q.quantifier, { render: (x) => q.query[SUBQUERY](x) }, { render: (x) => q.query[NAMED](x) }, q.query.labels[0]!);
+    } else w.render(this.left).sql(` ${this.operator} `).render(this.right);
   }
 }
 
@@ -450,11 +453,25 @@ export function rowInQuery(keys: readonly Expr<unknown>[], query: Query<unknown>
 export function quantified<T>(quantifier: "ANY" | "ALL", query: Query<T>): Expr<T> {
   const types = query[COLUMN_TYPES];
   if (types.length !== 1) throw new Error(`${quantifier} needs a subquery of one column, this one selects ${types.length}`);
-  return expression(types[0] as SqlType<NonNullable<T>>, (w) => {
-    w.sql(quantifier).sql(" (");
-    query[SUBQUERY](w);
+  return new Quantified(types[0] as SqlType<NonNullable<T>>, quantifier, query);
+}
+
+/** `ANY (子查询)` 或 `ALL (子查询)`，只能放在比较的右侧；比较交给方言渲染（SQLite 改写成 EXISTS）。 */
+export class Quantified<T> extends Expr<T> {
+  constructor(
+    type: SqlType<NonNullable<T>>,
+    readonly quantifier: "ANY" | "ALL",
+    readonly query: Query<T>,
+  ) {
+    super(type);
+  }
+
+  /** 单独渲染时写成 `ANY (子查询)`。 */
+  render(w: SqlWriter): void {
+    w.sql(this.quantifier).sql(" (");
+    this.query[SUBQUERY](w);
     w.sql(")");
-  });
+  }
 }
 
 /** 对查询、或对没有 SELECT 列表的作用域做 EXISTS：`exists(from(Vbkd).where((v) => ...))`。 */
@@ -608,10 +625,15 @@ class Call<T> extends Expr<T> {
     super(type);
   }
 
-  /** 按方言渲染函数定义，或直接写成 NAME(args)。 */
+  /** 按方言渲染函数定义；字符串名先找方言按名字登记的写法，没有时写成 NAME(args)。 */
   render(w: SqlWriter): void {
-    if (typeof this.fn === "string") FunctionDef.call(w, this.fn, this.args);
-    else this.fn.render(w, this.args);
+    if (typeof this.fn !== "string") {
+      this.fn.render(w, this.args);
+      return;
+    }
+    const custom = w.dialect.callRenderer(this.fn);
+    if (custom !== undefined) custom(w, this.args);
+    else FunctionDef.call(w, this.fn, this.args);
   }
 }
 
@@ -655,9 +677,9 @@ export class Arithmetic<T> extends Expr<T> {
     super(type);
   }
 
-  /** 写出带括号、用运算符连接的操作数。 */
+  /** 写出带括号、用运算符连接的操作数，由方言决定（SQLite 的除法先转成浮点）。 */
   render(w: SqlWriter): void {
-    w.sql("(").join(this.operands, ` ${this.operator} `).sql(")");
+    w.dialect.arithmetic(w, this.operator, this.operands);
   }
 }
 
@@ -670,9 +692,9 @@ class CastExpr extends Expr<unknown> {
     super(target.type as SqlType<{}>);
   }
 
-  /** 写出 CAST(内部表达式 AS 目标类型)。 */
+  /** 写出 CAST(内部表达式 AS 目标类型)，由方言决定（SQLite 的日期写成 date(...)）。 */
   render(w: SqlWriter): void {
-    w.sql("CAST(").render(this.inner).sql(" AS ").sql(w.dialect.castType(this.target)).sql(")");
+    w.dialect.cast(w, this.inner, this.target);
   }
 }
 
@@ -800,8 +822,9 @@ class Over<T> extends Expr<T> {
     super(fn.type);
   }
 
-  /** 写出 `fn OVER (window)`。 */
+  /** 写出 `fn OVER (window)`；方言不能把这个聚合当窗口函数时报错。 */
   render(w: SqlWriter): void {
+    if (this.fn instanceof Aggregate && !w.dialect.windowable(this.fn.name)) throw new Error(`${this.fn.name}(...) OVER (...) is not supported on ${w.dialect.name}`);
     w.render(this.fn).sql(" OVER (").render(this.window).sql(")");
   }
 }
@@ -834,8 +857,17 @@ export class Aggregate<T> extends Expr<T> {
     return new Over(this, window(Window.EMPTY));
   }
 
-  /** 写出 NAME([DISTINCT ]args)；没有参数时是 NAME(*)，有过滤条件时参数换成 CASE WHEN 条件 THEN 参数 END。 */
+  /**
+   * 写出 NAME([DISTINCT ]args)；没有参数时是 NAME(*)，有过滤条件时参数换成 CASE WHEN 条件 THEN 参数 END。
+   * 方言按名字登记了写法时（不带 DISTINCT）交给它，参数同样先套上过滤条件。
+   */
   render(w: SqlWriter): void {
+    const custom = this.distinct ? undefined : w.dialect.callRenderer(this.name);
+    if (custom !== undefined) {
+      const condition = this.condition;
+      custom(w, condition === undefined ? this.args : this.args.map((a) => ({ render: (x: SqlWriter) => void x.sql("CASE WHEN ").render(condition).sql(" THEN ").render(a).sql(" END") })));
+      return;
+    }
     w.sql(this.name + "(");
     if (this.distinct) w.sql("DISTINCT ");
     if (this.condition) {

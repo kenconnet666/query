@@ -106,6 +106,9 @@ public final class SqlWriter {
         return this;
     }
 
+    /** {@link #attribute} 的键：数据库实例已经警告过的 key（{@code Set<String>}），方言用它让每个实例每种警告只记一次。 */
+    public static final Object WARNED = new Object();
+
     /** {@link #attribute} 的键：数据库实例配置的 schema 映射，值是 {@code UnaryOperator<String>}。 */
     public static final Object SCHEMAS = new Object();
 
