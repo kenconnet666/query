@@ -2,11 +2,11 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），尚未合并、尚未发布。之后在 `feat/sqlite-idb`（基于 `feat/v2`）上完成了 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言（两端，含浏览器里的 SQLite WASM）和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，同样尚未合并。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表）。之后在 `feat/sqlite-idb`（基于 `feat/v2`）上完成了 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言（两端，含浏览器里的 SQLite WASM）和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包的第一、二阶段。两者已于 2026-10-24 经 [PR #12](https://github.com/kenconnet666/query/pull/12) 一起合并进 `master`（合并提交 `b15f0af`），**尚未发布**。合并时最后一个提交（TS 升到 7.1.0-beta）的 CI 还在运行，本机已跑过对应的全部 TS 测试；接手时先在 Actions 里确认 `master` 上那次运行是绿的。
 
 ## 当前状态
 
-### 2.0 完成了什么（`feat/v2`，设计见 [0006](../docs/decisions/0006-query-model-direction.md)）
+### 2.0 完成了什么（原 `feat/v2`，已合并，设计见 [0006](../docs/decisions/0006-query-model-direction.md)）
 
 - **第一期 骨架与删减**：Java 的表改为继承 `Entity` 的接口（每次表出现一个动态代理），投影只留单个表达式、`cols`、`row`、`selectAs`、`into`；`skipEmpty()` 代替 `IfPresent` 系列；作用域 16 张表、`row` 22 个参数由 `tools/generate-java-scopes.mjs` 生成。TS 同步删除重复写法。
 - **整理**：Java 核心包按职责分子包（`table`、`expr`、`scope`、`select`、`exec` 等），TS 源码分 `schema`、`sql`、`query`、`exec` 文件夹；全部注释改为中文。
@@ -51,15 +51,14 @@
 
 ## 待用户决定或执行
 
-- **合并 `feat/v2` 与 `feat/sqlite-idb`**：需要用户同意后开 PR 合并进 `master`；`feat/sqlite-idb` 基于 `feat/v2`，可以先合并 `feat/v2`，也可以一起合并。
-- **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
+- **发布 2.0.0 / 2.1.0**：版本号目前是开发版（根 POM 与各模块 parent 是 `2.0.0-SNAPSHOT`，TS 各包是 `2.0.0-dev`），发布时要和 `docs/api.md` 的依赖示例一起改成正式版本；CHANGELOG 的 2.0.0 和 2.1.0 都写着"未发布"。可以先发 2.0.0 再发 2.1.0，也可以把两者合成一次发布，由用户决定。新增的 `query-sqlite`、`@zerodep-dev/query-sqlite`、`@zerodep-dev/idb` 第一次发布，按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
 - **PolarDB MySQL 兼容**：2026-10-24 调研完，结论在 [0011](../docs/decisions/0011-polardb-mysql.md)。用户说先不动代码、以后再说；以后要做时先在 PolarDB 测试集群上跑 MySQL 实库场景。
 - **流程引擎本身**：用户 2026-10-24 说先不做；读查询（阶段 B）和写入（0007）已经为它备好。
 
 ## 下一步
 
-阶段 A、阶段 B、写入能力、下面的四批、A/B/C 三批和 0008 都已完成并推送到 `feat/v2`；0009 与 0010 的第一、二阶段完成并推送到 `feat/sqlite-idb`。合并与发布 2.0 / 2.1、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
+2.0（阶段 A、阶段 B、写入能力、四批、A/B/C 三批和 0008）与 2.1（0009 与 0010 的第一、二阶段）都已合并进 `master`。新的工作从 `master` 开分支。等用户决定的是：发布 2.0 / 2.1、前身仓库是否冻结、何时开始流程引擎、PolarDB 兼容（0011）。没有决定之前，可以做的是 0010 的第三阶段（IndexedDB 的示例与发布准备）和 Firefox / Safari 上的浏览器实测。
 
 2026-10-24 对照 EasyQuery 讨论后规划并完成了四批（用户确认"暂不做代码生成"后要求四批都做；每批两端、三方言同步，带金样例与实库场景，各批的提交与 CI 见 git log）：
 
@@ -84,7 +83,7 @@
 - **0008 实体追踪**：Java `db.tracking` / `tracked`、TS `db.tracking`，写成功后才写回版本、刷新快照；`Update.changedRows()`。
 - **0008 分区与分表**：`@TableOption`（TS `options`）写原生分区；`Config.shard` / 选项 `shards` 注册同库物理分表，按 WHERE 选表、`UNION ALL`、写入按行路由、`allShards()` / `onShards(...)`；三库执行计划都把外层条件推进各分支。
 
-### 0009 SQLite 与 0010 IndexedDB（已完成，`feat/sqlite-idb`；用户 2026-10-24 确认"就按照你的规划去做"）
+### 0009 SQLite 与 0010 IndexedDB（已完成，原 `feat/sqlite-idb`，已合并；用户 2026-10-24 确认"就按照你的规划去做"）
 
 - **用户的决定**：SQLite 两端都做；只有带扩展的构建才支持的函数照常渲染并警告，完全不支持的在类型上拦住或渲染时报错；小数用 NUMERIC 亲和。IndexedDB 是给前端用的轻量本地存储，离线同步完全不做，只支持新浏览器；独立的包 `@zerodep-dev/idb`，自己的装饰器，不依赖核心包。
 - **SQLite（Java）**：`query-sqlite`（门面 `Sqlite`、`SqliteDialect`、`SqliteSchemaSyntax`），sqlite-jdbc 3.53.4.0 是测试依赖。核心加了方言钩子：按名字覆盖函数、窗口、CAST、算术、量化子查询、集合运算分组、写语句别名、`honoursQueryTimeout`（sqlite-jdbc 不理会 setQueryTimeout，由 `exec/Watchdog` 调 cancel）。`SchemaSyntax` 加了能力声明（`altersColumns`、`inlineForeignKeys`、`storesComments`）。警告按数据库实例去重（`SqlWriter.WARNED`）。实库场景用临时文件库加 `ATTACH ... AS QUERY_IT`。
