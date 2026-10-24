@@ -54,6 +54,7 @@
 - **合并 `feat/v2` 与 `feat/sqlite-idb`**：需要用户同意后开 PR 合并进 `master`；`feat/sqlite-idb` 基于 `feat/v2`，可以先合并 `feat/v2`，也可以一起合并。
 - **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
+- **PolarDB MySQL 兼容**：2026-10-24 调研完，结论在 [0011](../docs/decisions/0011-polardb-mysql.md)。用户说先不动代码、以后再说；以后要做时先在 PolarDB 测试集群上跑 MySQL 实库场景。
 - **流程引擎本身**：用户 2026-10-24 说先不做；读查询（阶段 B）和写入（0007）已经为它备好。
 
 ## 下一步
