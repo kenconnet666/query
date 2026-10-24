@@ -53,18 +53,20 @@
 | 复用的 SQL 片段 | 字符串拼接 | 返回 CTE、条件或表达式的普通方法 | 1 |
 | 分组表达式中的常量 | 由用户处理 | SELECT 列表与分组相关子句中的常量自动写成字面量，WHERE 与 ON 仍绑定参数（0002 第 10 条） | 1 |
 | `IN` 大列表 | 由用户自行分批 | 超过方言上限时自动拆成多个 `IN` 并用 OR 连接；空列表渲染成恒假条件 | 1 |
-| 多租户、逻辑删除（读） | 谓词拦截器 `PredicateFilterInterceptor` | 全局过滤器 `filter(Type.class, ref -> cond)`，按实体的父类型或接口匹配；单个查询可用 `unfiltered()` 关闭 | 1 |
+| 多租户、逻辑删除（读） | 谓词拦截器 `PredicateFilterInterceptor`，`noInterceptor(name)`、`disableLogicDelete()` | 全局过滤器 `filter(Type.class, ref -> cond)`，按实体的父类型或接口匹配；具名的 `filter("tenant", ...)` 可以用 `unfiltered("tenant")` 单独关闭，`withDeleted()` 只关逻辑删除，`unfiltered()` 全部关闭 | 1 / 2.0 |
+| 运行时 schema | `RuntimeSchemaProvider`、`asSchema(...)` | 数据库实例的 `schema("ERP", "SAPHANADB")` 或按规则换名；不做查询级的动态表名 | 2.0 |
 
 ## 类型与扩展
 
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
 | 值转换 | `ValueConverter<T, P>`、`@Column(conversion)` | `Converter<J, D>`，配合组合注解 `@ConvertWith` 使用 | 1 |
-| 枚举 | `@Enumerated` 等 | 默认按名称映射；按编码映射由转换器提供 | 1 |
+| 枚举 | `@Enumerated`、`ValueAutoConverterProvider` | 默认按名称映射；实现 `CodeEnum<C>` 的按编码映射（Java；TS 用字面量联合） | 1 / 2.0 |
 | SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
 | 加密列 | `@Encryption` | `Converter` 在写入、读取和比较参数三处都转换，应用侧加解密可直接实现，等值查询可用；不做可以 LIKE 的分段加密 | 1 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
-| 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`daysBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`） | 2.0 |
+| 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`hour`、`minute`、`second`、`addDays`、`addMonths`、`addYears`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`、`daysBetween`、`secondsBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`）；周相关函数三库规则不同，暂不做 | 2.0 |
+| 文本补齐与数值函数 | `leftPad`、`rightPad`、`SQLMathFunc` | `lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`，三库实测一致；`length` 各库计法不同，留在方言包 | 2.0 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
 | 自定义方言 | 继承上游的内部类 | 继承开放的 `Dialect` 类，覆盖其中的钩子 | 1 |
 
@@ -81,10 +83,14 @@
 | 按主键写、乐观锁 | `@Version`、按实体更新 | `byId(rows)`：WHERE 主键加旧版本，SET 版本加一，冲突时抛异常；`skipEmpty().byId` 只更新非空属性 | 2.0 |
 | 主键生成 | `@Column(generatedKey)`、主键生成器 | `@Generated` 加 `db.insertKeys(insert)` 取回数据库生成的值；不做应用侧的主键生成器 | 2.0 |
 | 插入或更新 | `onConflictThen` | `.onConflict(keys).update(cols)` / `.doNothing()`：HANA `MERGE`、PostgreSQL `ON CONFLICT`、MySQL `ON DUPLICATE KEY UPDATE` | 2.0 |
-| 逻辑删除 | `@LogicDelete` 加策略 | `@LogicDelete(active, deleted)`，数值、文本或时间戳列；查询自动过滤，删除改成 UPDATE，`.physically()` 物理删除 | 2.0 |
-| 审计字段 | 拦截器 `EntityInterceptor` | 数据库实例的 `onInsert` / `onUpdate`，按父接口匹配，总是覆盖 | 2.0 |
+| 逻辑删除 | `@LogicDelete` 加策略（含 `DELETE_LONG_TIMESTAMP`） | `@LogicDelete(active, deleted)`，数值、文本或时间戳列，`epochMillis = true` 时删除写当前毫秒数；查询自动过滤，删除改成 UPDATE，`.physically()` 物理删除 | 2.0 |
+| 审计字段 | 拦截器 `EntityInterceptor` | 数据库实例的 `onInsert` / `onUpdate`，按父接口匹配，总是覆盖；单条语句 `.withoutFills()` 不填 | 2.0 |
+| 列级写入策略 | `@InsertIgnore`、`@UpdateIgnore` | `@ReadOnly`（从不写）、`@WriteOnce`（只在插入时写） | 2.0 |
+| 联表更新、删除 | 导航属性隐式 JOIN（`updatable(...).where(c -> c.user().name()...)`） | 写语句的 WHERE 经过导航时写成 `EXISTS (... LEFT JOIN ...)`，三库语义一致；显式联表写法只在方言包：`updateJoin` / `deleteJoin`，HANA 写成 MERGE 防止一行匹配多行时误写 | 2.0 |
+| 是否存在 | `any()` | `db.exists(q)` | 2.0 |
 | 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
-| 实体追踪 | `track` | — | — |
+| 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照 | 不做线程绑定的跟踪；差异更新写成 `update(T).byId(edited).diffFrom(loaded)`，由调用方给出修改前的行 | 2.0 |
+| 对象图级联保存 | `savable(root)` | 暂不做；随流程引擎再按"显式一层子行同步加中间表"评估 | 3 |
 | DDL、迁移 | code first、migration | — | — |
 
 ## 流程引擎的读查询

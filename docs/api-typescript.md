@@ -35,6 +35,7 @@
 | 原生 SQL 片段 | `` sql(text)`LPAD(${l.material}, ${18}, '0')` ``、`` sqlCond`...` ``、`` sqlTable({ ... })`...` `` |
 | 执行 | `await db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`for await (const r of db.stream(q))` |
 | `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T).values(rows))`、`update(T).set((t) => ({ x: v })).where(...)`、`deleteFrom(T).where(...)`；按主键 `.byId(row)`，见第 15 节 |
+| 联表 `UPDATE` / `DELETE` | 方言包的 `updateJoin(T, S, (t, s) => on).set(...).where(...)`、`deleteJoin(...)`，见第 15 节 |
 
 ## 1. 依赖与数据库实例
 
@@ -45,7 +46,8 @@ import pg from "pg";
 import { database, filter, from, inMemoryCache, NamingStrategy, sum } from "@zerodep-dev/query-postgres"; // 或 @zerodep-dev/query-hana、@zerodep-dev/query-mysql
 
 const db = database(new pg.Pool({ /* ... */ }), {
-  filters: [filter(ClientEntity, (r) => r.client.eq("100"))],   // 全局过滤器
+  filters: [filter("tenant", ClientEntity, (r) => r.client.eq("100"))], // 全局过滤器；有名字时可以用 unfiltered("tenant") 单独关掉
+  schemas: { ERP: "SAPHANADB" },                                 // 表声明里的 schema 换成实际名字，也可以是 (s) => ...
   cache: inMemoryCache(),                                        // 结果缓存（按查询开启）
   listener: (e) => log.debug(`${e.statement.sql} ${e.elapsedMs}ms`),
   printSql: true,                                                // 打印每条语句，见第 10 节
@@ -174,7 +176,8 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 | `having`、`groupBy(… => expr 或 [expr, ...])` | 分组与分组后的条件 |
 | `groupByRollup(… => [expr, ...])` | 分组并加上各级小计和总计：HANA、PostgreSQL 渲染 `ROLLUP(a, b)`，MySQL 渲染 `a, b WITH ROLLUP`；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `orderBy(… => item 或 [item, ...])` | 排序项可以是 `expr`（升序）、`expr.desc()`、`.nullsLast()` 等 |
-| `distinct()`、`limit(n)`、`offset(n)`、`unfiltered()` | `unfiltered()` 跳过全局过滤器 |
+| `distinct()`、`limit(n)`、`offset(n)` | — |
+| `unfiltered()`、`unfiltered("tenant")`、`withDeleted()` | 不加全局过滤器和逻辑删除条件；只关掉这些名字的过滤器（名字没配置过时报错）；只关掉逻辑删除（看已删除的行） |
 | `with(clause)` / `with((…) => clause)` | 方言子句，例如 `hint("NO_CS_JOIN")` |
 | `pipe(fragment)` | 套用可复用的片段：`(scope) => scope.where(...)` |
 
@@ -408,9 +411,9 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () => cond)`、`ifPresent(v, (x) => cond)`、`exists`、`notExists`、`like`、`notLike`（模式原样，`%` `_` 是通配符）、`contains`、`startsWith`、`endsWith`（转义通配符） |
 | 值 | `val(x, type?)`（参数）、`lit(x, type?)`（字面量，只用于固定代码值）、`nullOf(type)`；文本、数字、布尔的类型放宽为 `string`、`number`、`boolean`，所以只差一个常量的 UNION 各段类型相同 |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
-| 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil` |
-| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)`、`secondsBetween(from, to)`（时间戳，整秒） |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start, length?)`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是数字，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))`。`lpad(e, n, pad)`、`rpad(e, n, pad)` 补足到 n 个字符（物料号补零 `lpad(m.material, 18, "0")`），过长时截断 |
+| 数值 | `plus`（也接收数组）、`minus`、`times`、`divide`（被除数须为 decimal 或 double）、`negate`、`abs`、`round`、`floor`、`ceil`、`mod`（符号同被除数）、`power`、`sqrt`（结果是 number）、`sign`。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 null |
+| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`monthStart(d)`（当月第一天）、`daysBetween(from, to)`；时间戳的 `hour`、`minute`、`second`（整数）、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(from, to)`（整秒）。字符长度各库计法不同，用方言函数，例如 HANA 的 `length` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, ...order)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity).filter(l.unit.eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
@@ -513,6 +516,7 @@ console.log(events[0]!.statement.debugSql());
 | `db.first(q)` | 第一行或 `undefined`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, fn)` | 在一个游标上逐行读取：HANA 用 ResultSet，PostgreSQL 用服务端游标（需要连接池），MySQL 用流式查询（需要连接池）；提前 `break` 会释放游标。带 `list(...)` 的查询先读完全部行再交付 |
 | `db.count(q)` | 外包 `COUNT(*)` |
+| `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size, total?)` | 页号从 1 开始，同时返回总数和总页数；传入已知的 `total` 时不再执行 COUNT |
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列，另有 `first()`、`one()`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(60_000)` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的值；并发读取同一个键只查询一次 |
@@ -600,6 +604,7 @@ class Doc extends Audited {
   @column("TITLE") title!: string | null;
   @version @column("VERSION", integer) version!: number;  // 乐观锁版本，integer 或 bigint
   @logicDelete() @column("DELETED", integer) deleted!: number; // 逻辑删除，默认 0 未删除、1 已删除；logicDelete("N", "Y") 改值
+  @readOnly @column("SOURCE") source!: string | null;     // 只读：数据库默认值或触发器维护，本库从不写
 }
 
 @table("SEQ")
@@ -614,13 +619,17 @@ class Seq {
 | `insertInto(Doc).values({ id: "D1", title: "a", version: 1 }, ...)` | 行是普通对象，键对应字段；各行的键必须相同，值为 null 写 NULL。行在一个事务里逐行执行 |
 | `insertInto(Note).from(query)` | 查询的结果键对应字段 |
 | `update(Note).set((n) => ({ qty: plus(n.qty, val(10)), status: "closed" })).where(...).expect(1)` | SET 的值可以是值或表达式；`skipEmpty()` 省略空值；影响的行数不符时抛 `UnexpectedRowCountError` |
-| `deleteFrom(Note).where((n) => n.status.eq("closed"))` | 没有 where 的 UPDATE、DELETE 报错，`.all()` 放行；全局过滤器和逻辑删除的条件加进 WHERE，`unfiltered()` 关闭 |
+| `deleteFrom(Note).where((n) => n.status.eq("closed"))` | 没有 where 的 UPDATE、DELETE 报错，`.all()` 放行；全局过滤器和逻辑删除的条件加进 WHERE，`unfiltered(...)`、`withDeleted()` 同查询 |
+| `update(Lips).set(...).where((l) => l.mara.manufacturer.eq("MK1"))` | WHERE 里的导航写成 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN MARA ... WHERE ...)`，与查询里导航的语义相同；SET 里不能用导航 |
 | `update(Doc).byId(row)`、`deleteFrom(Doc).byId(row)` | 按主键（和版本）定位一行，SET 其余字段、版本加一；版本不对时抛 `UnexpectedRowCountError` |
+| `update(Doc).byId(edited).diffFrom(loaded)` | 差异更新：只 SET 与修改前不同的字段（decimal 按数值比较）；完全没变的行不发语句、不加版本、不计入期望行数 |
+| `@readOnly`、`@writeOnce` | 只读列插入和更新都不写，`set(...)` 显式写报错；只插入列（例如创建时间）插入时写，`byId` 和插入或更新的更新部分不写 |
+| `.withoutFills()` | 插入、更新、删除都可以加：不套用审计填充，例如迁移数据时保留原值 |
 | `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
 | `.onConflict().update((d) => d.title)`、`.onConflict((d) => d.id).doNothing()` | 插入或更新；不写键时用 `@id` 的列，`update()` 不写列时更新键以外的全部列 |
 | `.with(forUpdate("skipLocked"))` | 加锁读，另有 `"wait"`（默认）、`"nowait"`；HANA 写作 `IGNORE LOCKED` |
 | `await db.transaction(async () => { ... })` | 一个连接上的事务：正常返回提交，抛出时回滚；里面的 `db.*` 调用经 AsyncLocalStorage 用同一个连接，嵌套调用加入外层事务 |
-| `deleteFrom(Doc).where(...)` 在带 `@logicDelete` 的表上 | 改写成 `UPDATE ... SET DELETED = 1`，`.physically()` 才真正删除；查询、连接、关系都自动加"未删除"条件；插入时补上未删除的值；`timestamp` 列记录删除时间（`IS NULL` / `CURRENT_TIMESTAMP`） |
+| `deleteFrom(Doc).where(...)` 在带 `@logicDelete` 的表上 | 改写成 `UPDATE ... SET DELETED = 1`，`.physically()` 才真正删除；查询、连接、关系都自动加"未删除"条件；插入时补上未删除的值；`timestamp` 列记录删除时间（`IS NULL` / `CURRENT_TIMESTAMP`）；`@logicDelete({ epochMillis: true })` 的 bigint 列未删除为 0、删除写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建 |
 
 **审计字段自动填充**：
 
@@ -638,6 +647,21 @@ const db = database(pool, {
 
 自己实现的 `Driver` 要在 `DriverResult` 里返回 `affected`（MySQL 还有 `insertId`），并实现 `transaction(work)` 才能用 `db.transaction` 和多行写入。
 
+**联表更新与删除**（只在方言包里）：
+
+```ts
+import { deleteJoin, updateJoin } from "@zerodep-dev/query-postgres"; // 或 query-mysql、query-hana
+
+await db.execute(
+  updateJoin(Note, Doc, (n, d) => n.id.eq(d.id))
+    .set((_n, d) => ({ title: d.title }))
+    .where((_n, d) => d.version.gt(1)),
+);
+await db.execute(deleteJoin(Note, Doc, (n, d) => n.id.eq(d.id)).where((_n, d) => d.title.eq("gone")));
+```
+
+写法和规则同 Java 版第 15 节：PostgreSQL 写成 `UPDATE ... FROM` / `DELETE ... USING`，MySQL 写成 `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 写成按主键对上行的 MERGE（被改表要有 `@id`）和 `WHERE EXISTS`。每个被改行至多匹配一个连接行，否则 PostgreSQL、MySQL 任取一行，HANA 报错；没有 where 时报错，`.all()` 放行；不能经过导航关系。
+
 ## 16. 与 Java 版的差异
 
 概念一一对应，两端渲染出的 SQL 完全相同，由 `spec/render/` 的金样例保证。
@@ -649,5 +673,6 @@ const db = database(pool, {
 | 关系 | 表接口的 default 方法 `one(...)`、`many(...)`，或 `@ManyToOne`、`@OneToMany` | `@one`、`@many` 字段 |
 | 对象树 | `selectAs(VO.class)` 按属性类型自动映射嵌套 VO 与 `List<X>` | 对象投影里写 `list(...)` 和嵌套对象 |
 | 日期、精确小数 | `LocalDate`、`BigDecimal` | 字符串 |
+| 按编码存的枚举 | 实现 `CodeEnum<C>` | 字段直接声明成编码的字面量联合（如 `"A" \| "C"`），不需要转换 |
 | 表数 | 最多 16 张，`row(...)` 最多 22 个参数 | 不限 |
 | 执行 | 同步，JDBC | Promise，各库的 Node 驱动 |

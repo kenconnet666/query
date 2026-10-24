@@ -34,14 +34,29 @@
 
 ## 不做
 
-- **实体跟踪与脏检查**、`save(entity)` 自动判断插入还是更新、级联写入：属于完整 ORM，见 0001。
+- **实体跟踪与脏检查**、`save(entity)` 自动判断插入还是更新、级联写入：属于完整 ORM，见 0001。2026-10-24 复核了 EasyQuery 3.2.17 的跟踪实现：
+  - 跟踪上下文绑在线程上，要手动 `begin()` / `release()`；
+  - 更新执行后不论是否改到行都刷新快照（`AbstractClientEntityUpdatable.executeRows` 无条件调用 `refreshTrackEntities`），乐观锁冲突时这次修改会被当作已保存；
+  - 新版本号只在绑定参数时算出（`VersionPropertySQLParameter`），不写回对象，同一上下文里第二次更新会因版本不符改不到行（读源码得出，未实跑）。
+
+  因此差异更新改为无状态的 `diffFrom(loaded)`，见下文"之后补上的"。
 - **按非空列裁剪插入的列**：与取舍 1 相反；需要数据库默认值时不在行里放这个属性即可。
 - **默认禁止物理删除**：与取舍 3 相反；逻辑删除的表已经默认不物理删除。
 - **多行合并成一条 `INSERT ... VALUES (...), (...)`**：参数个数受 65535 的限制，且 HANA 不支持；JDBC 批量已经足够快。
 - **`RETURNING` 任意列**：PostgreSQL 专属；只做三库都能取回的生成主键。
 
+## 之后补上的（2026-10-24）
+
+对照 EasyQuery 继续补齐的四批，规划见交接文档：
+
+1. **写语句经过导航的条件**：之前 UPDATE、DELETE 的 WHERE 经过多对一导航会渲染出没有连接的列（SQL 无效）。改为 `EXISTS (SELECT 1 FROM 单行种子 LEFT JOIN 关联表 ... WHERE 条件)`，与查询里导航的 LEFT JOIN 语义一致，三库通用；SET 里用导航报错。另有 `diffFrom`、`@ReadOnly` / `@WriteOnce`、`db.exists`。
+2. **配置与过滤**：运行时 schema 映射、具名过滤器与 `unfiltered(name)`、`withDeleted()`、`withoutFills()`、Java 的 `CodeEnum`、逻辑删除记毫秒数。
+3. **函数**：`lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours` / `addMinutes` / `addSeconds`、`monthStart`；先在三库实测了截断、负数和 NULL 的行为。
+4. **联表 UPDATE / DELETE**：三库写法不同，一行匹配多行时 PostgreSQL、MySQL 任取一行而 HANA 的 MERGE 报错，所以入口只在方言包（`updateJoin`、`deleteJoin`），核心只有语句结构和方言钩子。HANA 沿用前身仓库实测过的 MERGE 写法。
+
 ## 验证证据
 
 - 金样例（两端渲染完全相同）：`write-insert`、`write-insert-select`、`write-update`、`write-delete`、`write-update-by-id`、`write-delete-by-id`、`write-upsert`、`write-upsert-nothing`、`write-insert-generated`、`write-logic-delete`、`logic-delete-query`、`workflow-claim`。
 - 三库实库场景（Java 与 TS 各一份）：影响行数与 `expect`、乐观锁冲突、生成主键的顺序、插入或更新（PostgreSQL 需要键上有主键或唯一约束）、`SKIP LOCKED` 领取任务、事务回滚、逻辑删除与审计填充。
+- 补齐的四批：金样例 `write-navigation`、`time-functions`、`number-text-functions`、`write-join-update`、`write-join-delete`、`write-join-logic-delete`；实库场景覆盖导航条件的匹配行数（MySQL 驱动默认返回匹配行数，值没变的行也计入，三库一致）、差异更新与只读列默认值、具名过滤器与 schema 映射、按编码的枚举、毫秒逻辑删除下的唯一约束、各函数的结果、联表更新与删除；HANA 上一行匹配多行的联表更新报错且没有行被改。
 - 本机三库与 CI 全部通过（2026-10-24）。

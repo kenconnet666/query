@@ -28,6 +28,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | 执行 | `db.list(q)`、`db.one(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
 | `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T.class).values(rows))`、`update(T.class).set(t -> t.x().to(v)).where(...)`、`deleteFrom(T.class).where(...)`；按主键 `.byId(row)`，见第 15 节 |
 | 插入或更新、`FOR UPDATE` | `.onConflict().update(t -> t.x())`、`.with(forUpdate(Lock.SKIP_LOCKED))` |
+| 联表 `UPDATE` / `DELETE` | 方言门面的 `updateJoin(T.class, S.class, (t, s) -> on).set(...).where(...)`、`deleteJoin(...)`，见第 15 节 |
 
 ## 1. 依赖与数据库实例
 
@@ -61,7 +62,12 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | PostgreSQL | `org.dpdns.zerodep.query.postgres.Postgres` | `PostgresDatabase` |
 | MySQL 8 | `org.dpdns.zerodep.query.mysql.Mysql` | `MysqlDatabase` |
 
-`database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有 `function`、`type`（覆盖函数渲染与类型读写，见第 12 节）、`fetchSize`、`name`。
+`database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
+
+- `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；
+- `schema("ERP", "SAPHANADB")` 或 `schema(s -> s + "_TEST")`：表接口里写的 schema 换成实际的名字，SAP 各环境 schema 不同时不用改代码，查询、写语句和关系里的表都换，原生 SQL 文本不换；
+- `onInsert`、`onUpdate`：审计字段自动填充，见第 15 节；
+- `function`、`type`（覆盖函数渲染与类型读写，见第 12 节）、`fetchSize`、`name`。
 
 **在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource)` 取连接：
 
@@ -122,6 +128,20 @@ public @interface SapDate { }
 ```
 
 列的值与比较时的参数都会经过转换器，例如 `l.createdOn().between(start, end)` 绑定的是 `'20260101'`。
+
+**枚举**：默认按名字存取。实现 `CodeEnum<C>` 的枚举按编码存取，不用给每列加注解：
+
+```java
+public enum Status implements CodeEnum<String> {
+    OPEN("A"), CLOSED("C");
+    private final String code;
+    Status(String code) { this.code = code; }
+    @Override public String code() { return code; }
+}
+@Column("STATUS") Col<Status> status();       // 读写和条件里都是 'A'、'C'
+```
+
+编码的类型取自泛型参数（`String`、`Integer`、`Long` 等）；同一个枚举里编码不能重复，读到表里没有的编码时报错。
 
 **SQL 级列转换**：转换器只在 Java 端改值，数据库看到的仍是原值；列转换写进 SQL，分组、聚合和条件看到的都是转换后的值。
 
@@ -256,7 +276,7 @@ List<Map<String, Object>> rows = db.list(q);
 | `orderBy(… -> 排序)` | 一个表达式按升序排，`.desc()` 降序，`.nullsFirst()` / `.nullsLast()` 指定 NULL 的位置；多项写 `orders(a, b.desc())` |
 | `groupByRollup(… -> 键)` | 分组并加上各级小计和总计；一次列出全部分组键，不能与 `groupBy` 同用 |
 | `distinct()`、`limit(n)`、`offset(n)` | — |
-| `unfiltered()` | 本查询不加全局过滤器 |
+| `unfiltered()`、`unfiltered("tenant")`、`withDeleted()` | 本查询不加全局过滤器和逻辑删除条件；只关掉这些名字的过滤器；只关掉逻辑删除（看已删除的行） |
 | `with(clause)` / `with(… -> clause)` | 方言子句，例如 `Hana.hint(...)`、`Postgres.distinctOn(...)` |
 
 - 与 null 比较在 `skipEmpty()` 之外是错误（比较永远不成立，多半是漏传了参数）；确实要判空用 `isNull()`。单个条件也可以不开 `skipEmpty`，写成 `ifPresent(x, v -> ...)` 或 `onlyIf(flag, () -> ...)`。
@@ -483,9 +503,9 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 | --- | --- |
 | 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`contains`、`startsWith`、`endsWith` |
 | 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))` |
-| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil` |
-| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`daysBetween(from, to)`、`secondsBetween(from, to)`（时间戳，整秒） |
+| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))`。`lpad(e, n, pad)`、`rpad(e, n, pad)` 补足到 n 个字符（物料号补零 `lpad(m.material(), 18, "0")`），过长时截断 |
+| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil`、`mod`（符号同被除数）、`power`、`sqrt`（结果是 Double）、`sign`。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 NULL |
+| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`monthStart(d)`（当月第一天，按月汇总用）、`daysBetween(from, to)`；时间戳的 `hour`、`minute`、`second`（整数，舍去不足一秒的部分）、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(from, to)`（整秒）。字符长度各库计法不同（MySQL 的 LENGTH 按字节），用方言函数，例如 `Hana.length` |
 | 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`avg`、`min`、`max`、`stringAgg(e, sep, order...)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity()).filter(l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
 | 窗口 | `rowNumber`、`rank`、`denseRank`、`lag`、`lead`、`firstValue`、`lastValue`、`ntile`，再加 `.over(...)` |
 | 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`scalar(query)`、`currentDate`、`currentTimestamp` |
@@ -544,6 +564,7 @@ from(totals)
 | `db.first(q)` | `Optional`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭。PostgreSQL 在自动提交的连接上自动开临时事务；MySQL 要配置 `fetchSize(Integer.MIN_VALUE)` 才逐行读取 |
 | `db.count(q)` | 外包 `COUNT(*)` |
+| `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
 | `db.sql("... :name IN (:ids)").bind("ids", ids).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射；另有 `first`、`one`、`bindNull`、`timeout`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、`::` 类型转换、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
@@ -553,7 +574,7 @@ from(totals)
 
 **参数个数**：HANA 和 PostgreSQL 的一条语句最多绑定 65535 个参数。超过时在连接数据库之前就报错，而不是等数据库返回难懂的错误。很长的 IN 列表请拆成几次查询，或者改成子查询。MySQL Connector/J 默认在客户端把参数写进语句，所以不设这个上限。
 
-**全局过滤器**按表接口的父接口匹配：FROM 中的表把条件加到 WHERE，JOIN 的表加到 ON（LEFT JOIN 语义不变）；关系连接的表、CTE 和子查询里的表同样生效。
+**全局过滤器**按表接口的父接口匹配：FROM 中的表把条件加到 WHERE，JOIN 的表加到 ON（LEFT JOIN 语义不变）；关系连接的表、CTE 和子查询里的表同样生效。`unfiltered("tenant")` 里的名字不是任何已配置的过滤器时报错，免得拼错的名字悄悄不起作用。
 
 ## 11. 打印与测试 SQL
 
@@ -662,6 +683,7 @@ public interface Doc extends Audited {             // Audited 声明审计列，
     @Column("TITLE") Col<String> title();
     @Version @Column("VERSION") Col<Integer> version();      // 乐观锁版本，Integer 或 Long
     @LogicDelete @Column("DELETED") Col<Integer> deleted();  // 逻辑删除，默认 0 未删除、1 已删除
+    @ReadOnly @Column("SOURCE") Col<String> source();        // 只读：数据库默认值或触发器维护，本库从不写
 }
 
 @Table("SEQ")
@@ -671,7 +693,13 @@ public interface Seq extends Entity {
 }
 ```
 
-`@LogicDelete(active = "N", deleted = "Y")` 按列的类型解析两个值（Boolean、整数、文本）；列是 `LocalDateTime` 时记录删除时间，未删除是 `IS NULL`，删除写 `CURRENT_TIMESTAMP`。版本列、生成列、逻辑删除列每张表各至多一列。
+`@LogicDelete(active = "N", deleted = "Y")` 按列的类型解析两个值（Boolean、整数、文本）；列是 `LocalDateTime` 时记录删除时间，未删除是 `IS NULL`，删除写 `CURRENT_TIMESTAMP`。`@LogicDelete(epochMillis = true)` 的列是 `Long`：未删除为 0，删除时写当前毫秒数，这样 `UNIQUE (业务键, 删除列)` 能拦住两条未删除的同键行，又允许同一个键删除后再建（NULL 互不相等，记录删除时间的写法做不到）。版本列、生成列、逻辑删除列每张表各至多一列。
+
+| 写入策略 | 插入 | `byId` 更新、插入或更新的更新部分 | `update(...).set(...)` 显式写 |
+| --- | --- | --- | --- |
+| `@ReadOnly` | 不写 | 不写 | 报错 |
+| `@WriteOnce`（例如创建时间） | 写 | 不写 | 可以 |
+| `@Generated` | 不写 | 不写 | 可以 |
 
 ### 插入、更新、删除
 
@@ -691,7 +719,8 @@ db.execute(deleteFrom(Note.class).where(n -> n.status().eq("closed")));
 - **行**：record 或 POJO，按属性名对应表的列，属性名找不到列时报错；所有属性都写，null 写成 NULL。多行插入按 JDBC 批量执行（每批 500 行），并自动放在一个事务里。
 - **从查询插入**：查询的列名（`cols` 的名字或 `as(...)`）对应表的属性名。
 - **SET**：`col.to(值)` 或 `col.to(表达式)`；`skipEmpty()` 下值为空的 SET 项省略，全部省略时不执行。
-- **WHERE**：lambda 条件或条件对象（同第 7 节）。没有条件的 UPDATE、DELETE 直接报错，确实要改整张表时写 `.all()`。全局过滤器和逻辑删除的条件照常加进 WHERE，`unfiltered()` 关闭。
+- **WHERE**：lambda 条件或条件对象（同第 7 节）。没有条件的 UPDATE、DELETE 直接报错，确实要改整张表时写 `.all()`。全局过滤器和逻辑删除的条件照常加进 WHERE，`unfiltered()`、`unfiltered("tenant")`、`withDeleted()` 同查询。
+- **WHERE 里的导航**：`where(l -> l.mara().manufacturer().eq("MK1"))` 写成 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN MARA ... WHERE ...)`，与查询里导航的 LEFT JOIN 语义相同；SET 里不能用导航，要读别的表时用标量子查询或联表更新。
 
 ### 按主键更新与删除、乐观锁
 
@@ -703,6 +732,8 @@ db.execute(deleteFrom(Doc.class).byId(row));           // WHERE 主键（和版�
 ```
 
 `byId` 的行必须带主键（有版本列时还要带版本），每行一条语句，每条期望改到 1 行，否则抛 `UnexpectedRowCountException`：版本不对就是被别人改过（乐观锁冲突）。
+
+**差异更新**：`update(Doc.class).byId(edited).diffFrom(loaded)` 与修改前的行逐个属性比较（BigDecimal 按数值），只 SET 变了的；完全没变的行不发语句、版本不加、也不计入期望的行数。修改前的行与 byId 的行一一对应，主键和版本必须相等。本库不做线程绑定的实体跟踪，需要差异更新时由调用方给出修改前的行。
 
 ### 取回生成的主键
 
@@ -765,7 +796,30 @@ Hana.database(dataSource, c -> c
     .onUpdate(Audited.class, a -> a.updatedBy(), currentUser::name));
 ```
 
-按表接口的父接口匹配（同全局过滤器）。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列。填充的值每条语句取一次，总是覆盖行里或 SET 里的同名项。`toSql(dialect)` 没有数据库实例，所以不带填充；要看实际执行的 SQL 用 `db.render(write)`。
+按表接口的父接口匹配（同全局过滤器）。插入时填 `onInsert` 的列；更新、`byId` 更新、插入或更新的更新部分、逻辑删除都填 `onUpdate` 的列。填充的值每条语句取一次，总是覆盖行里或 SET 里的同名项；迁移数据要保留原值时，在语句上写 `.withoutFills()`。`toSql(dialect)` 没有数据库实例，所以不带填充；要看实际执行的 SQL 用 `db.render(write)`。
+
+### 联表更新与删除（方言包）
+
+```java
+import static org.dpdns.zerodep.query.postgres.Postgres.*;   // 或 Mysql、Hana
+
+db.execute(updateJoin(Note.class, Doc.class, (n, d) -> n.id().eq(d.id()))
+    .set((n, d) -> n.title().to(d.title()))
+    .where((n, d) -> d.version().gt(1)));
+db.execute(deleteJoin(Note.class, Doc.class, (n, d) -> n.id().eq(d.id())).where((n, d) -> d.title().eq("gone")));
+```
+
+| 方言 | 联表更新 | 联表删除 |
+| --- | --- | --- |
+| PostgreSQL | `UPDATE 表 SET 列 = ... FROM 连接表 WHERE 连接条件 AND ...` | `DELETE FROM 表 USING 连接表 WHERE ...` |
+| MySQL | `UPDATE 表 JOIN 连接表 ON ... SET 别名.列 = ... WHERE ...` | `DELETE 别名 FROM 表 JOIN 连接表 ON ... WHERE ...` |
+| HANA | `MERGE INTO 表 USING (SELECT 主键, 新值 FROM 表 JOIN 连接表 ...) ON (主键相等) WHEN MATCHED THEN UPDATE SET ...`，被改表要有 `@Id` | `DELETE FROM 表 WHERE EXISTS (SELECT 1 FROM 连接表 WHERE ...)` |
+
+- 连接是内连接；连接表的全局过滤器和逻辑删除条件并进连接条件，`unfiltered(...)`、`withDeleted()` 对两张表一起生效。
+- **每个被改行至多匹配一个连接行**：多于一行时 PostgreSQL、MySQL 任取一行（结果不确定），HANA 报 689、整条语句不生效。三库语义不同，所以入口只在方言门面上。
+- 没有 where 条件时报错（连接条件不算），要改所有连接得上的行写 `.all()`；不能经过导航关系，要用的表直接连接。
+- 被改表有 `@LogicDelete` 时，`deleteJoin` 改写成联表更新，`.physically()` 才真正删除；SET 照常加上更新时的审计填充。
+- 只是条件要看别的表时，核心的 `where(t -> exists(...))` 或一对多的 `any()` 三库都能用，不必用联表写入。
 
 ### 执行与测试
 

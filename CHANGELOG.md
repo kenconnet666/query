@@ -36,11 +36,18 @@
 - **插入或更新与加锁读**：`.onConflict(keys).update(cols)` / `.doNothing()`（HANA `MERGE`、PostgreSQL `ON CONFLICT`、MySQL `ON DUPLICATE KEY UPDATE`）；`.with(forUpdate(Lock.SKIP_LOCKED))`，HANA 写作 `IGNORE LOCKED`。
 - **事务**：`db.transaction(work)`（Java 线程绑定连接，TS 用 AsyncLocalStorage）；接入 Spring 时交给 `@Transactional`。TS 的 `DriverResult` 增加 `affected`、`insertId`，`Driver` 增加 `transaction`。
 - **逻辑删除与审计填充**：`@LogicDelete`（TS `@logicDelete()`）让查询、连接和关系自动只看未删除的行，删除改写成 UPDATE，`.physically()` 物理删除；数据库实例的 `onInsert` / `onUpdate`（TS `fills`）在插入、更新、插入或更新和逻辑删除时自动填充审计列。
+- **差异更新与写入策略**：`update(T).byId(edited).diffFrom(loaded)` 只 SET 变了的属性，没变的行不发语句；`@ReadOnly`（插入和更新都不写）、`@WriteOnce`（只在插入时写，TS `@readOnly`、`@writeOnce`）；插入、更新、删除的 `withoutFills()`。
+- **过滤与 schema**：具名的全局过滤器 `filter("tenant", ...)`，查询和写语句可以 `unfiltered("tenant")` 单独关闭、`withDeleted()` 只关逻辑删除；`Config.schema("ERP", "SAPHANADB")` / `schema(fn)`（TS `schemas`）把表声明里的 schema 换成实际名字。
+- **按编码的枚举与毫秒逻辑删除**：Java 实现 `CodeEnum<C>` 的枚举按编码存取；`@LogicDelete(epochMillis = true)`（TS `@logicDelete({ epochMillis: true })`）删除时写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建。
+- **函数**：`lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`，三库实测语义一致。
+- **执行**：`db.exists(q)`。
+- **联表更新与删除（方言包）**：`updateJoin(T, S, on).set(...).where(...)`、`deleteJoin(...)`；PostgreSQL `UPDATE ... FROM` / `DELETE ... USING`，MySQL `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 按主键的 MERGE（一行匹配多行时报错）/ `WHERE EXISTS`。
 - **打印与测试 SQL**：`Rendered.debugSql()`（参数写回原处）、`parameterText()`；数据库实例的 `printSql` 选项按 MyBatis 的格式打印语句、参数、行数和耗时；`db.capture(...)` 收集一段代码执行的全部语句；`ConnectionProvider.dryRun()` / `dryRunDriver()` 不连数据库也能执行。
 
 ### 修复
 
 - 空跑或没有行时 `count` 不再出错。
+- UPDATE、DELETE 的 WHERE 经过多对一导航时渲染出没有连接的列（SQL 无效）；现在写成 `EXISTS (... LEFT JOIN ...)`，语义与查询里的导航相同，SET 里用导航时报错。
 
 ## [1.0.0] - 2026-10-22
 
