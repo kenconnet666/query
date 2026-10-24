@@ -2,7 +2,7 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）和写入能力，尚未合并、尚未发布。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 在 `feat/v2` 上完成了全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），尚未合并、尚未发布。
 
 ## 当前状态
 
@@ -44,8 +44,8 @@
 
 ### 测试（本机三库全部通过）
 
-- **Java**：core 209，HANA 139，PostgreSQL 142，MySQL 135（含实库场景与金样例），Spring 5。
-- **TS**：单元、编译期与金样例 348，实库 188。
+- **Java**：core 233，HANA 179，PostgreSQL 189，MySQL 177（含实库场景与金样例），Spring 5，Maven 插件 3。
+- **TS**：单元、编译期与金样例 430，实库 260。
 - 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
@@ -57,11 +57,11 @@
 
 ## 下一步
 
-阶段 A、阶段 B、写入能力和下面的四批都已完成并推送到 `feat/v2`。合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
+阶段 A、阶段 B、写入能力、下面的四批、A/B/C 三批和 0008 都已完成并推送到 `feat/v2`。合并与发布 2.0、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
 
 2026-10-24 对照 EasyQuery 讨论后规划并完成了四批（用户确认"暂不做代码生成"后要求四批都做；每批两端、三方言同步，带金样例与实库场景，各批的提交与 CI 见 git log）：
 
-- **代码生成：暂不做**。现有的表接口加运行时代理已覆盖三级继承想要的效果（共用父接口、同表多视图、模板父接口、子接口覆盖注解），生成只省"照库抄列"，且只声明用到的列时量不大。讨论过的方案（Maven 插件连库生成、两级或三级继承、文件内生成区）记在 0001，需要时再评估。
+- **代码生成**：当时暂不做，2026-10-24 随数据库变更改为 `query:pull` 生成只有列的父接口（见上一节和 0008）。
 - **第 1 批（已完成）**：
   - 修正：UPDATE/DELETE 的 WHERE 经过多对一导航时渲染出没有连接的列（两端都有）。改为 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN 关联表 ON ... WHERE 条件)`，HANA 的种子是 `SELECT 1 FROM DUMMY`；查询与写语句共用 `ImplicitJoins`（TS `implicitJoins`）；SET 经过导航报错。
   - `update(T).byId(edited).diffFrom(loaded)`、`@ReadOnly` / `@WriteOnce`、`db.exists(q)`。
@@ -70,14 +70,17 @@
 - **第 4 批（已完成）**：方言包的 `updateJoin` / `deleteJoin`（核心只有 `JoinUpdate` / `JoinDelete` 和方言钩子）：PG `UPDATE ... FROM` / `DELETE ... USING`，MySQL `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 按主键的 MERGE（一行匹配多行报错、没有行被改，实库验证）/ `WHERE EXISTS`。实测确认 MySQL 驱动默认返回匹配行数（值没变的行也计入），与另两库一致。
 - **之后（随流程引擎）**：多对多（经过中间表）、显式的一层子行同步与中间表同步（Jimmer 式）、内存装树。
 
-### 进行中：A、B、C 三批与 0008（用户 2026-10-24 确认"按照推荐执行所有步骤"）
+### A、B、C 三批与 0008（已完成；用户 2026-10-24 确认"按照推荐执行所有步骤"）
 
-顺序：A → B → C → 数据库变更（模型与实库读取、check → DDL、计划、迁移）→ `query:pull` → 实体追踪 → 分表。每批两端、三方言、金样例与实库场景，完成一批提交推送一批。
+每批两端、三方言，带金样例与实库场景，各自提交推送（见 git log）。
 
-- **A 批（核心，三库探针已证实都支持）**：`intersect`、`except`、`rightJoin`；多列 `IN` 子查询；`ANY` / `ALL` 子查询比较；`sumDistinct` / `avgDistinct`、`stddev` / `variance`；`percentRank`、`cumeDist`、`nthValue`；条件作为 SELECT 列（CASE 改写）；NULL 安全比较（CASE 改写）；`required` / `firstNotNull` 一类的执行辅助。
-- **B 批（定制能力）**：执行前钩子（改写或拦截语句）；过滤器与填充按实体 `apply` 和顺序；写入行拦截器；可替换的小策略（分页结果、异常、`cols` 的键名、自定义 `@Where` 运算）；`fill`（按键把数据装回结果）。
-- **C 批（方言包，参考前身的 `docs/hana-*.md`、`pgsql-*.md`、`mysql-*.md`）**：HANA 参数化视图、层级、全文、JSON、MEDIAN / PERCENTILE_CONT；PostgreSQL 数组、JSONB、全文、RETURNING、RANGE 窗口框架、递归 CTE、`FOR SHARE` / `FOR UPDATE OF`、`INTERSECT ALL` / `EXCEPT ALL`、FULL JOIN；MySQL JSON、全文、索引提示、`<=>`、RANGE、递归 CTE、`FOR SHARE`。
-- **0008**：见[决定](../docs/decisions/0008-schema-tracking-sharding.md)。
+- **A 批（核心）**：`intersect` / `except`（HANA 从左到右求值，按需加括号）、`rightJoin`（左侧的过滤条件移进 RIGHT JOIN 的 ON）、多列 `keys(a, b).in(q)`、`anyOf` / `allOf`、`isNotDistinctFrom`、`bool(cond)`、`sumDistinct` / `avgDistinct` / `stddev*` / `var*`、`percentRank` / `cumeDist` / `nthValue`、`db.optional`。
+- **B 批（定制）**：执行前钩子 `intercept`、逐行生成值 `generate`、`@Where(using = ...)`、`db.attach` / `attachMany`、`EmptyResultException` / `TooManyRowsException`。
+- **C 批（方言包）**：核心只加 SPI（`combine`、`Window.frame`、`fullJoin`、`Cte.recursive`、提示钩子）；HANA 参数化视图、层级、全文、JSON、MEDIAN、窗口 PERCENTILE；PG `INTERSECT/EXCEPT ALL`、RANGE 框架、递归 CTE、`FOR SHARE` / `FOR UPDATE OF`、RETURNING、数组、JSONB、全文；MySQL 提示类、JSON、全文。
+- **0008 结构变更**：表结构模型、三库读系统目录（默认值统一成 SQL 写法、带注释）、`check` / `plan` / `createTable`、安全 / 有风险 / 只报告三类差异、外部表；版本化迁移 `db.migrator(...)`（历史表加校验和、锁表、`verify` / `baseline` / `repair` / `migrateTo`）。
+- **0008 代码生成**：`query-maven-plugin` 的 `query:pull` 与 TS 方言包的 `query-pull-*` bin，生成只有列的父接口 / 基类；TS 增加 `smallint`。
+- **0008 实体追踪**：Java `db.tracking` / `tracked`、TS `db.tracking`，写成功后才写回版本、刷新快照；`Update.changedRows()`。
+- **0008 分区与分表**：`@TableOption`（TS `options`）写原生分区；`Config.shard` / 选项 `shards` 注册同库物理分表，按 WHERE 选表、`UNION ALL`、写入按行路由、`allShards()` / `onShards(...)`；三库执行计划都把外层条件推进各分支。
 
 ## 换电脑后的准备
 
@@ -141,3 +144,7 @@
 - **Bash 工具里的大段 heredoc**：内容很长且引号很多时会报 "unexpected EOF"。先用写文件工具把脚本写到临时目录，再执行它。
 - **HANA 内存**：HANA 会把 cgroup 内存限制当作物理内存。8 GiB 是 SAP 公布的最低值，测试变慢或内存不足时先查看占用，不要调大限制。
 - **javac**：Java 17 上 switch 模式匹配仍是预览特性，渲染器用节点自己的 `render` 方法。
+- **Java 条件表达式**：`?:` 的两支分别是 `Integer` 和 `Long` 时会按数值提升成 `Long`，写回 `Integer` 字段时报错；分开写 if。
+- **Java 重载与 lambda**：隐式类型的单参数 lambda 同时匹配 `Consumer` 和 `Function` 时报歧义（只抛异常的块就是这样），所以追踪分成 `tracking` 和 `tracked` 两个名字。
+- **时间精度**：Linux 上 `LocalDateTime.now()` 带纳秒，HANA 的 TIMESTAMP 只到 100 纳秒，绑定时拒绝截断；本机 Windows 的时钟只到 100 纳秒，复现不了，只在 CI 上出现。本库写入的时间戳先截到毫秒。
+- **PostgreSQL 手写 DDL**：没加引号的 `QUERY_IT` 会折成小写，测试里手写的分区语句要写 `"QUERY_IT"."PART_LOG"`。

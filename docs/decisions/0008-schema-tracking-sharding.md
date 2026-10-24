@@ -44,7 +44,7 @@
 - **一条语句一次 JDBC 执行**，不拼多语句。
 - **迁移用代码写**：Java 实现 `Migration`，TS 导出 `up(change)`；`change` 提供与计划相同的 DDL 操作、`sql(dialect, text)` 写方言原生语句、`execute(write)` 写数据。一份迁移在三个方言上渲染。迁移里不引用实体类型，以免实体以后修改后改变历史迁移的含义。
 - **历史表** `QUERY_MIGRATION`（版本、名称、校验和、状态、开始与结束时间）；校验和不符或已执行的版本缺失时报错。PostgreSQL 整批一个事务；MySQL 和 HANA 逐条记录状态，失败后停下，修正后从失败的版本继续。
-- **并发锁**：PostgreSQL `pg_advisory_lock`，MySQL `GET_LOCK`，HANA 用锁表的行锁。
+- **并发锁**：三个库都用锁表 `QUERY_MIGRATION_LOCK` 的一行：`UPDATE ... SET OWNER = 本实例 WHERE OWNER IS NULL` 改到一行就拿到锁，每 500 毫秒重试，超时（默认一分钟）报错，结束时清空。原先计划 PostgreSQL 用 `pg_advisory_lock`、MySQL 用 `GET_LOCK`，实现时改了：这两种锁绑定在会话上，而 `ConnectionProvider` 每条语句取一个连接、用完归还，持有锁就得另占一个连接到迁移结束；锁表一种写法三库通用，进程崩溃后留下的锁可以手工清掉 OWNER。PostgreSQL 的迁移事务（每个迁移一个）与锁的那一行互不影响。
 - **不做**：回滚迁移、生产环境的自动 update、重放全部迁移的影子库（HANA 一个实例要 8 GiB）、HDI 工件、影子表与触发器式的在线变更。PostgreSQL 的 `concurrently`、`NOT VALID`，MySQL 的 `ALGORITHM` / `LOCK` 作为方言包的选项。
 
 ### 4. 代码生成：从库生成列的父接口
