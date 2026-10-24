@@ -167,5 +167,6 @@
 - **sqlite-wasm 在 Node 里**：只支持内存库；QUERY_IT 也 ATTACH 成 `:memory:`。浏览器里 `ATTACH 'file:/x.db?vfs=opfs-sahpool'` 可用。
 - **fake-indexeddb**：用 6.2.5；它模拟不了真实的自动提交时机，相关的断言放在浏览器测试里。IDB 的 `anyOf` 结果按索引顺序，同一个值里的行再按主键排序。
 - **npm 依赖的版本**：新加的依赖选发布满两周的版本（fake-indexeddb 6.2.6 只有 8 天，所以用 6.2.5）。
-- **TypeScript 7.1**：开发编译器是 7.1.0-beta（与 vue-tsx-pro 一致）。7.1 不再把两处写法相同的内联映射类型当成同一个类型（`exclude` 与 `excludeIf` 报 TS2719），要抽成具名类型；用户代码推断出的类型引用到它时，具名类型还要从包里导出（否则 TS2883）。
+- **TypeScript 7.1**：开发编译器是 7.1.0-dev.20261023.1（跟随 vue-tsx-pro 用 dev 构建；pnpm 11 拒绝发布不满一天的包，升级时选满一天的那一版，不要往 `pnpm-workspace.yaml` 加豁免）。7.1 不再把两处写法相同的内联映射类型当成同一个类型（`exclude` 与 `excludeIf` 报 TS2719），要抽成具名类型；用户代码推断出的类型引用到它时，具名类型还要从包里导出（否则 TS2883）。
+- **只在编辑器里出现的类型错误**：`tsc -b` 通过，IDE 或 `tsc --lsp` 打开单个文件时却报错。原因是泛型类在逆变位置用到映射类型（`Many<T>` 的 `#on: (t: Ref<T>) => Cond`，而 `Ref<any>` 不是 any），能否赋给 `X<any>` 取决于编译器是否已算出变型。约束里不要写 `X<any>`，改用品牌类型（`AnyMany`）。排查时让 `tsc --lsp` 逐个文件拉取诊断（`textDocument/diagnostic`），整项目编译发现不了。
 - **IndexedDB 的事务结束时机**：CI 的 Chrome 上，回调 await 了 fetch 之后事务已经结束，但 `complete` 事件还没派发，`objectStore()` 报 `InvalidStateError`。按规范它只在事务已结束时报这个错，所以不看 `#done`，一律换成 `TransactionClosedError`。本机复现不了，只在 CI 上出现。
