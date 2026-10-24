@@ -2,6 +2,10 @@ package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.hana.HanaTables.LipsByUnit;
+import org.dpdns.zerodep.query.hana.HanaTables.Org;
+import org.dpdns.zerodep.query.hana.HanaTables.OrgNode;
+import org.dpdns.zerodep.query.hana.HanaTables.SalesView;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.RenderSpec;
@@ -10,6 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -26,6 +31,7 @@ class HanaSpecTest extends RenderSpec {
     @Override protected Map<String, SpecCase> dialectCases() {
         Map<String, SpecCase> cases = new LinkedHashMap<>(classicCases());
         cases.putAll(structureCases());
+        cases.putAll(functionCases());
         return cases;
     }
 
@@ -81,5 +87,34 @@ class HanaSpecTest extends RenderSpec {
             "hana-full-join", SpecCase.plain(() -> from(Lips.class)
                 .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
                 .select((l, m) -> cols(l.delivery(), m.material()))));
+    }
+
+    /** 带参数的视图与表函数、层级、全文检索与 JSON。 */
+    private Map<String, SpecCase> functionCases() {
+        Map<String, Object> placeholders = new LinkedHashMap<>();
+        placeholders.put("P_YEAR", "2026");
+        placeholders.put("P_REGION", null);
+        return Map.of(
+            "hana-calculation-view", SpecCase.plain(() -> fromView(SalesView.class, placeholders)
+                .where(v -> v.amount().gt(BigDecimal.TEN))
+                .select(v -> cols(v.material(), v.amount()))),
+            "hana-table-function", SpecCase.plain(() -> fromFunction(LipsByUnit.class, Map.of("P_UNIT", "EA"))
+                .orderBy(f -> f.delivery())
+                .select(f -> f.delivery())),
+            "hana-hierarchy", SpecCase.plain(() -> from(hierarchy(OrgNode.class, orgSource()))
+                .orderBy(n -> n.col(OrgNode::hierarchyRank))
+                .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyLevel), n.col(OrgNode::hierarchyParentRank), n.col(OrgNode::name)))),
+            "hana-descendants", SpecCase.plain(() -> from(descendants(OrgNode.class, orgSource(), List.of("B")))
+                .orderBy(n -> n.col(OrgNode::nodeId))
+                .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyDistance)))),
+            "hana-search", SpecCase.plain(() -> from(Lips.class)
+                .where(l -> all(contains("M1", l.material()), containsFuzzy(0.8, "D1", l.delivery(), l.material())))
+                .orderBy(l -> score().desc())
+                .select(l -> cols(l.delivery(), score().as("score"), jsonValue(l.unit(), "$.unit").as("json")))));
+    }
+
+    /** 组织表作为层级的来源：编号与上级编号改名为 nodeId、parentId。 */
+    static org.dpdns.zerodep.query.select.Query<Map<String, Object>> orgSource() {
+        return from(Org.class).select(o -> cols(o.id().as("nodeId"), o.parent().as("parentId"), o.name()));
     }
 }

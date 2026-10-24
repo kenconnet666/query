@@ -1,5 +1,5 @@
-import { aliasOf, Bound, call, Cte, Expr, FunctionDef, lit, param, text, type Clause, type KeepNull, type Lock, type Query, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
-import { MysqlDialect } from "./dialect.js";
+import { aliasOf, Bound, call, Cond, condition, Cte, double, Expr, expression, skips, text as textType, FunctionDef, lit, param, text, type Clause, type KeepNull, type Lock, type Query, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
+import { Hint, MysqlDialect } from "./dialect.js";
 
 /** MySQL 专有的函数和子句；在其他方言上拒绝渲染。 */
 
@@ -10,11 +10,29 @@ export function dateFormat<T>(value: Expr<T>, format: string): Expr<KeepNull<T, 
   return call(DATE_FORMAT, text, value as Expr<unknown>, lit(format));
 }
 
-/** 优化器提示 MAX_EXECUTION_TIME：语句超过给定毫秒数后中止。 */
+/** 优化器提示 MAX_EXECUTION_TIME：语句超过给定毫秒数后中止。与其他提示合并进同一个注释。 */
 export function maxExecutionTime(milliseconds: number): Clause {
   if (!Number.isInteger(milliseconds) || milliseconds < 1) throw new RangeError("maxExecutionTime needs a positive number of milliseconds");
-  const hint = `/*+ MAX_EXECUTION_TIME(${milliseconds}) */`;
-  return { position: "hint", dialect: MysqlDialect, render: (w) => void w.sql(hint) };
+  return new Hint((w) => void w.sql(`MAX_EXECUTION_TIME(${milliseconds})`));
+}
+
+/** 优化器提示 `INDEX(别名 索引, ...)`：只考虑这些索引；table 是查询的表参数。 */
+export function index(table: object, ...indexes: string[]): Clause {
+  return indexHint("INDEX", table, indexes);
+}
+
+/** 优化器提示 `NO_INDEX(别名 索引, ...)`：不用这些索引；不写索引时不用这张表的任何索引。 */
+export function noIndex(table: object, ...indexes: string[]): Clause {
+  return indexHint("NO_INDEX", table, indexes);
+}
+
+/** `NAME(别名 [索引, ...])`。 */
+function indexHint(name: string, table: object, indexes: readonly string[]): Clause {
+  return new Hint((w) => {
+    w.sql(name + "(").alias(aliasOf(w, table));
+    indexes.forEach((idx, i) => void w.sql(i === 0 ? " " : ", ").identifier(idx));
+    w.sql(")");
+  });
 }
 
 const GREATEST = FunctionDef.only(MysqlDialect, "GREATEST");
@@ -116,4 +134,68 @@ function lockClause(mode: string, lock: Lock, tables: readonly object[]): Clause
       else if (lock === "skipLocked") w.sql(" SKIP LOCKED");
     },
   };
+}
+
+// ---------- JSON ----------
+
+/** 绑定成 utf8mb4 文本的参数 `CONVERT(? USING utf8mb4)`，与 Java 端写法一致。 */
+function utf8(value: string): Expr<string> {
+  const p = param(textType, value);
+  return expression(textType, (w) => void w.sql("CONVERT(").render(p).sql(" USING utf8mb4)"));
+}
+
+/** MySQL 专属的条件，渲染时检查方言。 */
+function mysqlCond(render: (w: SqlWriter) => void): Cond {
+  return condition((w) => {
+    requireMysql(w);
+    render(w);
+  });
+}
+
+/**
+ * JSON 文档里一个路径上的标量文本：`JSON_UNQUOTE(JSON_EXTRACT(doc, ?))`，路径如 `"$.order.id"` 绑定成参数；
+ * 路径不存在、是 JSON null、对象或数组时为 NULL。
+ */
+export function jsonText(document: Expr<string | null>, path: string): Expr<string | null> {
+  const p = utf8(path);
+  return expression(textType, (w) => {
+    requireMysql(w);
+    w.sql("CASE WHEN JSON_TYPE(JSON_EXTRACT(").render(document).sql(", ").render(p).sql(")) IN ('OBJECT', 'ARRAY', 'NULL') THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(").render(document).sql(", ").render(p).sql(")) END");
+  });
+}
+
+/** JSON 文档包含 json 这段内容 `JSON_CONTAINS(doc, CAST(? AS JSON))`。 */
+export function jsonContains(document: Expr<string | null>, json: string | null | undefined): Cond {
+  if (skips(json)) return Cond.EMPTY;
+  const value = utf8(json as string);
+  return mysqlCond((w) => w.sql("JSON_CONTAINS(").render(document).sql(", CAST(").render(value).sql(" AS JSON))"));
+}
+
+// ---------- 全文检索 ----------
+
+/** `MATCH (...) AGAINST (? IN mode)`。 */
+function fulltext(mode: string, query: string | null | undefined, columns: readonly Expr<string | null>[]): Cond {
+  if (columns.length === 0) throw new TypeError("match(...) needs at least one column");
+  if (skips(query)) return Cond.EMPTY;
+  const q = param(textType, query as string);
+  return mysqlCond((w) => w.sql("MATCH (").join(columns, ", ").sql(") AGAINST (").render(q).sql(" IN " + mode + ")"));
+}
+
+/**
+ * 全文检索 `MATCH (a, b) AGAINST (? IN NATURAL LANGUAGE MODE)`；列必须正好是某个 FULLTEXT 索引的列。
+ * InnoDB 的全文索引在提交时才更新，同一个事务里刚插入的行搜不到。skipEmpty 下搜索词为空时没有条件。
+ */
+export function match(query: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
+  return fulltext("NATURAL LANGUAGE MODE", query, columns);
+}
+
+/** 布尔模式的全文检索 `AGAINST (? IN BOOLEAN MODE)`：`+必须 -排除 "短语" 前缀*`。 */
+export function matchBoolean(query: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
+  return fulltext("BOOLEAN MODE", query, columns);
+}
+
+/** 自然语言模式的相关度，用来排序；不能跨库比较。 */
+export function matchScore(query: string, ...columns: Expr<string | null>[]): Expr<number> {
+  const c = fulltext("NATURAL LANGUAGE MODE", query, columns);
+  return expression(double, (w) => void w.render(c));
 }

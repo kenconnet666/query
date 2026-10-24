@@ -448,6 +448,9 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | — | `recursiveCte(name, anchor, (self) => step)`，写成 `WITH RECURSIVE` | 同左（受 `cte_max_recursion_depth` 限制） |
 | — | `forShare(lock)`、`forUpdateOf("skipLocked", l)`（`FOR UPDATE OF 别名`） | 同左 |
 | — | `db.returning(write)`：插入、更新、删除后用 RETURNING 读回表的全部列 | — |
+| 数据来源：`fromView(View, { P_YEAR: "2026" })`（计算视图的 PLACEHOLDER 参数）、`fromFunction(Fn, { P_UNIT: "EA" })`（表函数的命名实参） | 数组：`eqAny(e, values)`（`= ANY(?)`，一个数组参数）、`arrayContains`、`arrayOverlaps`、`cardinality`、`arrayAgg(e, ...order)`；数组列声明成 `@column("TAGS", arrayOf(text))` | 优化器提示：`index(l, "idx")`、`noIndex(m)`，与 `maxExecutionTime` 合并进同一个 `/*+ ... */`（MySQL 只认第一个提示注释） |
+| 层级：`from(hierarchy(来源))`、`descendants(来源, ["B"])`（每行带上 hierarchyRank、hierarchyLevel 等列）、`ancestors`，来源查询要有 nodeId、parentId 两列 | JSONB：`jsonText(doc, "owner", "name")`、`jsonContains(doc, json)`、`jsonHasKey(doc, key)`、写入用 `jsonb(text)` | JSON：`jsonText(doc, "$.owner.name")`、`jsonContains(doc, json)` |
+| 全文检索：`contains(term, cols...)`、`containsFuzzy(0.8, term, cols...)`、`score()`；JSON：`jsonValue(doc, "$.a")`（路径必须写在代码里） | 全文检索：`textMatches("simple", doc, q)`、`webMatches`、`textRank` | 全文检索：`match(q, cols...)`、`matchBoolean`、`matchScore`（列要正好是一个 FULLTEXT 索引） |
 
 三个库对 `greatest`、`least` 的 NULL 处理不同，所以它们放在各自的方言包里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。
 

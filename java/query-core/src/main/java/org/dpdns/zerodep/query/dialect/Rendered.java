@@ -25,7 +25,7 @@ public record Rendered(String sql, List<Binding> bindings, Dialect dialect) {
     /** 带类型的参数文本，形如 {@code M1(String), 20260115(String), 3(Integer)}；值是经过转换器、实际发给数据库的值。 */
     public String parameterText() {
         return parameters().stream()
-            .map(v -> v == null ? "null" : v + "(" + v.getClass().getSimpleName() + ")")
+            .map(v -> v == null ? "null" : (v instanceof Object[] a ? java.util.Arrays.toString(a) : v) + "(" + v.getClass().getSimpleName() + ")")
             .collect(Collectors.joining(", "));
     }
 

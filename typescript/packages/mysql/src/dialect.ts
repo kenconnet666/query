@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type Clause, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /**
  * 默认 SQL 模式下的 MySQL 8。标识符一律用反引号引用（RANK 等窗口函数名是保留字），
@@ -127,6 +127,20 @@ export class MysqlDialect extends Dialect {
     else w.render(left).sql(" <=> ").render(right);
   }
 
+  /** MySQL 只认 SELECT 后面第一个优化器提示注释，所以把这一段的提示合并进一个 `/*+ ... *\/`，其他子句照常写出。 */
+  override hints(w: SqlWriter, hints: readonly Clause[]): void {
+    const optimizer = hints.filter((h): h is Hint => h instanceof Hint);
+    if (optimizer.length > 0) {
+      w.sql("/*+ ");
+      optimizer.forEach((h, i) => {
+        if (i > 0) w.sql(" ");
+        h.body(w);
+      });
+      w.sql(" */ ");
+    }
+    for (const c of hints) if (!(c instanceof Hint)) w.render(c).sql(" ");
+  }
+
   /** MySQL 没有 FULL JOIN。 */
   override get supportsFullJoin(): boolean {
     return false;
@@ -156,3 +170,23 @@ export class MysqlDialect extends Dialect {
 function dateAdd(w: SqlWriter, args: readonly Renderable[], unit: string): void {
   w.sql("DATE_ADD(").render(args[0]!).sql(", INTERVAL ").render(args[1]!).sql(` ${unit})`);
 }
+
+/**
+ * 一个优化器提示：MySQL 只认 SELECT 后面第一个 `/*+ ... *\/` 注释，所以同一段查询的提示由方言合并进一个注释。
+ * 由 {@link maxExecutionTime}、{@link index} 等创建。
+ */
+export class Hint implements Clause {
+  readonly position = "hint";
+  readonly dialect = MysqlDialect;
+
+
+  constructor(readonly body: (w: SqlWriter) => void) {}
+
+  /** 单独写出时带上注释符号；同一段里有多个提示时由方言合并。 */
+  render(w: SqlWriter): void {
+    w.sql("/*+ ");
+    this.body(w);
+    w.sql(" */");
+  }
+}
+

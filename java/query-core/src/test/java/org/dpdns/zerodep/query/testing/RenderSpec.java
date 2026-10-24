@@ -79,7 +79,9 @@ public abstract class RenderSpec {
             } else {
                 r = db.render((Query<?>) statement);
             }
-            List<String> parameters = r.parameters().stream().map(String::valueOf).toList();
+            // 数组参数写成逗号连接的元素，与 TypeScript 的 String(array) 相同。
+            List<String> parameters = r.parameters().stream().map(v -> v instanceof Object[] a
+                ? java.util.Arrays.stream(a).map(String::valueOf).collect(java.util.stream.Collectors.joining(",")) : String.valueOf(v)).toList();
             Path file = directory().resolve(e.getKey() + "." + dialect() + ".sql");
             if (write) {
                 Files.writeString(file, HEADER + json(parameters) + "\n" + r.sql() + "\n", StandardCharsets.UTF_8);

@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.postgres.PgTables.Tagged;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Event;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -31,6 +33,7 @@ class PostgresSpecTest extends RenderSpec {
     @Override protected Map<String, SpecCase> dialectCases() {
         Map<String, SpecCase> cases = new LinkedHashMap<>(classicCases());
         cases.putAll(structureCases());
+        cases.putAll(functionCases());
         return cases;
     }
 
@@ -98,4 +101,23 @@ class PostgresSpecTest extends RenderSpec {
 
     /** 某个单位的交货行的物料。 */
     private static Query<String> materials(String unit) { return from(Lips.class).where(l -> l.unit().eq(unit)).select(l -> l.material()); }
+
+    /** 数组、JSONB 与全文检索。 */
+    private Map<String, SpecCase> functionCases() {
+        return Map.of(
+            "postgres-arrays", SpecCase.plain(() -> from(Tagged.class)
+                .where(t -> all(eqAny(t.id(), List.of(1, 2)), arrayContains(t.tags(), new String[] {"red"}), arrayOverlaps(t.tags(), new String[] {"blue", "green"})))
+                .orderBy(t -> t.id())
+                .select(t -> cols(t.id(), t.tags(), cardinality(t.tags()).as("count")))),
+            "postgres-array-agg", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> l.material())
+                .select(l -> cols(l.material(), arrayAgg(l.delivery(), String[].class, l.delivery().desc()).as("deliveries")))),
+            "postgres-json", SpecCase.plain(() -> from(Tagged.class)
+                .where(t -> all(jsonContains(t.doc(), "{\"status\":\"open\"}"), jsonHasKey(t.doc(), "owner")))
+                .select(t -> cols(t.id(), jsonText(t.doc(), "owner", "name").as("owner")))),
+            "postgres-text-search", SpecCase.plain(() -> from(Tagged.class)
+                .where(t -> any(textMatches("simple", t.body(), "pump"), webMatches("english", t.body(), "valve -leak")))
+                .orderBy(t -> textRank("simple", t.body(), "pump").desc())
+                .select(t -> t.id())));
+    }
 }

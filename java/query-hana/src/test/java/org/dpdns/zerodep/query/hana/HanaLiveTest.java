@@ -3,6 +3,8 @@ package org.dpdns.zerodep.query.hana;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
+import org.dpdns.zerodep.query.hana.HanaTables.LipsByUnit;
+import org.dpdns.zerodep.query.hana.HanaTables.OrgNode;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -138,5 +140,46 @@ class HanaLiveTest extends LiveScenarios {
     void HANA没有INTERSECT_ALL() {
         Query<String> q = from(Lips.class).select(l -> l.material());
         assertThrows(UnsupportedOperationException.class, () -> db.list(q.combine("INTERSECT ALL", q)));
+    }
+
+    /** 建层级测试用的组织表和表函数。 */
+    private void createHanaObjects() throws java.sql.SQLException {
+        live.execute(List.of("-DROP TABLE QUERY_IT.H_ORG", "CREATE COLUMN TABLE QUERY_IT.H_ORG (ID NVARCHAR(10), PARENT_ID NVARCHAR(10), NAME NVARCHAR(20))",
+            "INSERT INTO QUERY_IT.H_ORG VALUES ('A', NULL, 'root')", "INSERT INTO QUERY_IT.H_ORG VALUES ('B', 'A', 'b')",
+            "INSERT INTO QUERY_IT.H_ORG VALUES ('C', 'B', 'c')", "INSERT INTO QUERY_IT.H_ORG VALUES ('D', 'A', 'd')",
+            "-DROP FUNCTION QUERY_IT.FN_LIPS",
+            "CREATE FUNCTION QUERY_IT.FN_LIPS (P_UNIT NVARCHAR(3)) RETURNS TABLE (VBELN NVARCHAR(10), LFIMG DECIMAL(13,3)) LANGUAGE SQLSCRIPT AS "
+                + "BEGIN RETURN SELECT VBELN, LFIMG FROM QUERY_IT.LIPS WHERE VRKME = :P_UNIT; END"));
+    }
+
+    @Test
+    void 层级与它的后代和祖先() throws java.sql.SQLException {
+        createHanaObjects();
+        assertEquals(List.of("A:1:0", "B:2:1", "C:3:2", "D:2:1"), db.list(from(hierarchy(OrgNode.class, HanaSpecTest.orgSource()))
+                .orderBy(n -> n.col(OrgNode::hierarchyRank))
+                .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyLevel), n.col(OrgNode::hierarchyParentRank))))
+            .stream().map(r -> r.get("nodeId") + ":" + r.get("hierarchyLevel") + ":" + r.get("hierarchyParentRank")).toList());
+        assertEquals(List.of("B:0", "C:1"), db.list(from(descendants(OrgNode.class, HanaSpecTest.orgSource(), List.of("B")))
+                .orderBy(n -> n.col(OrgNode::nodeId)).select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyDistance))))
+            .stream().map(r -> r.get("nodeId") + ":" + r.get("hierarchyDistance")).toList());
+        assertEquals(List.of("A:-2", "B:-1", "C:0"), db.list(from(ancestors(OrgNode.class, HanaSpecTest.orgSource(), List.of("C")))
+                .orderBy(n -> n.col(OrgNode::nodeId)).select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyDistance))))
+            .stream().map(r -> r.get("nodeId") + ":" + r.get("hierarchyDistance")).toList());
+    }
+
+    @Test
+    void 表函数按命名实参调用() throws java.sql.SQLException {
+        createHanaObjects();
+        assertEquals(List.of("D1", "D2", "D3", "D4", "D5", "D6"),
+            db.list(fromFunction(LipsByUnit.class, Map.of("P_UNIT", "EA")).orderBy(f -> f.delivery()).select(f -> f.delivery())));
+    }
+
+    @Test
+    void 全文检索与JSON取值() {
+        assertEquals(List.of("D1", "D2", "D5"), db.list(from(Lips.class).where(l -> contains("M1", l.material())).orderBy(l -> l.delivery()).select(l -> l.delivery())));
+        List<Map<String, Object>> fuzzy = db.list(from(Lips.class).where(l -> containsFuzzy(0.8, "D1", l.delivery())).select(l -> cols(l.delivery(), score().as("score"))));
+        assertEquals("D1", fuzzy.get(0).get("delivery"));
+        assertEquals(1.0, (Double) fuzzy.get(0).get("score"), 1e-9);
+        assertEquals("x", db.one(from(Lips.class).limit(1).select(l -> jsonValue(lit("{\"a\":{\"b\":\"x\"}}"), "$.a.b"))));
     }
 }

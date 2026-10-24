@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.scope;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.expr.Cond;
-import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.select.FilterObject;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;

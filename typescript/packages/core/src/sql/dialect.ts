@@ -199,6 +199,11 @@ export abstract class Dialect {
     w.sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
   }
 
+  /** 写出紧跟在 SELECT 之后的提示子句，每个后面跟一个空格；MySQL 把优化器提示合并进一个注释（它只认第一个）。 */
+  hints(w: SqlWriter, hints: readonly Clause[]): void {
+    for (const c of hints) w.render(c).sql(" ");
+  }
+
   /** 集合运算在本方言里的写法；不支持的（HANA 的 INTERSECT ALL、EXCEPT ALL）报错。 */
   setOperator(operator: string): string {
     return operator;

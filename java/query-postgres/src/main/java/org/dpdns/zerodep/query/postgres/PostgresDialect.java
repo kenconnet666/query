@@ -8,10 +8,15 @@ import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.dialect.Upsert;
 import org.dpdns.zerodep.query.type.CastType;
+import org.dpdns.zerodep.query.type.TypeRegistry;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -117,6 +122,35 @@ public class PostgresDialect extends Dialect {
     @Override public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
         w.render(left).sql(negate ? " IS DISTINCT FROM " : " IS NOT DISTINCT FROM ").render(right);
     }
+
+    /** 通用类型加上一维数组：文本、整数、长整数、小数和日期的数组列与参数，按 JDBC 的 Array 读写。 */
+    private static final TypeRegistry TYPES = TypeRegistry.defaults()
+        .with(String[].class, (rs, i) -> array(rs, i, String[].class), (ps, i, v) -> ps.setArray(i, ps.getConnection().createArrayOf("text", v)))
+        .with(Integer[].class, (rs, i) -> array(rs, i, Integer[].class), (ps, i, v) -> ps.setArray(i, ps.getConnection().createArrayOf("int4", v)))
+        .with(Long[].class, (rs, i) -> array(rs, i, Long[].class), (ps, i, v) -> ps.setArray(i, ps.getConnection().createArrayOf("int8", v)))
+        .with(BigDecimal[].class, (rs, i) -> array(rs, i, BigDecimal[].class), (ps, i, v) -> ps.setArray(i, ps.getConnection().createArrayOf("numeric", v)))
+        .with(LocalDate[].class, (rs, i) -> {
+            String[] text = array(rs, i, String[].class);
+            return text == null ? null : Arrays.stream(text).map(t -> t == null ? null : LocalDate.parse(t)).toArray(LocalDate[]::new);
+        }, (ps, i, v) -> ps.setArray(i, ps.getConnection().createArrayOf("date", Arrays.stream(v).map(d -> d == null ? null : d.toString()).toArray())));
+
+    /** 本方言的类型注册表：通用类型加上数组。 */
+    @Override public TypeRegistry types() { return TYPES; }
+
+    /** 读一维数组列，元素逐个转换成 type 的元素类型；日期数组先按文本读。 */
+    private static <A> A array(ResultSet rs, int index, Class<A> type) throws SQLException {
+        java.sql.Array a = rs.getArray(index);
+        if (a == null) return null;
+        try {
+            Object[] values = type == String[].class ? toText((Object[]) a.getArray()) : (Object[]) a.getArray();
+            return type.cast(Arrays.copyOf(values, values.length, type.asSubclass(Object[].class)));
+        } finally {
+            a.free();
+        }
+    }
+
+    /** 驱动按元素类型返回的数组转成文本数组（日期数组按文本读取时用）。 */
+    private static String[] toText(Object[] values) { return Arrays.stream(values).map(v -> v == null ? null : v.toString()).toArray(String[]::new); }
 
     /** CAST 的目标类型：小数写成 NUMERIC(精度,小数位)，其余沿用默认。 */
     @Override public String castType(CastType<?> type) {

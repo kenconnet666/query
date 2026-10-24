@@ -6,8 +6,9 @@ import { mysqlDriver } from "./driver.js";
 /** 一次导入拿到全部词汇：核心函数加上 MySQL 专有的。 */
 export * from "@zerodep-dev/query-core";
 export { deleteJoin, updateJoin } from "./join.js";
-export { MysqlDialect } from "./dialect.js";
+export { Hint, MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
+export { index, jsonContains, jsonText, match, matchBoolean, matchScore, noIndex } from "./functions.js";
 export { dateFormat, daysFollowing, daysPreceding, exceptAll, forShare, forUpdateOf, greatest, intersectAll, least, maxExecutionTime, range, recursiveCte } from "./functions.js";
 
 /** MySQL 数据库：查询渲染成 MySQL SQL，经由给定的驱动执行。 */

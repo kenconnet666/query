@@ -262,3 +262,20 @@ export class Derived<E> implements Source<E> {
     return column.name;
   }
 }
+
+/** 方言包自定义数据来源的各部分，见 {@link customSource}。 */
+export interface CustomSource {
+  readonly columns: readonly SourceColumn[];
+  readonly preferredAlias: string;
+  /** 是否套用数据库实例的全局过滤器；默认不套用。 */
+  readonly filtered?: boolean;
+  /** 表的实体类，供全局过滤器按类匹配。 */
+  readonly entity?: Ctor<unknown>;
+  renderSource(w: SqlWriter): void;
+  columnName(column: SourceColumn, w: SqlWriter): string;
+}
+
+/** 由各部分组成的数据来源，供方言包实现带参数的视图、表函数、层级等；E 是行的形状。 */
+export function customSource<E>(definition: CustomSource): Source<E> {
+  return { entity: definition.entity, filtered: definition.filtered ?? false, columns: definition.columns, preferredAlias: definition.preferredAlias, renderSource: (w) => definition.renderSource(w), columnName: (c, w) => definition.columnName(c, w) };
+}

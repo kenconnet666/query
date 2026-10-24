@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.mysql;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.JoinWrite;
@@ -118,6 +119,20 @@ public class MysqlDialect extends Dialect {
     @Override public void orderItem(SqlWriter w, Renderable expr, boolean descending, Boolean nullsFirst) {
         if (nullsFirst != null) w.render(expr).sql(nullsFirst ? " IS NULL DESC, " : " IS NULL ASC, ");
         w.render(expr).sql(descending ? " DESC" : " ASC");
+    }
+
+    /** MySQL 只认 SELECT 后面第一个优化器提示注释，所以把这一段的提示合并进一个 {@code /*+ ... *\/}，其他子句照常写出。 */
+    @Override public void hints(SqlWriter w, List<Clause> hints) {
+        List<Mysql.Hint> optimizer = hints.stream().filter(h -> h instanceof Mysql.Hint).map(h -> (Mysql.Hint) h).toList();
+        if (!optimizer.isEmpty()) {
+            w.sql("/*+ ");
+            for (int i = 0; i < optimizer.size(); i++) {
+                if (i > 0) w.sql(" ");
+                optimizer.get(i).renderBody(w);
+            }
+            w.sql(" */ ");
+        }
+        for (Clause c : hints) if (!(c instanceof Mysql.Hint)) w.render(c).sql(" ");
     }
 
     /** MySQL 没有 FULL JOIN。 */

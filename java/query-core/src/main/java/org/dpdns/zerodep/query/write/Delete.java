@@ -1,8 +1,8 @@
 package org.dpdns.zerodep.query.write;
 
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
-import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.EntityMeta;

@@ -3,6 +3,7 @@ import { it } from "node:test";
 import hana from "@sap/hana-client";
 import { addDays, addMonths, count, deleteFrom, insertInto, QueryExecutionError, updateJoin, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
 import * as hanax from "@zerodep-dev/query-hana";
+import { LipsByUnit, orgSource } from "../fixtures/dialect-tables.js";
 import { Lips, Mara } from "../fixtures/erp.js";
 import * as writes from "../fixtures/writes.js";
 import { liveScenarios } from "./live.js";
@@ -21,6 +22,7 @@ liveScenarios(
       "-DROP PROCEDURE QUERY_IT.SLOW_ROW",
       "CREATE PROCEDURE QUERY_IT.SLOW_ROW(IN SECONDS INTEGER) READS SQL DATA AS BEGIN USING SQLSCRIPT_SYNC AS SYNCLIB; " +
         "CALL SYNCLIB:SLEEP_SECONDS(:SECONDS); SELECT 1 AS X FROM DUMMY; END",
+      ...hanaObjects(),
     ],
     slowStatement: "CALL QUERY_IT.SLOW_ROW(3)",
   },
@@ -158,5 +160,42 @@ liveScenarios(
       const q = from(Lips).select((l) => l.material);
       await assert.rejects(live().db.list(q.combine("INTERSECT ALL", q)), /HANA has no INTERSECT ALL/);
     });
+
+    it("层级与它的后代和祖先", async () => {
+      const { db } = live();
+      const tree = await db.list(from(hanax.hierarchy(orgSource())).orderBy((n) => n.hierarchyRank).select((n) => ({ nodeId: n.nodeId, level: n.hierarchyLevel, parent: n.hierarchyParentRank })));
+      assert.deepEqual(tree.map((r) => `${r.nodeId}:${r.level}:${r.parent}`), ["A:1:0", "B:2:1", "C:3:2", "D:2:1"]);
+      const below = await db.list(from(hanax.descendants(orgSource(), ["B"])).orderBy((n) => n.nodeId).select((n) => ({ nodeId: n.nodeId, distance: n.hierarchyDistance })));
+      assert.deepEqual(below.map((r) => `${r.nodeId}:${r.distance}`), ["B:0", "C:1"]);
+      const above = await db.list(from(hanax.ancestors(orgSource(), ["C"])).orderBy((n) => n.nodeId).select((n) => ({ nodeId: n.nodeId, distance: n.hierarchyDistance })));
+      assert.deepEqual(above.map((r) => `${r.nodeId}:${r.distance}`), ["A:-2", "B:-1", "C:0"]);
+    });
+
+    it("表函数按命名实参调用", async () => {
+      assert.deepEqual(await live().db.list(hanax.fromFunction(LipsByUnit, { P_UNIT: "EA" }).orderBy((f) => f.delivery).select((f) => f.delivery)), ["D1", "D2", "D3", "D4", "D5", "D6"]);
+    });
+
+    it("全文检索与 JSON 取值", async () => {
+      const { db } = live();
+      assert.deepEqual(await db.list(from(Lips).where((l) => hanax.contains("M1", l.material)).orderBy((l) => l.delivery).select((l) => l.delivery)), ["D1", "D2", "D5"]);
+      const fuzzy = await db.list(from(Lips).where((l) => hanax.containsFuzzy(0.8, "D1", l.delivery)).select((l) => ({ delivery: l.delivery, score: hanax.score() })));
+      assert.equal(fuzzy[0]!.delivery, "D1");
+      assert.equal(fuzzy[0]!.score, 1);
+      assert.equal(await db.one(from(Lips).limit(1).select(() => hanax.jsonValue(lit('{"a":{"b":"x"}}'), "$.a.b"))), "x");
+    });
   },
 );
+
+/** 建层级测试用的组织表和表函数。 */
+function hanaObjects(): string[] {
+  return [
+    "-DROP TABLE QUERY_IT.H_ORG",
+    "CREATE COLUMN TABLE QUERY_IT.H_ORG (ID NVARCHAR(10), PARENT_ID NVARCHAR(10), NAME NVARCHAR(20))",
+    "INSERT INTO QUERY_IT.H_ORG VALUES ('A', NULL, 'root')",
+    "INSERT INTO QUERY_IT.H_ORG VALUES ('B', 'A', 'b')",
+    "INSERT INTO QUERY_IT.H_ORG VALUES ('C', 'B', 'c')",
+    "INSERT INTO QUERY_IT.H_ORG VALUES ('D', 'A', 'd')",
+    "-DROP FUNCTION QUERY_IT.FN_LIPS",
+    "CREATE FUNCTION QUERY_IT.FN_LIPS (P_UNIT NVARCHAR(3)) RETURNS TABLE (VBELN NVARCHAR(10), LFIMG DECIMAL(13,3)) LANGUAGE SQLSCRIPT AS BEGIN RETURN SELECT VBELN, LFIMG FROM QUERY_IT.LIPS WHERE VRKME = :P_UNIT; END",
+  ];
+}

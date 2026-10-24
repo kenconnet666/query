@@ -5,6 +5,7 @@ import { date, daysBetween, decimal, from, greatest, least, stringAgg, lit, maxE
 import * as mysqlx from "@zerodep-dev/query-mysql";
 import { Bound, count, plus } from "@zerodep-dev/query-mysql";
 import { Event, Lips, Mara } from "../fixtures/erp.js";
+import { Article } from "../fixtures/dialect-tables.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -27,6 +28,7 @@ liveScenarios(
     text: (length) => `VARCHAR(${length})`,
     // SLEEP() interrupted by max_execution_time returns 1 instead of failing, so this counts a billion rows instead.
     slowStatement: "SELECT COUNT(*) FROM (SELECT 1 FROM information_schema.columns LIMIT 1000) a, (SELECT 1 FROM information_schema.columns LIMIT 1000) b, (SELECT 1 FROM information_schema.columns LIMIT 1000) c",
+    setup: articleTable(),
     q: (identifier) => `\`${identifier}\``,
     // TIMESTAMP converts through the session time zone and ends in 2038; DATETIME is a plain local value.
     timestamp: "DATETIME(6)",
@@ -117,5 +119,36 @@ liveScenarios(
     it("MySQL 没有 FULL JOIN", async () => {
       await assert.rejects(live().db.list(from(Lips).unfiltered().fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l) => l.delivery)), /has no FULL JOIN/);
     });
+
+    it("优化器提示合并进一个注释", async () => {
+      const rows = await live().db.list(
+        from(Lips).join(Mara, (l, m) => m.material.eq(l.material)).with(() => mysqlx.maxExecutionTime(5000)).with((l, m) => mysqlx.noIndex(m)).orderBy((l) => l.delivery).select((l) => l.delivery),
+      );
+      assert.deepEqual(rows, ["D1", "D2", "D3", "D4", "D5"]);
+    });
+
+    it("JSON 的包含与路径文本", async () => {
+      const rows = await live().db.list(from(Article).where((a) => mysqlx.jsonContains(a.doc, '{"status":"open"}')).orderBy((a) => a.id).select((a) => ({ id: a.id, owner: mysqlx.jsonText(a.doc, "$.owner.name") })));
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.owner}`), ["1:ann", "3:null"]);
+    });
+
+    it("全文检索的自然语言与布尔模式", async () => {
+      const { db } = live();
+      assert.deepEqual(await db.list(from(Article).where((a) => mysqlx.match("pump", a.title, a.body)).select((a) => a.id)), [1]);
+      assert.deepEqual(await db.list(from(Article).where((a) => mysqlx.matchBoolean("+valve", a.title, a.body)).orderBy((a) => a.id).select((a) => a.id)), [2, 3]);
+      assert.deepEqual(await db.list(from(Article).where((a) => mysqlx.matchBoolean("+valve -found", a.title, a.body)).select((a) => a.id)), [2]);
+      assert.equal((await db.list(from(Article).orderBy((a) => [mysqlx.matchScore("pump", a.title, a.body).desc(), a.id]).select((a) => a.id)))[0], 1);
+    });
   },
 );
+
+/** 建 JSON 和全文检索用的表。 */
+function articleTable(): string[] {
+  return [
+    "-DROP TABLE `QUERY_IT`.`MY_ARTICLE`",
+    "CREATE TABLE `QUERY_IT`.`MY_ARTICLE` (`ID` INTEGER, `DOC` JSON, `TITLE` VARCHAR(100), `BODY` TEXT, FULLTEXT ft_article (`TITLE`, `BODY`)) ENGINE=InnoDB",
+    `INSERT INTO \`QUERY_IT\`.\`MY_ARTICLE\` VALUES (1, '{"status":"open","owner":{"name":"ann"}}', 'pump manual', 'the pump is running')`,
+    `INSERT INTO \`QUERY_IT\`.\`MY_ARTICLE\` VALUES (2, '{"status":"closed"}', 'valve notes', 'valve without leak')`,
+    `INSERT INTO \`QUERY_IT\`.\`MY_ARTICLE\` VALUES (3, '{"status":"open"}', 'valve report', 'valve leak found')`,
+  ];
+}

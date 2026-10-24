@@ -1,4 +1,4 @@
-import { call, cast, CastType, Cond, condition, date, double, Expr, expression, FunctionDef, integer, lit, param, skips, text, untyped, WindowFunction, type Clause, type KeepNull, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { call, cast, CastType, Cond, condition, customSource, Derived, from, integer as integerType, param as bindParam, tableSource, typeOf, type From, type Query, type Ref, type Source, type SourceColumn, type Table, date, double, Expr, expression, FunctionDef, integer, lit, param, skips, text, untyped, WindowFunction, type Clause, type KeepNull, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 
 /** HANA 专有的函数和子句；在其他方言上拒绝渲染。 */
@@ -120,4 +120,182 @@ export function corr(y: Expr<unknown>, x: Expr<unknown>): Expr<number | null> {
 function fraction(p: number): number {
   if (!(p >= 0 && p <= 1)) throw new RangeError(`A percentile must be between 0 and 1, got ${p}`);
   return p;
+}
+
+// ---------- 数据来源 ----------
+
+/** 渲染时确认当前方言是 HANA，否则报错。 */
+function requireHana(w: SqlWriter): void {
+  if (!(w.dialect instanceof HanaDialect)) throw new Error(`A HANA-only source cannot run on ${w.dialect.name}`);
+}
+
+/** 参数值按值推断类型绑定。 */
+function bindValue(w: SqlWriter, value: unknown): void {
+  w.render(bindParam(typeOf(value) as SqlType<unknown>, value));
+}
+
+/** 列取自表实体、名字和 schema 来自 `@table` 的带参数来源；值为 null 或 undefined 的参数不写。 */
+function parameterized<E>(table: Table<E>, parameters: Readonly<Record<string, unknown>>, fn: boolean): Source<E> {
+  const base = tableSource(table);
+  return customSource<E>({
+    entity: table,
+    filtered: true,
+    columns: base.columns,
+    preferredAlias: base.preferredAlias,
+    columnName: (c, w) => base.columnName(c, w),
+    renderSource: (w) => {
+      requireHana(w);
+      base.renderSource(w);
+      const given = Object.entries(parameters).filter(([, v]) => v != null);
+      if (given.length === 0 && !fn) return;
+      w.sql(" (");
+      given.forEach(([name, value], i) => {
+        if (i > 0) w.sql(", ");
+        if (fn) w.identifier(name);
+        else w.sql(`PLACEHOLDER."$$${name.replaceAll('"', '""')}$$"`);
+        w.sql(" => ");
+        bindValue(w, value);
+      });
+      w.sql(")");
+    },
+  });
+}
+
+/**
+ * 带输入参数的计算视图：`fromView(SalesView, { P_YEAR: "2026" })` 写成 `FROM "S"."CV_SALES" (PLACEHOLDER."$$P_YEAR$$" => ?)`。
+ * 视图的列声明成带 `@table` 的类；参数都绑定，值为空的参数不写，由视图的默认值决定。
+ */
+export function fromView<E>(view: Table<E>, placeholders: Readonly<Record<string, unknown>>): From<[Ref<E>]> {
+  return from(parameterized(view, placeholders, false));
+}
+
+/** 表函数：`fromFunction(LipsByUnit, { P_UNIT: "EA" })` 写成 `FROM "S"."FN" (P_UNIT => ?)`，命名实参，可以省略有默认值的参数。 */
+export function fromFunction<E>(fn: Table<E>, args: Readonly<Record<string, unknown>>): From<[Ref<E>]> {
+  return from(parameterized(fn, args, true));
+}
+
+/** 层级生成函数产生的列。 */
+export interface HierarchyColumns {
+  readonly hierarchyRank: number;
+  readonly hierarchyTreeSize: number;
+  readonly hierarchyParentRank: number;
+  readonly hierarchyRootRank: number;
+  readonly hierarchyLevel: number;
+  readonly hierarchyIsCycle: number;
+  readonly hierarchyIsOrphan: number;
+}
+
+/** 层级导航（后代、祖先）另外产生的列。 */
+export interface NavigationColumns {
+  readonly startRank: number;
+  readonly hierarchyDistance: number;
+}
+
+const TREE_COLUMNS: Readonly<Record<string, string>> = {
+  hierarchyRank: "HIERARCHY_RANK",
+  hierarchyTreeSize: "HIERARCHY_TREE_SIZE",
+  hierarchyParentRank: "HIERARCHY_PARENT_RANK",
+  hierarchyRootRank: "HIERARCHY_ROOT_RANK",
+  hierarchyLevel: "HIERARCHY_LEVEL",
+  hierarchyIsCycle: "HIERARCHY_IS_CYCLE",
+  hierarchyIsOrphan: "HIERARCHY_IS_ORPHAN",
+};
+const NAVIGATION_COLUMNS: Readonly<Record<string, string>> = { startRank: "START_RANK", hierarchyDistance: "HIERARCHY_DISTANCE" };
+
+/** 层级来源：来源查询要有 nodeId 和 parentId；navigation 为 undefined 时是整棵树。 */
+function hierarchySource<E>(source: Query<unknown>, navigation: "HIERARCHY_DESCENDANTS" | "HIERARCHY_ANCESTORS" | undefined, start: readonly unknown[]): Source<E> {
+  const derived = new Derived(source);
+  const names = derived.columns.map((c) => c.name);
+  if (!names.includes("nodeId") || !names.includes("parentId")) throw new Error(`A hierarchy source must select nodeId and parentId, it selects ${names.join(", ")}`);
+  if (navigation !== undefined && start.length === 0) throw new Error("Hierarchy navigation needs at least one start node");
+  const generated = navigation === undefined ? TREE_COLUMNS : { ...TREE_COLUMNS, ...NAVIGATION_COLUMNS };
+  const columns: SourceColumn[] = [...derived.columns, ...Object.keys(generated).map((name) => ({ name, type: integerType as SqlType<unknown> }))];
+  return customSource<E>({
+    columns,
+    preferredAlias: "hierarchy",
+    columnName: (c) => generated[c.name] ?? c.name,
+    renderSource: (w) => {
+      requireHana(w);
+      if (navigation !== undefined) w.sql(`${navigation}(SOURCE `);
+      const s = w.aliasFor({}, "src");
+      w.sql("HIERARCHY(SOURCE (SELECT ").alias(s).sql(".*, ").alias(s).sql(".").identifier("nodeId").sql(" AS NODE_ID, ").alias(s).sql(".").identifier("parentId").sql(" AS PARENT_ID FROM ");
+      new Derived(source).renderSource(w);
+      w.sql(" ").alias(s).sql(") SIBLING ORDER BY NODE_ID ASC)");
+      if (navigation === undefined) return;
+      w.sql(" START WHERE NODE_ID IN (");
+      start.forEach((v, i) => {
+        if (i > 0) w.sql(", ");
+        bindValue(w, v);
+      });
+      w.sql("))");
+    },
+  });
+}
+
+/**
+ * 层级：`from(hierarchy(来源查询))`。来源查询要有 nodeId 和 parentId 两列（类型相同，根的 parentId 为 NULL），
+ * 写成 `HIERARCHY(SOURCE (...) SIBLING ORDER BY NODE_ID)`；每行带上 hierarchyRank、hierarchyLevel（从 1 起）、hierarchyParentRank（根为 0）等列。
+ */
+export function hierarchy<R>(source: Query<R>): Source<R & HierarchyColumns> {
+  return hierarchySource(source as Query<unknown>, undefined, []);
+}
+
+/** 从 start 这些节点出发的后代（含自身），用 `HIERARCHY_DESCENDANTS`；另有 startRank、hierarchyDistance（自身为 0）。 */
+export function descendants<R>(source: Query<R>, start: readonly unknown[]): Source<R & HierarchyColumns & NavigationColumns> {
+  return hierarchySource(source as Query<unknown>, "HIERARCHY_DESCENDANTS", start);
+}
+
+/** 从 start 这些节点出发的祖先（含自身），用 `HIERARCHY_ANCESTORS`；hierarchyDistance 为负数。 */
+export function ancestors<R>(source: Query<R>, start: readonly unknown[]): Source<R & HierarchyColumns & NavigationColumns> {
+  return hierarchySource(source as Query<unknown>, "HIERARCHY_ANCESTORS", start);
+}
+
+// ---------- 全文检索与 JSON ----------
+
+const SCORE = FunctionDef.only(HanaDialect, "SCORE");
+
+/** CONTAINS 条件；option 是 FUZZY(...) 之类的固定文本。 */
+function search(term: string | null | undefined, columns: readonly Expr<string | null>[], option: string | undefined): Cond {
+  if (columns.length === 0) throw new TypeError("contains(...) needs at least one column");
+  if (skips(term)) return Cond.EMPTY;
+  const value = bindParam(text, term as string);
+  return condition((w) => {
+    if (!(w.dialect instanceof HanaDialect)) throw new Error(`A HANA-only operation cannot run on ${w.dialect.name}`);
+    w.sql("CONTAINS(");
+    if (columns.length === 1) w.render(columns[0]!);
+    else w.sql("(").join(columns, ", ").sql(")");
+    w.sql(", ").render(value);
+    if (option !== undefined) w.sql(", " + option);
+    w.sql(")");
+  });
+}
+
+/**
+ * 全文检索 `CONTAINS(列, ?)`，多列写成 `CONTAINS((a, b), ?)`；搜索词是 HANA 的 freestyle 语法（空格是与、OR、引号短语）。
+ * 只能用于列存表；skipEmpty 下搜索词为空时没有条件。与 {@link score} 配合排序。
+ */
+export function contains(term: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
+  return search(term, columns, undefined);
+}
+
+/** 模糊检索 `CONTAINS(列, ?, FUZZY(threshold))`，threshold 取 0 到 1，越大越严格，常用 0.8。 */
+export function containsFuzzy(threshold: number, term: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
+  if (!(threshold >= 0 && threshold <= 1)) throw new RangeError(`A fuzzy threshold must be between 0 and 1, got ${threshold}`);
+  return search(term, columns, `FUZZY(${threshold})`);
+}
+
+/** 查询里全部 CONTAINS 的综合相关度 `SCORE()`，0 到 1。 */
+export function score(): Expr<number> {
+  return call(SCORE, double);
+}
+
+/**
+ * JSON 文档里的一个标量 `JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)`，例如 `jsonValue(t.payload, "$.order.id")`。
+ * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
+ */
+export function jsonValue(document: Expr<string | null>, path: string): Expr<string | null> {
+  return expression(text, (w) => {
+    requireHana(w);
+    w.sql("JSON_VALUE(").render(document).sql(", ").literal(path, text).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
+  });
 }

@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.mysql.MysqlTables.Article;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Event;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -32,6 +34,7 @@ class MysqlSpecTest extends RenderSpec {
     @Override protected Map<String, SpecCase> dialectCases() {
         Map<String, SpecCase> cases = new LinkedHashMap<>(classicCases());
         cases.putAll(structureCases());
+        cases.putAll(functionCases());
         return cases;
     }
 
@@ -77,4 +80,22 @@ class MysqlSpecTest extends RenderSpec {
 
     /** 某个单位的交货行的物料。 */
     private static Query<String> materials(String unit) { return from(Lips.class).where(l -> l.unit().eq(unit)).select(l -> l.material()); }
+
+    /** 合并的优化器提示、JSON 与全文检索。 */
+    private Map<String, SpecCase> functionCases() {
+        return Map.of(
+            "mysql-hints", SpecCase.plain(() -> from(Lips.class)
+                .join(Mara.class, (l, m) -> m.material().eq(l.material()))
+                .with((l, m) -> maxExecutionTime(2000))
+                .with((l, m) -> index(l, "PRIMARY"))
+                .with((l, m) -> noIndex(m))
+                .select((l, m) -> l.delivery())),
+            "mysql-json", SpecCase.plain(() -> from(Article.class)
+                .where(a -> jsonContains(a.doc(), "{\"status\":\"open\"}"))
+                .select(a -> cols(a.id(), jsonText(a.doc(), "$.owner.name").as("owner")))),
+            "mysql-fulltext", SpecCase.plain(() -> from(Article.class)
+                .where(a -> any(match("pump", a.title(), a.body()), matchBoolean("+valve -leak", a.title(), a.body())))
+                .orderBy(a -> matchScore("pump", a.title(), a.body()).desc())
+                .select(a -> a.id())));
+    }
 }

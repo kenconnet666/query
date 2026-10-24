@@ -1,4 +1,4 @@
-import { aliasOf, Bound, call, cast, CastType, Cond, condition, Cte, double, Expr, expression, FunctionDef, lit, param, skips, untyped, type Clause, type Lock, type Query, type Renderable, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import { aliasOf, Bound, call, integer, text as textType, toOrder, type OrderItem, cast, CastType, Cond, condition, Cte, double, Expr, expression, FunctionDef, lit, param, skips, untyped, type Clause, type Lock, type Query, type Renderable, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
 import { PostgresDialect } from "./dialect.js";
 
 /** PostgreSQL 专有的函数和子句；在其他方言上拒绝渲染。 */
@@ -171,4 +171,152 @@ export function corr(y: Expr<unknown>, x: Expr<unknown>): Expr<number | null> {
 function fraction(p: number): number {
   if (!(p >= 0 && p <= 1)) throw new RangeError(`A percentile must be between 0 and 1, got ${p}`);
   return p;
+}
+
+// ---------- 数组 ----------
+
+/** 解析 PostgreSQL 一维数组的文本形式 `{a,"b c",NULL}`；已经是数组时原样返回。 */
+function parseArray(raw: unknown): readonly unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== "string" || !raw.startsWith("{") || !raw.endsWith("}")) throw new TypeError(`Cannot read ${JSON.stringify(raw)} as a PostgreSQL array`);
+  const out: (string | null)[] = [];
+  const body = raw.slice(1, -1);
+  let i = 0;
+  while (i < body.length) {
+    if (body[i] === '"') {
+      let value = "";
+      for (i++; body[i] !== '"'; i++) value += body[i] === "\\" ? body[++i] : body[i];
+      out.push(value);
+      i += 2;
+    } else {
+      let end = body.indexOf(",", i);
+      if (end < 0) end = body.length;
+      const value = body.slice(i, end);
+      out.push(value === "NULL" ? null : value);
+      i = end + 1;
+    }
+  }
+  return out;
+}
+
+/** 元素类型为 element 的一维数组列或参数，例如 `@column("TAGS", arrayOf(text)) tags!: string[]`；元素为 NULL 时读成 null。 */
+export function arrayOf<T>(element: SqlType<T>): SqlType<(T | null)[]> {
+  return Object.freeze({
+    name: `${element.name}[]`,
+    kind: "unknown" as const,
+    encode: (values: (T | null)[]) => values.map((v) => (v === null ? null : element.encode(v))),
+    decode: (raw: unknown) => parseArray(raw).map((v) => (v === null ? null : element.decode(v))),
+  });
+}
+
+/**
+ * 与一组值中任一个相等：`e = ANY($1)`，整个数组绑定成一个参数，不像 `IN (...)` 那样随个数变长，
+ * 语句可以复用执行计划，也不受参数个数上限的限制。空数组恒假。
+ */
+export function eqAny<T>(e: Expr<T>, values: readonly NonNullable<T>[] | null | undefined): Cond {
+  if (skips(values)) return Cond.EMPTY;
+  const p = param(arrayOf(e.type as SqlType<NonNullable<T>>), [...(values as NonNullable<T>[])]);
+  return pgCond((w) => w.render(e).sql(" = ANY(").render(p).sql(")"));
+}
+
+/** 数组列包含 values 的全部元素：`arr @> $1`。 */
+export function arrayContains<T>(array: Expr<(T | null)[] | null>, values: readonly T[]): Cond {
+  return arrayOp(array, " @> ", values);
+}
+
+/** 数组列与 values 至少有一个共同元素：`arr && $1`。 */
+export function arrayOverlaps<T>(array: Expr<(T | null)[] | null>, values: readonly T[]): Cond {
+  return arrayOp(array, " && ", values);
+}
+
+/** 数组的元素个数 `cardinality(arr)`，空数组为 0。 */
+export function cardinality(array: Expr<unknown>): Expr<number | null> {
+  return call(CARDINALITY, integer, array);
+}
+
+/** 把组内的值收集成数组 `ARRAY_AGG(e ORDER BY ...)`。 */
+export function arrayAgg<T>(e: Expr<T>, ...order: OrderItem[]): Expr<(T | null)[] | null> {
+  const orders = order.map(toOrder);
+  return expression(arrayOf(e.type), (w) => {
+    requirePostgres(w);
+    w.sql("ARRAY_AGG(").render(e);
+    if (orders.length > 0) w.sql(" ORDER BY ").join(orders, ", ");
+    w.sql(")");
+  });
+}
+
+const CARDINALITY = FunctionDef.only(PostgresDialect, "cardinality");
+
+/** `arr op $1`，values 绑定成同类型的数组参数。 */
+function arrayOp<T>(array: Expr<(T | null)[] | null>, op: string, values: readonly T[]): Cond {
+  const p = param(array.type as SqlType<(T | null)[]>, [...values]);
+  return pgCond((w) => w.render(array).sql(op).render(p));
+}
+
+// ---------- JSONB ----------
+
+/** JSONB 里一个路径上的文本 `(doc #>> CAST(ARRAY[$1, ...] AS TEXT[]))`，路径不存在或是 JSON null 时为 NULL。 */
+export function jsonText(document: Expr<string | null>, ...path: string[]): Expr<string | null> {
+  if (path.length === 0) throw new TypeError("jsonText(...) needs a path");
+  const keys = path.map((p) => param(textType, p));
+  return expression(textType, (w) => {
+    requirePostgres(w);
+    w.sql("(").render(document).sql(" #>> CAST(ARRAY[").join(keys, ", ").sql("] AS TEXT[]))");
+  });
+}
+
+/** JSONB 包含 json 这段文档：`doc @> CAST($1 AS JSONB)`；能用 GIN 索引。 */
+export function jsonContains(document: Expr<string | null>, json: string | null | undefined): Cond {
+  if (skips(json)) return Cond.EMPTY;
+  const value = param(textType, json as string);
+  return pgCond((w) => w.render(document).sql(" @> CAST(").render(value).sql(" AS JSONB)"));
+}
+
+/** JSONB 的顶层有这个键：`jsonb_exists(doc, $1)`（即 `?` 运算符）。 */
+export function jsonHasKey(document: Expr<string | null>, key: string | null | undefined): Cond {
+  if (skips(key)) return Cond.EMPTY;
+  const value = param(textType, key as string);
+  return pgCond((w) => w.sql("jsonb_exists(").render(document).sql(", ").render(value).sql(")"));
+}
+
+/** 写入 JSONB 列的值 `CAST($1 AS JSONB)`。 */
+export function jsonb(json: string): Expr<string> {
+  const value = param(textType, json);
+  return expression(textType, (w) => {
+    requirePostgres(w);
+    w.sql("CAST(").render(value).sql(" AS JSONB)");
+  });
+}
+
+// ---------- 全文检索 ----------
+
+/** 全文检索条件；tsquery 是生成查询的函数名。 */
+function textSearch(tsquery: string, config: string, document: Expr<string | null>, query: string | null | undefined): Cond {
+  if (skips(query)) return Cond.EMPTY;
+  const cfg = param(textType, config);
+  const q = param(textType, query as string);
+  return pgCond((w) => w.sql("to_tsvector(CAST(").render(cfg).sql(" AS regconfig), ").render(document).sql(") @@ " + tsquery + "(CAST(").render(cfg).sql(" AS regconfig), ").render(q).sql(")"));
+}
+
+/**
+ * 全文检索 `to_tsvector(配置, 文本) @@ plainto_tsquery(配置, $1)`：query 里的词都要出现（忽略大小写、按配置做词干化）。
+ * config 是文本检索配置，例如 `"simple"`、`"english"`；skipEmpty 下 query 为空时没有条件。
+ */
+export function textMatches(config: string, document: Expr<string | null>, query: string | null | undefined): Cond {
+  return textSearch("plainto_tsquery", config, document, query);
+}
+
+/** 同 {@link textMatches}，但 query 用网页搜索的写法（`websearch_to_tsquery`）：引号短语、`or`、`-排除`。 */
+export function webMatches(config: string, document: Expr<string | null>, query: string | null | undefined): Cond {
+  return textSearch("websearch_to_tsquery", config, document, query);
+}
+
+/** 相关度 `ts_rank(...)`，用来排序；不匹配的行也有分数，筛选要另用 {@link textMatches}。 */
+export function textRank(config: string, document: Expr<string | null>, query: string): Expr<number> {
+  const cfg = param(textType, config);
+  const q = param(textType, query);
+  return expression(double, (w) => {
+    requirePostgres(w);
+    w.sql("CAST(ts_rank(to_tsvector(CAST(").render(cfg).sql(" AS regconfig), ").render(document).sql("), plainto_tsquery(CAST(").render(cfg).sql(" AS regconfig), ").render(q).sql(")) AS DOUBLE PRECISION)");
+  });
 }

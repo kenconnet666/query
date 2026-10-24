@@ -66,6 +66,7 @@ import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgG
 import * as pgx from "@zerodep-dev/query-postgres";
 import * as mysqlx from "@zerodep-dev/query-mysql";
 import * as hanax from "@zerodep-dev/query-hana";
+import { Article, LipsByUnit, orgSource, SalesView, Tagged } from "./dialect-tables.js";
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
@@ -672,6 +673,32 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         .fullJoin(Mara, (l, m) => m.material.eq(l.material))
         .select((l, m) => ({ delivery: l.delivery, material: m.material })),
     ),
+    "hana-calculation-view": plain(() =>
+      hanax.fromView(SalesView, { P_YEAR: "2026", P_REGION: null })
+        .where((v) => v.amount.gt("10"))
+        .select((v) => ({ material: v.material, amount: v.amount })),
+    ),
+    "hana-table-function": plain(() =>
+      hanax.fromFunction(LipsByUnit, { P_UNIT: "EA" })
+        .orderBy((f) => f.delivery)
+        .select((f) => f.delivery),
+    ),
+    "hana-hierarchy": plain(() =>
+      from(hanax.hierarchy(orgSource()))
+        .orderBy((n) => n.hierarchyRank)
+        .select((n) => ({ nodeId: n.nodeId, hierarchyLevel: n.hierarchyLevel, hierarchyParentRank: n.hierarchyParentRank, name: n.name })),
+    ),
+    "hana-descendants": plain(() =>
+      from(hanax.descendants(orgSource(), ["B"]))
+        .orderBy((n) => n.nodeId)
+        .select((n) => ({ nodeId: n.nodeId, hierarchyDistance: n.hierarchyDistance })),
+    ),
+    "hana-search": plain(() =>
+      from(Lips)
+        .where((l) => all(hanax.contains("M1", l.material), hanax.containsFuzzy(0.8, "D1", l.delivery, l.material)))
+        .orderBy(() => hanax.score().desc())
+        .select((l) => ({ delivery: l.delivery, score: hanax.score(), json: hanax.jsonValue(l.unit, "$.unit") })),
+    ),
     "hana-regexpr": plain(() =>
       from(Lips)
         .where((l) => likeRegexpr(l.delivery, "^D[0-9]+$"))
@@ -737,6 +764,28 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         .fullJoin(Mara, (l, m) => m.material.eq(l.material))
         .select((l, m) => ({ delivery: l.delivery, material: m.material })),
     ),
+    "postgres-arrays": plain(() =>
+      from(Tagged)
+        .where((t) => all(pgx.eqAny(t.id, [1, 2]), pgx.arrayContains(t.tags, ["red"]), pgx.arrayOverlaps(t.tags, ["blue", "green"])))
+        .orderBy((t) => t.id)
+        .select((t) => ({ id: t.id, tags: t.tags, count: pgx.cardinality(t.tags) })),
+    ),
+    "postgres-array-agg": plain(() =>
+      from(Lips)
+        .groupBy((l) => l.material)
+        .select((l) => ({ material: l.material, deliveries: pgx.arrayAgg(l.delivery, l.delivery.desc()) })),
+    ),
+    "postgres-json": plain(() =>
+      from(Tagged)
+        .where((t) => all(pgx.jsonContains(t.doc, '{"status":"open"}'), pgx.jsonHasKey(t.doc, "owner")))
+        .select((t) => ({ id: t.id, owner: pgx.jsonText(t.doc, "owner", "name") })),
+    ),
+    "postgres-text-search": plain(() =>
+      from(Tagged)
+        .where((t) => any(pgx.textMatches("simple", t.body, "pump"), pgx.webMatches("english", t.body, "valve -leak")))
+        .orderBy((t) => pgx.textRank("simple", t.body, "pump").desc())
+        .select((t) => t.id),
+    ),
     "postgres-aggregates": plain(() =>
       from(Lips)
         .groupBy((l) => l.material)
@@ -777,6 +826,25 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
         .select((l) => l.delivery),
     ),
     "mysql-share-lock": plain(() => from(Lips).with(mysqlx.forShare("nowait")).select((l) => l.delivery)),
+    "mysql-hints": plain(() =>
+      from(Lips)
+        .join(Mara, (l, m) => m.material.eq(l.material))
+        .with(() => mysqlx.maxExecutionTime(2000))
+        .with((l) => mysqlx.index(l, "PRIMARY"))
+        .with((l, m) => mysqlx.noIndex(m))
+        .select((l) => l.delivery),
+    ),
+    "mysql-json": plain(() =>
+      from(Article)
+        .where((a) => mysqlx.jsonContains(a.doc, '{"status":"open"}'))
+        .select((a) => ({ id: a.id, owner: mysqlx.jsonText(a.doc, "$.owner.name") })),
+    ),
+    "mysql-fulltext": plain(() =>
+      from(Article)
+        .where((a) => any(mysqlx.match("pump", a.title, a.body), mysqlx.matchBoolean("+valve -leak", a.title, a.body)))
+        .orderBy((a) => mysqlx.matchScore("pump", a.title, a.body).desc())
+        .select((a) => a.id),
+    ),
     "mysql-functions": plain(() =>
       from(Lips)
         .with(maxExecutionTime(2000))

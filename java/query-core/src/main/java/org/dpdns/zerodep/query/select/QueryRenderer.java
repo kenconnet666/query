@@ -93,9 +93,7 @@ public final class QueryRenderer {
             }
         }
         w.sql("SELECT ");
-        for (Clause c : s.clauses) {
-            if (c.position() == Clause.Position.HINT) w.render(c).sql(" ");
-        }
+        w.dialect().hints(w, s.clauses.stream().filter(c -> c.position() == Clause.Position.HINT).toList());
         boolean replacedDistinct = false;
         for (Clause c : s.clauses) {
             if (c.position() == Clause.Position.DISTINCT) {

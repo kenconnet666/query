@@ -3,9 +3,10 @@ import { it } from "node:test";
 import pg from "pg";
 import { count, cube, decimal, distinctOn, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
 import * as pgx from "@zerodep-dev/query-postgres";
-import { Bound, deleteFrom, insertInto, plus } from "@zerodep-dev/query-postgres";
+import { all, Bound, deleteFrom, insertInto, plus } from "@zerodep-dev/query-postgres";
 import { Event, Lips, Mara } from "../fixtures/erp.js";
 import { Note } from "../fixtures/writes.js";
+import { Tagged } from "../fixtures/dialect-tables.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -18,6 +19,7 @@ liveScenarios(
     database: (driver, options) => new PostgresDatabase(driver, options),
     text: (length) => `VARCHAR(${length})`,
     slowStatement: "SELECT pg_sleep(3)",
+    setup: taggedTable(),
   },
   (live) => {
     it("关闭 standard_conforming_strings 的会话里含反斜杠的字面量仍原样往返", async () => {
@@ -183,5 +185,38 @@ liveScenarios(
       assert.deepEqual(await db.returning(deleteFrom(Note).where((n) => n.id.eq("RET1"))), [row]);
       assert.deepEqual(await db.returning(deleteFrom(Note).where((n) => n.id.eq("RET1"))), []);
     });
+
+    it("数组参数与数组列", async () => {
+      const { db } = live();
+      const rows = await db.list(from(Tagged).where((t) => pgx.eqAny(t.id, [1, 2, 3])).orderBy((t) => t.id).select((t) => ({ id: t.id, tags: t.tags, count: pgx.cardinality(t.tags) })));
+      assert.deepEqual(rows.map((r) => `${r.id}:${JSON.stringify(r.tags)}:${r.count}`), ['1:["red","blue"]:2', '2:["red"]:1', "3:[]:0"]);
+      assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.arrayContains(t.tags, ["red"])).orderBy((t) => t.id).select((t) => t.id)), [1, 2]);
+      assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.arrayOverlaps(t.tags, ["blue", "green"])).select((t) => t.id)), [1]);
+      assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.eqAny(t.id, [])).select((t) => t.id)), []);
+      assert.deepEqual(await db.one(from(Lips).where((l) => l.material.eq("M2")).select((l) => pgx.arrayAgg(l.delivery, l.delivery.desc()))), ["D4", "D3"]);
+    });
+
+    it("JSONB 的包含、键与路径文本", async () => {
+      const rows = await live().db.list(from(Tagged).where((t) => all(pgx.jsonContains(t.doc, '{"status":"open"}'), pgx.jsonHasKey(t.doc, "owner"))).select((t) => ({ id: t.id, owner: pgx.jsonText(t.doc, "owner", "name") })));
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.owner}`), ["1:ann"]);
+    });
+
+    it("全文检索与相关度", async () => {
+      const { db } = live();
+      assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.textMatches("simple", t.body, "pump")).select((t) => t.id)), [1]);
+      assert.deepEqual(await db.list(from(Tagged).where((t) => pgx.webMatches("simple", t.body, "valve -found")).select((t) => t.id)), [2]);
+      assert.deepEqual(await db.list(from(Tagged).orderBy((t) => [pgx.textRank("simple", t.body, "pump").desc(), t.id]).select((t) => t.id)), [1, 2, 3]);
+    });
   },
 );
+
+/** 建数组、JSONB 和全文检索用的表。 */
+function taggedTable(): string[] {
+  return [
+    '-DROP TABLE "QUERY_IT"."PG_TAGGED"',
+    'CREATE TABLE "QUERY_IT"."PG_TAGGED" ("ID" INTEGER, "TAGS" TEXT[], "DOC" JSONB, "BODY" TEXT)',
+    `INSERT INTO "QUERY_IT"."PG_TAGGED" VALUES (1, ARRAY['red', 'blue'], '{"status":"open","owner":{"name":"ann"}}', 'the pump is running')`,
+    `INSERT INTO "QUERY_IT"."PG_TAGGED" VALUES (2, ARRAY['red'], '{"status":"closed"}', 'a valve without a leak')`,
+    `INSERT INTO "QUERY_IT"."PG_TAGGED" VALUES (3, ARRAY[]::TEXT[], '{"status":"open"}', 'valve leak found')`,
+  ];
+}

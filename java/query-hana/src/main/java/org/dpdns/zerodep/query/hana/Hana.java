@@ -12,7 +12,12 @@ import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.expr.WindowFunction;
+import org.dpdns.zerodep.query.scope.From1;
+import org.dpdns.zerodep.query.scope.SkipEmpty;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.write.JoinDelete;
@@ -20,7 +25,10 @@ import org.dpdns.zerodep.query.write.JoinUpdate;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
@@ -41,11 +49,109 @@ public final class Hana extends Sql {
     private static final FunctionDef LEAST = FunctionDef.only(HanaDialect.class, "LEAST");
     private static final FunctionDef CUBE = FunctionDef.only(HanaDialect.class, "CUBE");
     private static final FunctionDef MEDIAN = FunctionDef.only(HanaDialect.class, "MEDIAN");
+    private static final FunctionDef SCORE = FunctionDef.only(HanaDialect.class, "SCORE");
     private static final FunctionDef CORR = FunctionDef.only(HanaDialect.class, "CORR");
     private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(HanaDialect.class, "PERCENTILE_CONT",
         (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
     private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(HanaDialect.class, "PERCENTILE_DISC",
         (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+
+    // ---------- 数据来源 ----------
+
+    /**
+     * 带输入参数的计算视图：{@code fromView(SalesView.class, Map.of("P_YEAR", "2026"))} 写成
+     * {@code FROM "S"."CV_SALES" (PLACEHOLDER."$$P_YEAR$$" => ?)}。视图的列声明成带 {@code @Table} 的表接口，
+     * 参数都绑定；值为 null 的参数不写，由视图的默认值决定。
+     */
+    public static <T extends Entity> From1<T> fromView(Class<T> view, Map<String, ?> placeholders) {
+        Ref<T> ref = Ref.of(new HanaSources.Parameterized<>(view, placeholders, false));
+        return From1.start(ref, ref.param());
+    }
+
+    /** 表函数：{@code fromFunction(OpenItems.class, Map.of("P_UNIT", "EA"))} 写成 {@code FROM "S"."FN" ("P_UNIT" => ?)}，命名实参，可以省略有默认值的参数。 */
+    public static <T extends Entity> From1<T> fromFunction(Class<T> function, Map<String, ?> arguments) {
+        Ref<T> ref = Ref.of(new HanaSources.Parameterized<>(function, arguments, true));
+        return From1.start(ref, ref.param());
+    }
+
+    /**
+     * 层级：{@code from(hierarchy(Node.class, 来源查询))}。来源查询要有 nodeId 和 parentId 两列（类型相同，根的 parentId 为 NULL），
+     * 写成 {@code HIERARCHY(SOURCE (...) SIBLING ORDER BY NODE_ID)}。结果类里名为 hierarchyRank、hierarchyLevel（从 1 起）、
+     * hierarchyParentRank（根为 0）、hierarchyRootRank、hierarchyTreeSize、hierarchyIsCycle、hierarchyIsOrphan 的属性读层级函数生成的列，
+     * 其余属性读来源查询的同名列。
+     */
+    public static <H> Source<H> hierarchy(Class<H> shape, Query<?> source) {
+        return new HanaSources.Hierarchy<>(shape, source, HanaSources.Navigation.TREE, List.of());
+    }
+
+    /** 从 start 这些节点出发的后代（含自身），用 {@code HIERARCHY_DESCENDANTS}；另有 startRank、hierarchyDistance（自身为 0）两列。 */
+    public static <H> Source<H> descendants(Class<H> shape, Query<?> source, Collection<?> start) {
+        return new HanaSources.Hierarchy<>(shape, source, HanaSources.Navigation.DESCENDANTS, List.copyOf(start));
+    }
+
+    /** 从 start 这些节点出发的祖先（含自身），用 {@code HIERARCHY_ANCESTORS}；hierarchyDistance 为负数。 */
+    public static <H> Source<H> ancestors(Class<H> shape, Query<?> source, Collection<?> start) {
+        return new HanaSources.Hierarchy<>(shape, source, HanaSources.Navigation.ANCESTORS, List.copyOf(start));
+    }
+
+    // ---------- 全文检索与 JSON ----------
+
+    /**
+     * 全文检索 {@code CONTAINS(列, ?)}，多列写成 {@code CONTAINS((a, b), ?)}；搜索词是 HANA 的 freestyle 语法（空格是与、OR、引号短语）。
+     * 只能用于列存表；skipEmpty 下搜索词为空时没有条件。与 {@link #score()} 配合排序。
+     */
+    @SafeVarargs
+    public static Cond contains(String term, Expr<String>... columns) { return search(term, columns, null); }
+
+    /** 模糊检索 {@code CONTAINS(列, ?, FUZZY(threshold))}，threshold 取 0 到 1，越大越严格，常用 0.8。 */
+    @SafeVarargs
+    public static Cond containsFuzzy(double threshold, String term, Expr<String>... columns) {
+        if (!(threshold >= 0 && threshold <= 1)) throw new IllegalArgumentException("A fuzzy threshold must be between 0 and 1, got " + threshold);
+        return search(term, columns, "FUZZY(" + threshold + ")");
+    }
+
+    /** 查询里全部 CONTAINS 的综合相关度 {@code SCORE()}，0 到 1。 */
+    public static Expr<Double> score() { return Nodes.call(SqlType.of(Double.class), SCORE, List.of()); }
+
+    /** CONTAINS 条件；option 是 FUZZY(...) 之类的固定文本。 */
+    private static Cond search(String term, Expr<String>[] columns, String option) {
+        if (columns.length == 0) throw new IllegalArgumentException("contains(...) needs at least one column");
+        if (SkipEmpty.skips(term)) return Cond.EMPTY;
+        Expr<String> value = val(term, columns[0].type());
+        List<Expr<String>> list = List.of(columns);
+        return hanaCond(w -> {
+            w.sql("CONTAINS(");
+            if (list.size() == 1) w.render(list.get(0));
+            else w.sql("(").join(list, ", ").sql(")");
+            w.sql(", ").render(value);
+            if (option != null) w.sql(", ").sql(option);
+            w.sql(")");
+        });
+    }
+
+    /**
+     * JSON 文档里的一个标量 {@code JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)}，例如 {@code jsonValue(t.payload(), "$.order.id")}。
+     * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
+     */
+    public static Expr<String> jsonValue(Expr<String> document, String path) {
+        Objects.requireNonNull(path, "path");
+        return new Expr<>(SqlType.of(String.class)) {
+            @Override public void render(SqlWriter w) {
+                HanaSources.requireHana(w);
+                w.sql("JSON_VALUE(").render(document).sql(", ").literal(path).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
+            }
+        };
+    }
+
+    /** HANA 专属的条件；在其他方言上渲染会明确报错。 */
+    private static Cond hanaCond(Consumer<SqlWriter> body) {
+        return new Cond() {
+            @Override public void render(SqlWriter w) {
+                HanaSources.requireHana(w);
+                body.accept(w);
+            }
+        };
+    }
 
     // ---------- 统计 ----------
 

@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.mysql.MysqlTables.Article;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Event;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.dpdns.zerodep.query.mysql.Mysql.*;
@@ -121,5 +123,38 @@ class MysqlLiveTest extends LiveScenarios {
     void MySQL没有FULL_JOIN() {
         assertThrows(UnsupportedOperationException.class, () -> db.list(from(Lips.class).unfiltered()
             .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material())).select((l, m) -> l.delivery())));
+    }
+
+    /** 建 JSON 和全文检索用的表。 */
+    private void createArticles() throws java.sql.SQLException {
+        live.execute(List.of("-DROP TABLE `QUERY_IT`.`MY_ARTICLE`",
+            "CREATE TABLE `QUERY_IT`.`MY_ARTICLE` (`ID` INTEGER, `DOC` JSON, `TITLE` VARCHAR(100), `BODY` TEXT, FULLTEXT ft_article (`TITLE`, `BODY`)) ENGINE=InnoDB",
+            "INSERT INTO `QUERY_IT`.`MY_ARTICLE` VALUES (1, '{\"status\":\"open\",\"owner\":{\"name\":\"ann\"}}', 'pump manual', 'the pump is running')",
+            "INSERT INTO `QUERY_IT`.`MY_ARTICLE` VALUES (2, '{\"status\":\"closed\"}', 'valve notes', 'valve without leak')",
+            "INSERT INTO `QUERY_IT`.`MY_ARTICLE` VALUES (3, '{\"status\":\"open\"}', 'valve report', 'valve leak found')"));
+    }
+
+    @Test
+    void 优化器提示合并进一个注释() {
+        List<String> rows = db.list(from(Lips.class).join(Mara.class, (l, m) -> m.material().eq(l.material()))
+            .with((l, m) -> maxExecutionTime(5000)).with((l, m) -> noIndex(m)).orderBy((l, m) -> l.delivery()).select((l, m) -> l.delivery()));
+        assertEquals(List.of("D1", "D2", "D3", "D4", "D5"), rows);
+    }
+
+    @Test
+    void JSON的包含与路径文本() throws java.sql.SQLException {
+        createArticles();
+        List<Map<String, Object>> rows = db.list(from(Article.class).where(a -> jsonContains(a.doc(), "{\"status\":\"open\"}")).orderBy(a -> a.id())
+            .select(a -> cols(a.id(), jsonText(a.doc(), "$.owner.name").as("owner"))));
+        assertEquals(List.of("1:ann", "3:null"), rows.stream().map(r -> r.get("id") + ":" + r.get("owner")).toList());
+    }
+
+    @Test
+    void 全文检索的自然语言与布尔模式() throws java.sql.SQLException {
+        createArticles();
+        assertEquals(List.of(1), db.list(from(Article.class).where(a -> match("pump", a.title(), a.body())).select(a -> a.id())));
+        assertEquals(List.of(2, 3), db.list(from(Article.class).where(a -> matchBoolean("+valve", a.title(), a.body())).orderBy(a -> a.id()).select(a -> a.id())));
+        assertEquals(List.of(2), db.list(from(Article.class).where(a -> matchBoolean("+valve -found", a.title(), a.body())).select(a -> a.id())));
+        assertEquals(1, db.list(from(Article.class).orderBy(a -> orders(matchScore("pump", a.title(), a.body()).desc(), a.id())).select(a -> a.id())).get(0));
     }
 }

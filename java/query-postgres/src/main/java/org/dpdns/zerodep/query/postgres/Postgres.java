@@ -12,7 +12,9 @@ import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.OrderItem;
 import org.dpdns.zerodep.query.expr.Window;
+import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
@@ -23,7 +25,10 @@ import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.write.JoinDelete;
 import org.dpdns.zerodep.query.write.JoinUpdate;
 
+import java.lang.reflect.Array;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiFunction;
@@ -50,6 +55,7 @@ public final class Postgres extends Sql {
     private static final FunctionDef MODE = FunctionDef.only(PostgresDialect.class, "MODE",
         (w, args) -> w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args.get(0)).sql(")"));
     private static final FunctionDef CORR = FunctionDef.only(PostgresDialect.class, "CORR");
+    private static final FunctionDef CARDINALITY = FunctionDef.only(PostgresDialect.class, "cardinality");
 
     /** 只放静态方法，不能实例化。 */
     private Postgres() { }
@@ -159,6 +165,126 @@ public final class Postgres extends Sql {
     private static int nonNegative(int days) {
         if (days < 0) throw new IllegalArgumentException("Frame offsets must not be negative");
         return days;
+    }
+
+    // ---------- 数组 ----------
+
+    /**
+     * 与一组值中任一个相等：{@code e = ANY(?)}，整个集合绑定成一个数组参数，不像 {@code IN (?, ?, ...)} 那样随个数变长，
+     * 语句可以复用执行计划，也不受参数个数上限的限制。值的类型支持文本、整数、长整数、小数和日期。空集合恒假。
+     */
+    public static <T> Cond eqAny(Expr<T> e, Collection<? extends T> values) {
+        if (SkipEmpty.skips(values)) return Cond.EMPTY;
+        Class<?> element = e.type().storageType();
+        Object array = values.toArray((Object[]) Array.newInstance(element, 0));
+        Expr<Object> param = arrayParam(array);
+        return cond(w -> w.render(e).sql(" = ANY(").render(param).sql(")"));
+    }
+
+    /** 数组列包含 values 的全部元素：{@code arr @> ?}。 */
+    public static <T> Cond arrayContains(Expr<T[]> array, T[] values) { return arrayOp(array, " @> ", values); }
+
+    /** 数组列与 values 至少有一个共同元素：{@code arr && ?}。 */
+    public static <T> Cond arrayOverlaps(Expr<T[]> array, T[] values) { return arrayOp(array, " && ", values); }
+
+    /** 数组的元素个数 {@code cardinality(arr)}，空数组为 0。 */
+    public static Expr<Integer> cardinality(Expr<?> array) { return Nodes.call(SqlType.of(Integer.class), CARDINALITY, List.of(array)); }
+
+    /** 把组内的值收集成数组 {@code ARRAY_AGG(e ORDER BY ...)}；数组类型由 elements 的类给出，例如 {@code String[].class}。 */
+    public static <T> Expr<T[]> arrayAgg(Expr<T> e, Class<T[]> elements, OrderItem... order) {
+        List<Renderable> args = new ArrayList<>();
+        args.add(e);
+        args.addAll(orders(order));
+        return new Expr<>(SqlType.of(elements)) {
+            @Override public void render(SqlWriter w) {
+                requirePostgres(w);
+                w.sql("ARRAY_AGG(").render(args.get(0));
+                if (args.size() > 1) w.sql(" ORDER BY ").join(args.subList(1, args.size()), ", ");
+                w.sql(")");
+            }
+        };
+    }
+
+    /** {@code arr op ?}，values 绑定成同类型的数组参数。 */
+    private static <T> Cond arrayOp(Expr<T[]> array, String op, T[] values) {
+        Expr<Object> param = arrayParam(Objects.requireNonNull(values, "values"));
+        return cond(w -> w.render(array).sql(op).render(param));
+    }
+
+    /** 绑定成数组的参数；PostgresDialect 的类型注册表负责 createArrayOf。 */
+    @SuppressWarnings("unchecked")
+    private static Expr<Object> arrayParam(Object array) { return new Nodes.Param<>((SqlType<Object>) SqlType.of(array.getClass()), array); }
+
+    // ---------- JSONB ----------
+
+    /** JSONB 里一个路径上的文本 {@code doc #>> ARRAY[?, ...]::TEXT[]}，路径不存在或是 JSON null 时为 NULL；路径各段都绑定成参数。 */
+    public static Expr<String> jsonText(Expr<String> document, String... path) {
+        if (path.length == 0) throw new IllegalArgumentException("jsonText(...) needs a path");
+        List<Expr<String>> keys = Arrays.stream(path).map(p -> val(Objects.requireNonNull(p, "path"))).toList();
+        return new Expr<>(SqlType.of(String.class)) {
+            @Override public void render(SqlWriter w) {
+                requirePostgres(w);
+                w.sql("(").render(document).sql(" #>> CAST(ARRAY[").join(keys, ", ").sql("] AS TEXT[]))");
+            }
+        };
+    }
+
+    /** JSONB 包含 json 这段文档：{@code doc @> CAST(? AS JSONB)}，例如 {@code jsonContains(t.payload(), "{\"status\":\"open\"}")}；能用 GIN 索引。 */
+    public static Cond jsonContains(Expr<String> document, String json) {
+        if (SkipEmpty.skips(json)) return Cond.EMPTY;
+        Expr<String> value = val(json);
+        return cond(w -> w.render(document).sql(" @> CAST(").render(value).sql(" AS JSONB)"));
+    }
+
+    /** JSONB 的顶层有这个键：{@code jsonb_exists(doc, ?)}（即 {@code ?} 运算符，JDBC 里不能直接写问号）。 */
+    public static Cond jsonHasKey(Expr<String> document, String key) {
+        if (SkipEmpty.skips(key)) return Cond.EMPTY;
+        Expr<String> value = val(key);
+        return cond(w -> w.sql("jsonb_exists(").render(document).sql(", ").render(value).sql(")"));
+    }
+
+    /** 写入 JSONB 列的值 {@code CAST(? AS JSONB)}：{@code update(T.class).set(t -> t.payload().to(jsonb(text)))}。 */
+    public static Expr<String> jsonb(String json) {
+        Expr<String> value = val(Objects.requireNonNull(json, "json"));
+        return new Expr<>(SqlType.of(String.class)) {
+            @Override public void render(SqlWriter w) {
+                requirePostgres(w);
+                w.sql("CAST(").render(value).sql(" AS JSONB)");
+            }
+        };
+    }
+
+    // ---------- 全文检索 ----------
+
+    /**
+     * 全文检索 {@code to_tsvector(配置, 文本) @@ plainto_tsquery(配置, ?)}：query 里的词都要出现（忽略大小写、按配置做词干化）。
+     * config 是文本检索配置，例如 {@code "simple"}、{@code "english"}；建 GIN 索引时用同一个配置。skipEmpty 下 query 为空时没有条件。
+     */
+    public static Cond textMatches(String config, Expr<String> document, String query) { return textSearch("plainto_tsquery", config, document, query); }
+
+    /** 同 {@link #textMatches}，但 query 用网页搜索的写法（{@code websearch_to_tsquery}）：引号短语、{@code or}、{@code -排除}。 */
+    public static Cond webMatches(String config, Expr<String> document, String query) { return textSearch("websearch_to_tsquery", config, document, query); }
+
+    /** 相关度 {@code ts_rank(to_tsvector(配置, 文本), plainto_tsquery(配置, ?))}，用来排序；不匹配的行也有分数，筛选要另用 {@link #textMatches}。 */
+    public static Expr<Double> textRank(String config, Expr<String> document, String query) {
+        Expr<String> cfg = val(Objects.requireNonNull(config, "config"));
+        Expr<String> q = val(Objects.requireNonNull(query, "query"));
+        return new Expr<>(SqlType.of(Double.class)) {
+            @Override public void render(SqlWriter w) {
+                requirePostgres(w);
+                w.sql("CAST(ts_rank(to_tsvector(CAST(").render(cfg).sql(" AS regconfig), ").render(document)
+                    .sql("), plainto_tsquery(CAST(").render(cfg).sql(" AS regconfig), ").render(q).sql(")) AS DOUBLE PRECISION)");
+            }
+        };
+    }
+
+    /** 全文检索条件；tsquery 是生成查询的函数名。 */
+    private static Cond textSearch(String tsquery, String config, Expr<String> document, String query) {
+        if (SkipEmpty.skips(query)) return Cond.EMPTY;
+        Expr<String> cfg = val(Objects.requireNonNull(config, "config"));
+        Expr<String> q = val(query);
+        return cond(w -> w.sql("to_tsvector(CAST(").render(cfg).sql(" AS regconfig), ").render(document).sql(") @@ ").sql(tsquery)
+            .sql("(CAST(").render(cfg).sql(" AS regconfig), ").render(q).sql(")"));
     }
 
     // ---------- 统计 ----------

@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.postgres.PgTables.Tagged;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Event;
@@ -246,4 +247,42 @@ class PostgresLiveTest extends LiveScenarios {
 
     /** 小数去掉末尾的零。 */
     private static String plainText(Object value) { return ((BigDecimal) value).stripTrailingZeros().toPlainString(); }
+
+    /** 建数组、JSONB 和全文检索用的表。 */
+    private void createTagged() throws java.sql.SQLException {
+        live.execute(List.of("-DROP TABLE \"QUERY_IT\".\"PG_TAGGED\"",
+            "CREATE TABLE \"QUERY_IT\".\"PG_TAGGED\" (\"ID\" INTEGER, \"TAGS\" TEXT[], \"DOC\" JSONB, \"BODY\" TEXT)",
+            "INSERT INTO \"QUERY_IT\".\"PG_TAGGED\" VALUES (1, ARRAY['red', 'blue'], '{\"status\":\"open\",\"owner\":{\"name\":\"ann\"}}', 'the pump is running')",
+            "INSERT INTO \"QUERY_IT\".\"PG_TAGGED\" VALUES (2, ARRAY['red'], '{\"status\":\"closed\"}', 'a valve without a leak')",
+            "INSERT INTO \"QUERY_IT\".\"PG_TAGGED\" VALUES (3, ARRAY[]::TEXT[], '{\"status\":\"open\"}', 'valve leak found')"));
+    }
+
+    @Test
+    void 数组参数与数组列() throws java.sql.SQLException {
+        createTagged();
+        List<Map<String, Object>> rows = db.list(from(Tagged.class).where(t -> eqAny(t.id(), List.of(1, 2, 3))).orderBy(t -> t.id())
+            .select(t -> cols(t.id(), t.tags(), cardinality(t.tags()).as("count"))));
+        assertEquals(List.of("1:[red, blue]:2", "2:[red]:1", "3:[]:0"),
+            rows.stream().map(r -> r.get("id") + ":" + java.util.Arrays.toString((String[]) r.get("tags")) + ":" + r.get("count")).toList());
+        assertEquals(List.of(1, 2), db.list(from(Tagged.class).where(t -> arrayContains(t.tags(), new String[] {"red"})).orderBy(t -> t.id()).select(t -> t.id())));
+        assertEquals(List.of(1), db.list(from(Tagged.class).where(t -> arrayOverlaps(t.tags(), new String[] {"blue", "green"})).select(t -> t.id())));
+        assertEquals(List.of(), db.list(from(Tagged.class).where(t -> eqAny(t.id(), List.of())).select(t -> t.id())));
+        String[] deliveries = db.one(from(Lips.class).where(l -> l.material().eq("M2")).select(l -> arrayAgg(l.delivery(), String[].class, l.delivery().desc())));
+        assertEquals(List.of("D4", "D3"), List.of(deliveries));
+    }
+
+    @Test
+    void JSONB的包含键与路径文本() throws java.sql.SQLException {
+        createTagged();
+        assertEquals(List.of("1:ann"), db.list(from(Tagged.class).where(t -> all(jsonContains(t.doc(), "{\"status\":\"open\"}"), jsonHasKey(t.doc(), "owner")))
+            .select(t -> cols(t.id(), jsonText(t.doc(), "owner", "name").as("owner")))).stream().map(r -> r.get("id") + ":" + r.get("owner")).toList());
+    }
+
+    @Test
+    void 全文检索与相关度() throws java.sql.SQLException {
+        createTagged();
+        assertEquals(List.of(1), db.list(from(Tagged.class).where(t -> textMatches("simple", t.body(), "pump")).select(t -> t.id())));
+        assertEquals(List.of(2), db.list(from(Tagged.class).where(t -> webMatches("simple", t.body(), "valve -found")).select(t -> t.id())));
+        assertEquals(List.of(1, 2, 3), db.list(from(Tagged.class).orderBy(t -> orders(textRank("simple", t.body(), "pump").desc(), t.id())).select(t -> t.id())));
+    }
 }

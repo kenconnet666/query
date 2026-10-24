@@ -676,7 +676,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
     if (c.dialect !== undefined && !(dialect instanceof c.dialect)) throw new Error(`A ${c.dialect.name} clause cannot run on ${w.dialect.name}`);
   }
   w.sql("SELECT ");
-  for (const c of s.clauses) if (c.position === "hint") w.render(c).sql(" ");
+  w.dialect.hints(w, s.clauses.filter((c) => c.position === "hint"));
   const distinctClauses = s.clauses.filter((c) => c.position === "distinct");
   for (const c of distinctClauses) w.render(c).sql(" ");
   if (s.distinct && distinctClauses.length === 0) w.sql("DISTINCT ");

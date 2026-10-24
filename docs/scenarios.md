@@ -17,6 +17,12 @@
 | 递归 CTE / 树 | `asTreeCTE` | PostgreSQL、MySQL 方言包的 `recursiveCte(name, anchor, self -> step)`，写成 `WITH RECURSIVE`；HANA 2.0 不支持递归 CTE，改用层级函数 | 2.0 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
 | INTERSECT / EXCEPT | `intersect`、`except` | `q1.intersect(q2)`、`q1.except(q2)`，按调用顺序求值；HANA 的集合运算从左到右，PostgreSQL、MySQL 的 INTERSECT 优先（实测），所以读法可能不同处自动加括号；`ALL` 变体只在 PostgreSQL、MySQL | 2.0 |
+| 参数化视图、表函数 | HANA 的 `PLACEHOLDER` 需手写 | HANA 方言包的 `fromView`、`fromFunction`：参数都绑定，值为空的参数不写（视图需 HDI 部署，只验证了渲染；表函数实库验证） | 2.0 |
+| 层级 | — | HANA 方言包的 `hierarchy`、`descendants`、`ancestors`（HIERARCHY 生成函数与导航函数） | 2.0 |
+| 全文检索 | — | HANA `contains` / `containsFuzzy` / `score`；PostgreSQL `textMatches` / `webMatches` / `textRank`；MySQL `match` / `matchBoolean` / `matchScore`，三库的分数不能互相比较 | 2.0 |
+| JSON | 前身的 JSON DSL | HANA `jsonValue`（路径必须是字面量）；PostgreSQL `jsonText` / `jsonContains` / `jsonHasKey` / `jsonb`；MySQL `jsonText` / `jsonContains`（参数 `CONVERT(? USING utf8mb4)`） | 2.0 |
+| PostgreSQL 数组 | — | `eqAny(e, values)` 一个数组参数代替长 IN 列表；数组列、`arrayContains`、`arrayOverlaps`、`cardinality`、`arrayAgg` | 2.0 |
+| MySQL 索引提示 | — | `index(l, "idx")`、`noIndex(m)`，与 `maxExecutionTime` 合并进一个提示注释（实测 MySQL 只认第一个） | 2.0 |
 | FULL JOIN | `fullJoin` | `fullJoin(T, on)`：HANA、PostgreSQL；有全局过滤条件的表不能参与（过滤条件放 ON 或 WHERE 都会改变语义）；MySQL 渲染时报错 | 2.0 |
 | RIGHT JOIN | `rightJoin` | `rightJoin(T, on)`；左侧各表的全局过滤条件放进它的 ON；TS 中之前各参数的列变成可空 | 2.0 |
 | 多列 IN、ANY / ALL 子查询 | `in(...)` 多列、`gtAll` 一类 | `keys(a, b).in(q)`；`x.gt(allOf(q))`、`x.eq(anyOf(q))` | 2.0 |
