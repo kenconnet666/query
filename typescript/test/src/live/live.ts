@@ -970,6 +970,65 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.equal(await db.count(from(writes.Code).withDeleted().select((c) => c.id)), 2);
     });
 
+    it("追踪范围结束时只写回变了的行并把新版本写回对象", async () => {
+      const { db } = live();
+      await insertDocs(db);
+      const d1 = await db.tracking(async (t) => {
+        const all = await t.list(writes.Doc, docRows());
+        all[0]!.title = "a2";
+        return all[0]!;
+      });
+      assert.deepEqual(await docs(db), ["D1:a2:2", "D2:b:1"]);
+      assert.equal(d1.version, 2);
+      await db.tracking(async (t) => {
+        const again = await t.one(writes.Doc, docRow("D1"));
+        again.title = "a3";
+        again.title = "a2";
+      });
+      assert.deepEqual(await docs(db), ["D1:a2:2", "D2:b:1"], "a row changed back is not written");
+    });
+
+    it("追踪范围里同一主键只登记一份且嵌套范围由最外层写回", async () => {
+      const { db } = live();
+      await insertDocs(db);
+      await db.tracking(async (t) => {
+        const first = await t.one(writes.Doc, docRow("D1"));
+        first.title = "x";
+        await db.tracking(async (inner) => {
+          const same = await inner.one(writes.Doc, docRow("D1"));
+          assert.equal(same, first);
+          same.title = "y";
+        });
+        assert.deepEqual(await docs(db), ["D1:a:1", "D2:b:1"], "the inner scope does not write");
+      });
+      assert.deepEqual(await docs(db), ["D1:y:2", "D2:b:1"]);
+    });
+
+    it("追踪范围抛出异常或写回冲突时不写也不改对象的版本", async () => {
+      const { db } = live();
+      await insertDocs(db);
+      await assert.rejects(
+        db.tracking(async (t) => {
+          (await t.one(writes.Doc, docRow("D1"))).title = "lost";
+          throw new Error("abort");
+        }),
+        /abort/,
+      );
+      assert.deepEqual(await docs(db), ["D1:a:1", "D2:b:1"]);
+      let held: { version: number } | undefined;
+      await assert.rejects(
+        db.tracking(async (t) => {
+          const d = await t.one(writes.Doc, docRow("D1"));
+          held = d;
+          d.title = "mine";
+          await db.execute(update(writes.Doc).byId({ id: "D1", title: "theirs", version: 1 }));
+        }),
+        UnexpectedRowCountError,
+      );
+      assert.deepEqual(await docs(db), ["D1:theirs:2", "D2:b:1"]);
+      assert.equal(held!.version, 1, "a failed write leaves the version as read");
+    });
+
     it("差异更新只写变了的列，只读列保留数据库默认值", async () => {
       const { db } = live();
       await db.execute(deleteFrom(writes.Doc).all());
@@ -1161,6 +1220,27 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
 
     extra?.(live);
   });
+}
+
+/** 两份版本为 1 的文档 D1、D2。 */
+async function insertDocs(db: Database): Promise<void> {
+  await db.execute(deleteFrom(writes.Doc).all());
+  await db.execute(insertInto(writes.Doc).values({ id: "D1", title: "a", version: 1 }, { id: "D2", title: "b", version: 1 }));
+}
+
+/** 全部文档的可变行（编号、标题、版本），按编号排序。 */
+function docRows() {
+  return from(writes.Doc).orderBy((d) => d.id).select((d) => ({ id: d.id, title: d.title, version: d.version }));
+}
+
+/** 一份文档的可变行。 */
+function docRow(id: string) {
+  return from(writes.Doc).where((d) => d.id.eq(id)).select((d) => ({ id: d.id, title: d.title, version: d.version }));
+}
+
+/** 库里每份文档的 编号:标题:版本。 */
+async function docs(db: Database): Promise<string[]> {
+  return (await db.list(docRows())).map((r) => `${r.id}:${r.title}:${r.version}`);
 }
 
 /** 结构变更的测试表先删掉；S_ITEM 引用 S_OWNER，所以先删它。表不存在时忽略错误。 */

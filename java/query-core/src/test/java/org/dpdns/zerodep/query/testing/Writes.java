@@ -71,6 +71,34 @@ public final class Writes {
     /** 文档的一行。 */
     public record DocRow(String id, String title, Integer version) { }
 
+    /** 可变的文档行，供实体追踪登记；字段按 JavaBean 写法读写。 */
+    public static final class DocBean {
+        private String id;
+        private String title;
+        private Integer version;
+
+        /** 映射和快照用的无参构造器。 */
+        public DocBean() { }
+
+        /** 编号。 */
+        public String getId() { return id; }
+
+        /** 设置编号。 */
+        public void setId(String id) { this.id = id; }
+
+        /** 标题。 */
+        public String getTitle() { return title; }
+
+        /** 设置标题。 */
+        public void setTitle(String title) { this.title = title; }
+
+        /** 版本号。 */
+        public Integer getVersion() { return version; }
+
+        /** 设置版本号。 */
+        public void setVersion(Integer version) { this.version = version; }
+    }
+
     /** 带上只读列的文档行，例如从库里读出来的整行。 */
     public record DocFull(String id, String title, Integer version, String source) { }
 

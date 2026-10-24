@@ -647,7 +647,7 @@ class Seq {
 | `deleteFrom(Note).where((n) => n.status.eq("closed"))` | 没有 where 的 UPDATE、DELETE 报错，`.all()` 放行；全局过滤器和逻辑删除的条件加进 WHERE，`unfiltered(...)`、`withDeleted()` 同查询 |
 | `update(Lips).set(...).where((l) => l.mara.manufacturer.eq("MK1"))` | WHERE 里的导航写成 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN MARA ... WHERE ...)`，与查询里导航的语义相同；SET 里不能用导航 |
 | `update(Doc).byId(row)`、`deleteFrom(Doc).byId(row)` | 按主键（和版本）定位一行，SET 其余字段、版本加一；版本不对时抛 `UnexpectedRowCountError` |
-| `update(Doc).byId(edited).diffFrom(loaded)` | 差异更新：只 SET 与修改前不同的字段（decimal 按数值比较）；完全没变的行不发语句、不加版本、不计入期望行数 |
+| `update(Doc).byId(edited).diffFrom(loaded)` | 差异更新：只 SET 与修改前不同的字段（decimal 按数值比较）；完全没变的行不发语句、不加版本、不计入期望行数；`changedRows` 是会被写的行 |
 | `@readOnly`、`@writeOnce` | 只读列插入和更新都不写，`set(...)` 显式写报错；只插入列（例如创建时间）插入时写，`byId` 和插入或更新的更新部分不写 |
 | `.withoutFills()` | 插入、更新、删除都可以加：不套用审计填充，例如迁移数据时保留原值 |
 | `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
@@ -688,6 +688,20 @@ await db.execute(deleteJoin(Note, Doc, (n, d) => n.id.eq(d.id)).where((_n, d) =>
 ```
 
 写法和规则同 Java 版第 15 节：PostgreSQL 写成 `UPDATE ... FROM` / `DELETE ... USING`，MySQL 写成 `UPDATE ... JOIN ... SET` / `DELETE 别名 FROM ... JOIN`，HANA 写成按主键对上行的 MERGE（被改表要有 `@id`）和 `WHERE EXISTS`。每个被改行至多匹配一个连接行，否则 PostgreSQL、MySQL 任取一行，HANA 报错；没有 where 时报错，`.all()` 放行；不能经过导航关系。
+
+### 实体追踪
+
+与 Java 版相同（`tracked` 在 TS 里不需要，`tracking` 本身返回 work 的结果）：
+
+```ts
+const d = await db.tracking(async (t) => {
+  const doc = await t.one(Doc, from(Doc).where((x) => x.id.eq("D1")).select((x) => ({ id: x.id, title: x.title, version: x.version })));
+  doc.title = "new";
+  return doc;
+}); // 范围结束时 UPDATE ... SET TITLE = ?, VERSION = VERSION + 1 WHERE ID = ? AND VERSION = ?；d.version 已是新值
+```
+
+`t.one` / `t.optional` / `t.list(表, 查询)` / `t.track(表, 行)` / `t.forget(行)`。行是普通对象或类的实例，字段都是表的列、带主键（和版本）；快照是保留原型的浅拷贝。范围跟着异步上下文走（AsyncLocalStorage），嵌套调用加入外层。
 
 ## 16. 与 Java 版的差异
 

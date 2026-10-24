@@ -103,6 +103,13 @@ record ById(List<Object> rows, List<RowColumns.Column> columns, WriteMeta writes
         return out;
     }
 
+    /** 要写的行，按原顺序：有 diffFrom 时只含有变化的行，否则是全部行。 */
+    List<Object> changed() {
+        List<Object> out = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) if (changed(i)) out.add(rows.get(i));
+        return out;
+    }
+
     /** 第 i 行与修改前相比有没有变化；没有 diffFrom 时总是有。 */
     boolean changed(int i) {
         if (originals == null) return true;

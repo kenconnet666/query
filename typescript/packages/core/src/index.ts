@@ -229,6 +229,7 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
+export { Tracker } from "./exec/tracker.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
 export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef } from "./ddl/model.js";
 export { catalogDefault, catalogNumber, catalogText, groupRows, SchemaSyntax, withoutCast, type Catalog } from "./ddl/syntax.js";

@@ -108,7 +108,7 @@
 | 条件对象的自定义比较 | `@EasyWhereCondition(type = ...)` 的扩展 | `@Where(using = X.class)` / `@where(fn, ...)` | 2.0 |
 | 拦截器的启用与顺序 | `enable()`、`order()`、`apply(entityClass)` | 过滤器、填充按添加顺序生效，按表接口的父类型匹配；动态开关在回调里返回 `Cond.EMPTY` | 2.0 |
 | 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
-| 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照 | 不做线程绑定的跟踪；差异更新写成 `update(T).byId(edited).diffFrom(loaded)`，由调用方给出修改前的行 | 2.0 |
+| 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照；无论成败都刷新快照，不写回版本 | `db.tracking(t -> ...)` 显式范围：`t.one/list(表, 查询)` 登记快照，结束时在一个事务里写 `byId(行).diffFrom(快照)`；只有写成功才刷新快照并写回版本；也可以无状态地 `update(T).byId(edited).diffFrom(loaded)` | 2.0 |
 | 对象图级联保存 | `savable(root)` | 暂不做；随流程引擎再按"显式一层子行同步加中间表"评估 | 3 |
 | DDL、迁移 | code first、migration | — | — |
 

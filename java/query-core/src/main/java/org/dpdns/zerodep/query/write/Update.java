@@ -77,6 +77,12 @@ public final class Update<T extends Entity> implements Write {
         return new Update<>(target, sets, byId.diffFrom(List.copyOf(originals)));
     }
 
+    /**
+     * {@code byId(...)} 的行里会被写的那些，按原顺序：有 {@code diffFrom(...)} 时只含值变了的行，否则是全部行；
+     * 没有 byId 时为空。执行成功后，表上有版本列时这些行在库里的版本都加了一。
+     */
+    public List<Object> changedRows() { return byId == null ? List.of() : List.copyOf(byId.changed()); }
+
     /** 追加一个 SET 项：{@code set(l -> l.unit().to("KG"))}；skipEmpty 下值为空的项被省略；{@code @ReadOnly} 的列不能写。 */
     public Update<T> set(Function<T, Assignment> assignment) {
         Assignment a = SkipEmpty.within(target.skipping(), () -> assignment.apply(target.row()));

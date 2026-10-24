@@ -766,7 +766,25 @@ db.execute(deleteFrom(Doc.class).byId(row));           // WHERE 主键（和版�
 
 `byId` 的行必须带主键（有版本列时还要带版本），每行一条语句，每条期望改到 1 行，否则抛 `UnexpectedRowCountException`：版本不对就是被别人改过（乐观锁冲突）。
 
-**差异更新**：`update(Doc.class).byId(edited).diffFrom(loaded)` 与修改前的行逐个属性比较（BigDecimal 按数值），只 SET 变了的；完全没变的行不发语句、版本不加、也不计入期望的行数。修改前的行与 byId 的行一一对应，主键和版本必须相等。本库不做线程绑定的实体跟踪，需要差异更新时由调用方给出修改前的行。
+**差异更新**：`update(Doc.class).byId(edited).diffFrom(loaded)` 与修改前的行逐个属性比较（BigDecimal 按数值），只 SET 变了的；完全没变的行不发语句、版本不加、也不计入期望的行数。修改前的行与 byId 的行一一对应，主键和版本必须相等。`changedRows()` 返回会被写的那些行。
+
+### 实体追踪
+
+```java
+db.tracking(t -> {
+    DocBean d = t.one(Doc.class, from(Doc.class).where(x -> x.id().eq("D1")).selectAs(DocBean.class));
+    d.setTitle("new");
+});   // UPDATE APP.DOC DOC SET TITLE = ?, VERSION = VERSION + 1 WHERE DOC.ID = ? AND DOC.VERSION = ?
+
+DocBean saved = db.tracked(t -> { ...; return d; });   // 要返回结果时用 tracked
+```
+
+- 范围里用 `t.one` / `t.optional` / `t.list(表, 查询)` 读，或 `t.track(表, 行)` 登记已有的行；登记时记下快照（浅拷贝）。范围正常结束时，变了的行按表分组写成 `update(表).byId(行).diffFrom(快照)`，在一个事务里执行；work 抛出异常时什么也不写。
+- 同一张表、同一主键只登记一份，再次读到时返回先登记的对象（库里的新值不覆盖范围内的修改）；`t.forget(row)` 取消登记，例如已经删除了它。
+- 写回成功后，变了的行的版本属性加一（与库里一致）并刷新快照；写回失败（例如乐观锁冲突抛出 `UnexpectedRowCountException`）时对象和快照都不动，可以重新读再试。
+- 行必须是有无参构造器的可变类（可以用 Lombok），带表的主键属性（有版本列时还要带版本属性），属性都是表的列；record 不可变，不能登记。快照是浅拷贝，改值时换成新对象，不要原地改数组或集合。
+- 范围绑定在当前线程上，嵌套调用加入外层，由最外层写回；在外层事务（`db.transaction`、`@Transactional`）里时写回加入那个事务，之后外层回滚不会撤销对象上已写回的版本。
+- 不做级联、`save` 自动判断插入或更新、懒加载；插入和删除仍然显式写。
 
 ### 取回生成的主键
 

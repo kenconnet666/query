@@ -6,6 +6,7 @@ import { SchemaTools } from "../ddl/tools.js";
 import { Migrator, type Migration } from "../ddl/migrator.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
+import { Tracker } from "./tracker.js";
 
 // ---------- 驱动 ----------
 
@@ -166,6 +167,21 @@ function printToConsole(text: string): void {
 function captures(): AsyncStorage<Capture> {
   activeCapture ??= asyncStorage("capture()");
   return activeCapture;
+}
+
+/** 一个追踪范围：所属的数据库、它的 Tracker 和外层范围（另一个数据库的）。 */
+interface TrackingScope {
+  readonly database: Database;
+  readonly tracker: Tracker;
+  readonly outer: TrackingScope | undefined;
+}
+
+let activeTracking: AsyncStorage<TrackingScope> | undefined;
+
+/** 惰性创建跨异步调用传递追踪范围的存储；不在 Node 上时 tracking 不可用。 */
+function trackers(): AsyncStorage<TrackingScope> {
+  activeTracking ??= asyncStorage("tracking()");
+  return activeTracking;
 }
 
 /** 惰性创建跨异步调用传递事务的存储；不在 Node 上时 transaction 不可用。 */
@@ -500,7 +516,7 @@ export abstract class Database {
       for (const s of statements) rows += (await this.#execute(s, undefined)).affected ?? 0;
       return rows;
     };
-    const rows = statements.length > 1 && this.#current() === this.#driver && this.#driver.transaction !== undefined ? await this.transaction(run) : await run();
+    const rows = statements.length > 1 ? await this.#atomically(run) : await run();
     this.#cache?.clear();
     const expected = write.expected;
     if (expected !== undefined && !DRY_RUN.has(this.#driver) && rows !== expected) throw new UnexpectedRowCountError(this.name, statements[0]!, expected, rows);
@@ -542,7 +558,7 @@ export abstract class Database {
       for (const s of statements) out.push(...(await this.#execute(s, undefined)).rows.map(decode));
       return out;
     };
-    const rows = statements.length > 1 && this.#current() === this.#driver && this.#driver.transaction !== undefined ? await this.transaction(run) : await run();
+    const rows = statements.length > 1 ? await this.#atomically(run) : await run();
     this.#cache?.clear();
     return rows;
   }
@@ -587,7 +603,7 @@ export abstract class Database {
     const run = async () => {
       for (const s of statements) await this.#execute(new Rendered(s, [], this.dialect), undefined);
     };
-    if (transactional && this.#current() === this.#driver && this.#driver.transaction !== undefined) await this.transaction(run);
+    if (transactional) await this.#atomically(run);
     else await run();
     this.#cache?.clear();
   }
@@ -608,6 +624,34 @@ export abstract class Database {
     if (driver.transaction === undefined) throw new Error(`${this.name}: the driver does not support transactions`);
     const storage = transactions();
     return driver.transaction((bound) => storage.run({ database: this, driver: bound, outer: storage.getStore() }, work));
+  }
+
+  /** 在一个事务里执行 run；已经在事务里、或驱动不支持事务时直接执行。 */
+  #atomically<R>(run: () => Promise<R>): Promise<R> {
+    return this.#current() === this.#driver && this.#driver.transaction !== undefined ? this.transaction(run) : run();
+  }
+
+  /**
+   * 在一个追踪范围里执行 work：用 {@link Tracker} 读到并登记的行，范围正常结束时把变了的按主键写回
+   * （`update(表).byId(行).diffFrom(快照)`，同一个事务），抛出异常时什么也不写。范围跟着异步上下文走（AsyncLocalStorage），
+   * 嵌套调用加入外层，由最外层写回。写回成功后行的版本字段变成库里的新值；外层事务之后回滚时，已写回的版本不会撤销。
+   * 例如 `await db.tracking(async (t) => { const d = await t.one(Doc, q); d.title = "x"; })`。
+   */
+  async tracking<R>(work: (t: Tracker) => Promise<R>): Promise<R> {
+    const storage = trackers();
+    let scope = storage.getStore();
+    while (scope !== undefined && scope.database !== this) scope = scope.outer;
+    if (scope !== undefined) return work(scope.tracker);
+    const tracker = new Tracker({
+      list: (q) => this.list(q),
+      one: (q) => this.one(q),
+      optional: (q) => this.optional(q),
+      execute: (w) => this.execute(w),
+      atomically: (run) => this.#atomically(run),
+    });
+    const result = await storage.run({ database: this, tracker, outer: storage.getStore() }, () => work(tracker));
+    await tracker.flush();
+    return result;
   }
 
   /** 当前异步上下文里这个数据库所在的事务。 */

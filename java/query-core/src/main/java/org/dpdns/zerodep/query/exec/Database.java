@@ -62,6 +62,9 @@ public abstract class Database {
     /** 当前线程正在 {@link #capture} 里时，收集执行过的语句。 */
     private final ThreadLocal<List<QueryListener.Event>> captured = new ThreadLocal<>();
 
+    /** 当前线程上的追踪范围；不在 {@link #tracking} 里时为 null。 */
+    private final ThreadLocal<Tracker> tracker = new ThreadLocal<>();
+
     /**
      * 创建后不再变化的配置，从 {@link Config} 复制而来。functions 是本库专属的函数渲染覆盖，
      * attributes 是渲染时通过 SqlWriter 取用的共享对象（全局过滤器、命名策略）。
@@ -259,8 +262,11 @@ public abstract class Database {
 
     /** 多条语句时在一个事务里执行（已经在事务里、或连接来源自己管理事务时直接执行），免得失败时只写了一部分。 */
     private <T> T atomically(List<Rendered> statements, Supplier<T> work) {
-        return statements.size() > 1 && executor.canStartTransaction() ? executor.transaction(work) : work.get();
+        return statements.size() > 1 ? atomically(work) : work.get();
     }
+
+    /** 在一个事务里执行 work；已经在事务里时加入它，连接来源自己管理事务（Spring）时直接执行。 */
+    <T> T atomically(Supplier<T> work) { return executor.canStartTransaction() ? executor.transaction(work) : work.get(); }
 
     /** 本数据库会为这条写语句执行的语句与参数，已套用全局过滤器；多行插入每行一条。 */
     public List<Rendered> render(Write write) { return write.render(this::writer); }
@@ -278,6 +284,35 @@ public abstract class Database {
             return null;
         });
     }
+
+    /**
+     * 在一个追踪范围里执行 work：用 {@link Tracker} 读到并登记的行，范围正常结束时把变了的按主键写回
+     * （{@code update(表).byId(行).diffFrom(快照)}，同一个事务），抛出异常时什么也不写。范围绑定在当前线程上，
+     * 嵌套调用加入外层，由最外层写回。写回成功后行的版本属性变成库里的新值；外层事务之后回滚时，已写回的版本不会撤销。
+     * <pre>{@code db.tracking(t -> { DocBean d = t.one(Doc.class, q); d.setTitle("x"); });}</pre>
+     */
+    public void tracking(Consumer<Tracker> work) {
+        tracked(t -> {
+            work.accept(t);
+            return null;
+        });
+    }
+
+    /** 同 {@link #tracking}，返回 work 的结果（在写回之后）：{@code DocBean d = db.tracked(t -> { ...; return d; })}。 */
+    public <T> T tracked(Function<Tracker, T> work) {
+        Tracker outer = tracker.get();
+        if (outer != null) return work.apply(outer);
+        Tracker t = new Tracker(this);
+        tracker.set(t);
+        try {
+            T result = work.apply(t);
+            t.flush();
+            return result;
+        } finally {
+            tracker.remove();
+        }
+    }
+
 
     // ---------- 装回关联数据 ----------
 

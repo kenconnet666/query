@@ -73,6 +73,7 @@ db.tracking(t -> {
 - 只有写成功后才刷新快照，版本号写回对象；EasyQuery 无论成败都刷新快照、也不写回版本，这两点是它的缺陷。
 - 行必须是可变对象（Java POJO，可以用 Lombok；TS 普通对象），登记时给出表接口。范围绑定在线程上（TS 用 AsyncLocalStorage），嵌套调用加入外层。
 - 不做级联、`save` 自动判断插入或更新、懒加载；插入和删除仍然显式写。
+- 实现：Java 的 `tracking(Consumer)` 与 `tracked(Function)` 分开命名，因为隐式类型的单参数 lambda 同时匹配两种函数接口时会有歧义（只抛异常的块就是这样）；TS 只有一个 `tracking`。写回前用 `Update.changedRows()`（TS `changedRows`）取出会被写的行，事务提交后才给它们加版本、刷新快照。快照是浅拷贝：Java 用无参构造器加逐字段复制，与映射 POJO 的要求相同；TS 保留原型。
 
 ### 6. 分表
 

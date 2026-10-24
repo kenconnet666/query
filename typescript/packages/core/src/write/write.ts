@@ -536,6 +536,14 @@ export class Update<T> extends Write {
     return new Update(this.#target, this.#sets, this.#byId.diffFrom(originals as readonly object[]));
   }
 
+  /**
+   * `byId(...)` 的行里会被写的那些，按原顺序：有 `diffFrom(...)` 时只含值变了的行，否则是全部行；没有 byId 时为空。
+   * 执行成功后，表上有版本列时这些行在库里的版本都加了一。
+   */
+  get changedRows(): readonly object[] {
+    return this.#byId?.changed() ?? [];
+  }
+
   /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数（有 diffFrom 时只算有变化的行）。 */
   get expected(): number | undefined {
     if (this.#target.expected !== undefined || this.#byId === undefined) return this.#target.expected;
@@ -710,6 +718,11 @@ export class ById {
       }
     });
     return new ById(this.rows, this.meta, before);
+  }
+
+  /** 要写的行，按原顺序：有 diffFrom 时只含有变化的行，否则是全部行。 */
+  changed(): object[] {
+    return this.originals === undefined ? [...this.rows] : this.rows.filter((_, i) => this.#changedFields(i).length > 0);
   }
 
   /** 每行影响一行；有 diffFrom 时只算有变化的行。 */
