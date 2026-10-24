@@ -41,6 +41,7 @@ import { distributionWindows, statistics } from "../fixtures/spec-cases.js";
 import { dateFunctions, numberTextFunctions, timeFunctions, DeliverySearch, groupJoin, filterMany, MaterialSearch, manyText, qualify, windowValues, dynamicColumns, filterObject, floorCeil, nativeSql, reservedAlias, rollup, simpleCase, textPositions, unionGrouping } from "../fixtures/spec-cases.js";
 import { deliveries, latestDeliveries, lines, partTotals, stock } from "../fixtures/scenarios.js";
 import * as wf from "../fixtures/workflow.js";
+import { ENGINE_TABLES, EngineCandidate, EngineEvent, EngineInstance, EngineJob, EngineWorkItem, engineTodo } from "../fixtures/engine.js";
 import * as writes from "../fixtures/writes.js";
 import { SHARDS, ShEvent } from "../fixtures/shards.js";
 
@@ -1165,6 +1166,135 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
           .select((d) => ({ id: d.id, title: d.title, version: d.version })),
       );
       assert.deepEqual(rows.map((r) => `${r.id}:${r.title}:${r.version}`), ["D1:b:1", "D2:d:1"]);
+    });
+
+    // ---------- 流程引擎的写法（engine.ts），与 Java 的 LiveScenarios 一致 ----------
+
+    const ENGINE_AT = "2026-10-24 08:00:00";
+    /** 在 ENGINE_AT 之后若干分钟（UTC 的本地时间值），可带毫秒。 */
+    const engineAt = (minutes: number, millis = 0) =>
+      `2026-10-24 ${String(8 + Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00${millis ? "." + String(millis).padStart(3, "0") : ""}`;
+    const pauseFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /** 删掉并按声明重建引擎场景的表。 */
+    const engineTables = async () => {
+      const { db, driver, table } = live();
+      for (const name of ["E_INSTANCE", "E_WORK_ITEM", "E_CANDIDATE", "E_EVENT", "E_JOB"]) await driver.query(`DROP TABLE ${table(name)}`, []).catch(() => undefined);
+      await (await db.schema().plan(...ENGINE_TABLES)).apply();
+    };
+
+    /** 一个会签实例：两个待处理的待办，分别给 alice 和 bob。 */
+    const signInstance = async () => {
+      const { db } = live();
+      await db.execute(insertInto(EngineInstance).values({ id: 1n, status: "active", variables: "{}", rev: 0, startedAt: ENGINE_AT }));
+      await db.execute(
+        insertInto(EngineWorkItem).values(
+          { id: 11n, instanceId: 1n, node: "sign", pool: null, assignee: "alice", state: "open", createdAt: ENGINE_AT },
+          { id: 12n, instanceId: 1n, node: "sign", pool: null, assignee: "bob", state: "open", createdAt: ENGINE_AT },
+        ),
+      );
+    };
+
+    /** 引擎处理一个会签待办：先把实例的版本加一（锁住这一行），再把待办从 open 改成 done，同一节点没有待处理的了就生成下一个节点的待办。 */
+    const completeSign = (item: bigint, next: bigint) =>
+      live().db.transaction(async (tx) => {
+        await tx.execute(update(EngineInstance).set((i) => ({ rev: plus(i.rev, val(1)) })).where((i) => i.id.eq(1n)).expect(1));
+        await tx.execute(update(EngineWorkItem).set(() => ({ state: "done" })).where((w) => all(w.id.eq(item), w.state.eq("open"))).expect(1));
+        await pauseFor(300);
+        const open = await tx.count(from(EngineWorkItem).where((w) => all(w.instanceId.eq(1n), w.node.eq("sign"), w.state.eq("open"))).select((w) => w.id));
+        if (open === 0) await tx.execute(insertInto(EngineWorkItem).values({ id: next, instanceId: 1n, node: "after", pool: "review", assignee: null, state: "open", createdAt: ENGINE_AT }));
+      });
+
+    it("引擎：会签的两个待办同时提交时先锁实例行所以只推进一次", async () => {
+      const { db } = live();
+      await engineTables();
+      await signInstance();
+      await Promise.all([completeSign(11n, 21n), completeSign(12n, 22n)]);
+      assert.deepEqual(await db.list(from(EngineWorkItem).where((w) => w.node.eq("sign")).orderBy((w) => w.id).select((w) => w.state)), ["done", "done"]);
+      assert.equal(await db.count(from(EngineWorkItem).where((w) => w.node.eq("after")).select((w) => w.id)), 1, "exactly one of the two completions moves the instance on");
+      assert.equal(await db.one(from(EngineInstance).select((i) => i.rev)), 2);
+    });
+
+    it("引擎：同一个待办提交两次时第二次改到 0 行就报错", async () => {
+      const { db } = live();
+      await engineTables();
+      await signInstance();
+      const complete = update(EngineWorkItem).set(() => ({ state: "done" })).where((w) => all(w.id.eq(11n), w.state.eq("open"))).expect(1);
+      await db.execute(complete);
+      await assert.rejects(db.execute(complete), UnexpectedRowCountError);
+    });
+
+    it("引擎：两个工作进程同时领取作业时互不重复", async () => {
+      const { db } = live();
+      await engineTables();
+      await db.execute(
+        insertInto(EngineJob).values(
+          { id: 1n, dueAt: engineAt(0), lockedBy: null },
+          { id: 2n, dueAt: engineAt(1), lockedBy: null },
+          { id: 3n, dueAt: engineAt(2), lockedBy: null },
+          { id: 4n, dueAt: engineAt(3), lockedBy: null },
+          { id: 5n, dueAt: "2026-10-25 08:00:00", lockedBy: null },
+        ),
+      );
+      // 先不加锁地读出候选，再逐个用带条件的 UPDATE 抢占（改到 1 行才算领到）；不用 SKIP LOCKED，原因见 Java 的同名场景
+      const worker = async (name: string) => {
+        const due = await db.list(from(EngineJob).where((j) => all(j.lockedBy.isNull(), j.dueAt.le(engineAt(60)))).orderBy((j) => [j.dueAt, j.id]).limit(10).select((j) => j.id));
+        const mine: bigint[] = [];
+        for (const id of due) {
+          if (mine.length === 2) break;
+          if ((await db.execute(update(EngineJob).set(() => ({ lockedBy: name })).where((j) => all(j.id.eq(id), j.lockedBy.isNull())))) === 1) mine.push(id);
+          await pauseFor(50);
+        }
+        return mine;
+      };
+      const claimed = await Promise.all([worker("w1"), worker("w2")]);
+      assert.deepEqual([...claimed[0]!, ...claimed[1]!].sort((a, b) => Number(a - b)), [1n, 2n, 3n, 4n], `each due job is claimed once: ${claimed}`);
+      assert.equal(await db.count(from(EngineJob).where((j) => j.lockedBy.isNull()).select((j) => j.id)), 1, "the job due tomorrow stays");
+    });
+
+    it("引擎：待办包括自己的和候选的但不包括退回过收件箱的", async () => {
+      const { db } = live();
+      await engineTables();
+      await db.execute(
+        insertInto(EngineWorkItem).values(
+          { id: 31n, instanceId: 1n, node: "check", pool: "cost", assignee: null, state: "open", createdAt: ENGINE_AT },
+          { id: 32n, instanceId: 1n, node: "fix", pool: null, assignee: "alice", state: "open", createdAt: ENGINE_AT },
+          { id: 33n, instanceId: 2n, node: "check", pool: null, assignee: null, state: "open", createdAt: ENGINE_AT },
+          { id: 34n, instanceId: 2n, node: "fix", pool: null, assignee: "alice", state: "done", createdAt: ENGINE_AT },
+        ),
+      );
+      await db.execute(
+        insertInto(EngineCandidate).values(
+          { id: 1n, workItemId: 31n, kind: "group", value: "cost" },
+          { id: 2n, workItemId: 31n, kind: "excluded", value: "alice" },
+          { id: 3n, workItemId: 33n, kind: "user", value: "alice" },
+        ),
+      );
+      assert.deepEqual(await db.list(from(EngineWorkItem).where((w) => engineTodo(w, "alice", ["cost"])).orderBy((w) => w.id).select((w) => w.id)), [32n, 33n]);
+      assert.deepEqual(await db.list(from(EngineWorkItem).where((w) => engineTodo(w, "bob", ["cost"])).orderBy((w) => w.id).select((w) => w.id)), [31n]);
+    });
+
+    it("引擎：实例上的长 JSON 变量原样往返", async () => {
+      const { db } = live();
+      await engineTables();
+      const big = `{"amount":"1234.50","note":"${"中文".repeat(3000)}${"x".repeat(6000)}"}`;
+      await db.execute(insertInto(EngineInstance).values({ id: 2n, status: "active", variables: big, rev: 0, startedAt: ENGINE_AT }));
+      assert.equal(await db.one(from(EngineInstance).where((i) => i.id.eq(2n)).select((i) => i.variables)), big);
+      const changed = big.replace("1234.50", "99.00");
+      await db.execute(update(EngineInstance).byId({ id: 2n, status: "active", variables: changed, rev: 0, startedAt: ENGINE_AT }));
+      assert.equal(await db.one(from(EngineInstance).where((i) => i.id.eq(2n)).select((i) => i.variables)), changed);
+      assert.equal(await db.one(from(EngineInstance).where((i) => i.id.eq(2n)).select((i) => i.rev)), 1);
+    });
+
+    it("引擎：流转记录批量写入后按时间倒序分页且毫秒不丢", async () => {
+      const { db } = live();
+      await engineTables();
+      const rows = Array.from({ length: 30 }, (_, k) => ({ id: BigInt(k + 1), instanceId: 1n, type: (k + 1) % 2 === 0 ? "completed" : "arrived", at: engineAt(k + 1, 123) }));
+      await db.execute(insertInto(EngineEvent).values(...rows));
+      const second = await db.page(from(EngineEvent).where((e) => e.instanceId.eq(1n)).orderBy((e) => [e.at.desc(), e.id]).select((e) => e.id), 2, 10);
+      assert.equal(second.total, 30);
+      assert.deepEqual(second.rows, [20n, 19n, 18n, 17n, 16n, 15n, 14n, 13n, 12n, 11n]);
+      assert.equal(await db.one(from(EngineEvent).where((e) => e.id.eq(7n)).select((e) => e.at)), "2026-10-24 08:07:00.123");
     });
 
     it("在事务里加锁领取最早的待认领任务", async () => {
