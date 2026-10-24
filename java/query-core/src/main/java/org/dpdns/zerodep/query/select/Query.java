@@ -75,10 +75,10 @@ public final class Query<R> {
             ops.addAll(right.operators);
             List<Group> all = new ArrayList<>(groups);
             // 左边有比 INTERSECT 低的运算时，PostgreSQL、MySQL 会先算 INTERSECT。
-            if (operator.equals("INTERSECT") && operators.stream().anyMatch(op -> !op.equals(operator))) all.add(new Group(0, operators.size()));
+            if (operator.startsWith("INTERSECT") && operators.stream().anyMatch(op -> !op.equals(operator))) all.add(new Group(0, operators.size()));
             for (Group g : right.groups) all.add(new Group(g.first + shift, g.last + shift));
             // 右边与本运算不同时，或本运算是不满足结合律的 EXCEPT 时，右边自成一组。
-            boolean wrapRight = right.operators.stream().anyMatch(op -> !op.equals(operator) || op.equals("EXCEPT"));
+            boolean wrapRight = right.operators.stream().anyMatch(op -> !op.equals(operator) || op.startsWith("EXCEPT"));
             if (wrapRight) all.add(new Group(shift, shift + right.operators.size()));
             return new Combination(ops, all);
         }
@@ -311,8 +311,15 @@ public final class Query<R> {
     /** EXCEPT（左边有、右边没有的行，去重），规则同 {@link #unionAll}。 */
     public Query<R> except(Query<R> other) { return combine("EXCEPT", other); }
 
-    /** 合并两个查询：校验列数、LIMIT 和 ORDER BY 的位置，按名的查询把右侧列按列名对齐到左侧。 */
-    private Query<R> combine(String operator, Query<R> other) {
+    /** 合法的集合运算；带 ALL 的 INTERSECT、EXCEPT 只有部分方言支持，由方言包提供入口。 */
+    private static final Set<String> SET_OPERATORS = Set.of("UNION", "UNION ALL", "INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL");
+
+    /**
+     * 用 operator 合并两个查询，供方言包使用（例如 PostgreSQL 的 {@code intersectAll}）；方言不支持的运算在渲染时报错。
+     * 校验列数、LIMIT 和 ORDER BY 的位置，按名的查询把右侧列按列名对齐到左侧。
+     */
+    public Query<R> combine(String operator, Query<R> other) {
+        if (!SET_OPERATORS.contains(operator)) throw new IllegalArgumentException("Unknown set operator " + operator);
         if (other.columnCount() != columnCount()) {
             throw new IllegalArgumentException("UNION arms select " + columnCount() + " and " + other.columnCount() + " columns");
         }

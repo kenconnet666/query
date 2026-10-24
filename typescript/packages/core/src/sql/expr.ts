@@ -660,9 +660,14 @@ export function raw<T>(type: SqlType<NonNullable<T>>, sql: string): Expr<T> {
 
 // ---------- 窗口、聚合、CASE ----------
 
-/** ROWS 窗口框架的边界。 */
+/** 窗口框架的边界。 */
 export class Bound {
   private constructor(readonly sql: string) {}
+
+  /** 方言包构造的边界，例如 `INTERVAL '7 days' PRECEDING`；只放代码里的固定文本。 */
+  static custom(sql: string): Bound {
+    return new Bound(sql);
+  }
 
   /** UNBOUNDED PRECEDING：从分区开头算起。 */
   static unboundedPreceding(): Bound {
@@ -703,22 +708,28 @@ export class Window implements Renderable {
   private constructor(
     readonly partition: readonly Expr<unknown>[],
     readonly order: readonly Order[],
-    readonly frame: string | undefined,
+    readonly framing: Renderable | undefined,
   ) {}
 
   /** PARTITION BY 分区键。 */
   partitionBy(...keys: Expr<unknown>[]): Window {
-    return new Window(keys, this.order, this.frame);
+    return new Window(keys, this.order, this.framing);
   }
 
   /** 窗口内的 ORDER BY。 */
   orderBy(...items: OrderItem[]): Window {
-    return new Window(this.partition, items.map(toOrder), this.frame);
+    return new Window(this.partition, items.map(toOrder), this.framing);
   }
 
-  /** ROWS BETWEEN start AND end；RANGE 框架各库不同，放在方言包里。 */
+  /** ROWS BETWEEN start AND end；RANGE 框架各库不同，放在方言包里，用 {@link frame} 传入。 */
   rows(start: Bound, end: Bound): Window {
-    return new Window(this.partition, this.order, `ROWS BETWEEN ${start.sql} AND ${end.sql}`);
+    const sql = `ROWS BETWEEN ${start.sql} AND ${end.sql}`;
+    return new Window(this.partition, this.order, { render: (w) => void w.sql(sql) });
+  }
+
+  /** 方言包给出的窗口框架，例如 PostgreSQL、MySQL 的 `range(...)`。 */
+  frame(frame: Renderable): Window {
+    return new Window(this.partition, this.order, frame);
   }
 
   /** 依次写出 PARTITION BY、ORDER BY 和框架，只写出存在的部分。 */
@@ -732,7 +743,7 @@ export class Window implements Renderable {
       w.sql(sep + "ORDER BY ").join(this.order, ", ");
       sep = " ";
     }
-    if (this.frame !== undefined) w.sql(sep + this.frame);
+    if (this.framing !== undefined) w.sql(sep).render(this.framing);
   }
 }
 
@@ -803,7 +814,8 @@ export class Aggregate<T> extends Expr<T> {
 export class WindowFunction<T> {
   constructor(
     readonly type: SqlType<NonNullable<T>>,
-    readonly name: string,
+    /** 函数名，或由方言决定写法的函数定义（例如 `PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x)`）。 */
+    readonly name: string | FunctionDef,
     readonly args: readonly Renderable[],
   ) {}
 

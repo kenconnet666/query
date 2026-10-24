@@ -205,7 +205,13 @@ public final class SqlWriter {
         Map<String, CteDefinition> names = new LinkedHashMap<>();
         for (CteDefinition c : ctes.values()) emit(c, order, bodies, names);
         if (order.isEmpty()) return new Rendered(text(), bindings, dialect);
-        StringBuilder out = new StringBuilder("WITH ");
+        boolean recursive = false;
+        for (CteDefinition c : order) {
+            if (c.recursiveIn() == null) continue;
+            if (!c.recursiveIn().isInstance(dialect)) throw new UnsupportedOperationException("The recursive CTE '" + c.name() + "' cannot run on " + dialect.name());
+            recursive = true;
+        }
+        StringBuilder out = new StringBuilder(recursive ? "WITH RECURSIVE " : "WITH ");
         List<Binding> all = new ArrayList<>();
         for (int i = 0; i < order.size(); i++) {
             CteDefinition c = order.get(i);

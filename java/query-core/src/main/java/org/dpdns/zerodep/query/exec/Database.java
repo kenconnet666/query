@@ -233,6 +233,25 @@ public abstract class Database {
         return (List<K>) keys;
     }
 
+    /**
+     * 执行会返回行的写语句（例如 PostgreSQL 的 {@code ... RETURNING}），把各条语句返回的行按列标签映射成 shape 并依次连起来；
+     * 供方言的数据库实例使用。多条语句在一个事务里执行，执行后清空结果缓存。
+     */
+    protected <R> List<R> writeReturning(List<Rendered> rendered, Class<R> shape) {
+        List<Rendered> statements = rendered.stream().map(executor::intercept).toList();
+        if (statements.isEmpty()) return List.of();
+        List<R> rows = atomically(statements, () -> {
+            List<R> out = new ArrayList<>();
+            for (Rendered s : statements) out.addAll(executor.query(s, rs -> NativeQuery.read(rs, shape, executor.types()), List::size, null));
+            return out;
+        });
+        clearCache();
+        return rows;
+    }
+
+    /** 本库未显式指定列名的属性所用的命名策略。 */
+    protected NamingStrategy naming() { return settings.naming(); }
+
     /** 多条语句时在一个事务里执行（已经在事务里、或连接来源自己管理事务时直接执行），免得失败时只写了一部分。 */
     private <T> T atomically(List<Rendered> statements, Supplier<T> work) {
         return statements.size() > 1 && executor.canStartTransaction() ? executor.transaction(work) : work.get();

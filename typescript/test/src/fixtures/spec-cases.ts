@@ -62,7 +62,10 @@ import {
 import { addDays, addHours, addMinutes, addMonths, addSeconds, addYears, day, daysBetween, firstValue, hour, lastValue, lpad, minute, mod, month, monthStart, ntile, power, rpad, second, sign, sqrt, stringAgg, year } from "@zerodep-dev/query-core";
 import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
 import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
-import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast, pg } from "@zerodep-dev/query-postgres";
+import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast } from "@zerodep-dev/query-postgres";
+import * as pgx from "@zerodep-dev/query-postgres";
+import * as mysqlx from "@zerodep-dev/query-mysql";
+import * as hanax from "@zerodep-dev/query-hana";
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
 import * as wf from "./workflow.js";
@@ -650,6 +653,25 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
           size: length(l.material),
         })),
     ),
+    "hana-statistics": plain(() =>
+      from(Lips)
+        .distinct()
+        .select((l) => ({
+          material: l.material,
+          median: hanax.percentileCont(0.5, l.quantity).over((w) => w.partitionBy(l.material)),
+          lower: hanax.percentileDisc(0.5, l.quantity).over((w) => w.partitionBy(l.material)),
+        })),
+    ),
+    "hana-median": plain(() =>
+      from(Lips)
+        .groupBy((l) => l.material)
+        .select((l) => ({ material: l.material, median: hanax.median(l.quantity), self: hanax.corr(l.quantity, l.quantity) })),
+    ),
+    "hana-full-join": plain(() =>
+      from(Lips)
+        .fullJoin(Mara, (l, m) => m.material.eq(l.material))
+        .select((l, m) => ({ delivery: l.delivery, material: m.material })),
+    ),
     "hana-regexpr": plain(() =>
       from(Lips)
         .where((l) => likeRegexpr(l.delivery, "^D[0-9]+$"))
@@ -669,9 +691,51 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     "postgres-functions": plain(() =>
       from(Lips)
         .with((l) => distinctOn(l.material))
-        .where((l) => all(ilike(l.unit, "e%"), pg(l.material).isDistinctFrom("M9"), pg(l.unit).isNotDistinctFrom(l.unit)))
+        .where((l) => all(ilike(l.unit, "e%"), l.material.isDistinctFrom(val("M9")), l.unit.isNotDistinctFrom(l.unit)))
         .orderBy((l) => [l.material.asc(), l.delivery.desc()])
         .select((l) => ({ material: l.material, delivery: l.delivery })),
+    ),
+
+    "postgres-set-all": plain(() => pgx.exceptAll(pgx.intersectAll(materialsOf("EA"), materialsOf("KG")), materialsOf("PC"))),
+    "postgres-range-frame": plain(() =>
+      from(Event)
+        .orderBy((e) => e.id)
+        .select((e) => ({
+          id: e.id,
+          lastWeek: count().over((w) => w.orderBy(e.onDay).frame(pgx.range(pgx.daysPreceding(7), Bound.currentRow()))),
+          near: count().over((w) => w.orderBy(e.id).frame(pgx.range(Bound.preceding(1), Bound.following(0)))),
+        })),
+    ),
+    "postgres-recursive": plain(() => {
+      const steps = pgx.recursiveCte(
+        "steps",
+        from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      );
+      return from(steps).orderBy((s) => s.depth).select((s) => s.depth);
+    }),
+    "postgres-locks": plain(() =>
+      from(Lips)
+        .join(Mara, (l, m) => m.material.eq(l.material))
+        .with((l) => pgx.forUpdateOf("skipLocked", l))
+        .select((l) => l.delivery),
+    ),
+    "postgres-share-lock": plain(() => from(Lips).with(pgx.forShare("nowait")).select((l) => l.delivery)),
+    "postgres-statistics": plain(() =>
+      from(Lips)
+        .groupBy((l) => l.material)
+        .select((l) => ({
+          material: l.material,
+          median: pgx.percentileCont(0.5, l.quantity),
+          lower: pgx.percentileDisc(0.5, l.quantity),
+          unit: pgx.mode(l.unit),
+          self: pgx.corr(l.quantity, l.quantity),
+        })),
+    ),
+    "postgres-full-join": plain(() =>
+      from(Lips)
+        .fullJoin(Mara, (l, m) => m.material.eq(l.material))
+        .select((l, m) => ({ delivery: l.delivery, material: m.material })),
     ),
     "postgres-aggregates": plain(() =>
       from(Lips)
@@ -687,6 +751,32 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     "mysql-extremes": plain(() =>
       from(Lips).select((l) => ({ atLeast4: mysqlGreatest(l.quantity, val("4", decimal)), atMost4: mysqlLeast(l.quantity, val("4", decimal)) })),
     ),
+
+    "mysql-set-all": plain(() => mysqlx.exceptAll(mysqlx.intersectAll(materialsOf("EA"), materialsOf("KG")), materialsOf("PC"))),
+    "mysql-range-frame": plain(() =>
+      from(Event)
+        .orderBy((e) => e.id)
+        .select((e) => ({
+          id: e.id,
+          lastWeek: count().over((w) => w.orderBy(e.onDay).frame(mysqlx.range(mysqlx.daysPreceding(7), Bound.currentRow()))),
+          near: count().over((w) => w.orderBy(e.id).frame(mysqlx.range(Bound.preceding(1), Bound.following(0)))),
+        })),
+    ),
+    "mysql-recursive": plain(() => {
+      const steps = mysqlx.recursiveCte(
+        "steps",
+        from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      );
+      return from(steps).orderBy((s) => s.depth).select((s) => s.depth);
+    }),
+    "mysql-locks": plain(() =>
+      from(Lips)
+        .join(Mara, (l, m) => m.material.eq(l.material))
+        .with((l) => mysqlx.forUpdateOf("skipLocked", l))
+        .select((l) => l.delivery),
+    ),
+    "mysql-share-lock": plain(() => from(Lips).with(mysqlx.forShare("nowait")).select((l) => l.delivery)),
     "mysql-functions": plain(() =>
       from(Lips)
         .with(maxExecutionTime(2000))
@@ -700,3 +790,8 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql", Readon
     ),
   },
 };
+
+/** 某个单位的交货行的物料。 */
+function materialsOf(unit: string) {
+  return from(Lips).where((l) => l.unit.eq(unit)).select((l) => l.material);
+}

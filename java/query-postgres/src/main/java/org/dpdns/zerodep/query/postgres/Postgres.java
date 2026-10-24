@@ -4,21 +4,31 @@ import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.Window;
+import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.TableProxy;
+import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.write.JoinDelete;
 import org.dpdns.zerodep.query.write.JoinUpdate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import javax.sql.DataSource;
 
 /**
@@ -33,6 +43,13 @@ public final class Postgres extends Sql {
     private static final FunctionDef LEAST = FunctionDef.only(PostgresDialect.class, "LEAST");
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(PostgresDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
+    private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(PostgresDialect.class, "PERCENTILE_CONT",
+        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+    private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(PostgresDialect.class, "PERCENTILE_DISC",
+        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+    private static final FunctionDef MODE = FunctionDef.only(PostgresDialect.class, "MODE",
+        (w, args) -> w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args.get(0)).sql(")"));
+    private static final FunctionDef CORR = FunctionDef.only(PostgresDialect.class, "CORR");
 
     /** 只放静态方法，不能实例化。 */
     private Postgres() { }
@@ -76,36 +93,103 @@ public final class Postgres extends Sql {
         return clause(Clause.Position.DISTINCT, w -> w.sql("DISTINCT ON (").join(list, ", ").sql(")"));
     }
 
-    // ---------- 函数 ----------
+    // ---------- 集合运算、窗口帧、递归 CTE、加锁 ----------
 
-    /** PostgreSQL 专属的运算符，两个操作数必须同类型，类型由调用者 {@code expr} 决定。 */
-    public static <T> Ops<T> pg(Expr<T> expr) { return new Ops<>(expr); }
+    /** INTERSECT ALL：两边都有的行，保留重复（取两边次数的较小值）。规则同 {@code q1.unionAll(q2)}。 */
+    public static <R> Query<R> intersectAll(Query<R> left, Query<R> right) { return left.combine("INTERSECT ALL", right); }
+
+    /** EXCEPT ALL：左边有、右边没有的行，按次数相减。规则同 {@code q1.unionAll(q2)}。 */
+    public static <R> Query<R> exceptAll(Query<R> left, Query<R> right) { return left.combine("EXCEPT ALL", right); }
+
+    /**
+     * RANGE 窗口帧：按排序值的距离取行，排序值相同的行一起进出，例如近 7 天的滚动合计
+     * {@code over(w -> w.orderBy(l.createdOn()).frame(range(daysPreceding(6), Bound.currentRow())))}。
+     * 有限的偏移要求窗口只有一个排序项；数值偏移用 {@code Bound.preceding(n)}。
+     */
+    public static Renderable range(Window.Bound start, Window.Bound end) {
+        String sql = "RANGE BETWEEN " + start.sql() + " AND " + end.sql();
+        return w -> {
+            requirePostgres(w);
+            w.sql(sql);
+        };
+    }
+
+    /** RANGE 帧的起点：排序值（日期或时间戳）之前 days 天。 */
+    public static Window.Bound daysPreceding(int days) { return Window.Bound.custom("INTERVAL '" + nonNegative(days) + " days' PRECEDING"); }
+
+    /** RANGE 帧的终点：排序值之后 days 天。 */
+    public static Window.Bound daysFollowing(int days) { return Window.Bound.custom("INTERVAL '" + nonNegative(days) + " days' FOLLOWING"); }
+
+    /**
+     * 递归 CTE：{@code anchor UNION ALL step(自己)}，step 里 {@code from(self)} 取上一轮的行，例如沿上级编号展开组织树：
+     * <pre>{@code
+     * Cte<Node> tree = recursiveCte("tree",
+     *     from(Org.class).where(o -> o.parent().isNull()).select(o -> cols(o.id(), lit(1).as("depth"))).into(Node.class),
+     *     self -> from(self).join(Org.class, (t, o) -> o.parent().eq(t.col(Node::id)))
+     *         .select((t, o) -> cols(o.id(), plus(t.col(Node::depth), lit(1)).as("depth"))).into(Node.class));
+     * }</pre>
+     * 语句里有递归 CTE 时写成 {@code WITH RECURSIVE}；step 必须有终止条件。
+     */
+    public static <E> Cte<E> recursiveCte(String name, Query<E> anchor, Function<Cte<E>, Query<E>> step) {
+        return Cte.recursive(name, anchor, step, PostgresDialect.class);
+    }
+
+    /** 共享锁读 {@code FOR SHARE}：别人可以读、也可以再加共享锁，但改不了；lock 同 {@code forUpdate(lock)}。 */
+    public static Clause forShare(Lock lock) { return lockClause("FOR SHARE", lock, List.of()); }
+
+    /** 只锁 tables 这几张表的行：{@code .with((l, m) -> forUpdateOf(Lock.SKIP_LOCKED, l))} 写成 {@code FOR UPDATE OF 别名 SKIP LOCKED}。 */
+    public static Clause forUpdateOf(Lock lock, Entity... tables) {
+        if (tables.length == 0) throw new IllegalArgumentException("forUpdateOf(...) needs at least one table");
+        return lockClause("FOR UPDATE", lock, List.of(tables));
+    }
+
+    /** {@code FOR UPDATE / FOR SHARE [OF 别名, ...] [NOWAIT | SKIP LOCKED]}。 */
+    private static Clause lockClause(String mode, Lock lock, List<Entity> tables) {
+        Objects.requireNonNull(lock, "lock");
+        List<Ref<?>> refs = tables.stream().<Ref<?>>map(TableProxy::refOf).toList();
+        return clause(Clause.Position.END, w -> {
+            w.sql(mode);
+            for (int i = 0; i < refs.size(); i++) w.sql(i == 0 ? " OF " : ", ").alias(refs.get(i).alias(w));
+            if (lock == Lock.NOWAIT) w.sql(" NOWAIT");
+            else if (lock == Lock.SKIP_LOCKED) w.sql(" SKIP LOCKED");
+        });
+    }
+
+    /** 校验天数不为负。 */
+    private static int nonNegative(int days) {
+        if (days < 0) throw new IllegalArgumentException("Frame offsets must not be negative");
+        return days;
+    }
+
+    // ---------- 统计 ----------
+
+    /** 连续百分位数 {@code PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)}，在相邻两行之间插值；p 取 0 到 1，中位数是 0.5。只能作聚合。 */
+    public static Expr<Double> percentileCont(double p, Expr<? extends Number> e) {
+        return Nodes.call(SqlType.of(Double.class), PERCENTILE_CONT, List.of(lit(fraction(p)), cast(e, CastType.doublePrecision())));
+    }
+
+    /** 离散百分位数 {@code PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY e)}：取排序后第一个累计比例不小于 p 的值。只能作聚合。 */
+    public static <T> Expr<T> percentileDisc(double p, Expr<T> e) { return Nodes.call(e.type(), PERCENTILE_DISC, List.of(lit(fraction(p)), e)); }
+
+    /** 众数 {@code MODE() WITHIN GROUP (ORDER BY e)}：出现次数最多的值，并列时取最小的。只能作聚合。 */
+    public static <T> Expr<T> mode(Expr<T> e) { return Nodes.call(e.type(), MODE, List.of(e)); }
+
+    /** 相关系数 {@code CORR(y, x)}，取值 -1 到 1。 */
+    public static Expr<Double> corr(Expr<? extends Number> y, Expr<? extends Number> x) { return Nodes.call(SqlType.of(Double.class), CORR, List.of(y, x)); }
+
+    /** 校验百分位数在 0 到 1 之间。 */
+    private static double fraction(double p) {
+        if (!(p >= 0 && p <= 1)) throw new IllegalArgumentException("A percentile must be between 0 and 1, got " + p);
+        return p;
+    }
+
+    // ---------- 函数 ----------
 
     /** ILIKE：不区分大小写的 LIKE。skipEmpty 下模式为空时没有条件。 */
     public static Cond ilike(Expr<String> e, String pattern) {
         if (skipped(pattern)) return Cond.EMPTY;
         Expr<String> p = val(pattern, e.type());
         return cond(w -> w.render(e).sql(" ILIKE ").render(p));
-    }
-
-    /** {@link #pg} 返回的运算符集合，绑定到一个表达式。 */
-    public static final class Ops<T> {
-        private final Expr<T> expr;
-
-        /** 包住 expr，在它上面提供 PostgreSQL 专属的比较。 */
-        private Ops(Expr<T> expr) { this.expr = expr; }
-
-        /** {@code expr IS DISTINCT FROM other}：把 NULL 当作普通值比较的不等。 */
-        public Cond isDistinctFrom(Expr<T> other) { return cond(w -> w.render(expr).sql(" IS DISTINCT FROM ").render(other)); }
-
-        /** 与常量比较的 {@link #isDistinctFrom(Expr)}。 */
-        public Cond isDistinctFrom(T value) { return isDistinctFrom(val(value, expr.type())); }
-
-        /** {@code expr IS NOT DISTINCT FROM other}：把 NULL 当作普通值比较的相等。 */
-        public Cond isNotDistinctFrom(Expr<T> other) { return cond(w -> w.render(expr).sql(" IS NOT DISTINCT FROM ").render(other)); }
-
-        /** 与常量比较的 {@link #isNotDistinctFrom(Expr)}。 */
-        public Cond isNotDistinctFrom(T value) { return isNotDistinctFrom(val(value, expr.type())); }
     }
 
     /** 构造一个只属于 PostgreSQL 方言的子句，放在 {@code position} 指定的位置。 */
@@ -116,16 +200,6 @@ public final class Postgres extends Sql {
             @Override public Class<? extends Dialect> dialect() { return PostgresDialect.class; }
 
             @Override public void render(SqlWriter w) { body.accept(w); }
-        };
-    }
-
-    /** 类型与 {@code like} 相同的 PostgreSQL 专属表达式；在其他方言上渲染会明确报错。 */
-    private static <T> Expr<T> expr(Expr<T> like, Consumer<SqlWriter> body) {
-        return new Expr<>(like.type()) {
-            @Override public void render(SqlWriter w) {
-                requirePostgres(w);
-                body.accept(w);
-            }
         };
     }
 

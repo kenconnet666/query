@@ -49,6 +49,12 @@ public final class TableProxy implements InvocationHandler {
         this.meta = Metadata.entity(ref.entity());
     }
 
+    /** 表接口代理所属的那次表出现，供方言包按表取别名（例如 {@code FOR UPDATE OF 别名}）；参数不是表代理时报错。 */
+    public static Ref<?> refOf(Entity table) {
+        if (table != null && Proxy.isProxyClass(table.getClass()) && Proxy.getInvocationHandler(table) instanceof TableProxy p) return p.ref;
+        throw new IllegalArgumentException("Expected a table of the query (a lambda parameter), got " + table);
+    }
+
     /** 创建 ref 的表接口代理。 */
     static Object create(Ref<?> ref) {
         Class<?> type = ref.entity();

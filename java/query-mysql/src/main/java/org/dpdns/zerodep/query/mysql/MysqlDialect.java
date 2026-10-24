@@ -120,6 +120,9 @@ public class MysqlDialect extends Dialect {
         w.render(expr).sql(descending ? " DESC" : " ASC");
     }
 
+    /** MySQL 没有 FULL JOIN。 */
+    @Override public boolean supportsFullJoin() { return false; }
+
     /** NULL 也相等的比较写成 MySQL 的 {@code <=>}，否定时加 NOT。 */
     @Override public void notDistinct(SqlWriter w, Renderable left, Renderable right, boolean negate) {
         if (negate) w.sql("NOT (").render(left).sql(" <=> ").render(right).sql(")");

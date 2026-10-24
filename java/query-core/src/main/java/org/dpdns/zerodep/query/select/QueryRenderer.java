@@ -67,7 +67,7 @@ public final class QueryRenderer {
         List<Query.Arm> arms = q.arms();
         Query.Combination c = q.combination();
         for (int i = 0; i < arms.size(); i++) {
-            if (i > 0) w.sql("\n").sql(c.operators().get(i - 1)).sql("\n");
+            if (i > 0) w.sql("\n").sql(w.dialect().setOperator(c.operators().get(i - 1))).sql("\n");
             w.sql("(".repeat(c.opens(i)));
             arm(w, arms.get(i), q.labels(), i == 0 && labeled, ordered);
             w.sql(")".repeat(c.closes(i)));
@@ -153,6 +153,17 @@ public final class QueryRenderer {
                     w.sql("\nCROSS JOIN ");
                     j.ref().renderSource(w);
                     pending.addAll(extra);
+                }
+                case FULL -> {
+                    if (!w.dialect().supportsFullJoin()) throw new UnsupportedOperationException(w.dialect().name() + " has no FULL JOIN");
+                    // 两侧都会补空行：过滤条件放在 ON 里会让被过滤掉的行作为不匹配的行留下，放在 WHERE 里会去掉补出来的行，
+                    // 所以有全局过滤条件的表不能参与 FULL JOIN。
+                    if (!pending.isEmpty() || !extra.isEmpty()) {
+                        throw new IllegalStateException("FULL JOIN cannot keep the global filters of its tables; use unfiltered() and filter each side in a CTE or derived table");
+                    }
+                    w.sql("\nFULL JOIN ");
+                    j.ref().renderSource(w);
+                    w.sql(" ON ").render(j.on());
                 }
                 case RIGHT -> {
                     w.sql("\nRIGHT JOIN ");

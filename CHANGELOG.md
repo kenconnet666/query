@@ -41,6 +41,7 @@
 - **按编码的枚举与毫秒逻辑删除**：Java 实现 `CodeEnum<C>` 的枚举按编码存取；`@LogicDelete(epochMillis = true)`（TS `@logicDelete({ epochMillis: true })`）删除时写当前毫秒数，`UNIQUE (业务键, 删除列)` 允许同一个键删除后再建。
 - **函数**：`lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`、`hour`、`minute`、`second`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`，三库实测语义一致。
 - **执行**：`db.exists(q)`、`db.optional(q)`（零行或一行，多于一行报错）。
+- **方言包的结构能力**：PostgreSQL、MySQL 的 `intersectAll` / `exceptAll`、RANGE 窗口帧（`w.frame(range(daysPreceding(7), Bound.currentRow()))`）、`recursiveCte`、`forShare`、`forUpdateOf`；PostgreSQL 的 `db.returning(write, ...)`、`percentileCont` / `percentileDisc` / `mode` / `corr`；HANA 的 `median`、窗口式 `percentileCont` / `percentileDisc`、`corr`；核心作用域的 `fullJoin`（HANA、PostgreSQL）。删除 PostgreSQL 的 `pg(e).isDistinctFrom`，改用核心的 `isDistinctFrom`。
 - **定制**：执行前钩子 `config.intercept(...)` / TS `interceptors`（改写或拦下每条语句，缓存按改写后的 SQL 作键）；插入时逐行生成值的 `generate(...)`；条件对象的自定义比较 `@Where(using = ...)` / `@where(fn, ...)`；`db.attach` / `attachMany` 按键装回另一个查询的结果；`db.one` / `optional` 抛 `EmptyResultException`、`TooManyRowsException`（TS `EmptyResultError`、`TooManyRowsError`）。
 - **集合运算与连接**：`intersect`、`except`（按调用顺序求值，三库读法可能不同处自动加括号）、`rightJoin`（左侧各表的全局过滤条件进它的 ON；TS 中之前各参数变成可空）。
 - **子查询比较与条件列**：多列 `keys(a, b).in(q)`、`anyOf(q)` / `allOf(q)`、NULL 安全的 `isNotDistinctFrom` / `isDistinctFrom`（PostgreSQL 原生、MySQL `<=>`、HANA 用 CASE）、条件作为布尔列 `bool(cond)`。

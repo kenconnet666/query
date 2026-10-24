@@ -1,8 +1,15 @@
 package org.dpdns.zerodep.query.mysql;
 
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.table.Cte;
+import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
+import org.dpdns.zerodep.query.testing.Erp.Step;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +23,7 @@ import java.util.function.Consumer;
 import static org.dpdns.zerodep.query.mysql.Mysql.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Needs QUERY_MYSQL_URL, QUERY_MYSQL_USER and QUERY_MYSQL_PASSWORD; skipped otherwise. */
 @DisplayName("MySQL 实库场景")
@@ -71,5 +79,47 @@ class MysqlLiveTest extends LiveScenarios {
         assertEquals(List.of("D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"), rows);
         assertNull(db.one(from(Lips.class).where(l -> l.delivery().eq("D1"))
             .select(l -> greatest(l.quantity(), nullOf(BigDecimal.class)))));
+    }
+
+    @Test
+    void INTERSECT_ALL与EXCEPT_ALL按次数保留重复的行() {
+        Query<String> each = from(Lips.class).where(l -> l.unit().eq("EA")).select(l -> l.material());
+        Query<String> master = from(Mara.class).select(m -> m.material());
+        assertEquals(List.of("M1", "M2"), db.list(intersectAll(each, master)).stream().sorted().toList());
+        assertEquals(List.of("M1", "M1", "M2"), db.list(exceptAll(each, master)).stream().sorted().toList());
+    }
+
+    @Test
+    void RANGE窗口帧按排序值的距离取行() {
+        assertEquals(List.of("1:1:1", "2:1:2"), db.list(from(Event.class)
+                .orderBy(e -> e.id())
+                .select(e -> cols(e.id(),
+                    count().over(w -> w.orderBy(e.onDay()).frame(range(daysPreceding(7), Bound.currentRow()))).as("lastWeek"),
+                    count().over(w -> w.orderBy(e.id()).frame(range(Bound.preceding(1), Bound.following(0)))).as("near"))))
+            .stream().map(r -> r.get("id") + ":" + r.get("lastWeek") + ":" + r.get("near")).toList());
+    }
+
+    @Test
+    void 递归CTE逐层展开到终止条件() {
+        Cte<Step> steps = recursiveCte("steps",
+            from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> cols(l.delivery(), lit(1).as("depth"))).into(Step.class),
+            self -> from(self).where(s -> s.col(Step::depth).lt(3))
+                .select(s -> cols(s.col(Step::delivery), plus(s.col(Step::depth), lit(1)).as("depth"))).into(Step.class));
+        assertEquals(List.of(1, 2, 3), db.list(from(steps).orderBy(s -> s.col(Step::depth)).select(s -> s.col(Step::depth))));
+    }
+
+    @Test
+    void 共享锁与只锁部分表的加锁读() {
+        db.transaction(() -> {
+            assertEquals(5, db.list(from(Lips.class).join(Mara.class, (l, m) -> m.material().eq(l.material()))
+                .with((l, m) -> forUpdateOf(Lock.SKIP_LOCKED, l)).select((l, m) -> l.delivery())).size());
+            assertEquals(5, db.list(from(Lips.class).with(forShare(Lock.NOWAIT)).select(l -> l.delivery())).size());
+        });
+    }
+
+    @Test
+    void MySQL没有FULL_JOIN() {
+        assertThrows(UnsupportedOperationException.class, () -> db.list(from(Lips.class).unfiltered()
+            .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material())).select((l, m) -> l.delivery())));
     }
 }

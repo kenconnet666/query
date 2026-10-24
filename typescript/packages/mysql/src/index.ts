@@ -8,7 +8,7 @@ export * from "@zerodep-dev/query-core";
 export { deleteJoin, updateJoin } from "./join.js";
 export { MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
-export { dateFormat, greatest, least, maxExecutionTime } from "./functions.js";
+export { dateFormat, daysFollowing, daysPreceding, exceptAll, forShare, forUpdateOf, greatest, intersectAll, least, maxExecutionTime, range, recursiveCte } from "./functions.js";
 
 /** MySQL 数据库：查询渲染成 MySQL SQL，经由给定的驱动执行。 */
 export class MysqlDatabase extends Database {

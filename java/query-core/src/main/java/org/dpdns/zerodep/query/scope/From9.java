@@ -62,6 +62,12 @@ public final class From9<T1, T2, T3, T4, T5, T6, T7, T8, T9> extends AbstractFro
     /** RIGHT JOIN 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
     public <E> From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, Ref<E>> rightJoin(Source<E> source, Fn.F10<T1, T2, T3, T4, T5, T6, T7, T8, T9, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.RIGHT, Ref.of(source), on); }
 
+    /** FULL JOIN（HANA、PostgreSQL；有全局过滤条件的表不能参与） 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
+    public <N extends Entity> From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, N> fullJoin(Class<N> table, Fn.F10<T1, T2, T3, T4, T5, T6, T7, T8, T9, N, Cond> on) { return next(SelectSpec.JoinKind.FULL, Ref.table(table), on); }
+
+    /** FULL JOIN（HANA、PostgreSQL；有全局过滤条件的表不能参与） 一个 CTE、派生表或常量行；lambda 的下一个参数是它的 Ref，用 {@code r.col(Row::x)} 取列。 */
+    public <E> From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, Ref<E>> fullJoin(Source<E> source, Fn.F10<T1, T2, T3, T4, T5, T6, T7, T8, T9, Ref<E>, Cond> on) { return next(SelectSpec.JoinKind.FULL, Ref.of(source), on); }
+
     /** CROSS JOIN 一张表（笛卡尔积）。 */
     public <N extends Entity> From10<T1, T2, T3, T4, T5, T6, T7, T8, T9, N> crossJoin(Class<N> table) { return next(SelectSpec.JoinKind.CROSS, Ref.table(table), null); }
 

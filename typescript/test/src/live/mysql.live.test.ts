@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import mysql from "mysql2/promise";
 import { date, daysBetween, decimal, from, greatest, least, stringAgg, lit, maxExecutionTime, MysqlDatabase, mysqlDriver, nullOf } from "@zerodep-dev/query-mysql";
-import { Lips } from "../fixtures/erp.js";
+import * as mysqlx from "@zerodep-dev/query-mysql";
+import { Bound, count, plus } from "@zerodep-dev/query-mysql";
+import { Event, Lips, Mara } from "../fixtures/erp.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -72,6 +74,48 @@ liveScenarios(
           .select((l) => greatest(l.quantity, nullOf(decimal))),
       );
       assert.equal(withNull, null);
+    });
+
+    it("INTERSECT ALL 与 EXCEPT ALL 按次数保留重复的行", async () => {
+      const { db } = live();
+      const each = from(Lips).where((l) => l.unit.eq("EA")).select((l) => l.material);
+      const master = from(Mara).select((m) => m.material);
+      assert.deepEqual((await db.list(mysqlx.intersectAll(each, master))).sort(), ["M1", "M2"]);
+      assert.deepEqual((await db.list(mysqlx.exceptAll(each, master))).sort(), ["M1", "M1", "M2"]);
+    });
+
+    it("RANGE 窗口帧按排序值的距离取行", async () => {
+      const rows = await live().db.list(
+        from(Event)
+          .orderBy((e) => e.id)
+          .select((e) => ({
+            id: e.id,
+            lastWeek: count().over((w) => w.orderBy(e.onDay).frame(mysqlx.range(mysqlx.daysPreceding(7), Bound.currentRow()))),
+            near: count().over((w) => w.orderBy(e.id).frame(mysqlx.range(Bound.preceding(1), Bound.following(0)))),
+          })),
+      );
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.lastWeek}:${r.near}`), ["1:1:1", "2:1:2"]);
+    });
+
+    it("递归 CTE 逐层展开到终止条件", async () => {
+      const steps = mysqlx.recursiveCte(
+        "steps",
+        from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      );
+      assert.deepEqual(await live().db.list(from(steps).orderBy((s) => s.depth).select((s) => s.depth)), [1, 2, 3]);
+    });
+
+    it("共享锁与只锁部分表的加锁读", async () => {
+      const { db } = live();
+      await db.transaction(async () => {
+        assert.equal((await db.list(from(Lips).join(Mara, (l, m) => m.material.eq(l.material)).with((l) => mysqlx.forUpdateOf("skipLocked", l)).select((l) => l.delivery))).length, 5);
+        assert.equal((await db.list(from(Lips).with(mysqlx.forShare("nowait")).select((l) => l.delivery))).length, 5);
+      });
+    });
+
+    it("MySQL 没有 FULL JOIN", async () => {
+      await assert.rejects(live().db.list(from(Lips).unfiltered().fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l) => l.delivery)), /has no FULL JOIN/);
     });
   },
 );

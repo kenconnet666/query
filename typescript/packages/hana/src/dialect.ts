@@ -82,6 +82,12 @@ export class HanaDialect extends Dialect {
     w.sql(")");
   }
 
+  /** HANA 没有 INTERSECT ALL 和 EXCEPT ALL。 */
+  override setOperator(operator: string): string {
+    if (operator.endsWith(" ALL") && operator !== "UNION ALL") throw new Error(`HANA has no ${operator}`);
+    return operator;
+  }
+
   /** HANA 跳过被锁住的行写作 `IGNORE LOCKED`。 */
   override lock(w: SqlWriter, lock: Lock): void {
     if (lock === "skipLocked") w.sql("FOR UPDATE IGNORE LOCKED");

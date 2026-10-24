@@ -1,4 +1,4 @@
-import type { Dialect, FunctionDef, FunctionRenderer } from "./dialect.js";
+import type { Dialect, DialectClass, FunctionDef, FunctionRenderer } from "./dialect.js";
 import { NamingStrategy } from "../schema/metadata.js";
 import type { SqlType } from "../schema/types.js";
 
@@ -11,6 +11,8 @@ export interface Renderable {
 /** 提升到语句开头 WITH 里的命名主体。 */
 export interface CteDefinition extends Renderable {
   readonly name: string;
+  /** 递归 CTE 只能在这个方言（及其子类）上渲染，WITH 写成 `WITH RECURSIVE`；普通 CTE 没有。 */
+  readonly recursiveIn?: DialectClass | undefined;
 }
 
 /** 绑定参数：原值以及负责编码它的类型。 */
@@ -277,9 +279,16 @@ export class SqlWriter {
     for (const c of this.#ctes.values()) this.#emit(c, order, bodies, names);
     const chunks: Chunk[] = [];
     const bindings: Binding[] = [];
+    let recursive = false;
+    for (const c of order) {
+      if (c.recursiveIn === undefined) continue;
+      const dialect: Dialect = this.dialect;
+      if (!(dialect instanceof c.recursiveIn)) throw new Error(`The recursive CTE '${c.name}' cannot run on ${this.dialect.name}`);
+      recursive = true;
+    }
     order.forEach((c, i) => {
       const body = bodies.get(c)!;
-      chunks.push(`${i > 0 ? ",\n" : "WITH "}${this.dialect.quote(c.name)} AS (\n`);
+      chunks.push(`${i > 0 ? ",\n" : recursive ? "WITH RECURSIVE " : "WITH "}${this.dialect.quote(c.name)} AS (\n`);
       pushAll(chunks, body.#chunks);
       chunks.push("\n)");
       pushAll(bindings, body.#bindings);

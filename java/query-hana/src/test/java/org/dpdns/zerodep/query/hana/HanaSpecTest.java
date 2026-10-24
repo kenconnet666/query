@@ -3,11 +3,13 @@ package org.dpdns.zerodep.query.hana;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.RenderSpec;
 import org.junit.jupiter.api.DisplayName;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -22,6 +24,13 @@ class HanaSpecTest extends RenderSpec {
     }
 
     @Override protected Map<String, SpecCase> dialectCases() {
+        Map<String, SpecCase> cases = new LinkedHashMap<>(classicCases());
+        cases.putAll(structureCases());
+        return cases;
+    }
+
+    /** 方言包早先就有的函数与子句。 */
+    private Map<String, SpecCase> classicCases() {
         LocalDate first = LocalDate.of(2026, 1, 1);
         LocalDate day = LocalDate.of(2026, 1, 31);
         return Map.of(
@@ -56,5 +65,21 @@ class HanaSpecTest extends RenderSpec {
                     l.material(),
                     stringAgg(l.delivery(), ",", l.delivery().asc(), l.unit().desc())
                         .as("deliveries")))));
+    }
+
+    /** HANA 的中位数、窗口式的百分位数、相关系数与 FULL JOIN。 */
+    private Map<String, SpecCase> structureCases() {
+        return Map.of(
+            "hana-statistics", SpecCase.plain(() -> from(Lips.class)
+                .distinct()
+                .select(l -> cols(l.material(),
+                    percentileCont(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("median"),
+                    percentileDisc(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("lower")))),
+            "hana-median", SpecCase.plain(() -> from(Lips.class)
+                .groupBy(l -> l.material())
+                .select(l -> cols(l.material(), median(l.quantity()).as("median"), corr(l.quantity(), l.quantity()).as("self")))),
+            "hana-full-join", SpecCase.plain(() -> from(Lips.class)
+                .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
+                .select((l, m) -> cols(l.delivery(), m.material()))));
     }
 }

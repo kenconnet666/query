@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import hana from "@sap/hana-client";
 import { addDays, addMonths, count, deleteFrom, insertInto, QueryExecutionError, updateJoin, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
-import { Lips } from "../fixtures/erp.js";
+import * as hanax from "@zerodep-dev/query-hana";
+import { Lips, Mara } from "../fixtures/erp.js";
 import * as writes from "../fixtures/writes.js";
 import { liveScenarios } from "./live.js";
 
@@ -121,6 +122,41 @@ liveScenarios(
           .select((l) => toInteger(substring(l.delivery, 2))),
       );
       assert.deepEqual(numbers, [1, 2, 3, 4, 5]);
+    });
+
+    it("FULL JOIN 保留两侧没有匹配的行且有全局过滤条件时报错", async () => {
+      const { db } = live();
+      const rows = await db.list(from(Lips).unfiltered().fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l, m) => ({ delivery: l.delivery, material: m.material })));
+      assert.equal(rows.length, 12);
+      assert.equal(rows.filter((r) => r.delivery === null).length, 2);
+      await assert.rejects(db.list(from(Lips).fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l) => l.delivery)), /FULL JOIN cannot keep/);
+    });
+
+    it("中位数与窗口式的百分位数", async () => {
+      const { db } = live();
+      const windows = await db.list(
+        from(Lips)
+          .distinct()
+          .orderBy((l) => l.material)
+          .select((l) => ({
+            material: l.material,
+            median: hanax.percentileCont(0.5, l.quantity).over((w) => w.partitionBy(l.material)),
+            lower: hanax.percentileDisc(0.5, l.quantity).over((w) => w.partitionBy(l.material)),
+          })),
+      );
+      assert.deepEqual(windows.map((r) => `${r.material}:${r.median}:${Number(r.lower)}`), ["M1:2:2", "M2:6:5"]);
+      const grouped = await db.list(
+        from(Lips)
+          .groupBy((l) => l.material)
+          .orderBy((l) => l.material)
+          .select((l) => ({ material: l.material, median: hanax.median(l.quantity), self: hanax.corr(l.quantity, l.quantity) })),
+      );
+      assert.deepEqual(grouped.map((r) => `${r.material}:${r.median}:${Math.round(r.self!)}`), ["M1:2:1", "M2:6:1"]);
+    });
+
+    it("HANA 没有 INTERSECT ALL", async () => {
+      const q = from(Lips).select((l) => l.material);
+      await assert.rejects(live().db.list(q.combine("INTERSECT ALL", q)), /HANA has no INTERSECT ALL/);
     });
   },
 );

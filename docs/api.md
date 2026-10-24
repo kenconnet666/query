@@ -270,6 +270,7 @@ List<Map<String, Object>> rows = db.list(q);
 | 方法 | 说明 |
 | --- | --- |
 | `join` / `leftJoin` / `rightJoin(表接口.class 或 Source, (…) -> cond)` | 连接条件里可以用到作用域内所有的表；`crossJoin(...)` 是笛卡尔积。`rightJoin` 时左侧各表的全局过滤条件放进它的 ON，补出来的行不会被 WHERE 过滤掉 |
+| `fullJoin(...)` | HANA、PostgreSQL 的 FULL JOIN（MySQL 渲染时报错）。两侧都会补空行，过滤条件放在哪里都会改变语义，所以有全局过滤条件的表不能参与，要先 `unfiltered()`，再在 CTE 或派生表里各自过滤 |
 | `where(… -> cond)`、`having(… -> cond)` | 条件；多次调用之间是 AND，空条件（`Cond.EMPTY`）自动丢弃 |
 | `where(searchObject)` | 按条件对象筛选，见第 7 节 |
 | `skipEmpty()` | 其后的 WHERE、HAVING、ON 里，与 null、空白字符串或空集合比较的条件直接省略；`between` 只缺一端时留下另一端 |
@@ -522,12 +523,18 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 | HANA | PostgreSQL | MySQL |
 | --- | --- | --- |
 | `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `distinctOn(...)` 子句 | `dateFormat(e, "%Y%m")` |
-| `hint(...)` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | — |
+| `hint(...)` | — | — |
 | `likeRegexpr(e, pattern)` | — | — |
 | `length`（按 UTF-16 单元计） | `ilike` | `maxExecutionTime(ms)` 优化器提示 |
 | `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
 | `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
 | `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+| `median(e)`、`percentileCont(p, e).over(...)`、`percentileDisc`（HANA 只把百分位数当窗口函数）、`corr(y, x)` | `percentileCont(p, e)`、`percentileDisc`、`mode(e)`（只作聚合）、`corr(y, x)` | — |
+| — | `intersectAll(a, b)`、`exceptAll(a, b)` | 同左（8.0.31 起） |
+| — | 窗口帧 `w.frame(range(daysPreceding(7), Bound.currentRow()))`，数值偏移用 `Bound.preceding(n)` | 同左 |
+| — | `recursiveCte(name, anchor, self -> step)`，写成 `WITH RECURSIVE` | 同左（受 `cte_max_recursion_depth` 限制） |
+| — | `forShare(lock)`、`forUpdateOf(lock, l)`（`FOR UPDATE OF 别名`） | 同左 |
+| — | `db.returning(write, Row.class)`：插入、更新、删除后用 RETURNING 读回行 | — |
 
 `greatest`、`least` 的常量参数写成 `val(x)`。三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里，空的 `keys()` 是总计。
 

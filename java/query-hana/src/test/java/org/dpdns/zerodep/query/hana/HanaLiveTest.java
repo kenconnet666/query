@@ -3,7 +3,9 @@ package org.dpdns.zerodep.query.hana;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
+import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
 import org.dpdns.zerodep.query.testing.Writes;
@@ -15,6 +17,7 @@ import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.dpdns.zerodep.query.hana.Hana.*;
@@ -102,5 +105,38 @@ class HanaLiveTest extends LiveScenarios {
         assertThrows(QueryExecutionException.class, () -> db.execute(updateJoin(Writes.Note.class, Writes.Doc.class, (n, d) -> n.title().eq(d.title()))
             .set((n, d) -> n.status().to(d.id())).all()));
         assertEquals(List.of("open", "open"), db.list(from(Writes.Note.class).orderBy(n -> n.id()).select(n -> n.status())));
+    }
+
+    @Test
+    void FULL_JOIN保留两侧没有匹配的行且有全局过滤条件时报错() {
+        List<Map<String, Object>> rows = db.list(from(Lips.class).unfiltered()
+            .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
+            .select((l, m) -> cols(l.delivery(), m.material())));
+        assertEquals(12, rows.size());
+        assertEquals(2, rows.stream().filter(r -> r.get("delivery") == null).count());
+        assertThrows(IllegalStateException.class, () -> db.list(from(Lips.class)
+            .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material())).select((l, m) -> l.delivery())));
+    }
+
+    @Test
+    void 中位数与窗口式的百分位数() {
+        assertEquals(List.of("M1:2.0:2:1", "M2:6.0:5:1"), db.list(from(Lips.class)
+                .distinct()
+                .orderBy(l -> l.material())
+                .select(l -> cols(l.material(),
+                    percentileCont(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("median"),
+                    percentileDisc(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("lower"))))
+            .stream().map(r -> r.get("material") + ":" + r.get("median") + ":" + ((BigDecimal) r.get("lower")).stripTrailingZeros().toPlainString() + ":1").toList());
+        assertEquals(List.of("M1:2.0:1", "M2:6.0:1"), db.list(from(Lips.class)
+                .groupBy(l -> l.material())
+                .orderBy(l -> l.material())
+                .select(l -> cols(l.material(), median(l.quantity()).as("median"), corr(l.quantity(), l.quantity()).as("self"))))
+            .stream().map(r -> r.get("material") + ":" + r.get("median") + ":" + Math.round((Double) r.get("self"))).toList());
+    }
+
+    @Test
+    void HANA没有INTERSECT_ALL() {
+        Query<String> q = from(Lips.class).select(l -> l.material());
+        assertThrows(UnsupportedOperationException.class, () -> db.list(q.combine("INTERSECT ALL", q)));
     }
 }

@@ -89,6 +89,12 @@ public abstract class Dialect {
             .sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
     }
 
+    /** 集合运算在本方言里的写法；不支持的（HANA 的 INTERSECT ALL、EXCEPT ALL）报错。 */
+    public String setOperator(String operator) { return operator; }
+
+    /** 是否支持 FULL JOIN；MySQL 没有。 */
+    public boolean supportsFullJoin() { return true; }
+
     /** 没有数据表的 SELECT 需要补的内容：多数数据库什么都不用写，HANA 要写 {@code FROM DUMMY}。 */
     public void fromNothing(SqlWriter w) { }
 

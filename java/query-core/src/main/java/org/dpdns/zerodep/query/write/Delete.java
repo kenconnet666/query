@@ -45,6 +45,9 @@ public final class Delete<T extends Entity> implements Write {
     /** 从 table 删除；通常写作 {@code Sql.deleteFrom(Lips.class)}。 */
     public static <T extends Entity> Delete<T> of(Class<T> table) { return new Delete<>(Target.of(table), null, false); }
 
+    /** 删除的表。 */
+    public Class<T> table() { return target.ref().entity(); }
+
     /** 表上有 {@code @LogicDelete} 列时仍然真正删除，而不是把它设为已删除。 */
     public Delete<T> physically() { return new Delete<>(target, byId, true); }
 

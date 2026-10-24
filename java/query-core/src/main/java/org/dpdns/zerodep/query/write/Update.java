@@ -48,6 +48,9 @@ public final class Update<T extends Entity> implements Write {
     /** 更新 table；通常写作 {@code Sql.update(Lips.class)}。 */
     public static <T extends Entity> Update<T> of(Class<T> table) { return new Update<>(Target.of(table), List.of(), null); }
 
+    /** 更新的表。 */
+    public Class<T> table() { return target.ref().entity(); }
+
     /**
      * 按主键更新这些行：每行一条 {@code UPDATE ... SET 其余属性 WHERE 主键 = ?}，表上有 {@code @Version} 时加上
      * {@code SET version = version + 1} 和 {@code AND version = ?}；期望每行影响一行，否则 {@code db.execute} 抛出

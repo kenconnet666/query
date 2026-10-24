@@ -530,6 +530,27 @@ export abstract class Database {
   }
 
   /**
+   * 执行会返回行的写语句（例如 PostgreSQL 的 `... RETURNING`），用 decode 把每行变成对象，各条语句的行依次连起来；
+   * 供方言的数据库实例使用。多条语句在一个事务里执行，执行后清空结果缓存。
+   */
+  protected async writeReturning<R>(statements: readonly Rendered[], decode: (row: readonly unknown[]) => R): Promise<R[]> {
+    if (statements.length === 0) return [];
+    const run = async () => {
+      const out: R[] = [];
+      for (const s of statements) out.push(...(await this.#execute(s, undefined)).rows.map(decode));
+      return out;
+    };
+    const rows = statements.length > 1 && this.#current() === this.#driver && this.#driver.transaction !== undefined ? await this.transaction(run) : await run();
+    this.#cache?.clear();
+    return rows;
+  }
+
+  /** 本库未显式指定列名的字段所用的命名策略。 */
+  protected get naming(): NamingStrategy {
+    return this.#writer().naming;
+  }
+
+  /**
    * 在一个事务里执行 work 并返回它的结果：其中通过这个数据库执行的查询和写语句用同一个连接，正常结束时提交，
    * 抛出异常时回滚；嵌套调用加入外层事务。驱动不支持事务时报错。
    */

@@ -199,6 +199,16 @@ export abstract class Dialect {
     w.sql(" IS NULL) THEN 1 ELSE 0 END = ").sql(negate ? "0" : "1");
   }
 
+  /** 集合运算在本方言里的写法；不支持的（HANA 的 INTERSECT ALL、EXCEPT ALL）报错。 */
+  setOperator(operator: string): string {
+    return operator;
+  }
+
+  /** 是否支持 FULL JOIN；MySQL 没有。 */
+  get supportsFullJoin(): boolean {
+    return true;
+  }
+
   /** 没有表的 SELECT 需要的部分：多数数据库什么都不要，HANA 要 `FROM DUMMY`。 */
   fromNothing(_w: SqlWriter): void {}
 

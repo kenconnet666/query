@@ -127,6 +127,11 @@ export class MysqlDialect extends Dialect {
     else w.render(left).sql(" <=> ").render(right);
   }
 
+  /** MySQL 没有 FULL JOIN。 */
+  override get supportsFullJoin(): boolean {
+    return false;
+  }
+
   /** MySQL 的 CAST 目标类型名；它不支持 CAST 成 BOOLEAN。 */
   override castType(type: CastType<unknown>): string {
     switch (type.kind) {

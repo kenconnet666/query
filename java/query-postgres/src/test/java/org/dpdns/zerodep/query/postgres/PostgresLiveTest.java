@@ -1,12 +1,20 @@
 package org.dpdns.zerodep.query.postgres;
 
+import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.exec.QueryExecutionException;
+import org.dpdns.zerodep.query.expr.Window.Bound;
 import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.table.Cte;
+import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
+import org.dpdns.zerodep.query.testing.Erp.Mara;
+import org.dpdns.zerodep.query.testing.Erp.Step;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
+import org.dpdns.zerodep.query.testing.Writes.Note;
+import org.dpdns.zerodep.query.testing.Writes.NoteRow;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -18,6 +26,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -73,7 +82,7 @@ class PostgresLiveTest extends LiveScenarios {
         assertEquals(0, new BigDecimal("6").compareTo(m1));
         long ea = db.one(from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> count()));
         assertEquals(5, ea);
-        long notM1 = db.one(from(Lips.class).where(l -> pg(l.material()).isDistinctFrom("M1")).select(l -> count()));
+        long notM1 = db.one(from(Lips.class).where(l -> l.material().isDistinctFrom(val("M1"))).select(l -> count()));
         assertEquals(2, notM1);
     }
 
@@ -168,4 +177,73 @@ class PostgresLiveTest extends LiveScenarios {
         assertEquals("3", plain(db.one(from(Lips.class).where(l -> l.delivery().eq("D1"))
             .select(l -> greatest(l.quantity(), nullOf(BigDecimal.class))))));
     }
+
+    @Test
+    void INTERSECT_ALL与EXCEPT_ALL按次数保留重复的行() {
+        Query<String> each = from(Lips.class).where(l -> l.unit().eq("EA")).select(l -> l.material());
+        Query<String> master = from(Mara.class).select(m -> m.material());
+        assertEquals(List.of("M1", "M2"), db.list(intersectAll(each, master)).stream().sorted().toList());
+        assertEquals(List.of("M1", "M1", "M2"), db.list(exceptAll(each, master)).stream().sorted().toList());
+    }
+
+    @Test
+    void RANGE窗口帧按排序值的距离取行() {
+        assertEquals(List.of("1:1:1", "2:1:2"), db.list(from(Event.class)
+                .orderBy(e -> e.id())
+                .select(e -> cols(e.id(),
+                    count().over(w -> w.orderBy(e.onDay()).frame(range(daysPreceding(7), Bound.currentRow()))).as("lastWeek"),
+                    count().over(w -> w.orderBy(e.id()).frame(range(Bound.preceding(1), Bound.following(0)))).as("near"))))
+            .stream().map(r -> r.get("id") + ":" + r.get("lastWeek") + ":" + r.get("near")).toList());
+    }
+
+    @Test
+    void 递归CTE逐层展开到终止条件() {
+        Cte<Step> steps = recursiveCte("steps",
+            from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> cols(l.delivery(), lit(1).as("depth"))).into(Step.class),
+            self -> from(self).where(s -> s.col(Step::depth).lt(3))
+                .select(s -> cols(s.col(Step::delivery), plus(s.col(Step::depth), lit(1)).as("depth"))).into(Step.class));
+        assertEquals(List.of(1, 2, 3), db.list(from(steps).orderBy(s -> s.col(Step::depth)).select(s -> s.col(Step::depth))));
+    }
+
+    @Test
+    void 共享锁与只锁部分表的加锁读() {
+        db.transaction(() -> {
+            assertEquals(5, db.list(from(Lips.class).join(Mara.class, (l, m) -> m.material().eq(l.material()))
+                .with((l, m) -> forUpdateOf(Lock.SKIP_LOCKED, l)).select((l, m) -> l.delivery())).size());
+            assertEquals(5, db.list(from(Lips.class).with(forShare(Lock.NOWAIT)).select(l -> l.delivery())).size());
+        });
+    }
+
+    @Test
+    void FULL_JOIN保留两侧没有匹配的行且有全局过滤条件时报错() {
+        List<Map<String, Object>> rows = db.list(from(Lips.class).unfiltered()
+            .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
+            .select((l, m) -> cols(l.delivery(), m.material())));
+        assertEquals(12, rows.size());
+        assertEquals(2, rows.stream().filter(r -> r.get("delivery") == null).count());
+        assertThrows(IllegalStateException.class, () -> db.list(from(Lips.class)
+            .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material())).select((l, m) -> l.delivery())));
+    }
+
+    @Test
+    void 百分位数众数与相关系数() {
+        assertEquals(List.of("M1:2.0:2:EA:1.0", "M2:6.0:5:EA:1.0"), db.list(from(Lips.class)
+                .groupBy(l -> l.material())
+                .orderBy(l -> l.material())
+                .select(l -> cols(l.material(), percentileCont(0.5, l.quantity()).as("median"), percentileDisc(0.5, l.quantity()).as("lower"),
+                    mode(l.unit()).as("unit"), corr(l.quantity(), l.quantity()).as("self"))))
+            .stream().map(r -> r.get("material") + ":" + r.get("median") + ":" + plainText(r.get("lower")) + ":" + r.get("unit") + ":" + Math.round((Double) r.get("self"))  + ".0").toList());
+    }
+
+    @Test
+    void RETURNING读回插入和删除的行() {
+        PostgresDatabase pg = (PostgresDatabase) db;
+        NoteRow row = new NoteRow("RET1", "T9", "returned", 3, "open");
+        assertEquals(List.of(row), pg.returning(insertInto(Note.class).values(row), NoteRow.class));
+        assertEquals(List.of(row), pg.returning(deleteFrom(Note.class).where(n -> n.id().eq("RET1")), NoteRow.class));
+        assertEquals(List.of(), pg.returning(deleteFrom(Note.class).where(n -> n.id().eq("RET1")), NoteRow.class));
+    }
+
+    /** 小数去掉末尾的零。 */
+    private static String plainText(Object value) { return ((BigDecimal) value).stripTrailingZeros().toPlainString(); }
 }

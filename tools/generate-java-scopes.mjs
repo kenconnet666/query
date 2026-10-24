@@ -89,6 +89,7 @@ function from(n) {
       ["join", "INNER", "INNER JOIN"],
       ["leftJoin", "LEFT", "LEFT JOIN"],
       ["rightJoin", "RIGHT", "RIGHT JOIN"],
+      ["fullJoin", "FULL", "FULL JOIN（HANA、PostgreSQL；有全局过滤条件的表不能参与）"],
     ]) {
       m.push(`    /** ${what} 一张表；新表是 lambda 的下一个参数，on 里可以用到作用域内所有的表。 */
     public <N extends Entity> ${next}<${tp.join(", ")}, N> ${method}(Class<N> table, ${on("N")} on) { return next(SelectSpec.JoinKind.${kind}, Ref.table(table), on); }`);

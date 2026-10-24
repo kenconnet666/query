@@ -15,7 +15,7 @@ import java.util.List;
 public final class SelectSpec {
     /** FROM 与各种 JOIN，sql 是渲染时写出的关键字。 */
     public enum JoinKind {
-        FROM("FROM"), INNER("JOIN"), LEFT("LEFT JOIN"), RIGHT("RIGHT JOIN"), CROSS("CROSS JOIN");
+        FROM("FROM"), INNER("JOIN"), LEFT("LEFT JOIN"), RIGHT("RIGHT JOIN"), FULL("FULL JOIN"), CROSS("CROSS JOIN");
 
         /** 渲染时写出的关键字。 */
         final String sql;

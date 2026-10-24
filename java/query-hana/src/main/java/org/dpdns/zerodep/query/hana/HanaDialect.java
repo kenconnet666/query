@@ -101,6 +101,12 @@ public class HanaDialect extends Dialect {
     }
 
     /** HANA 跳过被锁住的行写作 {@code IGNORE LOCKED}。 */
+    /** HANA 没有 INTERSECT ALL 和 EXCEPT ALL。 */
+    @Override public String setOperator(String operator) {
+        if (operator.endsWith(" ALL") && !operator.equals("UNION ALL")) throw new UnsupportedOperationException("HANA has no " + operator);
+        return operator;
+    }
+
     @Override public void lock(SqlWriter w, Lock lock) {
         if (lock == Lock.SKIP_LOCKED) w.sql("FOR UPDATE IGNORE LOCKED");
         else super.lock(w, lock);

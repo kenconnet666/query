@@ -3,6 +3,7 @@ import { COLUMNS, NAMED } from "../internal.js";
 import { columnName, entityMeta, type Ctor, type One, type PropertyMeta, type RelationMeta, type Table } from "../schema/metadata.js";
 import { Many } from "./many.js";
 import type { Query } from "./query.js";
+import type { DialectClass } from "../sql/dialect.js";
 import type { CteDefinition, SqlWriter } from "../sql/writer.js";
 
 /** 只在类型层面携带行类型的标记，运行时不存在。 */
@@ -126,6 +127,11 @@ function relationValue(owner: RefOwner, self: object, relation: RelationMeta): u
 }
 
 /** 取引用背后的 {@link RefOwner}；不是查询回调给出的引用就报错。 */
+/** 一个数据源引用（查询回调的参数）在当前语句里的别名，供方言包写子句用，例如 `FOR UPDATE OF 别名`。 */
+export function aliasOf(w: SqlWriter, ref: object): string {
+  return ownerOf(ref).alias(w);
+}
+
 export function ownerOf(ref: object): RefOwner {
   const owner = (ref as Record<symbol, RefOwner | undefined>)[OWNER];
   if (owner === undefined) throw new TypeError("Not a source reference; use the parameters the query hands to its callbacks");
@@ -182,12 +188,32 @@ export class Cte<E> implements Source<E>, CteDefinition {
   readonly filtered = false;
   readonly columns: readonly SourceColumn[];
 
+  #body: Query<E>;
+
   constructor(
     readonly name: string,
-    readonly body: Query<E>,
+    body: Query<E>,
+    /** 递归 CTE 所属的方言，见 {@link Cte.recursive}。 */
+    readonly recursiveIn?: DialectClass,
   ) {
     if (name.trim() === "") throw new TypeError("A CTE needs a name");
     this.columns = body[COLUMNS]("a CTE");
+    this.#body = body;
+  }
+
+  /** CTE 的查询体。 */
+  get body(): Query<E> {
+    return this.#body;
+  }
+
+  /**
+   * 递归 CTE，供方言包使用（PostgreSQL、MySQL 的 `recursiveCte`）：查询体是 `anchor UNION ALL step(自己)`，
+   * step 收到这个 CTE 本身，在里面 `from(self)` 引用上一轮的行。只能在 dialect 上渲染。
+   */
+  static recursive<E>(name: string, anchor: Query<E>, step: (self: Cte<E>) => Query<E>, dialect: DialectClass): Cte<E> {
+    const self = new Cte(name, anchor, dialect);
+    self.#body = anchor.unionAll(step(self));
+    return self;
   }
 
   /** CTE 的名字同时作为首选别名。 */

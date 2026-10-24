@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import pg from "pg";
-import { count, cube, decimal, distinctOn, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pg as pgOps, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
-import { Lips } from "../fixtures/erp.js";
+import { count, cube, decimal, distinctOn, from, greatest, grouping, groupingSets, ilike, least, lit, nullOf, pgDriver, PostgresDatabase, stringAgg, sum } from "@zerodep-dev/query-postgres";
+import * as pgx from "@zerodep-dev/query-postgres";
+import { Bound, deleteFrom, insertInto, plus } from "@zerodep-dev/query-postgres";
+import { Event, Lips, Mara } from "../fixtures/erp.js";
+import { Note } from "../fixtures/writes.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -55,7 +58,7 @@ liveScenarios(
       assert.equal(
         await db.one(
           from(Lips)
-            .where((l) => pgOps(l.material).isDistinctFrom("M1"))
+            .where((l) => l.material.isDistinctFrom(lit("M1")))
             .select(() => count()),
         ),
         2,
@@ -115,6 +118,70 @@ liveScenarios(
           .select((l) => greatest(l.quantity, nullOf(decimal))),
       );
       assert.equal(Number(withNull), 3);
+    });
+
+    it("INTERSECT ALL 与 EXCEPT ALL 按次数保留重复的行", async () => {
+      const { db } = live();
+      const each = from(Lips).where((l) => l.unit.eq("EA")).select((l) => l.material);
+      const master = from(Mara).select((m) => m.material);
+      assert.deepEqual((await db.list(pgx.intersectAll(each, master))).sort(), ["M1", "M2"]);
+      assert.deepEqual((await db.list(pgx.exceptAll(each, master))).sort(), ["M1", "M1", "M2"]);
+    });
+
+    it("RANGE 窗口帧按排序值的距离取行", async () => {
+      const rows = await live().db.list(
+        from(Event)
+          .orderBy((e) => e.id)
+          .select((e) => ({
+            id: e.id,
+            lastWeek: count().over((w) => w.orderBy(e.onDay).frame(pgx.range(pgx.daysPreceding(7), Bound.currentRow()))),
+            near: count().over((w) => w.orderBy(e.id).frame(pgx.range(Bound.preceding(1), Bound.following(0)))),
+          })),
+      );
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.lastWeek}:${r.near}`), ["1:1:1", "2:1:2"]);
+    });
+
+    it("递归 CTE 逐层展开到终止条件", async () => {
+      const steps = pgx.recursiveCte(
+        "steps",
+        from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      );
+      assert.deepEqual(await live().db.list(from(steps).orderBy((s) => s.depth).select((s) => s.depth)), [1, 2, 3]);
+    });
+
+    it("共享锁与只锁部分表的加锁读", async () => {
+      const { db } = live();
+      await db.transaction(async () => {
+        assert.equal((await db.list(from(Lips).join(Mara, (l, m) => m.material.eq(l.material)).with((l) => pgx.forUpdateOf("skipLocked", l)).select((l) => l.delivery))).length, 5);
+        assert.equal((await db.list(from(Lips).with(pgx.forShare("nowait")).select((l) => l.delivery))).length, 5);
+      });
+    });
+
+    it("FULL JOIN 保留两侧没有匹配的行且有全局过滤条件时报错", async () => {
+      const { db } = live();
+      const rows = await db.list(from(Lips).unfiltered().fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l, m) => ({ delivery: l.delivery, material: m.material })));
+      assert.equal(rows.length, 12);
+      assert.equal(rows.filter((r) => r.delivery === null).length, 2);
+      await assert.rejects(db.list(from(Lips).fullJoin(Mara, (l, m) => m.material.eq(l.material)).select((l) => l.delivery)), /FULL JOIN cannot keep/);
+    });
+
+    it("百分位数众数与相关系数", async () => {
+      const rows = await live().db.list(
+        from(Lips)
+          .groupBy((l) => l.material)
+          .orderBy((l) => l.material)
+          .select((l) => ({ material: l.material, median: pgx.percentileCont(0.5, l.quantity), lower: pgx.percentileDisc(0.5, l.quantity), unit: pgx.mode(l.unit), self: pgx.corr(l.quantity, l.quantity) })),
+      );
+      assert.deepEqual(rows.map((r) => `${r.material}:${r.median}:${Number(r.lower)}:${r.unit}:${Math.round(r.self!)}`), ["M1:2:2:EA:1", "M2:6:5:EA:1"]);
+    });
+
+    it("RETURNING 读回插入和删除的行", async () => {
+      const db = live().db as PostgresDatabase;
+      const row = { id: "RET1", tenant: "T9", title: "returned", qty: 3, status: "open" };
+      assert.deepEqual(await db.returning(insertInto(Note).values(row)), [row]);
+      assert.deepEqual(await db.returning(deleteFrom(Note).where((n) => n.id.eq("RET1"))), [row]);
+      assert.deepEqual(await db.returning(deleteFrom(Note).where((n) => n.id.eq("RET1"))), []);
     });
   },
 );

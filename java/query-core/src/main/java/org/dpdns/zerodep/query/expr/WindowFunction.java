@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.expr;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.List;
@@ -11,8 +12,11 @@ public final class WindowFunction<T> {
     /** 结果类型。 */
     private final SqlType<T> type;
 
-    /** 函数名，例如 ROW_NUMBER。 */
+    /** 函数名，例如 ROW_NUMBER；用函数定义时为 null。 */
     private final String name;
+
+    /** 方言决定写法的函数定义；按名字调用时为 null。 */
+    private final FunctionDef function;
 
     /** 函数参数，可以为空。 */
     private final List<? extends Expr<?>> args;
@@ -21,11 +25,21 @@ public final class WindowFunction<T> {
     public WindowFunction(SqlType<T> type, String name, List<? extends Expr<?>> args) {
         this.type = type;
         this.name = name;
+        this.function = null;
+        this.args = List.copyOf(args);
+    }
+
+    /** 由函数定义决定写法的窗口函数，例如方言包里的 {@code PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x)}。 */
+    public WindowFunction(SqlType<T> type, FunctionDef function, List<? extends Expr<?>> args) {
+        this.type = type;
+        this.name = null;
+        this.function = function;
         this.args = List.copyOf(args);
     }
 
     /** 给出窗口定义，得到 {@code NAME(args) OVER (...)} 表达式；window 从空窗口开始配置。 */
     public Expr<T> over(UnaryOperator<Window> window) {
-        return new Aggregate.Over<>(Nodes.call(type, name, args), window.apply(Window.EMPTY));
+        Expr<T> call = function == null ? Nodes.call(type, name, args) : Nodes.call(type, function, args);
+        return new Aggregate.Over<>(call, window.apply(Window.EMPTY));
     }
 }

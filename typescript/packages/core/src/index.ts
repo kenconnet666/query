@@ -19,6 +19,7 @@ export {
 export {
   blankAsNull,
   column,
+  columnName,
   entityMeta,
   generated,
   id,
@@ -92,7 +93,7 @@ export {
   type TemplateValue,
 } from "./sql/expr.js";
 export { type FilterObject } from "./query/filter.js";
-export { Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
+export { aliasOf, Cte, Derived, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
 export { Children, Many } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Excluded, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
 export {
@@ -223,4 +224,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
-export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";
+export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";

@@ -16,11 +16,11 @@ public final class Window implements Renderable {
     /** 窗口内的 ORDER BY。 */
     private final List<Order> order;
 
-    /** 窗口帧的 SQL，null 表示不写。 */
-    private final String frame;
+    /** 窗口帧，null 表示不写。 */
+    private final Renderable frame;
 
     /** 只能通过 {@link #EMPTY} 和各修改方法创建。 */
-    private Window(List<Expr<?>> partition, List<Order> order, String frame) {
+    private Window(List<Expr<?>> partition, List<Order> order, Renderable frame) {
         this.partition = partition;
         this.order = order;
         this.frame = frame;
@@ -32,8 +32,14 @@ public final class Window implements Renderable {
     /** 窗口内的排序；单独的表达式按升序。 */
     public Window orderBy(OrderItem... items) { return new Window(partition, OrderList.of(items), frame); }
 
-    /** 窗口帧 ROWS BETWEEN start AND end；RANGE 帧各数据库不同，放在方言包里。 */
-    public Window rows(Bound start, Bound end) { return new Window(partition, order, "ROWS BETWEEN " + start.sql + " AND " + end.sql); }
+    /** 窗口帧 ROWS BETWEEN start AND end；RANGE 帧各数据库不同，放在方言包里，用 {@link #frame} 传入。 */
+    public Window rows(Bound start, Bound end) {
+        String sql = "ROWS BETWEEN " + start.sql + " AND " + end.sql;
+        return new Window(partition, order, w -> w.sql(sql));
+    }
+
+    /** 方言包给出的窗口帧，例如 PostgreSQL、MySQL 的 {@code Postgres.range(...)}。 */
+    public Window frame(Renderable frame) { return new Window(partition, order, frame); }
 
     /** 写出 OVER 括号里的内容：PARTITION BY、ORDER BY、窗口帧，缺的部分省略。 */
     @Override public void render(SqlWriter w) {
@@ -46,13 +52,19 @@ public final class Window implements Renderable {
             w.sql(sep).sql("ORDER BY ").join(order, ", ");
             sep = " ";
         }
-        if (frame != null) w.sql(sep).sql(frame);
+        if (frame != null) w.sql(sep).render(frame);
     }
 
     /** 窗口帧的一端。 */
     public static final class Bound {
         /** 这一端的 SQL。 */
         private final String sql;
+
+        /** 这一端的 SQL 文本，供方言包拼窗口帧。 */
+        public String sql() { return sql; }
+
+        /** 方言包构造的端点，例如 {@code INTERVAL '7 days' PRECEDING}；只放代码里的固定文本。 */
+        public static Bound custom(String sql) { return new Bound(sql); }
 
         /** 只能通过下面的静态方法创建。 */
         private Bound(String sql) { this.sql = sql; }

@@ -9,7 +9,7 @@ import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/so
 import type { Clause, JoinWrite, Lock, Upsert } from "../sql/dialect.js";
 
 /** 表实体里的列字段：去掉 `@one`、`@many` 关系字段。 */
-type Columns<T> = { [K in keyof T as T[K] extends Many<any> | One<any> ? never : K]: T[K] };
+export type Columns<T> = { [K in keyof T as T[K] extends Many<any> | One<any> ? never : K]: T[K] };
 
 /** `update(...).set(...)` 回调返回的对象：列字段到新值（值或表达式）。 */
 export type Assignments<T> = { readonly [K in keyof Columns<T>]?: Columns<T>[K] | null | Expr<Columns<T>[K]> | Expr<NonNullable<Columns<T>[K]>> };
@@ -109,6 +109,11 @@ function tableName(w: SqlWriter, meta: EntityMeta): void {
  */
 export class Insert<T> extends Write {
   readonly #table: Table<T>;
+
+  /** 插入的表。 */
+  get table(): Table<T> {
+    return this.#table;
+  }
   readonly #rows: readonly object[];
   readonly #columns: readonly PropertyMeta[];
   readonly #source: Query<unknown> | undefined;
@@ -443,6 +448,11 @@ export class Target<T> {
  */
 export class Update<T> extends Write {
   readonly #target: Target<T>;
+
+  /** 更新的表。 */
+  get table(): Table<T> {
+    return this.#target.table;
+  }
   readonly #sets: readonly (readonly [Column<unknown>, Expr<unknown>])[];
   readonly #byId: ById | undefined;
 
@@ -561,6 +571,11 @@ export class Update<T> extends Write {
  */
 export class Delete<T> extends Write {
   readonly #target: Target<T>;
+
+  /** 删除的表。 */
+  get table(): Table<T> {
+    return this.#target.table;
+  }
   readonly #byId: ById | undefined;
   /** 是否真正删除；false 时有 `@logicDelete` 列的表改写成 UPDATE。 */
   readonly #physical: boolean;

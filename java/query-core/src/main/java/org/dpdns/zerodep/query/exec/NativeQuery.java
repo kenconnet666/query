@@ -83,7 +83,7 @@ public final class NativeQuery {
     }
 
     /** 读完结果集：按列标签建立映射计划，再把每行的值转换成 type 的实例。 */
-    private static <R> List<R> read(ResultSet rs, Class<R> type, TypeRegistry types) throws java.sql.SQLException {
+    static <R> List<R> read(ResultSet rs, Class<R> type, TypeRegistry types) throws java.sql.SQLException {
         ResultSetMetaData meta = rs.getMetaData();
         List<String> labels = new ArrayList<>();
         for (int i = 1; i <= meta.getColumnCount(); i++) labels.add(meta.getColumnLabel(i));

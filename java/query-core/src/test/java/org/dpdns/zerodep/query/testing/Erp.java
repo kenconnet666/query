@@ -213,6 +213,9 @@ public final class Erp {
     /** EVENTS 的一行。 */
     public record EventRow(Integer id, LocalDate onDay, LocalDateTime atTime) { }
 
+    /** 递归 CTE 的一行：交货单与展开的层数。 */
+    public record Step(String delivery, Integer depth) { }
+
     /** 交货汇总的一行。 */
     public record Delivery(String partNumber, String name, BigDecimal quantity) { }
 

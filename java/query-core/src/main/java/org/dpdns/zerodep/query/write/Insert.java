@@ -185,6 +185,9 @@ public final class Insert<T extends Entity> implements Write {
     /** 不套用数据库实例的写入填充（审计列），例如迁移数据时保留行里原来的创建人和时间。 */
     public Insert<T> withoutFills() { return new Insert<>(table, rows, columns, source, conflict, false); }
 
+    /** 插入的表。 */
+    public Class<T> table() { return table.type(); }
+
     /** 插入不检查影响的行数。 */
     @Override public Long expected() { return null; }
 

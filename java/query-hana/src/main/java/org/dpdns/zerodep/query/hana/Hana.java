@@ -10,7 +10,10 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.WindowFunction;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.write.JoinDelete;
 import org.dpdns.zerodep.query.write.JoinUpdate;
@@ -37,6 +40,41 @@ public final class Hana extends Sql {
     private static final FunctionDef GREATEST = FunctionDef.only(HanaDialect.class, "GREATEST");
     private static final FunctionDef LEAST = FunctionDef.only(HanaDialect.class, "LEAST");
     private static final FunctionDef CUBE = FunctionDef.only(HanaDialect.class, "CUBE");
+    private static final FunctionDef MEDIAN = FunctionDef.only(HanaDialect.class, "MEDIAN");
+    private static final FunctionDef CORR = FunctionDef.only(HanaDialect.class, "CORR");
+    private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(HanaDialect.class, "PERCENTILE_CONT",
+        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+    private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(HanaDialect.class, "PERCENTILE_DISC",
+        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+
+    // ---------- 统计 ----------
+
+    /** 中位数 {@code MEDIAN(e)}，偶数行时取中间两个值的平均；参数先转成 DOUBLE。可以作聚合。 */
+    public static Expr<Double> median(Expr<? extends Number> e) {
+        return Nodes.call(SqlType.of(Double.class), MEDIAN, List.of(cast(e, CastType.doublePrecision())));
+    }
+
+    /**
+     * 连续百分位数 {@code PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)}，再加 {@code .over(w -> w.partitionBy(...))}：
+     * HANA 只把它当窗口函数（PostgreSQL 只当聚合），分组的百分位数用 {@code partitionBy} 加 {@code distinct()}。p 取 0 到 1。
+     */
+    public static WindowFunction<Double> percentileCont(double p, Expr<? extends Number> e) {
+        return new WindowFunction<>(SqlType.of(Double.class), PERCENTILE_CONT, List.of(lit(fraction(p)), cast(e, CastType.doublePrecision())));
+    }
+
+    /** 离散百分位数 {@code PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY e)}，再加 {@code .over(...)}；规则同 {@link #percentileCont}。 */
+    public static <T> WindowFunction<T> percentileDisc(double p, Expr<T> e) {
+        return new WindowFunction<>(e.type(), PERCENTILE_DISC, List.of(lit(fraction(p)), e));
+    }
+
+    /** 相关系数 {@code CORR(y, x)}，取值 -1 到 1。 */
+    public static Expr<Double> corr(Expr<? extends Number> y, Expr<? extends Number> x) { return Nodes.call(SqlType.of(Double.class), CORR, List.of(y, x)); }
+
+    /** 校验百分位数在 0 到 1 之间。 */
+    private static double fraction(double p) {
+        if (!(p >= 0 && p <= 1)) throw new IllegalArgumentException("A percentile must be between 0 and 1, got " + p);
+        return p;
+    }
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
 

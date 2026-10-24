@@ -168,6 +168,7 @@ const rows = await db.list(q);   // { partNumber: string; name: string | null; q
 
 | 方法 | 说明 |
 | --- | --- |
+| `fullJoin(...)` | HANA、PostgreSQL 的 FULL JOIN（MySQL 渲染时报错），所有参数的列都变成可空；有全局过滤条件的表不能参与，要先 `unfiltered()` |
 | `join` / `leftJoin` / `rightJoin(实体类或 Source, (…) => cond)` | 连接条件里可以用到作用域内所有的表；`leftJoin` 之后该参数的列都可能为 null，`rightJoin` 之后之前各参数的列都可能为 null。`rightJoin` 时左侧各表的全局过滤条件放进它的 ON，补出来的行不会被 WHERE 过滤掉 |
 | `crossJoin(...)` | 笛卡尔积 |
 | `where((…) => cond)` | 条件；多次调用之间是 AND，值为空而省略的条件（`Cond.EMPTY`）会被自动丢弃 |
@@ -435,12 +436,18 @@ stockArm(Mardh, (h) => h.unrestricted.coalesce("0"), "2026")
 | `@zerodep-dev/query-hana` | `@zerodep-dev/query-postgres` | `@zerodep-dev/query-mysql` |
 | --- | --- | --- |
 | `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `distinctOn(...)` 子句 | `dateFormat(e, "%Y%m")` |
-| `hint(...)` | `pg(e).isDistinctFrom(...)` / `isNotDistinctFrom` | — |
+| `hint(...)` | — | — |
 | `likeRegexpr(e, pattern)` | — | — |
 | `length`（按 UTF-16 单元计） | `ilike` | `maxExecutionTime(ms)` 优化器提示 |
 | `cube(a, b)`、`groupingSets([a, b], [a], [])` | 同左 | — |
 | `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
 | `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+| `median(e)`、`percentileCont(p, e).over(...)`、`percentileDisc`（HANA 只把百分位数当窗口函数）、`corr(y, x)` | `percentileCont(p, e)`、`percentileDisc`、`mode(e)`（只作聚合）、`corr(y, x)` | — |
+| — | `intersectAll(a, b)`、`exceptAll(a, b)` | 同左（8.0.31 起） |
+| — | 窗口帧 `w.frame(range(daysPreceding(7), Bound.currentRow()))`，数值偏移用 `Bound.preceding(n)` | 同左 |
+| — | `recursiveCte(name, anchor, (self) => step)`，写成 `WITH RECURSIVE` | 同左（受 `cte_max_recursion_depth` 限制） |
+| — | `forShare(lock)`、`forUpdateOf("skipLocked", l)`（`FOR UPDATE OF 别名`） | 同左 |
+| — | `db.returning(write)`：插入、更新、删除后用 RETURNING 读回表的全部列 | — |
 
 三个库对 `greatest`、`least` 的 NULL 处理不同，所以它们放在各自的方言包里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里：`groupBy((l) => groupingSets([l.material, l.unit], [l.material], []))`，空数组是总计。
 

@@ -98,7 +98,10 @@ export function activeCondition(ref: object): Cond | undefined {
 // ---------- 不含投影的一个 SELECT ----------
 
 /** FROM 子句中的一项连接。 */
-type JoinKind = "FROM" | "JOIN" | "LEFT JOIN" | "RIGHT JOIN" | "CROSS JOIN";
+type JoinKind = "FROM" | "JOIN" | "LEFT JOIN" | "RIGHT JOIN" | "FULL JOIN" | "CROSS JOIN";
+
+/** 合法的集合运算；带 ALL 的 INTERSECT、EXCEPT 只有部分方言支持，由方言包提供入口。 */
+const SET_OPERATORS = new Set(["UNION", "UNION ALL", "INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL"]);
 
 /** RIGHT JOIN 之后，之前各数据源的列都可能为 null。 */
 type NullableAll<T extends readonly unknown[]> = { [K in keyof T]: NullableColumns<T[K]> };
@@ -315,6 +318,15 @@ export class Query<R> {
     return this.#combine("EXCEPT", other);
   }
 
+  /**
+   * 用 operator 合并两个查询，供方言包使用（例如 PostgreSQL 的 `intersectAll`）；方言不支持的运算在渲染时报错。
+   * 规则同 {@link unionAll}。
+   */
+  combine(operator: string, other: Query<R>): Query<R> {
+    if (!SET_OPERATORS.has(operator)) throw new Error(`Unknown set operator ${operator}`);
+    return this.#combine(operator, other);
+  }
+
   /** 用集合运算符合并两个查询，校验列数、排序与分页，并按需重排对象投影的列。 */
   #combine(operator: string, other: Query<R>): Query<R> {
     const a = this.#s;
@@ -334,10 +346,10 @@ export class Query<R> {
     const shift = a.arms.length;
     const groups: (readonly [number, number])[] = [...a.groups];
     // 左边有比 INTERSECT 低的运算时，PostgreSQL、MySQL 会先算 INTERSECT。
-    if (operator === "INTERSECT" && a.operators.some((op) => op !== operator)) groups.push([0, shift - 1]);
+    if (operator.startsWith("INTERSECT") && a.operators.some((op) => op !== operator)) groups.push([0, shift - 1]);
     groups.push(...b.groups.map(([first, last]) => [first + shift, last + shift] as const));
     // 右边与本运算不同时，或本运算是不满足结合律的 EXCEPT 时，右边自成一组。
-    if (b.operators.some((op) => op !== operator || op === "EXCEPT")) groups.push([shift, shift + b.arms.length - 1]);
+    if (b.operators.some((op) => op !== operator || op.startsWith("EXCEPT"))) groups.push([shift, shift + b.arms.length - 1]);
     return makeQuery({ ...a, arms: [...a.arms, ...arms], operators: [...a.operators, operator, ...b.operators], groups, ttl: a.ttl, timeout: a.timeout });
   }
 
@@ -641,7 +653,7 @@ export function limitAtMost<R>(q: Query<R>, n: number): Query<R> {
 /** 渲染各分支及其运算符和括号；`labeled` 为真时给首个分支的列加上 AS 标签。 */
 function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean): void {
   s.arms.forEach((arm, i) => {
-    if (i > 0) w.sql(`\n${s.operators[i - 1]}\n`);
+    if (i > 0) w.sql(`\n${w.dialect.setOperator(s.operators[i - 1]!)}\n`);
     w.sql("(".repeat(s.groups.filter(([first]) => first === i).length));
     renderArm(w, arm, s.labels, i === 0 && labeled, ordered);
     w.sql(")".repeat(s.groups.filter(([, last]) => last === i).length));
@@ -715,6 +727,16 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
       w.sql(`\n${j.kind} `);
       owner.renderSource(w);
       pending.push(...extra);
+    } else if (j.kind === "FULL JOIN") {
+      if (!w.dialect.supportsFullJoin) throw new Error(`${w.dialect.name} has no FULL JOIN`);
+      // 两侧都会补空行：过滤条件放在 ON 里会让被过滤掉的行作为不匹配的行留下，放在 WHERE 里会去掉补出来的行，
+      // 所以有全局过滤条件的表不能参与 FULL JOIN。
+      if (pending.length > 0 || extra.length > 0) {
+        throw new Error("FULL JOIN cannot keep the global filters of its tables; use unfiltered() and filter each side in a CTE or derived table");
+      }
+      w.sql("\nFULL JOIN ");
+      owner.renderSource(w);
+      w.sql(" ON ").render(j.on);
     } else if (j.kind === "RIGHT JOIN") {
       w.sql("\nRIGHT JOIN ");
       owner.renderSource(w);
@@ -986,6 +1008,11 @@ export class From<T extends readonly unknown[]> {
   /** RIGHT JOIN；之前各数据源的列在之后的回调里是可空的，新数据源的行全部保留。 */
   rightJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...NullableAll<T>, Ref<E>]> {
     return this.#join("RIGHT JOIN", target, on);
+  }
+
+  /** FULL JOIN（HANA、PostgreSQL）：两侧都可能没有匹配，所有参数的列都变成可空；有全局过滤条件的表不能参与。 */
+  fullJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...NullableAll<T>, NullableRef<E>]> {
+    return this.#join("FULL JOIN", target, on);
   }
 
   /** CROSS JOIN（笛卡尔积），不需要条件。 */
