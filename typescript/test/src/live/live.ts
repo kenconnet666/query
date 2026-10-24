@@ -752,6 +752,16 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       await withBroken.verify();
     });
 
+    it("迁移历史表改名后两套迁移各记各的", async () => {
+      const { db } = live();
+      for (const t of ["M_TASK", MIGRATION_HISTORY, MIGRATION_LOCK, "M_HISTORY", "M_HISTORY_LOCK"]) await db.sql(`DROP TABLE ${db.dialect.quote("QUERY_IT")}.${db.dialect.quote(t)}`).list().catch(() => undefined);
+      const own = db.migrator([CREATE_TASK]).historySchema("QUERY_IT").historyTable("M_HISTORY");
+      assert.deepEqual(await own.migrateToLatest(), ["1"]);
+      assert.deepEqual((await own.history()).map((a) => a.version), ["1"]);
+      assert.ok((await db.schema().read("QUERY_IT", "M_HISTORY_LOCK")) !== undefined, "the lock table follows the history table's name");
+      assert.deepEqual(await db.migrator([CREATE_TASK]).historySchema("QUERY_IT").history(), [], "the default history table stays untouched");
+    });
+
     it("外部表只核对已声明的列", async () => {
       const { db } = live();
       assert.ok((await db.schema().check(LipsExternal)).isEmpty);

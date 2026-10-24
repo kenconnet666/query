@@ -704,6 +704,17 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 迁移历史表改名后两套迁移各记各的() throws SQLException {
+        live.execute(List.of("-DROP TABLE " + t("M_TASK"), "-DROP TABLE " + t(Migrator.HISTORY), "-DROP TABLE " + t(Migrator.LOCK),
+            "-DROP TABLE " + t("M_HISTORY"), "-DROP TABLE " + t("M_HISTORY_LOCK")));
+        Migrator own = db.migrator(List.of(Schemas.CREATE_TASK)).historySchema("QUERY_IT").historyTable("M_HISTORY");
+        assertEquals(List.of("1"), own.migrateToLatest());
+        assertEquals(List.of("1"), own.history().stream().map(Migrator.Applied::version).toList());
+        assertTrue(db.schema().read("QUERY_IT", "M_HISTORY_LOCK") != null, "the lock table follows the history table's name");
+        assertEquals(List.of(), db.migrator(List.of(Schemas.CREATE_TASK)).historySchema("QUERY_IT").history(), "the default history table stays untouched");
+    }
+
+    @Test
     void 外部表只核对已声明的列() {
         assertTrue(db.schema().check(Schemas.LipsExternal.class).isEmpty());
         SchemaPlan broken = db.schema().check(Schemas.LipsBroken.class);

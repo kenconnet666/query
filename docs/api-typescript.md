@@ -759,7 +759,7 @@ await migrator.migrateToLatest();
 await migrator.verify();
 ```
 
-`plan()`、`pending()`、`history()`、`baseline(version)`、`repair(version)`、`migrateTo(version)` 都是异步的；手写的 SQL 用 `?` 作占位符，PostgreSQL 上自动换成 `$n`。
+`plan()`、`pending()`、`history()`、`baseline(version)`、`repair(version)`、`migrateTo(version)` 都是异步的；手写的 SQL 用 `?` 作占位符，PostgreSQL 上自动换成 `$n`。`historyTable("flow_migration")` 换历史表的名字（锁表跟着叫 `flow_migration_lock`），同 Java。
 
 **从数据库生成列**：每个方言包带一个 bin（`query-pull-hana`、`query-pull-postgres`、`query-pull-mysql`），读 `query-pull.json`，在 `src/generated` 里生成只有列的基类，自己的表类继承它：
 

@@ -944,6 +944,7 @@ migrator.verify();           // 已执行的迁移被改过、历史里有未知
 
 - 迁移用代码写，一份迁移在三个方言上各自渲染；表结构用 `TableBuilder` 手写，不引用表接口（表接口以后会改，旧迁移的含义不能跟着变）。也可以 `Migration.of(version, description, steps -> ...)`。
 - 按列表顺序执行，每个版本一次，记进历史表 `QUERY_MIGRATION`（版本、说明、语句的 SHA-256、状态、时间）；锁表 `QUERY_MIGRATION_LOCK` 的一行让同时启动的实例互斥（`lockTimeout(...)`，默认一分钟）。
+- 同一个库里有几套各自迁移的表时（例如建在本库上的库自带迁移），用 `historyTable("flow_migration")` 换历史表的名字，锁表跟着叫 `flow_migration_lock`（名字有大写时加 `_LOCK`），各记各的版本。
 - PostgreSQL 每个迁移在一个事务里执行，失败时整体回滚。MySQL、HANA 的 DDL 逐条提交，失败的迁移记为 failed，修好数据库后 `repair(version)` 再重新执行；所以一个迁移最好只做一件事。
 - `baseline(version)` 把这个版本之前的迁移记为已执行而不执行，用于接管手工建好的库；`migrateTo(version)` 只执行到这个版本。
 - 只向前，没有回滚迁移；要撤销就再写一个新的迁移。迁移适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。

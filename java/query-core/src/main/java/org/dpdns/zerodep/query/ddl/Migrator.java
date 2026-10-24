@@ -25,6 +25,7 @@ import java.util.function.Supplier;
 /**
  * 版本化迁移的执行器，由 {@code db.migrator(migrations)} 得到：按列表顺序执行还没执行过的迁移，每个一次，记进历史表 QUERY_MIGRATION
  * （版本、说明、校验和、状态、开始与结束时间）。多个实例同时启动时用锁表 QUERY_MIGRATION_LOCK 的一行互斥。
+ * 两张表的名字可以用 {@link #historyTable(String)} 换掉。
  * <ul>
  *   <li>PostgreSQL 每个迁移在一个事务里执行，失败时整体回滚；MySQL、HANA 的 DDL 逐条提交，失败的迁移记为 failed，
  *       修好数据库后调用 {@link #repair} 再重新执行。</li>
@@ -69,15 +70,18 @@ public final class Migrator {
     private final SchemaSyntax syntax;
     private final Backend backend;
     private final String schema;
+    private final String historyTable;
+    private final String lockTable;
     private final Duration lockTimeout;
     private final String owner = UUID.randomUUID().toString();
 
     /** 由数据库实例创建。 */
     public Migrator(List<Migration> migrations, Dialect dialect, SchemaSyntax syntax, Backend backend) {
-        this(migrations, dialect, syntax, backend, "", Duration.ofMinutes(1));
+        this(migrations, dialect, syntax, backend, "", HISTORY, LOCK, Duration.ofMinutes(1));
     }
 
-    private Migrator(List<Migration> migrations, Dialect dialect, SchemaSyntax syntax, Backend backend, String schema, Duration lockTimeout) {
+    private Migrator(List<Migration> migrations, Dialect dialect, SchemaSyntax syntax, Backend backend, String schema,
+                     String historyTable, String lockTable, Duration lockTimeout) {
         Set<String> seen = new HashSet<>();
         for (Migration m : migrations) {
             if (!seen.add(m.version())) throw new IllegalArgumentException("Migration version " + m.version() + " appears twice");
@@ -87,20 +91,36 @@ public final class Migrator {
         this.syntax = syntax;
         this.backend = backend;
         this.schema = schema;
+        this.historyTable = historyTable;
+        this.lockTable = lockTable;
         this.lockTimeout = lockTimeout;
     }
 
     /** 历史表和锁表放在 schema 里；默认是连接当前的 schema。 */
-    public Migrator historySchema(String historySchema) { return new Migrator(migrations, dialect, syntax, backend, historySchema, lockTimeout); }
+    public Migrator historySchema(String historySchema) {
+        return new Migrator(migrations, dialect, syntax, backend, historySchema, historyTable, lockTable, lockTimeout);
+    }
+
+    /**
+     * 换历史表的名字，锁表跟着叫"历史表名加 _LOCK"（名字全是小写时加 _lock）。同一个库里有几套各自迁移的表时用它分开，
+     * 例如建在本库上的库自带迁移：{@code db.migrator(flowMigrations).historyTable("flow_migration")}，锁表是 flow_migration_lock。
+     */
+    public Migrator historyTable(String name) {
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("The history table needs a name");
+        String lock = name + (name.equals(name.toLowerCase(java.util.Locale.ROOT)) ? "_lock" : "_LOCK");
+        return new Migrator(migrations, dialect, syntax, backend, schema, name, lock, lockTimeout);
+    }
 
     /** 等待别的实例释放迁移锁的最长时间，默认一分钟。 */
-    public Migrator lockTimeout(Duration timeout) { return new Migrator(migrations, dialect, syntax, backend, schema, timeout); }
+    public Migrator lockTimeout(Duration timeout) {
+        return new Migrator(migrations, dialect, syntax, backend, schema, historyTable, lockTable, timeout);
+    }
 
     /** 历史表里的各行，按开始时间；历史表还不存在时为空。 */
     public List<Applied> history() {
-        if (syntax.read(backend::query, schema, HISTORY) == null) return List.of();
+        if (syntax.read(backend::query, schema, historyTable) == null) return List.of();
         List<Applied> out = new ArrayList<>();
-        for (Map<String, Object> r : backend.query(cols("SELECT {VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT} FROM ") + table(HISTORY) + cols(" ORDER BY {STARTED_AT}"))) {
+        for (Map<String, Object> r : backend.query(cols("SELECT {VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT} FROM ") + table(historyTable) + cols(" ORDER BY {STARTED_AT}"))) {
             out.add(new Applied(text(r.get("version")), text(r.get("description")), text(r.get("checksum")), text(r.get("status")),
                 time(r.get("started_at")), time(r.get("finished_at"))));
         }
@@ -165,7 +185,7 @@ public final class Migrator {
             for (Migration m : migrations) {
                 if (!applied.containsKey(m.version())) {
                     LocalDateTime now = now();
-                    backend.update("INSERT INTO " + table(HISTORY) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
+                    backend.update("INSERT INTO " + table(historyTable) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
                         m.version(), m.description(), checksum(record(m)), "baseline", now, now);
                 }
                 if (m.version().equals(version)) break;
@@ -177,7 +197,7 @@ public final class Migrator {
 
     /** 删掉 version 失败的那一行，修好数据库后再执行 {@link #migrateToLatest()} 会重新执行它。 */
     public void repair(String version) {
-        long rows = backend.update("DELETE FROM " + table(HISTORY) + cols(" WHERE {VERSION} = ? AND {STATUS} = ?"), version, "failed");
+        long rows = backend.update("DELETE FROM " + table(historyTable) + cols(" WHERE {VERSION} = ? AND {STATUS} = ?"), version, "failed");
         if (rows == 0) throw new IllegalStateException("Migration " + version + " has not failed");
     }
 
@@ -187,7 +207,7 @@ public final class Migrator {
     private void run(Migration m) {
         MigrationSteps steps = record(m);
         String checksum = checksum(steps);
-        backend.update("INSERT INTO " + table(HISTORY) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
+        backend.update("INSERT INTO " + table(historyTable) + cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
             m.version(), m.description(), checksum, "started", now());
         Runnable work = () -> {
             for (MigrationSteps.Step s : steps.steps()) {
@@ -210,7 +230,7 @@ public final class Migrator {
 
     /** 改历史表里一个版本的状态和结束时间。 */
     private void mark(String version, String status) {
-        backend.update("UPDATE " + table(HISTORY) + cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
+        backend.update("UPDATE " + table(historyTable) + cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
     }
 
     /** 让迁移登记它的步骤。 */
@@ -257,20 +277,20 @@ public final class Migrator {
 
     /** 历史表和锁表不存在时建上，锁表放入唯一的一行。 */
     private void ensureTables() {
-        if (syntax.read(backend::query, schema, HISTORY) == null) {
-            backend.run(syntax.createTable(TableBuilder.table(schema, HISTORY)
+        if (syntax.read(backend::query, schema, historyTable) == null) {
+            backend.run(syntax.createTable(TableBuilder.table(schema, historyTable)
                 .column("VERSION", ColumnType.text(100)).column("DESCRIPTION", ColumnType.text(200)).column("CHECKSUM", ColumnType.text(64))
                 .column("STATUS", ColumnType.text(10)).notNull().column("STARTED_AT", ColumnType.of(Kind.TIMESTAMP)).column("FINISHED_AT", ColumnType.of(Kind.TIMESTAMP))
                 .primaryKey("VERSION").build()));
         }
-        if (syntax.read(backend::query, schema, LOCK) == null) {
-            backend.run(syntax.createTable(TableBuilder.table(schema, LOCK)
+        if (syntax.read(backend::query, schema, lockTable) == null) {
+            backend.run(syntax.createTable(TableBuilder.table(schema, lockTable)
                 .column("ID", ColumnType.of(Kind.INTEGER)).column("OWNER", ColumnType.text(64)).column("LOCKED_AT", ColumnType.of(Kind.TIMESTAMP))
                 .primaryKey("ID").build()));
         }
-        if (backend.query(cols("SELECT {ID} FROM ") + table(LOCK) + cols(" WHERE {ID} = ?"), 1).isEmpty()) {
+        if (backend.query(cols("SELECT {ID} FROM ") + table(lockTable) + cols(" WHERE {ID} = ?"), 1).isEmpty()) {
             try {
-                backend.update("INSERT INTO " + table(LOCK) + cols(" ({ID}) VALUES (?)"), 1);
+                backend.update("INSERT INTO " + table(lockTable) + cols(" ({ID}) VALUES (?)"), 1);
             } catch (RuntimeException e) {
                 // 另一个实例同时插入了这一行
             }
@@ -280,9 +300,9 @@ public final class Migrator {
     /** 占用锁行；别的实例占着时每半秒重试一次，超过 lockTimeout 报错。 */
     private void lock() {
         long deadline = System.nanoTime() + lockTimeout.toNanos();
-        while (backend.update("UPDATE " + table(LOCK) + cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), owner, now(), 1) == 0) {
+        while (backend.update("UPDATE " + table(lockTable) + cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), owner, now(), 1) == 0) {
             if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("Another process holds the migration lock in " + table(LOCK) + "; if it crashed, clear OWNER by hand");
+                throw new IllegalStateException("Another process holds the migration lock in " + table(lockTable) + "; if it crashed, clear OWNER by hand");
             }
             try {
                 Thread.sleep(500);
@@ -295,7 +315,7 @@ public final class Migrator {
 
     /** 释放锁行。 */
     private void unlock() {
-        backend.update("UPDATE " + table(LOCK) + cols(" SET {OWNER} = NULL, {LOCKED_AT} = NULL WHERE {ID} = ? AND {OWNER} = ?"), 1, owner);
+        backend.update("UPDATE " + table(lockTable) + cols(" SET {OWNER} = NULL, {LOCKED_AT} = NULL WHERE {ID} = ? AND {OWNER} = ?"), 1, owner);
     }
 
     /** 把 SQL 片段里的 {列名} 换成按方言加引号的列名。 */

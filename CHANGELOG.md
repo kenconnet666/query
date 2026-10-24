@@ -18,6 +18,7 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - 投影、`groupJoin` 和写入的列筛选用品牌类型 `AnyMany`（核心包导出）认一对多关系，不再写成 `Many<any>`：编辑器只检查单个文件时，`Many<Lips>` 赋不给 `Many<any>`，带关系的投影被推成 `Query<unknown>`（TS2769）。`groupJoin` 收到的不是一对多关系时报 `TypeError`。
 - 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
 - **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 之后，`db.transaction(...)` 与多行写入的自动事务由这个事务管理器执行（传播行为 REQUIRED，已有事务时加入）。多数据源的项目每个数据源各传自己的事务管理器；只给 DataSource 时仍然报错。连接来源的接口加了 `startsTransactions()` 与 `transaction(work)`。
+- **迁移历史表可以改名**：`migrator.historyTable("flow_migration")`（两端），锁表跟着改名；同一个库里几套各自迁移的表不再共用 `QUERY_MIGRATION`。
 
 ## [2.0.0] - 未发布
 
