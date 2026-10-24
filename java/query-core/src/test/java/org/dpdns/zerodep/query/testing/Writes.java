@@ -13,6 +13,8 @@ import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.type.CodeEnum;
 import org.dpdns.zerodep.query.write.Delete;
 import org.dpdns.zerodep.query.write.Insert;
+import org.dpdns.zerodep.query.write.JoinDelete;
+import org.dpdns.zerodep.query.write.JoinUpdate;
 import org.dpdns.zerodep.query.write.Update;
 
 import java.time.LocalDateTime;
@@ -203,6 +205,21 @@ public final class Writes {
 
     /** 编码表的一行。 */
     public record CodeRow(String id, String code) { }
+
+    /** 联表更新：把同编号文档的标题抄到便签上，只抄改过的文档（版本大于 1）。 */
+    public static JoinUpdate<Note, Doc> syncNoteTitles() {
+        return JoinUpdate.of(Note.class, Doc.class, (n, d) -> n.id().eq(d.id())).set((n, d) -> n.title().to(d.title())).where((n, d) -> d.version().gt(1));
+    }
+
+    /** 联表删除：删掉同编号文档标题为 title 的便签。 */
+    public static JoinDelete<Note, Doc> deleteNotesOfDocs(String title) {
+        return JoinDelete.of(Note.class, Doc.class, (n, d) -> n.id().eq(d.id())).where((n, d) -> d.title().eq(title));
+    }
+
+    /** 联表删除逻辑删除的工单：改写成把 DELETED 设为 1 的联表更新。 */
+    public static JoinDelete<Ticket, Doc> deleteTicketsOfDocs(String title) {
+        return JoinDelete.of(Ticket.class, Doc.class, (t, d) -> t.id().eq(d.id())).where((t, d) -> d.title().eq(title));
+    }
 
     /** 插入两行，第二行的标题为 NULL。 */
     public static Insert<Note> insertNotes() {

@@ -784,6 +784,23 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       );
     });
 
+    it("联表更新与删除在实库上按连接得上的行改动", async () => {
+      const { db } = live();
+      await db.execute(deleteFrom(writes.Note).all());
+      await db.execute(deleteFrom(writes.Doc).all());
+      await db.execute(writes.insertNotes());
+      await db.execute(insertInto(writes.Doc).values({ id: "N1", title: "synced", version: 2 }, { id: "N2", title: "gone", version: 1 }));
+      assert.equal(await db.execute(writes.syncNoteTitles()), 1);
+      assert.equal(await db.execute(writes.deleteNotesOfDocs("gone")), 1);
+      const rows = await db.list(from(writes.Note).select((n) => ({ id: n.id, title: n.title })));
+      assert.deepEqual(rows.map((r) => `${r.id}:${r.title}`), ["N1:synced"]);
+      await db.execute(deleteFrom(writes.Ticket).physically().unfiltered().all());
+      await db.execute(insertInto(writes.Ticket).values({ id: "N2", title: "t" }));
+      assert.equal(await db.execute(writes.deleteTicketsOfDocs("gone")), 1);
+      assert.equal(await db.count(from(writes.Ticket).select((t) => t.id)), 0, "the ticket is deleted logically");
+      assert.equal(await db.count(from(writes.Ticket).withDeleted().select((t) => t.id)), 1);
+    });
+
     it("逻辑删除记毫秒数时同一个编码删除后可以再建", async () => {
       const { db } = live();
       await db.execute(deleteFrom(writes.Code).physically().unfiltered().all());

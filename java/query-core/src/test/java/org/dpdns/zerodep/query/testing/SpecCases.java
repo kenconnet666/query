@@ -141,6 +141,9 @@ public final class SpecCases {
         cases.put("write-insert", SpecCase.plain(() -> insertInto(Writes.Note.class).values(new Writes.NoteRow("N1", "T1", "first", 1, "open"))));
         cases.put("write-insert-select", SpecCase.plain(Writes::copyNote));
         cases.put("write-update", SpecCase.plain(() -> Writes.closeOpenNote("N1")));
+        cases.put("write-join-update", SpecCase.plain(Writes::syncNoteTitles));
+        cases.put("write-join-delete", SpecCase.plain(() -> Writes.deleteNotesOfDocs("gone")));
+        cases.put("write-join-logic-delete", SpecCase.plain(() -> Writes.deleteTicketsOfDocs("gone")));
         cases.put("write-navigation", SpecCase.filtered(() -> update(Lips.class).set(l -> l.unit().to("EA")).where(l -> l.text().text().isNull())));
         cases.put("write-delete", SpecCase.plain(Writes::deleteClosed));
         cases.put("write-update-by-id", SpecCase.plain(() -> Writes.renameDoc(new Writes.DocRow("D1", "new", 3))));

@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, DAY, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, HOUR, LOCATE, MINUTE, MONTH, MONTH_START, SECOND, SECONDS_BETWEEN, YEAR, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, DAY, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, HOUR, LOCATE, MINUTE, MONTH, MONTH_START, SECOND, SECONDS_BETWEEN, YEAR, renderOnAndWhere, type CastType, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /** PostgreSQL。未加引号的标识符折叠为小写；参数带编号（$1、$2……）。 */
 export class PostgresDialect extends Dialect {
@@ -31,6 +31,23 @@ export class PostgresDialect extends Dialect {
   }
 
   /** `INSERT ... ON CONFLICT (键) DO UPDATE SET 列 = EXCLUDED.列` 或 `DO NOTHING`。 */
+  /** `UPDATE 表 别名 SET 列 = 值 FROM 连接表 别名 WHERE 连接条件 AND ...`；SET 左边的列不带别名（PostgreSQL 不允许）。 */
+  override joinUpdate(w: SqlWriter, u: JoinWrite): void {
+    w.sql("UPDATE ").render(u.target).sql("\nSET ");
+    u.columns.forEach((c, i) => {
+      if (i > 0) w.sql(", ");
+      w.render(c).sql(" = ").render(u.values[i]!);
+    });
+    w.sql("\nFROM ").render(u.source).sql("\nWHERE ");
+    renderOnAndWhere(w, u);
+  }
+
+  /** `DELETE FROM 表 别名 USING 连接表 别名 WHERE 连接条件 AND ...`。 */
+  override joinDelete(w: SqlWriter, d: JoinWrite): void {
+    w.sql("DELETE FROM ").render(d.target).sql("\nUSING ").render(d.source).sql("\nWHERE ");
+    renderOnAndWhere(w, d);
+  }
+
   override upsert(w: SqlWriter, u: Upsert): void {
     w.sql("INSERT INTO ").render(u.table).sql(" ");
     columnList(w, u.columns);

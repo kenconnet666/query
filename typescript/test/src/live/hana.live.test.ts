@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import hana from "@sap/hana-client";
-import { addDays, addMonths, count, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
+import { addDays, addMonths, count, deleteFrom, insertInto, QueryExecutionError, updateJoin, cube, date, daysBetween, decimal, from, greatest, grouping, groupingSets, hanaDriver, HanaDatabase, hint, least, lit, nullOf, stringAgg, substring, sum, toInteger, toVarchar } from "@zerodep-dev/query-hana";
 import { Lips } from "../fixtures/erp.js";
+import * as writes from "../fixtures/writes.js";
 import { liveScenarios } from "./live.js";
 
 liveScenarios(
@@ -23,6 +24,31 @@ liveScenarios(
     slowStatement: "CALL QUERY_IT.SLOW_ROW(3)",
   },
   (live) => {
+    it("联表更新一行匹配多行时整条语句报错且没有行被改", async () => {
+      const { db } = live();
+      await db.execute(deleteFrom(writes.Note).all());
+      await db.execute(deleteFrom(writes.Doc).all());
+      await db.execute(writes.insertNotes());
+      await db.execute(insertInto(writes.Doc).values({ id: "D1", title: "first", version: 1 }, { id: "D2", title: "first", version: 1 }));
+      // N1 的标题 first 对上两份文档；PostgreSQL、MySQL 会任取一行，HANA 的 MERGE 报 689
+      await assert.rejects(
+        db.execute(
+          updateJoin(writes.Note, writes.Doc, (n, d) => n.title.eq(d.title))
+            .set((_n, d) => ({ status: d.id }))
+            .all(),
+        ),
+        QueryExecutionError,
+      );
+      assert.deepEqual(
+        await db.list(
+          from(writes.Note)
+            .orderBy((n) => n.id)
+            .select((n) => n.status),
+        ),
+        ["open", "open"],
+      );
+    });
+
     it("超时按整秒交给客户端，短于超时的语句照常完成", async () => {
       const start = Date.now();
       await live().db.sql("CALL QUERY_IT.SLOW_ROW(1)").timeout(2500).list();

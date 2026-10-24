@@ -76,6 +76,41 @@ export interface Clause extends Renderable {
 export type Lock = "wait" | "nowait" | "skipLocked";
 
 /**
+ * 联表的 UPDATE 或 DELETE（方言包的 updateJoin、deleteJoin）交给方言写出的内容。三个库的写法不同，一行匹配到多行时的行为也不同
+ * （PostgreSQL、MySQL 取其中一行，HANA 的 MERGE 报错），所以只由方言包提供。
+ */
+export interface JoinWrite {
+  /** 写出被改的表和别名。 */
+  readonly target: Renderable;
+  /** 写出被改表的别名，MySQL 的 `DELETE 别名 FROM ...` 要用。 */
+  readonly targetAlias: Renderable;
+  /** 写出被改的表，不带别名。 */
+  readonly table: Renderable;
+  /** 写出连接的表和别名。 */
+  readonly source: Renderable;
+  /** 连接条件，已带上连接表的全局过滤器和逻辑删除条件。 */
+  readonly on: Renderable;
+  /** 被改表的过滤条件加上 where 的条件；都没有时为 undefined。 */
+  readonly where: Renderable | undefined;
+  /** 写出 SET 的列名（不带别名），与 targetColumns、values 一一对应；DELETE 时为空。 */
+  readonly columns: readonly Renderable[];
+  /** 写出带别名的被改列，MySQL 写在 SET 左边。 */
+  readonly targetColumns: readonly Renderable[];
+  /** 新值，可以引用两张表的列。 */
+  readonly values: readonly Renderable[];
+  /** 写出被改表的主键列名（不带别名），HANA 的 MERGE 按它对上行。 */
+  readonly keys: readonly Renderable[];
+  /** 写出带别名的主键列，HANA 写在 MERGE 的 USING 查询里。 */
+  readonly keyColumns: readonly Renderable[];
+}
+
+/** 写出 `on` 再接上 `AND where`（有 where 时），PostgreSQL 的 WHERE 和 HANA 的 EXISTS 子查询用。 */
+export function renderOnAndWhere(w: SqlWriter, j: JoinWrite): void {
+  w.render(j.on);
+  if (j.where !== undefined) w.sql(" AND ").render(j.where);
+}
+
+/**
  * 插入或更新一行（`insertInto(...).values(row).onConflict(...)`）交给方言写出的内容；各方言的写法差别很大：
  * HANA 用 MERGE，PostgreSQL 用 ON CONFLICT，MySQL 用 ON DUPLICATE KEY UPDATE。列名都未加引号。
  */
@@ -184,6 +219,16 @@ export abstract class Dialect {
   /** 写出插入或更新一行的语句；各方言的写法不同，没有实现的方言报错。 */
   upsert(_w: SqlWriter, _upsert: Upsert): void {
     throw new Error(`${this.name} has no insert-or-update statement; implement upsert in its dialect`);
+  }
+
+  /** 写出联表的 UPDATE；只有方言包实现，见 {@link JoinWrite}。 */
+  joinUpdate(_w: SqlWriter, _update: JoinWrite): void {
+    throw new Error(`${this.name} has no join update; use a subquery in where(...) instead`);
+  }
+
+  /** 写出联表的 DELETE；只有方言包实现，见 {@link JoinWrite}。 */
+  joinDelete(_w: SqlWriter, _delete: JoinWrite): void {
+    throw new Error(`${this.name} has no join delete; use a subquery in where(...) instead`);
   }
 
   limit(w: SqlWriter, limit: number | undefined, offset: number | undefined): void {

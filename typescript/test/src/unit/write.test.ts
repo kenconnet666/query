@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
+import { deleteFrom, dryRunDriver, filter, forUpdate, from, insertInto, JoinUpdate, update, UnexpectedRowCountError } from "@zerodep-dev/query-core";
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
 import { Lips } from "../fixtures/erp.js";
 import { claimable } from "../fixtures/workflow.js";
-import { AppNote, Archive, audit, Code, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
+import { AppNote, Archive, audit, Code, syncNoteTitles, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
@@ -195,6 +195,28 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
       )[0]!.sql,
       "UPDATE QUERY_IT.W_TICKET TICKET\nSET CREATED_AT = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?",
       "an explicit set(...) may still change it",
+    );
+  });
+
+  it("联表写入只在方言包里提供，没有 where 时报错", () => {
+    assert.throws(() => db.render(syncNoteTitles()), /has no join update/);
+    assert.throws(
+      () =>
+        db.render(
+          JoinUpdate.of(Note, Doc, (n, d) => n.id.eq(d.id))
+            .set((_n, d) => ({ title: d.title })),
+        ),
+      /without where/,
+    );
+    assert.throws(() => db.render(JoinUpdate.of(Note, Doc, (n, d) => n.id.eq(d.id)).all()), /nothing to SET/);
+    assert.throws(
+      () =>
+        db.render(
+          JoinUpdate.of(Lips, Doc, (l, d) => l.delivery.eq(d.id))
+            .set((_l, d) => ({ unit: d.title as never }))
+            .where((l) => l.mara.manufacturer.eq("MK1")),
+        ),
+      /cannot follow relations/,
     );
   });
 

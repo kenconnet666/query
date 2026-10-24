@@ -1,4 +1,4 @@
-import { all, bigint, column, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
+import { all, bigint, column, JoinDelete, JoinUpdate, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
 /** 写入场景的表和语句：单元测试、金样例和三库实库场景共用，与 Java 的 Writes 一一对应。 */
@@ -112,6 +112,23 @@ export class Code {
   @id @column("ID") id!: string;
   @column("CODE") code!: string;
   @logicDelete({ epochMillis: true }) @column("DELETED", bigint) deleted!: bigint;
+}
+
+/** 联表更新：把同编号文档的标题抄到便签上，只抄改过的文档（版本大于 1）。 */
+export function syncNoteTitles() {
+  return JoinUpdate.of(Note, Doc, (n, d) => n.id.eq(d.id))
+    .set((_n, d) => ({ title: d.title }))
+    .where((_n, d) => d.version.gt(1));
+}
+
+/** 联表删除：删掉同编号文档标题为 title 的便签。 */
+export function deleteNotesOfDocs(title: string) {
+  return JoinDelete.of(Note, Doc, (n, d) => n.id.eq(d.id)).where((_n, d) => d.title.eq(title));
+}
+
+/** 联表删除逻辑删除的工单：改写成把 DELETED 设为 1 的联表更新。 */
+export function deleteTicketsOfDocs(title: string) {
+  return JoinDelete.of(Ticket, Doc, (t, d) => t.id.eq(d.id)).where((_t, d) => d.title.eq(title));
 }
 
 /** 插入两行，第二行的标题为 NULL。 */

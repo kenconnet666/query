@@ -1,4 +1,4 @@
-import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
+import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, columnList, CONCAT, DAYS_BETWEEN, Dialect, doNothing, FunctionDef, LOCATE, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, type CastType, type JoinWrite, type Renderable, type SqlWriter, type Upsert } from "@zerodep-dev/query-core";
 
 /**
  * 默认 SQL 模式下的 MySQL 8。标识符一律用反引号引用（RANK 等窗口函数名是保留字），
@@ -37,6 +37,22 @@ export class MysqlDialect extends Dialect {
    * `INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE 列 = new.列`（8.0.19 起的行别名写法）；冲突了什么也不做时
    * 把第一个键设为它自己，而不用会把别的错误也降为警告的 INSERT IGNORE。冲突由表的主键和唯一索引决定。
    */
+  /** `UPDATE 表 别名 JOIN 连接表 别名 ON ... SET 别名.列 = 值 WHERE ...`；SET 左边带别名，两张表有同名列时才不含糊。 */
+  override joinUpdate(w: SqlWriter, u: JoinWrite): void {
+    w.sql("UPDATE ").render(u.target).sql("\nJOIN ").render(u.source).sql(" ON ").render(u.on).sql("\nSET ");
+    u.targetColumns.forEach((c, i) => {
+      if (i > 0) w.sql(", ");
+      w.render(c).sql(" = ").render(u.values[i]!);
+    });
+    if (u.where !== undefined) w.sql("\nWHERE ").render(u.where);
+  }
+
+  /** `DELETE 别名 FROM 表 别名 JOIN 连接表 别名 ON ... WHERE ...`；只删被改表的行。 */
+  override joinDelete(w: SqlWriter, d: JoinWrite): void {
+    w.sql("DELETE ").render(d.targetAlias).sql(" FROM ").render(d.target).sql("\nJOIN ").render(d.source).sql(" ON ").render(d.on);
+    if (d.where !== undefined) w.sql("\nWHERE ").render(d.where);
+  }
+
   override upsert(w: SqlWriter, u: Upsert): void {
     w.sql("INSERT INTO ").render(u.table).sql(" ");
     columnList(w, u.columns);

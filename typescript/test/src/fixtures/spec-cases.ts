@@ -290,6 +290,9 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "write-insert": plain(() => insertInto(writes.Note).values({ id: "N1", tenant: "T1", title: "first", qty: 1, status: "open" })),
   "write-insert-select": plain(() => writes.copyNote()),
   "write-update": plain(() => writes.closeOpenNote("N1")),
+  "write-join-update": plain(() => writes.syncNoteTitles()),
+  "write-join-delete": plain(() => writes.deleteNotesOfDocs("gone")),
+  "write-join-logic-delete": plain(() => writes.deleteTicketsOfDocs("gone")),
   "write-navigation": {
     filtered: true,
     query: () =>

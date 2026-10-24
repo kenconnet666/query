@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.JoinWrite;
 import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.dialect.Upsert;
@@ -147,4 +148,42 @@ public class HanaDialect extends Dialect {
 
     /** 每次新建一个 UTC 日历，因为 {@link Calendar} 可变且不是线程安全的。 */
     private static Calendar utc() { return Calendar.getInstance(TimeZone.getTimeZone(ZoneOffset.UTC)); }
+
+    /**
+     * HANA 的 {@code UPDATE ... FROM} 遇到一行匹配多行时会多次赋值、结果取决于顺序，所以写成按主键对上行的 MERGE：
+     * {@code MERGE INTO 表 AS T USING (SELECT 主键 AS "k0", 新值 AS "v0" FROM 表 别名 JOIN 连接表 ... WHERE ...) AS S ON (T.主键 = S."k0")
+     * WHEN MATCHED THEN UPDATE SET T.列 = S."v0"}。一行匹配多行时报 689，整条语句不生效。被改表必须有 {@code @Id}。
+     */
+    @Override public void joinUpdate(SqlWriter w, JoinWrite u) {
+        if (u.keys().isEmpty()) {
+            throw new IllegalArgumentException("HANA writes a join update as MERGE on the primary key; declare @Id on the updated table");
+        }
+        String target = w.aliasFor(new Object(), "target");
+        String source = w.aliasFor(new Object(), "source");
+        w.sql("MERGE INTO ").render(u.table()).sql(" AS ").alias(target).sql("\nUSING (SELECT ");
+        for (int i = 0; i < u.keyColumns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.render(u.keyColumns().get(i)).sql(" AS ").identifier("k" + i);
+        }
+        for (int i = 0; i < u.values().size(); i++) w.sql(", ").render(u.values().get(i)).sql(" AS ").identifier("v" + i);
+        w.sql("\nFROM ").render(u.target()).sql("\nJOIN ").render(u.source()).sql(" ON ").render(u.on());
+        if (u.where() != null) w.sql("\nWHERE ").render(u.where());
+        w.sql(") AS ").alias(source).sql(" ON (");
+        for (int i = 0; i < u.keys().size(); i++) {
+            if (i > 0) w.sql(" AND ");
+            w.alias(target).sql(".").render(u.keys().get(i)).sql(" = ").alias(source).sql(".").identifier("k" + i);
+        }
+        w.sql(")\nWHEN MATCHED THEN UPDATE SET ");
+        for (int i = 0; i < u.columns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.alias(target).sql(".").render(u.columns().get(i)).sql(" = ").alias(source).sql(".").identifier("v" + i);
+        }
+    }
+
+    /** {@code DELETE FROM 表 别名 WHERE EXISTS (SELECT 1 FROM 连接表 别名 WHERE 连接条件 AND ...)}。 */
+    @Override public void joinDelete(SqlWriter w, JoinWrite d) {
+        w.sql("DELETE FROM ").render(d.target()).sql("\nWHERE EXISTS (SELECT 1\nFROM ").render(d.source()).sql("\nWHERE ");
+        d.renderOnAndWhere(w);
+        w.sql(")");
+    }
 }

@@ -5,6 +5,7 @@ import { mysqlDriver } from "./driver.js";
 
 /** 一次导入拿到全部词汇：核心函数加上 MySQL 专有的。 */
 export * from "@zerodep-dev/query-core";
+export { deleteJoin, updateJoin } from "./join.js";
 export { MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
 export { dateFormat, greatest, least, maxExecutionTime } from "./functions.js";

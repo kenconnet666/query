@@ -198,6 +198,20 @@ class WriteTest {
     }
 
     @Test
+    void 联表写入只在方言包里提供且没有where时报错() {
+        assertThrows(UnsupportedOperationException.class, () -> Writes.syncNoteTitles().toSql(DIALECT), "the core dialect has no join update");
+        var e = assertThrows(IllegalStateException.class,
+            () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> n.id().eq(d.id())).set((n, d) -> n.title().to(d.title())).toSql(DIALECT));
+        assertTrue(e.getMessage().contains("without where(...)"), e.getMessage());
+        assertThrows(IllegalStateException.class, () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> n.id().eq(d.id())).all().toSql(DIALECT),
+            "nothing to SET");
+        assertThrows(IllegalArgumentException.class, () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> org.dpdns.zerodep.query.expr.Cond.EMPTY));
+        var nav = assertThrows(IllegalArgumentException.class, () -> JoinUpdate.of(Lips.class, Writes.Doc.class, (l, d) -> l.delivery().eq(d.id()))
+            .set((l, d) -> l.unit().to(d.title())).where((l, d) -> l.mara().manufacturer().eq("MK1")).toSql(DIALECT));
+        assertTrue(nav.getMessage().contains("cannot follow relations"), nav.getMessage());
+    }
+
+    @Test
     void 具名过滤器可以单独关闭而withDeleted只关闭逻辑删除() {
         Database db = new TestDatabase(c -> c.filter("tenant", Tenanted.class, t -> t.tenant().eq("T1")));
         assertTrue(db.render(from(Note.class).select(n -> n.id())).sql().endsWith("WHERE NOTE.TENANT = ?"));

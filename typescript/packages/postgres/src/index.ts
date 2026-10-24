@@ -5,6 +5,7 @@ import { pgDriver } from "./driver.js";
 
 /** 一次导入拿到全部词汇：核心函数加上 PostgreSQL 专有的。 */
 export * from "@zerodep-dev/query-core";
+export { deleteJoin, updateJoin } from "./join.js";
 export { PostgresDialect } from "./dialect.js";
 export { pgDriver } from "./driver.js";
 export { cube, distinctOn, greatest, groupingSets, ilike, least, pg, PgOps } from "./functions.js";

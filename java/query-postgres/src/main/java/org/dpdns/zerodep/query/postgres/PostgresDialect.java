@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.postgres;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.JoinWrite;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.dialect.Upsert;
@@ -148,5 +149,22 @@ public class PostgresDialect extends Dialect {
                 connection.setAutoCommit(true);
             }
         };
+    }
+
+    /** {@code UPDATE 表 别名 SET 列 = 值 FROM 连接表 别名 WHERE 连接条件 AND ...}；SET 左边的列不带别名（PostgreSQL 不允许）。 */
+    @Override public void joinUpdate(SqlWriter w, JoinWrite u) {
+        w.sql("UPDATE ").render(u.target()).sql("\nSET ");
+        for (int i = 0; i < u.columns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.render(u.columns().get(i)).sql(" = ").render(u.values().get(i));
+        }
+        w.sql("\nFROM ").render(u.source()).sql("\nWHERE ");
+        u.renderOnAndWhere(w);
+    }
+
+    /** {@code DELETE FROM 表 别名 USING 连接表 别名 WHERE 连接条件 AND ...}。 */
+    @Override public void joinDelete(SqlWriter w, JoinWrite d) {
+        w.sql("DELETE FROM ").render(d.target()).sql("\nUSING ").render(d.source()).sql("\nWHERE ");
+        d.renderOnAndWhere(w);
     }
 }

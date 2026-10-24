@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.mysql;
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
+import org.dpdns.zerodep.query.dialect.JoinWrite;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.dialect.Upsert;
@@ -129,5 +130,21 @@ public class MysqlDialect extends Dialect {
             case BOOLEAN -> throw new UnsupportedOperationException("MySQL has no CAST to BOOLEAN; compare the value instead");
             default -> super.castType(type);
         };
+    }
+
+    /** {@code UPDATE 表 别名 JOIN 连接表 别名 ON ... SET 别名.列 = 值 WHERE ...}；SET 左边带别名，两张表有同名列时才不含糊。 */
+    @Override public void joinUpdate(SqlWriter w, JoinWrite u) {
+        w.sql("UPDATE ").render(u.target()).sql("\nJOIN ").render(u.source()).sql(" ON ").render(u.on()).sql("\nSET ");
+        for (int i = 0; i < u.targetColumns().size(); i++) {
+            if (i > 0) w.sql(", ");
+            w.render(u.targetColumns().get(i)).sql(" = ").render(u.values().get(i));
+        }
+        if (u.where() != null) w.sql("\nWHERE ").render(u.where());
+    }
+
+    /** {@code DELETE 别名 FROM 表 别名 JOIN 连接表 别名 ON ... WHERE ...}；只删被改表的行。 */
+    @Override public void joinDelete(SqlWriter w, JoinWrite d) {
+        w.sql("DELETE ").render(d.targetAlias()).sql(" FROM ").render(d.target()).sql("\nJOIN ").render(d.source()).sql(" ON ").render(d.on());
+        if (d.where() != null) w.sql("\nWHERE ").render(d.where());
     }
 }

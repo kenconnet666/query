@@ -2,9 +2,11 @@ package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.exec.QueryExecutionException;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.LiveDatabase;
 import org.dpdns.zerodep.query.testing.LiveScenarios;
+import org.dpdns.zerodep.query.testing.Writes;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import java.util.function.Consumer;
 import static org.dpdns.zerodep.query.hana.Hana.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Needs QUERY_HANA_URL, QUERY_HANA_USER and QUERY_HANA_PASSWORD; skipped otherwise. */
 @DisplayName("HANA 实库场景")
@@ -87,5 +90,17 @@ class HanaLiveTest extends LiveScenarios {
         assertEquals(List.of(1, 2, 3, 4, 5), db.list(from(Lips.class)
             .orderBy(l -> l.delivery())
             .select(l -> toInteger(substring(l.delivery(), 2)))));
+    }
+
+    @Test
+    void 联表更新一行匹配多行时整条语句报错且没有行被改() {
+        db.execute(deleteFrom(Writes.Note.class).all());
+        db.execute(deleteFrom(Writes.Doc.class).all());
+        db.execute(Writes.insertNotes());
+        db.execute(insertInto(Writes.Doc.class).values(new Writes.DocRow("D1", "first", 1), new Writes.DocRow("D2", "first", 1)));
+        // N1 的标题 first 对上两份文档；PostgreSQL、MySQL 会任取一行，HANA 的 MERGE 报 689
+        assertThrows(QueryExecutionException.class, () -> db.execute(updateJoin(Writes.Note.class, Writes.Doc.class, (n, d) -> n.title().eq(d.title()))
+            .set((n, d) -> n.status().to(d.id())).all()));
+        assertEquals(List.of("open", "open"), db.list(from(Writes.Note.class).orderBy(n -> n.id()).select(n -> n.status())));
     }
 }

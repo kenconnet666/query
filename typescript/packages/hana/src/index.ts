@@ -5,6 +5,7 @@ import { hanaDriver } from "./driver.js";
 
 /** 一次导入拿到全部词汇：核心函数加上 HANA 专有的。 */
 export * from "@zerodep-dev/query-core";
+export { deleteJoin, updateJoin } from "./join.js";
 export { HanaDialect } from "./dialect.js";
 export { hanaDriver } from "./driver.js";
 export { cube, greatest, groupingSets, hint, least, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "./functions.js";

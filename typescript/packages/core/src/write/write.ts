@@ -1,12 +1,12 @@
 import { columnName, deletedValue, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
 import { all, bindValue, Column, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
-import type { Rendered, SqlWriter } from "../sql/writer.js";
+import type { Renderable, Rendered, SqlWriter } from "../sql/writer.js";
 import { currentTimestamp, lit, plus } from "../sql/functions.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { Many } from "../query/many.js";
 import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
 import { createRef, ownerOf, RefOwner, tableSource, type Ref } from "../query/source.js";
-import type { Clause, Lock, Upsert } from "../sql/dialect.js";
+import type { Clause, JoinWrite, Lock, Upsert } from "../sql/dialect.js";
 
 /** 表实体里的列字段：去掉 `@one`、`@many` 关系字段。 */
 type Columns<T> = { [K in keyof T as T[K] extends Many<any> | One<any> ? never : K]: T[K] };
@@ -730,4 +730,237 @@ function same(a: unknown, b: unknown, kind: string | undefined): boolean {
 /** 去掉小数末尾的 0 和多余的小数点，用于比较精确小数的文本。 */
 function normalize(decimal: string): string {
   return decimal.includes(".") ? decimal.replace(/0+$/, "").replace(/\.$/, "") : decimal;
+}
+
+/**
+ * 联表的 UPDATE：SET 和 WHERE 可以引用连接的表，由方言包的 `updateJoin` 开始：
+ * `updateJoin(Card, User, (c, u) => u.id.eq(c.userId)).set((c, u) => ({ owner: u.name })).where((c, u) => u.status.eq("ACTIVE"))`。
+ * PostgreSQL 写成 `UPDATE ... FROM`，MySQL 写成 `UPDATE ... JOIN ... SET`，HANA 写成按主键对上行的 MERGE（被改表要有 `@id`）。
+ * 连接是内连接；每个被改行至多匹配一个连接行，否则 PostgreSQL、MySQL 取其中一行（值不确定），HANA 报错。
+ * 没有 where 条件时报错（连接条件不算），全表要写 `.all()`；两张表的全局过滤器和逻辑删除条件都照常加上。
+ * 不能用导航关系，要用的表直接连接。不可变，每个方法返回新的语句。
+ */
+export class JoinUpdate<T, S> extends Write {
+  readonly #target: Target<T>;
+  readonly #source: Ref<S>;
+  readonly #on: Cond;
+  readonly #sets: readonly (readonly [Column<unknown>, Expr<unknown>])[];
+
+  /** 由 {@link JoinUpdate.of} 和各修改方法调用。 */
+  constructor(target: Target<T>, source: Ref<S>, on: Cond, sets: readonly (readonly [Column<unknown>, Expr<unknown>])[]) {
+    super();
+    this.#target = target;
+    this.#source = source;
+    this.#on = on;
+    this.#sets = sets;
+  }
+
+  /** 更新 table，连接 joined；由方言包的 `updateJoin` 调用。 */
+  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): JoinUpdate<T, S> {
+    const target = Target.of(table);
+    const source = createRef(tableSource(joined));
+    return new JoinUpdate(target, source, joinCondition(target, source, on), []);
+  }
+
+  /** 追加 SET 项：回调返回列字段到新值的对象，值可以引用连接的表，例如 `set((c, u) => ({ owner: u.name }))`。 */
+  set(assign: (t: Ref<T>, s: Ref<S>) => Assignments<T>): JoinUpdate<T, S> {
+    const target = this.#target;
+    const sets = [...this.#sets];
+    for (const [name, value] of Object.entries(assign(target.ref, this.#source) as object)) {
+      const column = (target.ref as Record<string, unknown>)[name];
+      if (!(column instanceof Column) || column.owner !== ownerOf(target.ref as object)) throw new Error(`set(...): ${name} is not a column of ${target.table.name}`);
+      if (entityMeta(target.table).writes.readOnly.includes(name)) throw new Error(`set(...): ${target.table.name}.${name} is @readOnly`);
+      if (value === undefined) continue;
+      sets.push([column, value instanceof Expr ? value : bindValue(column.type, value)]);
+    }
+    return new JoinUpdate(target, this.#source, this.#on, sets);
+  }
+
+  /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
+  where(cond: (t: Ref<T>, s: Ref<S>) => Cond): JoinUpdate<T, S> {
+    return new JoinUpdate(withCondition(this.#target, cond(this.#target.ref, this.#source)), this.#source, this.#on, this.#sets);
+  }
+
+  /** 两张表都不套用全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器。 */
+  unfiltered(...names: string[]): JoinUpdate<T, S> {
+    return new JoinUpdate(this.#target.with({ filtering: unfilteredBy(this.#target.filtering, names) }), this.#source, this.#on, this.#sets);
+  }
+
+  /** 两张表都不加逻辑删除的条件。 */
+  withDeleted(): JoinUpdate<T, S> {
+    return new JoinUpdate(this.#target.with({ filtering: { ...this.#target.filtering, logicDelete: false } }), this.#source, this.#on, this.#sets);
+  }
+
+  /** 不套用数据库实例的写入填充（审计列）。 */
+  withoutFills(): JoinUpdate<T, S> {
+    return new JoinUpdate(this.#target.with({ fills: false }), this.#source, this.#on, this.#sets);
+  }
+
+  /** 允许没有 where 条件，即改动所有连接得上的行。 */
+  all(): JoinUpdate<T, S> {
+    return new JoinUpdate(this.#target.with({ everyRow: true }), this.#source, this.#on, this.#sets);
+  }
+
+  /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError。 */
+  expect(rows: number): JoinUpdate<T, S> {
+    return new JoinUpdate(this.#target.expect(rows), this.#source, this.#on, this.#sets);
+  }
+
+  /** `expect(n)` 写明的行数。 */
+  get expected(): number | undefined {
+    return this.#target.expected;
+  }
+
+  /** 一条联表 UPDATE，由方言写出；没有 SET 项时报错。 */
+  render(writer: () => SqlWriter): Rendered[] {
+    if (this.#sets.length === 0) throw new Error("updateJoin(...) has nothing to SET; add set(...)");
+    const w = writer();
+    w.dialect.joinUpdate(w, joinParts(w, this.#target, this.#source, this.#on, this.#sets, "updateJoin(...)"));
+    return [w.statement()];
+  }
+}
+
+/**
+ * 联表的 DELETE：WHERE 可以引用连接的表，由方言包的 `deleteJoin` 开始：
+ * `deleteJoin(Card, User, (c, u) => u.id.eq(c.userId)).where((c, u) => u.status.eq("LEFT"))`。
+ * PostgreSQL 写成 `DELETE ... USING`，MySQL 写成 `DELETE 别名 FROM ... JOIN`，HANA 写成 `WHERE EXISTS` 子查询。
+ * 被改表有 `@logicDelete` 列时改写成联表 UPDATE，`.physically()` 才真正删除。其余规则同 {@link JoinUpdate}。
+ */
+export class JoinDelete<T, S> extends Write {
+  readonly #target: Target<T>;
+  readonly #source: Ref<S>;
+  readonly #on: Cond;
+  /** 是否真正删除；false 时有 `@logicDelete` 列的表改写成 UPDATE。 */
+  readonly #physical: boolean;
+
+  /** 由 {@link JoinDelete.of} 和各修改方法调用。 */
+  constructor(target: Target<T>, source: Ref<S>, on: Cond, physical: boolean) {
+    super();
+    this.#target = target;
+    this.#source = source;
+    this.#on = on;
+    this.#physical = physical;
+  }
+
+  /** 从 table 删除，连接 joined；由方言包的 `deleteJoin` 调用。 */
+  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): JoinDelete<T, S> {
+    const target = Target.of(table);
+    const source = createRef(tableSource(joined));
+    return new JoinDelete(target, source, joinCondition(target, source, on), false);
+  }
+
+  /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
+  where(cond: (t: Ref<T>, s: Ref<S>) => Cond): JoinDelete<T, S> {
+    return new JoinDelete(withCondition(this.#target, cond(this.#target.ref, this.#source)), this.#source, this.#on, this.#physical);
+  }
+
+  /** 表上有 `@logicDelete` 列时仍然真正删除。 */
+  physically(): JoinDelete<T, S> {
+    return new JoinDelete(this.#target, this.#source, this.#on, true);
+  }
+
+  /** 两张表都不套用全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器。 */
+  unfiltered(...names: string[]): JoinDelete<T, S> {
+    return new JoinDelete(this.#target.with({ filtering: unfilteredBy(this.#target.filtering, names) }), this.#source, this.#on, this.#physical);
+  }
+
+  /** 两张表都不加逻辑删除的条件。 */
+  withDeleted(): JoinDelete<T, S> {
+    return new JoinDelete(this.#target.with({ filtering: { ...this.#target.filtering, logicDelete: false } }), this.#source, this.#on, this.#physical);
+  }
+
+  /** 不套用数据库实例的写入填充；只影响逻辑删除改写成的 UPDATE。 */
+  withoutFills(): JoinDelete<T, S> {
+    return new JoinDelete(this.#target.with({ fills: false }), this.#source, this.#on, this.#physical);
+  }
+
+  /** 允许没有 where 条件，即删除所有连接得上的行。 */
+  all(): JoinDelete<T, S> {
+    return new JoinDelete(this.#target.with({ everyRow: true }), this.#source, this.#on, this.#physical);
+  }
+
+  /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError。 */
+  expect(rows: number): JoinDelete<T, S> {
+    return new JoinDelete(this.#target.expect(rows), this.#source, this.#on, this.#physical);
+  }
+
+  /** `expect(n)` 写明的行数。 */
+  get expected(): number | undefined {
+    return this.#target.expected;
+  }
+
+  /** 一条联表 DELETE，或逻辑删除改写成的联表 UPDATE，由方言写出。 */
+  render(writer: () => SqlWriter): Rendered[] {
+    const w = writer();
+    const logic = entityMeta(this.#target.table).writes.logicDelete;
+    if (logic === undefined || this.#physical) {
+      w.dialect.joinDelete(w, joinParts(w, this.#target, this.#source, this.#on, [], "deleteJoin(...)"));
+    } else {
+      const column = (this.#target.ref as unknown as Record<string, Column<unknown>>)[logic.property]!;
+      const deleted = logic.timestamp ? (currentTimestamp() as Expr<unknown>) : bindValue(column.type, deletedValue(logic));
+      w.dialect.joinUpdate(w, joinParts(w, this.#target, this.#source, this.#on, [[column, deleted]], "deleteJoin(...)"));
+    }
+    return [w.statement()];
+  }
+}
+
+/** 用两张表的引用算出连接条件。 */
+function joinCondition<T, S>(target: Target<T>, source: Ref<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): Cond {
+  const c = on(target.ref, source);
+  if (c == null) throw new TypeError("A condition is missing; return Cond.EMPTY for no condition");
+  if (c.isEmpty) throw new Error("A join needs a condition");
+  return c;
+}
+
+/** 给 target 追加一个已经算好的条件。 */
+function withCondition<T>(target: Target<T>, c: Cond): Target<T> {
+  if (c == null) throw new TypeError("A condition is missing; return Cond.EMPTY for no condition");
+  return target.with({ conditions: [...target.conditions, c] });
+}
+
+/**
+ * 交给方言的各部分：被改表的过滤条件和 where 合在一起，连接表的过滤条件并进连接条件，SET 里再加上更新时的填充（覆盖同名的项）。
+ * 没有 where 条件又没有 all() 时报错；条件或值用到导航关系时报错。statement 用于报错。
+ */
+function joinParts(
+  w: SqlWriter,
+  target: Target<unknown>,
+  source: Ref<unknown>,
+  on: Cond,
+  assignments: readonly (readonly [Column<unknown>, Expr<unknown>])[],
+  statement: string,
+): JoinWrite {
+  const own = all(...target.conditions);
+  if (own.isEmpty && !target.everyRow) {
+    throw new Error(`${statement} without where(...) would touch every joined row of ${target.table.name}; add .all() if that is intended`);
+  }
+  const sets = [...assignments];
+  for (const fill of target.fills ? fillsFor(w, target.ref as object, false) : []) {
+    const i = sets.findIndex(([c]) => c.column.name === fill[0].column.name);
+    if (i >= 0) sets.splice(i, 1);
+    sets.push(fill);
+  }
+  const owner = ownerOf(target.ref as object);
+  const sourceOwner = ownerOf(source as object);
+  if (implicitJoins(w, [owner, sourceOwner], [...sets.map(([, v]) => v), own, on]).size > 0) {
+    throw new Error(`${statement} cannot follow relations; join the table you need instead`);
+  }
+  const filters = target.filters(w);
+  const where = all(...conditionsFor(filters, target.ref as object), own);
+  const meta = entityMeta(target.table);
+  const name = (c: Column<unknown>): Renderable => ({ render: (x: SqlWriter) => void x.identifier(columnName(c.column as PropertyMeta, x.naming)) });
+  const keys = meta.writes.ids.map((id) => (target.ref as Record<string, Column<unknown>>)[id]!);
+  return {
+    target: { render: (x) => owner.renderSource(x) },
+    targetAlias: { render: (x) => void x.alias(owner.alias(x)) },
+    table: { render: (x) => tableName(x, meta) },
+    source: { render: (x) => sourceOwner.renderSource(x) },
+    on: all(on, ...conditionsFor(filters, source as object)),
+    where: where.isEmpty ? undefined : where,
+    columns: sets.map(([c]) => name(c)),
+    targetColumns: sets.map(([c]) => c),
+    values: sets.map(([, v]) => v),
+    keys: keys.map(name),
+    keyColumns: keys,
+  };
 }

@@ -7,8 +7,13 @@ import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
+import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.write.JoinDelete;
+import org.dpdns.zerodep.query.write.JoinUpdate;
 
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
@@ -71,5 +76,17 @@ public final class Mysql extends Sql {
     @SafeVarargs
     public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
         return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
+    }
+
+    // ---------- 联表写入 ----------
+
+    /** 联表更新：SET 和 WHERE 可以引用 joined 表，写成 UPDATE ... JOIN ... SET；见 {@link JoinUpdate}。 */
+    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+        return JoinUpdate.of(table, joined, on);
+    }
+
+    /** 联表删除：WHERE 可以引用 joined 表，写成 DELETE 别名 FROM ... JOIN；见 {@link JoinDelete}。 */
+    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+        return JoinDelete.of(table, joined, on);
     }
 }

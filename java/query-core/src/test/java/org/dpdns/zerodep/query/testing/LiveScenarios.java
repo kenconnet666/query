@@ -712,6 +712,23 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 联表更新与删除在实库上按连接得上的行改动() {
+        db.execute(deleteFrom(Writes.Note.class).all());
+        db.execute(deleteFrom(Writes.Doc.class).all());
+        db.execute(Writes.insertNotes());
+        db.execute(insertInto(Writes.Doc.class).values(new Writes.DocRow("N1", "synced", 2), new Writes.DocRow("N2", "gone", 1)));
+        assertEquals(1, db.execute(Writes.syncNoteTitles()));
+        assertEquals(1, db.execute(Writes.deleteNotesOfDocs("gone")));
+        assertEquals(List.of("N1:synced"), db.list(from(Writes.Note.class).select(n -> cols(n.id(), n.title()))).stream()
+            .map(r -> r.get("id") + ":" + r.get("title")).toList());
+        db.execute(deleteFrom(Writes.Ticket.class).physically().unfiltered().all());
+        db.execute(insertInto(Writes.Ticket.class).values(new Writes.TicketRow("N2", "t")));
+        assertEquals(1, db.execute(Writes.deleteTicketsOfDocs("gone")));
+        assertEquals(0, db.count(from(Writes.Ticket.class).select(t -> t.id())), "the ticket is deleted logically");
+        assertEquals(1, db.count(from(Writes.Ticket.class).withDeleted().select(t -> t.id())));
+    }
+
+    @Test
     void 逻辑删除记毫秒数时同一个编码删除后可以再建() {
         db.execute(deleteFrom(Writes.Code.class).physically().unfiltered().all());
         db.execute(insertInto(Writes.Code.class).values(new Writes.CodeRow("C1", "A")));

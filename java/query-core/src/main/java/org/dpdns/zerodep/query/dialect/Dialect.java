@@ -194,6 +194,16 @@ public abstract class Dialect {
         throw new UnsupportedOperationException(name() + " has no insert-or-update statement; register one in its dialect");
     }
 
+    /** 写出联表的 UPDATE；只有方言包实现，见 {@link JoinWrite}。 */
+    public void joinUpdate(SqlWriter w, JoinWrite update) {
+        throw new UnsupportedOperationException(name() + " has no join update; use a subquery in where(...) instead");
+    }
+
+    /** 写出联表的 DELETE；只有方言包实现，见 {@link JoinWrite}。 */
+    public void joinDelete(SqlWriter w, JoinWrite delete) {
+        throw new UnsupportedOperationException(name() + " has no join delete; use a subquery in where(...) instead");
+    }
+
     /** 写出列名清单 {@code ("A", "B")}。 */
     protected static void columnList(SqlWriter w, List<String> columns) {
         w.sql("(");

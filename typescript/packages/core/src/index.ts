@@ -57,7 +57,9 @@ export {
   type FunctionRenderer,
   columnList,
   doNothing,
+  type JoinWrite,
   type Lock,
+  renderOnAndWhere,
   type Upsert,
 } from "./sql/dialect.js";
 export {
@@ -203,4 +205,4 @@ export {
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";
-export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";
+export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Fill, type InsertRow } from "./write/write.js";

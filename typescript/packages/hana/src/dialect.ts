@@ -1,4 +1,4 @@
-import { type CastType, type Lock, type SqlWriter, type Upsert, columnList, Dialect, doNothing } from "@zerodep-dev/query-core";
+import { type CastType, type JoinWrite, type Lock, type SqlWriter, type Upsert, columnList, Dialect, doNothing, renderOnAndWhere } from "@zerodep-dev/query-core";
 
 /** SAP HANA 2.0。未加引号的标识符折叠为大写。 */
 export class HanaDialect extends Dialect {
@@ -11,6 +11,42 @@ export class HanaDialect extends Dialect {
    * `MERGE INTO 表 AS T USING (SELECT ? AS 列, ... FROM DUMMY) AS S ON (T.键 = S.键 ...) WHEN MATCHED THEN UPDATE SET T.列 = S.列
    * WHEN NOT MATCHED THEN INSERT (列) VALUES (S.列)`；冲突了什么也不做时省略 WHEN MATCHED。值只在 USING 的 SELECT 里写一次。
    */
+  /**
+   * HANA 的 `UPDATE ... FROM` 遇到一行匹配多行时会多次赋值、结果取决于顺序，所以写成按主键对上行的 MERGE：
+   * `MERGE INTO 表 AS T USING (SELECT 主键 AS "k0", 新值 AS "v0" FROM 表 别名 JOIN 连接表 ... WHERE ...) AS S ON (T.主键 = S."k0")
+   * WHEN MATCHED THEN UPDATE SET T.列 = S."v0"`。一行匹配多行时报 689，整条语句不生效。被改表必须有 `@id`。
+   */
+  override joinUpdate(w: SqlWriter, u: JoinWrite): void {
+    if (u.keys.length === 0) throw new Error("HANA writes a join update as MERGE on the primary key; declare @id on the updated table");
+    const target = w.aliasFor({}, "target");
+    const source = w.aliasFor({}, "source");
+    w.sql("MERGE INTO ").render(u.table).sql(" AS ").alias(target).sql("\nUSING (SELECT ");
+    u.keyColumns.forEach((k, i) => {
+      if (i > 0) w.sql(", ");
+      w.render(k).sql(" AS ").identifier(`k${i}`);
+    });
+    u.values.forEach((v, i) => void w.sql(", ").render(v).sql(" AS ").identifier(`v${i}`));
+    w.sql("\nFROM ").render(u.target).sql("\nJOIN ").render(u.source).sql(" ON ").render(u.on);
+    if (u.where !== undefined) w.sql("\nWHERE ").render(u.where);
+    w.sql(") AS ").alias(source).sql(" ON (");
+    u.keys.forEach((k, i) => {
+      if (i > 0) w.sql(" AND ");
+      w.alias(target).sql(".").render(k).sql(" = ").alias(source).sql(".").identifier(`k${i}`);
+    });
+    w.sql(")\nWHEN MATCHED THEN UPDATE SET ");
+    u.columns.forEach((c, i) => {
+      if (i > 0) w.sql(", ");
+      w.alias(target).sql(".").render(c).sql(" = ").alias(source).sql(".").identifier(`v${i}`);
+    });
+  }
+
+  /** `DELETE FROM 表 别名 WHERE EXISTS (SELECT 1 FROM 连接表 别名 WHERE 连接条件 AND ...)`。 */
+  override joinDelete(w: SqlWriter, d: JoinWrite): void {
+    w.sql("DELETE FROM ").render(d.target).sql("\nWHERE EXISTS (SELECT 1\nFROM ").render(d.source).sql("\nWHERE ");
+    renderOnAndWhere(w, d);
+    w.sql(")");
+  }
+
   override upsert(w: SqlWriter, u: Upsert): void {
     const target = w.aliasFor({}, "target");
     const source = w.aliasFor({}, "source");
