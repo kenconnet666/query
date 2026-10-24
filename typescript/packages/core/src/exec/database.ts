@@ -3,6 +3,7 @@ import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata
 import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
 import { integer, typeOf, untyped, type SqlType } from "../schema/types.js";
 import { SchemaTools } from "../ddl/tools.js";
+import { Migrator, type Migration } from "../ddl/migrator.js";
 import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 
@@ -554,9 +555,30 @@ export abstract class Database {
     return new SchemaTools(syntax, this.naming, this.#settings.schema ?? ((s: string) => s), (sql, ...parameters) => this.#catalog(sql, parameters), (statements) => this.#runStatements(statements, syntax.transactionalDdl));
   }
 
+  /**
+   * 版本化迁移的执行器：`await db.migrator([v1, v2]).migrateToLatest()`，见 {@link Migrator}。
+   * 适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
+   */
+  migrator(migrations: readonly Migration[]): Migrator {
+    return new Migrator(migrations, this.dialect, this.dialect.schemaSyntax, {
+      query: (sql, ...parameters) => this.#catalog(sql, parameters),
+      update: async (sql, ...parameters) => (await this.#execute(this.#native(sql, parameters), undefined)).affected ?? 0,
+      run: (statements) => this.#runStatements(statements, false),
+      render: (write) => this.render(write),
+      execute: (write) => this.execute(write),
+      transaction: (work) => this.transaction(work),
+    });
+  }
+
+  /** 手写的 SQL：问号按顺序换成方言的占位符，参数按值推断类型。 */
+  #native(sql: string, parameters: readonly unknown[]): Rendered {
+    let n = 0;
+    return new Rendered(sql.replace(/\?/g, () => this.dialect.placeholder(++n)), parameters.map((value) => ({ value, type: typeOf(value) })), this.dialect);
+  }
+
   /** 系统目录查询：每行是小写列标签到值的映射。 */
   async #catalog(sql: string, parameters: readonly unknown[]): Promise<Record<string, unknown>[]> {
-    const result = await this.#execute(new Rendered(sql, parameters.map((value) => ({ value, type: typeOf(value) })), this.dialect), undefined);
+    const result = await this.#execute(this.#native(sql, parameters), undefined);
     return result.rows.map((row) => Object.fromEntries(result.columns.map((c, i) => [c.toLowerCase(), row[i]])));
   }
 

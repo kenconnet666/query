@@ -1,4 +1,4 @@
-import { bigint, column, date, decimal, generated, id, table, text } from "@zerodep-dev/query-core";
+import { bigint, column, columnType, date, decimal, generated, id, insertInto, integer, migration, namedTable, table, tableBuilder, text } from "@zerodep-dev/query-core";
 
 /**
  * 结构变更的测试表，与 Java 的 testing/Schemas.java 对应：同一张 S_ITEM 的三个版本（初版、安全的变更、有风险的变更），
@@ -86,3 +86,31 @@ export class LipsBroken {
   @column("NO_SUCH") missing!: string;
   @column("LFIMG", date) quantityAsDate!: string;
 }
+
+/** 迁移建的表，供迁移里的数据步骤写入。 */
+@table("M_TASK", { schema: SCHEMA })
+export class MTask {
+  @id @column("ID") id!: string;
+  @column("TITLE") title!: string | null;
+  @column("PRIORITY", integer) priority!: number | null;
+}
+
+/** 第一个迁移：建 M_TASK。 */
+export const CREATE_TASK = migration("1", "create M_TASK", (steps) =>
+  steps.createTable(tableBuilder(SCHEMA, "M_TASK").column("ID", columnType("TEXT", 10)).column("TITLE", columnType("TEXT", 40)).primaryKey("ID").build()),
+);
+
+/** 第二个迁移：加优先级列并写入一行种子数据。 */
+export const ADD_PRIORITY = migration("2", "add PRIORITY", (steps) =>
+  steps
+    .addColumn(namedTable(SCHEMA, "M_TASK"), { name: "PRIORITY", type: columnType("INTEGER"), nullable: true, defaultValue: "0", identity: false, comment: "", previousName: "" })
+    .execute(insertInto(MTask).values({ id: "T1", title: "seed", priority: 5 })),
+);
+
+/** 改过内容的第二个迁移：校验和与已执行的不同。 */
+export const ADD_PRIORITY_CHANGED = migration("2", "add PRIORITY", (steps) =>
+  steps.addColumn(namedTable(SCHEMA, "M_TASK"), { name: "PRIORITY", type: columnType("BIGINT"), nullable: true, defaultValue: "0", identity: false, comment: "", previousName: "" }),
+);
+
+/** 会失败的迁移。 */
+export const BROKEN = migration("3", "broken", (steps) => steps.sql(`UPDATE ${SCHEMA}.NO_SUCH_TABLE SET X = 1`));

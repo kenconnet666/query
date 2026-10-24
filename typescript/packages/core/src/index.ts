@@ -232,3 +232,4 @@ export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, 
 export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef } from "./ddl/model.js";
 export { catalogNumber, catalogText, groupRows, SchemaSyntax, type Catalog } from "./ddl/syntax.js";
 export { SchemaPlan, SchemaTools, type Change, type Risk } from "./ddl/tools.js";
+export { migration, MigrationSteps, Migrator, MIGRATION_HISTORY, MIGRATION_LOCK, namedTable, TableBuilder, tableBuilder, type Applied, type Migration, type MigrationBackend } from "./ddl/migrator.js";

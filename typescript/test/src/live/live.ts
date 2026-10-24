@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { LipsBroken, LipsExternal, SItem, SItemV2, SItemV3, SOwner } from "../fixtures/schemas.js";
+import { ADD_PRIORITY, ADD_PRIORITY_CHANGED, BROKEN, CREATE_TASK, LipsBroken, LipsExternal, MTask, SItem, SItemV2, SItemV3, SOwner } from "../fixtures/schemas.js";
+import { MIGRATION_HISTORY, MIGRATION_LOCK } from "@zerodep-dev/query-core";
 import { after, before, describe, it } from "node:test";
 import {
   caseWhen,
@@ -678,6 +679,27 @@ export function liveScenarios(target: LiveTarget, extra?: (live: () => LiveConte
       assert.ok(done.changes.every((c) => c.risk === "REPORT"), done.toString());
       const back = await db.schema().check(SItem);
       assert.ok(back.changes.some((c) => c.risk === "REPORT" && c.message.includes("NOTE is not declared")), back.toString());
+    });
+
+    it("迁移按版本执行一次且历史与迁移不符时报错", async () => {
+      const { db } = live();
+      for (const t of ["M_TASK", MIGRATION_HISTORY, MIGRATION_LOCK]) await db.sql(`DROP TABLE ${db.dialect.quote("QUERY_IT")}.${db.dialect.quote(t)}`).list().catch(() => undefined);
+      const migrator = db.migrator([CREATE_TASK, ADD_PRIORITY]).historySchema("QUERY_IT");
+      assert.deepEqual([...(await migrator.plan()).keys()], ["1", "2"]);
+      assert.deepEqual(await migrator.migrateToLatest(), ["1", "2"]);
+      assert.deepEqual(await migrator.migrateToLatest(), []);
+      await migrator.verify();
+      assert.deepEqual((await migrator.history()).map((a) => a.status), ["success", "success"]);
+      assert.deepEqual((await db.list(from(MTask).select((m) => ({ id: m.id, title: m.title, priority: m.priority })))).map((r) => `${r.id}:${r.title}:${r.priority}`), ["T1:seed:5"]);
+      await assert.rejects(db.migrator([CREATE_TASK, ADD_PRIORITY_CHANGED]).historySchema("QUERY_IT").verify(), /checksum differs/);
+      const withBroken = db.migrator([CREATE_TASK, ADD_PRIORITY, BROKEN]).historySchema("QUERY_IT");
+      await assert.rejects(withBroken.migrateToLatest());
+      await assert.rejects(withBroken.verify(), /3 is failed/);
+      await withBroken.repair("3");
+      assert.deepEqual((await withBroken.pending()).map((m) => m.version), ["3"]);
+      await withBroken.baseline("3");
+      assert.deepEqual(await withBroken.pending(), []);
+      await withBroken.verify();
     });
 
     it("外部表只核对已声明的列", async () => {

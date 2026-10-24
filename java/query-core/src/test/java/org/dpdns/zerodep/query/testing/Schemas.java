@@ -1,11 +1,16 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ForeignKey;
 import org.dpdns.zerodep.query.annotation.Generated;
 import org.dpdns.zerodep.query.annotation.Id;
 import org.dpdns.zerodep.query.annotation.Index;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.ddl.ColumnType;
+import org.dpdns.zerodep.query.ddl.Migration;
+import org.dpdns.zerodep.query.ddl.TableBuilder;
+import org.dpdns.zerodep.query.ddl.TableDef;
 import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 
@@ -120,6 +125,38 @@ public final class Schemas {
         /** 备注。 */
         @Column(value = "NOTE", length = 100) Col<String> note();
     }
+
+    /** 迁移建的表，供迁移里的数据步骤写入。 */
+    @Table(schema = SCHEMA, value = "M_TASK")
+    public interface MTask extends Entity {
+        /** 编号。 */
+        @Id @Column("ID") Col<String> id();
+
+        /** 标题。 */
+        @Column("TITLE") Col<String> title();
+
+        /** 优先级，第二个迁移加上。 */
+        @Column("PRIORITY") Col<Integer> priority();
+    }
+
+    /** M_TASK 的一行。 */
+    public record MTaskRow(String id, String title, Integer priority) { }
+
+    /** 第一个迁移：建 M_TASK。 */
+    public static final Migration CREATE_TASK = Migration.of("1", "create M_TASK", steps -> steps.createTable(TableBuilder.table(SCHEMA, "M_TASK")
+        .column("ID", ColumnType.text(10)).column("TITLE", ColumnType.text(40)).primaryKey("ID").build()));
+
+    /** 第二个迁移：加优先级列并写入一行种子数据。 */
+    public static final Migration ADD_PRIORITY = Migration.of("2", "add PRIORITY", steps -> steps
+        .addColumn(TableBuilder.named(SCHEMA, "M_TASK"), new TableDef.Column("PRIORITY", ColumnType.of(ColumnType.Kind.INTEGER), true, "0", false, "", ""))
+        .execute(Sql.insertInto(MTask.class).values(new MTaskRow("T1", "seed", 5))));
+
+    /** 改过内容的第二个迁移：校验和与已执行的不同。 */
+    public static final Migration ADD_PRIORITY_CHANGED = Migration.of("2", "add PRIORITY", steps -> steps
+        .addColumn(TableBuilder.named(SCHEMA, "M_TASK"), new TableDef.Column("PRIORITY", ColumnType.of(ColumnType.Kind.BIGINT), true, "0", false, "", "")));
+
+    /** 会失败的迁移。 */
+    public static final Migration BROKEN = Migration.of("3", "broken", steps -> steps.sql("UPDATE " + SCHEMA + ".NO_SUCH_TABLE SET X = 1"));
 
     /** 把 LIPS 当作外部表：只核对这两列存在、类型相容。 */
     @Table(schema = SCHEMA, value = "LIPS", external = true)

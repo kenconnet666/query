@@ -726,3 +726,19 @@ export class Item {
 - `@column` 的第三个参数：`length`、`precision` / `scale`、`nullable`、`default`、`lob`、`comment`、`previousName`；外部表写 `@table(name, { external: true })`。
 - `await db.schema().check(Item)`、`await db.schema().plan(Item)`（`statements`、`toSql()`、`await plan.apply()`、`plan.allowDestructive()`）、`db.schema().createTable(Item)`、`await db.schema().read(schema, table)`。
 - 主键列在前，其余列按字段名排序，生成的建表语句与 Java 完全相同。
+
+**版本化迁移**与 Java 版相同：
+
+```ts
+const v1 = migration("2026.10.24.1", "create S_ITEM", (steps) =>
+  steps
+    .createTable(tableBuilder("APP", "S_ITEM").column("ID", columnType("BIGINT")).identity().column("CODE", columnType("TEXT", 20)).notNull().primaryKey("ID").build())
+    .sql("ALTER TABLE APP.S_ITEM ...", HanaDialect) // 只在 HANA 上执行
+    .execute(insertInto(Code).values(seedRows)),
+);
+const migrator = db.migrator([v1, v2]).historySchema("APP");
+await migrator.migrateToLatest();
+await migrator.verify();
+```
+
+`plan()`、`pending()`、`history()`、`baseline(version)`、`repair(version)`、`migrateTo(version)` 都是异步的；手写的 SQL 用 `?` 作占位符，PostgreSQL 上自动换成 `$n`。

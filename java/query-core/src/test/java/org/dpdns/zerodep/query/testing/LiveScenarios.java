@@ -1,5 +1,7 @@
 package org.dpdns.zerodep.query.testing;
 
+import org.dpdns.zerodep.query.ddl.Migration;
+import org.dpdns.zerodep.query.ddl.Migrator;
 import org.dpdns.zerodep.query.ddl.SchemaPlan;
 import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
@@ -630,6 +632,30 @@ public abstract class LiveScenarios {
         assertTrue(done.changes().stream().allMatch(c -> c.risk() == SchemaPlan.Risk.REPORT), done::toString);
         SchemaPlan back = db.schema().check(Schemas.SItem.class);
         assertTrue(back.changes().stream().anyMatch(c -> c.risk() == SchemaPlan.Risk.REPORT && c.message().contains("NOTE is not declared")), back::toString);
+    }
+
+    @Test
+    void 迁移按版本执行一次且历史与迁移不符时报错() throws SQLException {
+        live.execute(List.of("-DROP TABLE " + t("M_TASK"), "-DROP TABLE " + t(Migrator.HISTORY), "-DROP TABLE " + t(Migrator.LOCK)));
+        Migrator migrator = db.migrator(List.of(Schemas.CREATE_TASK, Schemas.ADD_PRIORITY)).historySchema("QUERY_IT");
+        assertEquals(List.of("1", "2"), List.copyOf(migrator.plan().keySet()));
+        assertEquals(List.of("1", "2"), migrator.migrateToLatest());
+        assertEquals(List.of(), migrator.migrateToLatest());
+        migrator.verify();
+        assertEquals(List.of("success", "success"), migrator.history().stream().map(Migrator.Applied::status).toList());
+        assertEquals(List.of("T1:seed:5"), db.list(from(Schemas.MTask.class).select(m -> cols(m.id(), m.title(), m.priority())))
+            .stream().map(r -> r.get("id") + ":" + r.get("title") + ":" + r.get("priority")).toList());
+        var changed = assertThrows(IllegalStateException.class, () -> db.migrator(List.of(Schemas.CREATE_TASK, Schemas.ADD_PRIORITY_CHANGED)).historySchema("QUERY_IT").verify());
+        assertTrue(changed.getMessage().contains("checksum differs"), changed.getMessage());
+        Migrator withBroken = db.migrator(List.of(Schemas.CREATE_TASK, Schemas.ADD_PRIORITY, Schemas.BROKEN)).historySchema("QUERY_IT");
+        assertThrows(IllegalStateException.class, withBroken::migrateToLatest);
+        var failed = assertThrows(IllegalStateException.class, withBroken::verify);
+        assertTrue(failed.getMessage().contains("3 is failed"), failed.getMessage());
+        withBroken.repair("3");
+        assertEquals(List.of("3"), withBroken.pending().stream().map(Migration::version).toList());
+        withBroken.baseline("3");
+        assertEquals(List.of(), withBroken.pending());
+        withBroken.verify();
     }
 
     @Test

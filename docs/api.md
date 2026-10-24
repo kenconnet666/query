@@ -896,3 +896,32 @@ public interface Item extends Entity {
 - **只报告的**，从不生成语句：库里多出来的列和索引、主键或自增不同、外部表的问题。本库不删列。
 
 一条语句执行一次。PostgreSQL 的整个计划在一个事务里执行；MySQL 的每条 DDL 隐式提交，HANA 的 DDL 默认自动提交，中途失败时已执行的语句不会回滚。
+
+### 版本化迁移
+
+```java
+public final class V1 implements Migration {
+    public String version() { return "2026.10.24.1"; }
+    public String description() { return "create S_ITEM"; }
+    public void up(MigrationSteps steps) {
+        steps.createTable(TableBuilder.table("APP", "S_ITEM")
+                .column("ID", ColumnType.of(Kind.BIGINT)).identity()
+                .column("CODE", ColumnType.text(20)).notNull()
+                .primaryKey("ID").index("IX_S_ITEM_CODE", true, "CODE").build())
+            .sql(HanaDialect.class, "ALTER TABLE APP.S_ITEM ...")          // 只在 HANA 上执行
+            .execute(insertInto(Code.class).values(seedRows));             // 数据变更用写语句
+    }
+}
+
+Migrator migrator = db.migrator(List.of(new V1(), new V2())).historySchema("APP");
+migrator.plan();             // 还没执行的迁移各自的语句，不执行
+migrator.migrateToLatest();  // 执行，返回执行了的版本
+migrator.verify();           // 已执行的迁移被改过、历史里有未知的版本、中间有空缺时报错
+```
+
+- 迁移用代码写，一份迁移在三个方言上各自渲染；表结构用 `TableBuilder` 手写，不引用表接口（表接口以后会改，旧迁移的含义不能跟着变）。也可以 `Migration.of(version, description, steps -> ...)`。
+- 按列表顺序执行，每个版本一次，记进历史表 `QUERY_MIGRATION`（版本、说明、语句的 SHA-256、状态、时间）；锁表 `QUERY_MIGRATION_LOCK` 的一行让同时启动的实例互斥（`lockTimeout(...)`，默认一分钟）。
+- PostgreSQL 每个迁移在一个事务里执行，失败时整体回滚。MySQL、HANA 的 DDL 逐条提交，失败的迁移记为 failed，修好数据库后 `repair(version)` 再重新执行；所以一个迁移最好只做一件事。
+- `baseline(version)` 把这个版本之前的迁移记为已执行而不执行，用于接管手工建好的库；`migrateTo(version)` 只执行到这个版本。
+- 只向前，没有回滚迁移；要撤销就再写一个新的迁移。迁移适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
+- 已经在用 Flyway、Liquibase 的项目不必用它：`db.schema().plan(...).toSql()` 生成的脚本交给它们，`check(...)` 在启动时核对。

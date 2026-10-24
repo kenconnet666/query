@@ -1,5 +1,7 @@
 package org.dpdns.zerodep.query.exec;
 
+import org.dpdns.zerodep.query.ddl.Migration;
+import org.dpdns.zerodep.query.ddl.Migrator;
 import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.ddl.SchemaTools;
 import org.dpdns.zerodep.query.dialect.Binding;
@@ -337,6 +339,39 @@ public abstract class Database {
         return new SchemaTools(syntax, settings.naming(), schemas, this::catalogRows, statements -> runStatements(statements, syntax.transactionalDdl()));
     }
 
+    /**
+     * 版本化迁移的执行器：{@code db.migrator(List.of(new V1(), new V2())).migrateToLatest()}，见 {@link Migrator}。
+     * 适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
+     */
+    public Migrator migrator(List<Migration> migrations) {
+        Database db = this;
+        return new Migrator(migrations, dialect, dialect.schemaSyntax(), new Migrator.Backend() {
+            @Override public List<Map<String, Object>> query(String sql, Object... parameters) { return catalogRows(sql, parameters); }
+
+            @Override public long update(String sql, Object... parameters) { return updateRows(sql, parameters); }
+
+            @Override public void run(List<String> statements) { runStatements(statements, false); }
+
+            @Override public List<Rendered> render(Write write) { return db.render(write); }
+
+            @Override public void execute(Write write) { db.execute(write); }
+
+            @Override public <T> T transaction(Supplier<T> work) { return db.transaction(work); }
+        });
+    }
+
+    /** 带 {@code ?} 参数的手写写语句，返回影响的行数。 */
+    long updateRows(String sql, Object... parameters) {
+        return executor.update(List.of(executor.intercept(new Rendered(sql, bindings(parameters), dialect))), null);
+    }
+
+    /** 参数按值的类绑定。 */
+    private static List<Binding> bindings(Object[] parameters) {
+        List<Binding> out = new ArrayList<>();
+        for (Object p : parameters) out.add(new Binding(p, SqlType.of(p.getClass())));
+        return out;
+    }
+
     /** 执行手写的语句（DDL 等），一条一次；transactional 时在一个事务里执行。执行后清空结果缓存。 */
     void runStatements(List<String> statements, boolean transactional) {
         List<Rendered> rendered = statements.stream().map(s -> executor.intercept(new Rendered(s, List.of(), dialect))).toList();
@@ -350,9 +385,7 @@ public abstract class Database {
 
     /** 系统目录查询：带 {@code ?} 参数的 SELECT，每行是小写列标签到值的映射。 */
     List<Map<String, Object>> catalogRows(String sql, Object... parameters) {
-        List<Binding> bindings = new ArrayList<>();
-        for (Object p : parameters) bindings.add(new Binding(p, SqlType.of(p.getClass())));
-        Rendered statement = executor.intercept(new Rendered(sql, bindings, dialect));
+        Rendered statement = executor.intercept(new Rendered(sql, bindings(parameters), dialect));
         return executor.query(statement, rs -> {
             java.sql.ResultSetMetaData meta = rs.getMetaData();
             List<Map<String, Object>> rows = new ArrayList<>();
