@@ -24,9 +24,9 @@ class DynamicTest {
     /** 按物料、单位、交货单前缀汇总数量。 */
     private static Query<Map<String, Object>> totals() {
         return from(Lips.class)
-            .groupBy(l -> keys(l.material(), l.unit(), substring(l.delivery(), 1, 1)))
+            .groupBy(l -> keys(l.material(), l.unit(), l.delivery().substring(1, 1)))
             .orderBy(l -> orders(l.material().asc(), l.unit().asc()))
-            .select(l -> cols(l.material(), l.unit(), substring(l.delivery(), 1, 1).as("prefix"), sum(l.quantity()).as("total")));
+            .select(l -> cols(l.material(), l.unit(), l.delivery().substring(1, 1).as("prefix"), l.quantity().sum().as("total")));
     }
 
     @Test

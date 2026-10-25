@@ -1,3 +1,4 @@
+import type { CalendarDateTime } from "@internationalized/date";
 import {
   all,
   any,
@@ -9,12 +10,9 @@ import {
   many,
   one,
   rowNumber,
-  secondsBetween,
-  sum,
   table,
   timestamp,
   where,
-  type Cond,
   type Many,
   type One,
   type Ref,
@@ -50,8 +48,8 @@ export class ProcInst {
   @column("DEF_ID") defId!: string;
   @column("BUSINESS_KEY") businessKey!: string;
   @column("START_USER") startUser!: string;
-  @column("START_TIME", timestamp) startTime!: string;
-  @column("END_TIME", timestamp) endTime!: string | null;
+  @column("START_TIME", timestamp) startTime!: CalendarDateTime;
+  @column("END_TIME", timestamp) endTime!: CalendarDateTime | null;
   @column("DURATION", integer) duration!: number | null;
 
   /** 所属的流程定义。 */
@@ -69,7 +67,7 @@ export class Task {
   @column("ASSIGNEE") assignee!: string | null;
   @column("PROC_INST_ID") procInstId!: string;
   @column("DEF_ID") defId!: string;
-  @column("CREATE_TIME", timestamp) createTime!: string;
+  @column("CREATE_TIME", timestamp) createTime!: CalendarDateTime;
 
   /** 所属的流程定义。 */
   @one(() => ProcDef, (t, d) => d.id.eq(t.defId)) definition!: One<ProcDef>;
@@ -78,7 +76,10 @@ export class Task {
   @one(() => ProcInst, (t, p) => p.id.eq(t.procInstId)) instance!: One<ProcInst>;
 
   /** 候选人和候选组。 */
-  @many(() => Link, (t, l) => all(l.taskId.eq(t.id), l.kind.eq("candidate"))) candidates!: Many<Link>;
+  @many(() => Link, (t, l) => {
+    l.taskId.eq(t.id);
+    l.kind.eq("candidate");
+  }) candidates!: Many<Link>;
 }
 
 /** 任务的身份链接：候选人（USER_ID）或候选组（GROUP_ID）。 */
@@ -108,8 +109,8 @@ export class HiTask {
   @column("NAME") name!: string;
   @column("ASSIGNEE") assignee!: string;
   @column("PROC_INST_ID") procInstId!: string;
-  @column("START_TIME", timestamp) startTime!: string;
-  @column("END_TIME", timestamp) endTime!: string | null;
+  @column("START_TIME", timestamp) startTime!: CalendarDateTime;
+  @column("END_TIME", timestamp) endTime!: CalendarDateTime | null;
   @column("DURATION", integer) duration!: number | null;
 }
 
@@ -119,7 +120,7 @@ export class HiTask {
 export class TodoSearch {
   @where("eq", "definition.defKey") process?: string;
   @where("contains") name?: string;
-  @where("ge", "createTime") createdFrom?: string;
+  @where("ge", "createTime") createdFrom?: CalendarDateTime;
 }
 
 /**
@@ -128,7 +129,20 @@ export class TodoSearch {
  */
 export function todo(user: string, groups: readonly string[], search: TodoSearch) {
   return from(Task)
-    .where((t) => any(t.assignee.eq(user), all(t.assignee.isNull(), t.candidates.any((l) => any(l.userId.eq(user), l.groupId.in(groups))))))
+    .where((t) =>
+      any(() => {
+        t.assignee.eq(user);
+        all(() => {
+          t.assignee.isNull();
+          t.candidates.any((l) =>
+            any(() => {
+              l.userId.eq(user);
+              l.groupId.in(groups);
+            }),
+          );
+        });
+      }),
+    )
     .where(search)
     .orderBy((t) => [t.createTime.desc(), t.id])
     .select((t) => ({ id: t.id, name: t.name, assignee: t.assignee, process: t.definition.defKey, businessKey: t.instance.businessKey }));
@@ -144,15 +158,22 @@ export function claimable() {
     .select((t) => t.id);
 }
 
-/** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */
-export function variable(p: Ref<ProcInst>, name: string, value: (v: Ref<Variable>) => Cond): Cond {
-  return p.variables.any((v) => all(v.name.eq(name), value(v)));
+/** 某个变量满足条件：变量名相等，值的条件写在 value 里；写进调用处的条件块。 */
+export function variable(p: Ref<ProcInst>, name: string, value: (v: Ref<Variable>) => void): void {
+  p.variables.any((v) => {
+    v.name.eq(name);
+    value(v);
+  });
 }
 
 /** 运行中、金额大于 1000 且部门是 X 的流程实例：每个变量条件一个 EXISTS（Flowable 的写法）。 */
 export function instancesByVariables() {
   return from(ProcInst)
-    .where((p) => all(p.endTime.isNull(), variable(p, "amount", (v) => v.longValue.gt(1000)), variable(p, "dept", (v) => v.textValue.eq("X"))))
+    .where((p) => {
+      p.endTime.isNull();
+      variable(p, "amount", (v) => v.longValue.gt(1000));
+      variable(p, "dept", (v) => v.textValue.eq("X"));
+    })
     .orderBy((p) => p.id)
     .select((p) => p.id);
 }
@@ -161,7 +182,11 @@ export function instancesByVariables() {
 export function instancesByVariablesGrouped() {
   return from(ProcInst)
     .groupJoin((p) => p.variables)
-    .where((p) => all(p.endTime.isNull(), variable(p, "amount", (v) => v.longValue.gt(1000)), variable(p, "dept", (v) => v.textValue.eq("X"))))
+    .where((p) => {
+      p.endTime.isNull();
+      variable(p, "amount", (v) => v.longValue.gt(1000));
+      variable(p, "dept", (v) => v.textValue.eq("X"));
+    })
     .orderBy((p) => p.id)
     .select((p) => p.id);
 }
@@ -169,8 +194,16 @@ export function instancesByVariablesGrouped() {
 /** 同上，每个变量条件连接一次变量表（Activiti 的多别名 JOIN 写法）。 */
 export function instancesByVariablesJoined() {
   return from(ProcInst)
-    .join(Variable, (p, a) => all(a.procInstId.eq(p.id), a.name.eq("amount"), a.longValue.gt(1000)))
-    .join(Variable, (p, _a, d) => all(d.procInstId.eq(p.id), d.name.eq("dept"), d.textValue.eq("X")))
+    .join(Variable, (p, a) => {
+      a.procInstId.eq(p.id);
+      a.name.eq("amount");
+      a.longValue.gt(1000);
+    })
+    .join(Variable, (p, _a, d) => {
+      d.procInstId.eq(p.id);
+      d.name.eq("dept");
+      d.textValue.eq("X");
+    })
     .where((p) => p.endTime.isNull())
     .orderBy((p) => p.id)
     .select((p) => p.id);
@@ -195,7 +228,10 @@ export function latestDefinitionsRanked() {
 /** 已办：某人办完的历史任务，按结束时间倒序。 */
 export function done(user: string) {
   return from(HiTask)
-    .where((h) => all(h.assignee.eq(user), h.endTime.isNotNull()))
+    .where((h) => {
+      h.assignee.eq(user);
+      h.endTime.isNotNull();
+    })
     .orderBy((h) => [h.endTime.desc(), h.id])
     .select((h) => ({ id: h.id, name: h.name, endTime: h.endTime, duration: h.duration }));
 }
@@ -219,7 +255,7 @@ export function definitionStatistics() {
 export function elapsed() {
   return from(HiTask)
     .orderBy((h) => h.id)
-    .select((h) => ({ id: h.id, seconds: secondsBetween(h.startTime, h.endTime) }));
+    .select((h) => ({ id: h.id, seconds: h.startTime.secondsBetween(h.endTime) }));
 }
 
 /** 每个办理人办完的任务数和总耗时，以及其中超过一小时的任务数。 */
@@ -231,7 +267,7 @@ export function workload() {
     .select((h) => ({
       assignee: h.assignee,
       tasks: count(),
-      totalDuration: sum(h.duration),
-      slow: count().filter(h.duration.gt(3_600_000)),
+      totalDuration: h.duration.sum(),
+      slow: count().filter(() => h.duration.gt(3_600_000)),
     }));
 }

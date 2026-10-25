@@ -1,6 +1,7 @@
+import { parseDateTime } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { before, it } from "node:test";
-import { all, any, count, forUpdate, from, insertInto, rowNumber, secondsBetween, sum, type Cond, type Ref } from "@zerodep-dev/query-core";
+import { all, any, count, forUpdate, from, insertInto, rowNumber, type Ref } from "@zerodep-dev/query-core";
 import { HiTask, Link, ProcDef, ProcInst, Task, TodoSearch, Variable } from "../../fixtures/workflow.js";
 import { liveSuite } from "../support/live.js";
 
@@ -35,11 +36,10 @@ liveSuite("流程引擎的读查询", (live) => {
     await db.execute(insertInto(ProcDef).values({ id: "D1", defKey: "leave", name: "Leave", version: 1 }, { id: "D2", defKey: "leave", name: "Leave", version: 2 }, { id: "D3", defKey: "expense", name: "Expense", version: 1 }));
     await db.execute(
       insertInto(ProcInst).values(
-        { id: "P1", defId: "D2", businessKey: "BK-1", startUser: "alice", startTime: "2026-01-10 09:00:00", endTime: null, duration: null },
-        { id: "P2", defId: "D2", businessKey: "BK-2", startUser: "bob", startTime: "2026-01-11 09:00:00", endTime: null, duration: null },
-        { id: "P3", defId: "D3", businessKey: "BK-3", startUser: "alice", startTime: "2026-01-05 09:00:00", endTime: "2026-01-12 10:00:00", duration: 7_200_000 },
-        { id: "P4", defId: "D1", businessKey: "BK-4", startUser: "alice", startTime: "2025-12-01 09:00:00", endTime: "2025-12-01 10:00:00", duration: 3_600_000 },
-      ),
+        { id: "P1", defId: "D2", businessKey: "BK-1", startUser: "alice", startTime: parseDateTime("2026-01-10T09:00:00"), endTime: null, duration: null },
+        { id: "P2", defId: "D2", businessKey: "BK-2", startUser: "bob", startTime: parseDateTime("2026-01-11T09:00:00"), endTime: null, duration: null },
+        { id: "P3", defId: "D3", businessKey: "BK-3", startUser: "alice", startTime: parseDateTime("2026-01-05T09:00:00"), endTime: parseDateTime("2026-01-12T10:00:00"), duration: 7_200_000 },
+        { id: "P4", defId: "D1", businessKey: "BK-4", startUser: "alice", startTime: parseDateTime("2025-12-01T09:00:00"), endTime: parseDateTime("2025-12-01T10:00:00"), duration: 3_600_000 }),
     );
     await db.execute(
       insertInto(Variable).values(
@@ -48,16 +48,14 @@ liveSuite("流程引擎的读查询", (live) => {
         { id: "V3", procInstId: "P2", name: "amount", textValue: null, longValue: 500 },
         { id: "V4", procInstId: "P2", name: "dept", textValue: "X", longValue: null },
         { id: "V5", procInstId: "P3", name: "amount", textValue: null, longValue: 2000 },
-        { id: "V6", procInstId: "P3", name: "dept", textValue: "Y", longValue: null },
-      ),
+        { id: "V6", procInstId: "P3", name: "dept", textValue: "Y", longValue: null }),
     );
     await db.execute(
       insertInto(Task).values(
-        { id: "T1", name: "approve", assignee: null, procInstId: "P1", defId: "D2", createTime: "2026-01-10 09:00:00" },
-        { id: "T2", name: "approve", assignee: "alice", procInstId: "P2", defId: "D2", createTime: "2026-01-11 09:00:00" },
-        { id: "T3", name: "review", assignee: null, procInstId: "P2", defId: "D2", createTime: "2026-01-11 10:00:00" },
-        { id: "T4", name: "pay", assignee: "carol", procInstId: "P1", defId: "D2", createTime: "2026-01-10 11:00:00" },
-      ),
+        { id: "T1", name: "approve", assignee: null, procInstId: "P1", defId: "D2", createTime: parseDateTime("2026-01-10T09:00:00") },
+        { id: "T2", name: "approve", assignee: "alice", procInstId: "P2", defId: "D2", createTime: parseDateTime("2026-01-11T09:00:00") },
+        { id: "T3", name: "review", assignee: null, procInstId: "P2", defId: "D2", createTime: parseDateTime("2026-01-11T10:00:00") },
+        { id: "T4", name: "pay", assignee: "carol", procInstId: "P1", defId: "D2", createTime: parseDateTime("2026-01-10T11:00:00") }),
     );
     await db.execute(
       insertInto(Link).values(
@@ -65,16 +63,14 @@ liveSuite("流程引擎的读查询", (live) => {
         { id: "L2", taskId: "T1", kind: "candidate", userId: null, groupId: "managers" },
         { id: "L3", taskId: "T3", kind: "candidate", userId: null, groupId: "finance" },
         { id: "L4", taskId: "T4", kind: "candidate", userId: "alice", groupId: null },
-        { id: "L5", taskId: "T3", kind: "participant", userId: "alice", groupId: null },
-      ),
+        { id: "L5", taskId: "T3", kind: "participant", userId: "alice", groupId: null }),
     );
     await db.execute(
       insertInto(HiTask).values(
-        { id: "H1", name: "approve", assignee: "alice", procInstId: "P3", startTime: "2026-01-05 09:00:00", endTime: "2026-01-11 09:00:00", duration: 3_600_000 },
-        { id: "H2", name: "pay", assignee: "alice", procInstId: "P3", startTime: "2026-01-11 09:00:00", endTime: "2026-01-12 10:00:00", duration: 5_400_000 },
-        { id: "H3", name: "approve", assignee: "bob", procInstId: "P4", startTime: "2025-12-01 09:00:00", endTime: "2025-12-01 09:10:00", duration: 600_000 },
-        { id: "H4", name: "approve", assignee: "alice", procInstId: "P1", startTime: "2026-01-10 09:00:00", endTime: null, duration: null },
-      ),
+        { id: "H1", name: "approve", assignee: "alice", procInstId: "P3", startTime: parseDateTime("2026-01-05T09:00:00"), endTime: parseDateTime("2026-01-11T09:00:00"), duration: 3_600_000 },
+        { id: "H2", name: "pay", assignee: "alice", procInstId: "P3", startTime: parseDateTime("2026-01-11T09:00:00"), endTime: parseDateTime("2026-01-12T10:00:00"), duration: 5_400_000 },
+        { id: "H3", name: "approve", assignee: "bob", procInstId: "P4", startTime: parseDateTime("2025-12-01T09:00:00"), endTime: parseDateTime("2025-12-01T09:10:00"), duration: 600_000 },
+        { id: "H4", name: "approve", assignee: "alice", procInstId: "P1", startTime: parseDateTime("2026-01-10T09:00:00"), endTime: null, duration: null }),
     );
   });
 
@@ -84,7 +80,16 @@ liveSuite("流程引擎的读查询", (live) => {
    */
   const todo = (user: string, groups: readonly string[], search: TodoSearch) =>
     from(Task)
-      .where((t) => any(t.assignee.eq(user), all(t.assignee.isNull(), t.candidates.any((l) => any(l.userId.eq(user), l.groupId.in(groups))))))
+      .where((t) => any(() => {
+        t.assignee.eq(user);
+        all(() => {
+          t.assignee.isNull();
+          t.candidates.any((l) => any(() => {
+            l.userId.eq(user);
+            l.groupId.in(groups);
+          }));
+        });
+      }))
       .where(search)
       .orderBy((t) => [t.createTime.desc(), t.id])
       .select((t) => ({ id: t.id, name: t.name, assignee: t.assignee, process: t.definition.defKey, businessKey: t.instance.businessKey }));
@@ -93,29 +98,49 @@ liveSuite("流程引擎的读查询", (live) => {
     const ids = (rows: readonly { id: string; process: string | null; businessKey: string | null }[]) => rows.map((r) => `${r.id}/${r.process}/${r.businessKey}`);
     assert.deepEqual(ids(await live.db.list(todo("alice", ["managers"], new TodoSearch()))), ["T2/leave/BK-2", "T1/leave/BK-1"], "T2 由 alice 办理；T1 没有办理人、候选组 managers；T4 虽然候选人有 alice，但已经由 carol 办理");
     assert.deepEqual(ids(await live.db.list(todo("bob", ["finance"], new TodoSearch()))), ["T3/leave/BK-2", "T1/leave/BK-1"]);
-    const search = Object.assign(new TodoSearch(), { process: "leave", name: "app", createdFrom: "2026-01-11 00:00:00" });
+    const search = Object.assign(new TodoSearch(), { process: "leave", name: "app", createdFrom: parseDateTime("2026-01-11T00:00:00") });
     assert.deepEqual(ids(await live.db.list(todo("alice", ["managers"], search))), ["T2/leave/BK-2"], "流程 leave、名称含 app、1 月 11 日以后创建");
     const page = await live.db.page(todo("bob", ["finance"], new TodoSearch()), 1, 1);
     assert.deepEqual([page.total, page.rows.length], [2, 1]);
   });
 
-  /** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */
-  const variable = (p: Ref<ProcInst>, name: string, value: (v: Ref<Variable>) => Cond): Cond => p.variables.any((v) => all(v.name.eq(name), value(v)));
+  /** 某个变量满足条件：变量名相等，值的条件写在 value 里；写进调用处的条件块。 */
+  const variable = (p: Ref<ProcInst>, name: string, value: (v: Ref<Variable>) => void): void =>
+    p.variables.any((v) => {
+      v.name.eq(name);
+      value(v);
+    });
 
   it("按变量筛选实例的三种写法结果相同", async () => {
     // 运行中、金额大于 1000 且部门是 X 的实例只有 P1（P2 金额 500，P3 已结束）。
     const exists = from(ProcInst) // 每个变量条件一个 EXISTS（Flowable 的写法）
-      .where((p) => all(p.endTime.isNull(), variable(p, "amount", (v) => v.longValue.gt(1000)), variable(p, "dept", (v) => v.textValue.eq("X"))))
+      .where((p) => {
+        p.endTime.isNull();
+        variable(p, "amount", (v) => v.longValue.gt(1000));
+        variable(p, "dept", (v) => v.textValue.eq("X"));
+      })
       .orderBy((p) => p.id)
       .select((p) => p.id);
     const grouped = from(ProcInst) // 变量条件合成一个按实例分组的派生表
       .groupJoin((p) => p.variables)
-      .where((p) => all(p.endTime.isNull(), variable(p, "amount", (v) => v.longValue.gt(1000)), variable(p, "dept", (v) => v.textValue.eq("X"))))
+      .where((p) => {
+        p.endTime.isNull();
+        variable(p, "amount", (v) => v.longValue.gt(1000));
+        variable(p, "dept", (v) => v.textValue.eq("X"));
+      })
       .orderBy((p) => p.id)
       .select((p) => p.id);
     const joined = from(ProcInst) // 每个变量条件连接一次变量表（Activiti 的多别名 JOIN 写法）
-      .join(Variable, (p, a) => all(a.procInstId.eq(p.id), a.name.eq("amount"), a.longValue.gt(1000)))
-      .join(Variable, (p, _a, d) => all(d.procInstId.eq(p.id), d.name.eq("dept"), d.textValue.eq("X")))
+      .join(Variable, (p, a) => {
+        a.procInstId.eq(p.id);
+        a.name.eq("amount");
+        a.longValue.gt(1000);
+      })
+      .join(Variable, (p, _a, d) => {
+        d.procInstId.eq(p.id);
+        d.name.eq("dept");
+        d.textValue.eq("X");
+      })
       .where((p) => p.endTime.isNull())
       .orderBy((p) => p.id)
       .select((p) => p.id);
@@ -139,7 +164,10 @@ liveSuite("流程引擎的读查询", (live) => {
     // 已办：alice 办完的历史任务，按结束时间倒序。
     const done = await live.db.list(
       from(HiTask)
-        .where((h) => all(h.assignee.eq("alice"), h.endTime.isNotNull()))
+        .where((h) => {
+          h.assignee.eq("alice");
+          h.endTime.isNotNull();
+        })
         .orderBy((h) => [h.endTime.desc(), h.id])
         .select((h) => ({ id: h.id, name: h.name, endTime: h.endTime, duration: h.duration })),
     );
@@ -164,7 +192,7 @@ liveSuite("流程引擎的读查询", (live) => {
       "D3:expense:1:0:1:7200000",
     ]);
     // 耗时在读取时计算（Warm-Flow、SnakerFlow 不存耗时），单位秒；未办完的为空。
-    const elapsed = await live.db.list(from(HiTask).orderBy((h) => h.id).select((h) => ({ id: h.id, seconds: secondsBetween(h.startTime, h.endTime) })));
+    const elapsed = await live.db.list(from(HiTask).orderBy((h) => h.id).select((h) => ({ id: h.id, seconds: h.startTime.secondsBetween(h.endTime) })));
     assert.deepEqual(elapsed.map((r) => `${r.id}:${r.seconds}`), ["H1:518400", "H2:90000", "H3:600", "H4:null"]);
     // 每个办理人办完的任务数和总耗时，以及其中超过一小时的任务数。
     const workload = await live.db.list(
@@ -172,7 +200,7 @@ liveSuite("流程引擎的读查询", (live) => {
         .where((h) => h.endTime.isNotNull())
         .groupBy((h) => h.assignee)
         .orderBy((h) => h.assignee)
-        .select((h) => ({ assignee: h.assignee, tasks: count(), totalDuration: sum(h.duration), slow: count().filter(h.duration.gt(3_600_000)) })),
+        .select((h) => ({ assignee: h.assignee, tasks: count(), totalDuration: h.duration.sum(), slow: count().filter(() => h.duration.gt(3_600_000)) })),
     );
     assert.deepEqual(workload.map((r) => `${r.assignee}:${r.tasks}:${r.totalDuration}:${r.slow}`), ["alice:2:9000000:1", "bob:1:600000:0"]);
   });

@@ -2,6 +2,7 @@ package org.dpdns.zerodep.query.select;
 
 import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
 
 import java.math.BigDecimal;
@@ -78,18 +79,19 @@ public final class Children<C> implements Selection<List<C>> {
     /** 一批父键对应的子查询：单列键用 IN，多列键用 (a = ? AND b = ?) OR ...；每行映射成 {子行, 各键}。 */
     @SuppressWarnings("unchecked")
     private Query<Object[]> query(List<List<Object>> batch) {
-        Cond match;
-        if (keys.size() == 1) {
-            match = ((Expr<Object>) keys.get(0)).in(batch.stream().map(t -> t.get(0)).toList());
-        } else {
-            List<Cond> any = new ArrayList<>();
-            for (List<Object> t : batch) {
-                List<Cond> each = new ArrayList<>();
-                for (int i = 0; i < keys.size(); i++) each.add(((Expr<Object>) keys.get(i)).eq(t.get(i)));
-                any.add(Sql.all(each));
+        Cond match = Conditions.collect(() -> {
+            if (keys.size() == 1) {
+                ((Expr<Object>) keys.get(0)).in(batch.stream().map(t -> t.get(0)).toList());
+                return;
             }
-            match = Sql.any(any);
-        }
+            Sql.any(() -> {
+                for (List<Object> t : batch) {
+                    Sql.all(() -> {
+                        for (int i = 0; i < keys.size(); i++) ((Expr<Object>) keys.get(i)).eq(t.get(i));
+                    });
+                }
+            });
+        });
         Selection<?>[] parts = new Selection<?>[keys.size() + 1];
         parts[0] = projection;
         for (int i = 0; i < keys.size(); i++) parts[i + 1] = keys.get(i);

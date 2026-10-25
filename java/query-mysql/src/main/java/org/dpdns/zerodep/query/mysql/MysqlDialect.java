@@ -146,7 +146,7 @@ public class MysqlDialect extends Dialect {
     }
 
     /** CAST 的目标类型：文本用 CHAR，整数用 SIGNED，时间戳用 DATETIME(6)；MySQL 不能 CAST 成 BOOLEAN。 */
-    @Override public String castType(CastType<?> type) {
+    @Override public String castType(CastType<?, ?> type) {
         return switch (type.kind()) {
             case TEXT -> "CHAR(" + type.length() + ")";
             case INTEGER, BIGINT -> "SIGNED";

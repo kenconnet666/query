@@ -1,6 +1,7 @@
+import { parseDateTime } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { before, it } from "node:test";
-import { all, deleteFrom, filter, from, insertInto, JoinDelete, JoinUpdate, onInsert, onUpdate, plus, QueryExecutionError, UnexpectedRowCountError, update, val } from "@zerodep-dev/query-core";
+import { deleteFrom, filter, from, insertInto, JoinDelete, JoinUpdate, onInsert, onUpdate, QueryExecutionError, UnexpectedRowCountError, update, val } from "@zerodep-dev/query-core";
 import { AppNote, Audited, Code, Doc, Note, Seq, Tenanted, Ticket } from "../../fixtures/writes.js";
 import { liveSuite } from "../support/live.js";
 
@@ -28,8 +29,11 @@ liveSuite("插入、更新与删除", (live) => {
     assert.equal(await live.db.execute(twoNotes()), 2);
     // 比较后更新：只改开着的便签，期望改到一行，改到 0 行（已经被关了）就报错。
     const closeN1 = update(Note)
-      .set((n) => ({ qty: plus(n.qty, val(10)), status: "closed" }))
-      .where((n) => all(n.id.eq("N1"), n.status.eq("open")))
+      .set((n) => ({ qty: n.qty.plus(val(10)), status: "closed" }))
+      .where((n) => {
+        n.id.eq("N1");
+        n.status.eq("open");
+      })
       .expect(1);
     assert.equal(await live.db.execute(closeN1), 1);
     const stale = await live.db.execute(closeN1).then(() => undefined, (e: unknown) => e);
@@ -139,7 +143,7 @@ liveSuite("插入、更新与删除", (live) => {
   it("逻辑删除与审计填充按预期写入和过滤", async () => {
     // 插入时填创建时间，更新时填修改时间和修改人；删除工单是把 DELETED 设为 1 的更新，所以也填修改人。
     const audited = live.database({
-      fills: [onInsert(Audited, (a) => a.createdAt, () => "2026-01-01 08:00:00"), onUpdate(Audited, (a) => a.updatedAt, () => "2026-01-02 09:30:00"), onUpdate(Audited, (a) => a.updatedBy, () => "bob")],
+      fills: [onInsert(Audited, (a) => a.createdAt, () => parseDateTime("2026-01-01T08:00:00")), onUpdate(Audited, (a) => a.updatedAt, () => parseDateTime("2026-01-02T09:30:00")), onUpdate(Audited, (a) => a.updatedBy, () => "bob")],
     });
     await audited.execute(deleteFrom(Ticket).physically().unfiltered().all());
     await audited.execute(insertInto(Ticket).values({ id: "T1", title: "a" }, { id: "T2", title: "b" }));
@@ -152,7 +156,7 @@ liveSuite("插入、更新与删除", (live) => {
     const rows = await audited.list(from(Ticket).unfiltered().orderBy((t) => t.id).select((t) => ({ id: t.id, title: t.title, deleted: t.deleted, createdAt: t.createdAt, updatedBy: t.updatedBy })));
     assert.deepEqual(
       rows.map((r) => `${r.id}:${r.title}:${r.deleted}:${r.createdAt}:${r.updatedBy}`),
-      ["T1:a:1:2026-01-01 08:00:00:bob", "T2:b2:0:2026-01-01 08:00:00:bob", "T3:c2:0:2026-01-01 08:00:00:bob"],
+      ["T1:a:1:2026-01-01T08:00:00:bob", "T2:b2:0:2026-01-01T08:00:00:bob", "T3:c2:0:2026-01-01T08:00:00:bob"],
       "the create time is written once and survives the upsert",
     );
     assert.equal(await audited.execute(deleteFrom(Ticket).physically().unfiltered().where((t) => t.id.eq("T1"))), 1);

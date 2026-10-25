@@ -1,3 +1,5 @@
+import { Decimal } from "decimal.js";
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { deleteFrom, from, update } from "@zerodep-dev/query-core";
@@ -31,7 +33,10 @@ liveSuite("导航关系与对象树", (live) => {
     ]);
     assert.deepEqual(await live.db.list(from(Lips).where((l) => l.mara.materialType.eq("ZMAT")).orderBy((l) => l.delivery).select((l) => l.delivery)), ["D1", "D2", "D3", "D4", "D5"]);
     assert.deepEqual(await live.db.list(from(Lips).where((l) => l.salesData.none()).select((l) => l.delivery)), ["D5"], "S9 没有销售订单数据");
-    assert.deepEqual(await live.db.list(from(Mara).where((m) => m.deliveries.any((l) => l.quantity.gt("2.5")).and(m.deliveries.count().ge(3))).select((m) => m.material)), ["M1"]);
+    assert.deepEqual(await live.db.list(from(Mara).where((m) => {
+      m.deliveries.any((l) => l.quantity.gt(new Decimal("2.5")));
+      m.deliveries.count().ge(3);
+    }).select((m) => m.material)), ["M1"]);
   });
 
   it("子数组与对象树用一条批量查询加载", async () => {
@@ -78,7 +83,7 @@ liveSuite("导航关系与对象树", (live) => {
           material: m.material,
           lines: m.deliveries.count(),
           total: m.deliveries.sum((l) => l.quantity),
-          recent: m.deliveries.where((l) => l.createdOn.ge("2026-01-01")).count(),
+          recent: m.deliveries.where((l) => l.createdOn.ge(parseDate("2026-01-01"))).count(),
         })),
     );
     assert.deepEqual(rows.map((r) => `${r.material}:${r.lines}:${Number(r.total)}:${r.recent}`), ["M1:3:6:3", "M2:2:12:1"]);

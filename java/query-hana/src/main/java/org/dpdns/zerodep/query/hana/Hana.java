@@ -9,9 +9,17 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.ExprNode;
+import org.dpdns.zerodep.query.expr.Family;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.expr.WindowFunction;
+import org.dpdns.zerodep.query.expr.typed.ExprDate;
+import org.dpdns.zerodep.query.expr.typed.ExprDouble;
+import org.dpdns.zerodep.query.expr.typed.ExprInteger;
+import org.dpdns.zerodep.query.expr.typed.ExprNumber;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.scope.From1;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.Query;
@@ -29,14 +37,15 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
 /**
  * HANA 门面：包含 {@link Sql} 的全部能力，外加 HANA 专属的函数和子句。一次静态导入即可使用全部词汇：
  * <pre>{@code import static org.dpdns.zerodep.query.hana.Hana.*;}</pre>
- * HANA 专属函数在其他方言上渲染时会报错。
+ * 有主操作数的 HANA 函数经由视图调用：{@code hana(l.createdOn()).toVarchar("YYYYMMDD")}、{@code hana(l.delivery()).toDate("YYYYMMDD")}，
+ * 视图的结果回到核心的类型接口，可以接着写。HANA 专属函数在其他方言上渲染时会报错。
  */
 public final class Hana extends Sql {
     // 只能在 HANA 方言上渲染的函数；在其他方言上渲染会报错。
@@ -55,6 +64,26 @@ public final class Hana extends Sql {
         (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
     private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(HanaDialect.class, "PERCENTILE_DISC",
         (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+    private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
+        (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
+
+    /** 只放静态方法，不能实例化。 */
+    private Hana() { }
+
+    // ---------- 数据库 ----------
+
+    /** 用默认配置创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接。 */
+    public static HanaDatabase database(DataSource dataSource) { return database(ConnectionProvider.of(dataSource), null); }
+
+    /** 创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接，并用 {@code configure} 调整配置。 */
+    public static HanaDatabase database(DataSource dataSource, Consumer<Database.Config> configure) {
+        return database(ConnectionProvider.of(dataSource), configure);
+    }
+
+    /** 创建 HANA 数据库实例，连接由 {@code connections} 提供；{@code configure} 可为 null。 */
+    public static HanaDatabase database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return new HanaDatabase(connections, configure);
+    }
 
     // ---------- 数据来源 ----------
 
@@ -94,31 +123,108 @@ public final class Hana extends Sql {
         return new HanaSources.Hierarchy<>(shape, source, HanaSources.Navigation.ANCESTORS, List.copyOf(start));
     }
 
-    // ---------- 全文检索与 JSON ----------
+    // ---------- 视图：有主操作数的 HANA 函数 ----------
+
+    /** 文本上的 HANA 函数：{@code hana(l.delivery()).toDate("YYYYMMDD")}、{@code hana(l.text()).likeRegexpr("^A")}。 */
+    public static <T> ViewText<T> hana(ExprText<T> e) { return new ViewText<>(e); }
+
+    /** 数值上的 HANA 函数：{@code hana(l.quantity()).median()}。 */
+    public static <T> ViewNumber<T> hana(ExprNumber<T> e) { return new ViewNumber<>(e); }
+
+    /** 任意值上的 HANA 函数：{@code hana(e.onDay()).toVarchar("YYYYMMDD")}。 */
+    public static <T> ViewAny<T> hana(Expr<T> e) { return new ViewAny<>(e); }
+
+    /** 任意值上的 HANA 函数，由 {@code hana(e)} 得到。 */
+    public static class ViewAny<T> {
+        /** 视图的主操作数。 */
+        final Expr<T> e;
+
+        ViewAny(Expr<T> e) { this.e = Objects.requireNonNull(e, "e"); }
+
+        /** TO_VARCHAR(this, format)，例如日期写成 {@code toVarchar("YYYYMMDD")}。 */
+        public ExprText<String> toVarchar(String format) { return ExprText.of(call(TO_VARCHAR, String.class, e, lit(format))); }
+
+        /** TO_NVARCHAR(this, format)，{@link #toVarchar} 的 Unicode 版本。 */
+        public ExprText<String> toNvarchar(String format) { return ExprText.of(call(TO_NVARCHAR, String.class, e, lit(format))); }
+
+        /** TO_NVARCHAR(this)，不带格式。 */
+        public ExprText<String> toNvarchar() { return ExprText.of(call(TO_NVARCHAR, String.class, e)); }
+    }
+
+    /** 文本上的 HANA 函数，由 {@code hana(文本表达式)} 得到。 */
+    public static final class ViewText<T> extends ViewAny<T> {
+        ViewText(ExprText<T> e) { super(e); }
+
+        /** TO_DATE(this, format)：按 format 把文本解析为日期。 */
+        public ExprDate<LocalDate> toDate(String format) { return ExprDate.of(call(TO_DATE, LocalDate.class, e, lit(format))); }
+
+        /** TO_INTEGER(this)，也可写作 TO_INT：文本不是数字时查询会失败。 */
+        public ExprInteger<Integer> toInteger() { return ExprInteger.of(call(TO_INTEGER, Integer.class, e)); }
+
+        /** LENGTH：HANA 按 UTF-16 码元计数，所以 BMP 之外的字符算 2。 */
+        public ExprInteger<Integer> length() { return ExprInteger.of(call(LENGTH, Integer.class, e)); }
+
+        /** {@code this LIKE_REGEXPR pattern}，HANA 的正则谓词，写进当前的条件块；skipEmpty 下模式为空时没有条件。 */
+        public void likeRegexpr(String pattern) {
+            if (skipped(pattern)) {
+                Conditions.add(Cond.EMPTY);
+                return;
+            }
+            Expr<String> p = val(pattern, SqlType.of(String.class));
+            Conditions.add(hanaCond(w -> w.render(e).sql(" LIKE_REGEXPR ").render(p)));
+        }
+
+        /**
+         * JSON 文档里的一个标量 {@code JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)}，例如 {@code hana(t.payload()).jsonValue("$.order.id")}。
+         * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
+         */
+        public ExprText<String> jsonValue(String path) {
+            Objects.requireNonNull(path, "path");
+            return ExprText.of(new ExprNode<>(SqlType.of(String.class)) {
+                @Override public void render(SqlWriter w) {
+                    HanaSources.requireHana(w);
+                    w.sql("JSON_VALUE(").render(e).sql(", ").literal(path).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
+                }
+            });
+        }
+    }
+
+    /** 数值上的 HANA 函数，由 {@code hana(数值表达式)} 得到。 */
+    public static final class ViewNumber<T> extends ViewAny<T> {
+        ViewNumber(ExprNumber<T> e) { super(e); }
+
+        /** TO_INTEGER(this)：小数截成整数。 */
+        public ExprInteger<Integer> toInteger() { return ExprInteger.of(call(TO_INTEGER, Integer.class, e)); }
+
+        /** 中位数 {@code MEDIAN(this)}（聚合），偶数行时取中间两个值的平均；参数先转成 DOUBLE。 */
+        public ExprDouble<Double> median() {
+            return ExprDouble.of(Nodes.call(SqlType.of(Double.class), MEDIAN, List.of(e.cast(CastType.doublePrecision()))));
+        }
+    }
+
+    // ---------- 全文检索 ----------
 
     /**
-     * 全文检索 {@code CONTAINS(列, ?)}，多列写成 {@code CONTAINS((a, b), ?)}；搜索词是 HANA 的 freestyle 语法（空格是与、OR、引号短语）。
+     * 全文检索 {@code CONTAINS(列, ?)}，多列写成 {@code CONTAINS((a, b), ?)}，写进当前的条件块；搜索词是 HANA 的 freestyle 语法（空格是与、OR、引号短语）。
      * 只能用于列存表；skipEmpty 下搜索词为空时没有条件。与 {@link #score()} 配合排序。
      */
-    @SafeVarargs
-    public static Cond contains(String term, Expr<String>... columns) { return search(term, columns, null); }
+    public static void contains(String term, ExprText<?>... columns) { Conditions.add(search(term, columns, null)); }
 
     /** 模糊检索 {@code CONTAINS(列, ?, FUZZY(threshold))}，threshold 取 0 到 1，越大越严格，常用 0.8。 */
-    @SafeVarargs
-    public static Cond containsFuzzy(double threshold, String term, Expr<String>... columns) {
+    public static void containsFuzzy(double threshold, String term, ExprText<?>... columns) {
         if (!(threshold >= 0 && threshold <= 1)) throw new IllegalArgumentException("A fuzzy threshold must be between 0 and 1, got " + threshold);
-        return search(term, columns, "FUZZY(" + threshold + ")");
+        Conditions.add(search(term, columns, "FUZZY(" + threshold + ")"));
     }
 
     /** 查询里全部 CONTAINS 的综合相关度 {@code SCORE()}，0 到 1。 */
-    public static Expr<Double> score() { return Nodes.call(SqlType.of(Double.class), SCORE, List.of()); }
+    public static ExprDouble<Double> score() { return ExprDouble.of(Nodes.call(SqlType.of(Double.class), SCORE, List.of())); }
 
     /** CONTAINS 条件；option 是 FUZZY(...) 之类的固定文本。 */
-    private static Cond search(String term, Expr<String>[] columns, String option) {
+    private static Cond search(String term, ExprText<?>[] columns, String option) {
         if (columns.length == 0) throw new IllegalArgumentException("contains(...) needs at least one column");
         if (SkipEmpty.skips(term)) return Cond.EMPTY;
-        Expr<String> value = val(term, columns[0].type());
-        List<Expr<String>> list = List.of(columns);
+        Expr<String> value = val(term, SqlType.of(String.class));
+        List<ExprText<?>> list = List.of(columns);
         return hanaCond(w -> {
             w.sql("CONTAINS(");
             if (list.size() == 1) w.render(list.get(0));
@@ -127,20 +233,6 @@ public final class Hana extends Sql {
             if (option != null) w.sql(", ").sql(option);
             w.sql(")");
         });
-    }
-
-    /**
-     * JSON 文档里的一个标量 {@code JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)}，例如 {@code jsonValue(t.payload(), "$.order.id")}。
-     * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
-     */
-    public static Expr<String> jsonValue(Expr<String> document, String path) {
-        Objects.requireNonNull(path, "path");
-        return new Expr<>(SqlType.of(String.class)) {
-            @Override public void render(SqlWriter w) {
-                HanaSources.requireHana(w);
-                w.sql("JSON_VALUE(").render(document).sql(", ").literal(path).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
-            }
-        };
     }
 
     /** HANA 专属的条件；在其他方言上渲染会明确报错。 */
@@ -155,86 +247,27 @@ public final class Hana extends Sql {
 
     // ---------- 统计 ----------
 
-    /** 中位数 {@code MEDIAN(e)}，偶数行时取中间两个值的平均；参数先转成 DOUBLE。可以作聚合。 */
-    public static Expr<Double> median(Expr<? extends Number> e) {
-        return Nodes.call(SqlType.of(Double.class), MEDIAN, List.of(cast(e, CastType.doublePrecision())));
-    }
-
     /**
      * 连续百分位数 {@code PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)}，再加 {@code .over(w -> w.partitionBy(...))}：
      * HANA 只把它当窗口函数（PostgreSQL 只当聚合），分组的百分位数用 {@code partitionBy} 加 {@code distinct()}。p 取 0 到 1。
      */
-    public static WindowFunction<Double> percentileCont(double p, Expr<? extends Number> e) {
-        return new WindowFunction<>(SqlType.of(Double.class), PERCENTILE_CONT, List.of(lit(fraction(p)), cast(e, CastType.doublePrecision())));
+    public static WindowFunction<Double, ExprDouble<Double>> percentileCont(double p, ExprNumber<?> e) {
+        return new WindowFunction<>(SqlType.of(Double.class), PERCENTILE_CONT, List.of(lit(fraction(p)), e.cast(CastType.doublePrecision())), ExprDouble::of);
     }
 
-    /** 离散百分位数 {@code PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY e)}，再加 {@code .over(...)}；规则同 {@link #percentileCont}。 */
-    public static <T> WindowFunction<T> percentileDisc(double p, Expr<T> e) {
-        return new WindowFunction<>(e.type(), PERCENTILE_DISC, List.of(lit(fraction(p)), e));
+    /** 离散百分位数 {@code PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY e)}，再加 {@code .over(...)}；结果与 e 同一类型，规则同 {@link #percentileCont}。 */
+    public static <T, F extends Expr<T>> WindowFunction<T, F> percentileDisc(double p, Family<T, F> e) {
+        return new WindowFunction<>(e.type(), PERCENTILE_DISC, List.of(lit(fraction(p)), e), e::retype);
     }
 
     /** 相关系数 {@code CORR(y, x)}，取值 -1 到 1。 */
-    public static Expr<Double> corr(Expr<? extends Number> y, Expr<? extends Number> x) { return Nodes.call(SqlType.of(Double.class), CORR, List.of(y, x)); }
+    public static ExprDouble<Double> corr(ExprNumber<?> y, ExprNumber<?> x) { return ExprDouble.of(Nodes.call(SqlType.of(Double.class), CORR, List.of(y, x))); }
 
     /** 校验百分位数在 0 到 1 之间。 */
     private static double fraction(double p) {
         if (!(p >= 0 && p <= 1)) throw new IllegalArgumentException("A percentile must be between 0 and 1, got " + p);
         return p;
     }
-    private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
-        (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
-
-    /** 只放静态方法，不能实例化。 */
-    private Hana() { }
-
-    // ---------- 数据库 ----------
-
-    /** 用默认配置创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接。 */
-    public static HanaDatabase database(DataSource dataSource) { return database(ConnectionProvider.of(dataSource), null); }
-
-    /** 创建 HANA 数据库实例，每条语句从 {@code dataSource} 取一个连接，并用 {@code configure} 调整配置。 */
-    public static HanaDatabase database(DataSource dataSource, Consumer<Database.Config> configure) {
-        return database(ConnectionProvider.of(dataSource), configure);
-    }
-
-    /** 创建 HANA 数据库实例，连接由 {@code connections} 提供；{@code configure} 可为 null。 */
-    public static HanaDatabase database(ConnectionProvider connections, Consumer<Database.Config> configure) {
-        return new HanaDatabase(connections, configure);
-    }
-
-    // ---------- 函数 ----------
-
-    /** TO_VARCHAR(value, format)，例如 {@code toVarchar(date, "YYYYMMDD")}。 */
-    public static Expr<String> toVarchar(Expr<?> value, String format) { return call(TO_VARCHAR, String.class, value, lit(format)); }
-
-    /** TO_DATE(text, format)：按 {@code format} 把文本解析为日期。 */
-    public static Expr<LocalDate> toDate(Expr<String> text, String format) { return call(TO_DATE, LocalDate.class, text, lit(format)); }
-
-    /** TO_NVARCHAR(value, format)，{@link #toVarchar} 的 Unicode 版本。 */
-    public static Expr<String> toNvarchar(Expr<?> value, String format) { return call(TO_NVARCHAR, String.class, value, lit(format)); }
-
-    /** TO_NVARCHAR(value)，不带格式。 */
-    public static Expr<String> toNvarchar(Expr<?> value) { return call(TO_NVARCHAR, String.class, value); }
-
-    /** {@code e LIKE_REGEXPR pattern}，HANA 的正则谓词。skipEmpty 下模式为空时没有条件。 */
-    public static Cond likeRegexpr(Expr<String> e, String pattern) {
-        if (skipped(pattern)) return Cond.EMPTY;
-        Expr<String> p = val(pattern, SqlType.of(String.class));
-        return new Cond() {
-            @Override public void render(SqlWriter w) {
-                if (!(w.dialect() instanceof HanaDialect)) {
-                    throw new UnsupportedOperationException("LIKE_REGEXPR is a HanaDialect predicate; this database uses " + w.dialect().name());
-                }
-                w.render(e).sql(" LIKE_REGEXPR ").render(p);
-            }
-        };
-    }
-
-    /** LENGTH：HANA 按 UTF-16 码元计数，所以 BMP 之外的字符算 2。 */
-    public static Expr<Integer> length(Expr<String> text) { return call(LENGTH, Integer.class, text); }
-
-    /** TO_INTEGER(value)，也可写作 TO_INT：把文本或数字转成整数；文本不是数字时查询会失败。 */
-    public static Expr<Integer> toInteger(Expr<?> value) { return call(TO_INTEGER, Integer.class, value); }
 
     // ---------- 分组键 ----------
 
@@ -246,7 +279,7 @@ public final class Hana extends Sql {
     public static Expr<Object> groupingSets(List<? extends Expr<?>>... sets) {
         List<Renderable> args = new ArrayList<>();
         for (List<? extends Expr<?>> set : sets) args.add(w -> w.sql("(").join(set, ", ").sql(")"));
-        return new Expr<>(SqlType.of(Object.class)) {
+        return new ExprNode<>(SqlType.of(Object.class)) {
             @Override public void render(SqlWriter w) { GROUPING_SETS.render(w, args); }
         };
     }
@@ -266,28 +299,29 @@ public final class Hana extends Sql {
         };
     }
 
-    /** STRING_AGG 表达式：ORDER BY 项作为参数一起传入，由渲染器放进函数调用内部。 */
-    /** GREATEST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
+    // ---------- 多个同类型参数 ----------
+
+    /** GREATEST(a, b, ...)，结果与 first 同一类型，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
-    public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
-        return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
+    public static <T, F extends Expr<T>> F greatest(Family<T, F> first, Expr<? extends T>... rest) {
+        return first.retype(call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest)));
     }
 
-    /** LEAST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
+    /** LEAST(a, b, ...)，结果与 first 同一类型，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
-    public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
-        return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
+    public static <T, F extends Expr<T>> F least(Family<T, F> first, Expr<? extends T>... rest) {
+        return first.retype(call(LEAST, first.type(), twoOrMore("LEAST", first, rest)));
     }
 
     // ---------- 联表写入 ----------
 
     /** 联表更新：SET 和 WHERE 可以引用 joined 表，写成按主键对上行的 MERGE（被改表要有 {@code @Id}）；见 {@link JoinUpdate}。 */
-    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinUpdate.of(table, joined, on);
     }
 
     /** 联表删除：WHERE 可以引用 joined 表，写成 DELETE ... WHERE EXISTS；见 {@link JoinDelete}。 */
-    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinDelete.of(table, joined, on);
     }
 }

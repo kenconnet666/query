@@ -8,16 +8,17 @@ import org.dpdns.zerodep.query.meta.Getter;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 来源（表、CTE、派生表等）在查询里的一次出现。表的出现以它的表接口传给 lambda；
- * CTE、派生表或常量行则以这个 Ref 传入，用 {@code r.col(Row::total)} 取列。
+ * CTE、派生表或常量行则以这个 Ref 传入，用 {@code r.col(Row::total)} 取列（按 getter 的返回类型得到相应的列接口，见 {@link RefColumns}）。
  * 别名在渲染每条语句时分配。
  */
-public final class Ref<E> {
+public final class Ref<E> extends RefColumns<E> {
     /** 这次出现所对应的来源。 */
     private final Source<E> source;
 
@@ -47,12 +48,12 @@ public final class Ref<E> {
     /** 任意来源的一次出现。 */
     public static <E> Ref<E> of(Source<E> source) { return new Ref<>(source); }
 
-    /** CTE、派生表或常量行的一列；{@code ? super E} 允许传入基类和接口上的 getter。表的列直接用表接口的方法，调用本方法会报错。 */
-    public <T> Col<T> col(Getter<? super E, T> getter) {
+    /** 属性 getter 对应的列，供 {@code col(...)} 使用；表的列直接用表接口的方法，调用本方法会报错。 */
+    @Override Col<?> column(Getter<? super E, ?> getter) {
         if (source.entity().isInterface()) {
             throw new IllegalArgumentException("Columns of " + source.entity().getSimpleName() + " are its methods, e.g. t.material()");
         }
-        return new Col<>(this, Metadata.property(source.entity(), getter));
+        return Col.of(this, Metadata.property(source.entity(), getter));
     }
 
     /** 描述行的类：表接口，或 CTE、派生表的结构类。 */
@@ -66,7 +67,7 @@ public final class Ref<E> {
     public <P> P param() { return (P) param; }
 
     /** 本次出现里名为 property 的列；排名子查询等来源也按表接口的属性名取列。 */
-    Col<?> column(String property) { return new Col<>(this, Metadata.entity(source.entity()).property(property)); }
+    Col<?> column(String property) { return Col.of(this, Metadata.entity(source.entity()).property(property)); }
 
     /** 登记一个从本次出现出发的隐式连接，由表接口的 {@code one(...)} 与一对多的 {@code first(...)} 调用。 */
     public void relate(Ref<?> target, Cond on) { relations.add(new Relation(target, on)); }
@@ -77,8 +78,8 @@ public final class Ref<E> {
     /** 本次出现在当前语句里的别名，首次调用时分配。 */
     public String alias(SqlWriter w) { return w.aliasFor(this, source.preferredAlias()); }
 
-    /** 写出带别名的列；属性带 {@code @ReadAs} 模板时按模板写。 */
-    void renderColumn(SqlWriter w, PropertyMeta property) {
+    /** 写出带别名的列；属性带 {@code @ReadAs} 模板时按模板写。供列的实现使用。 */
+    public void renderColumn(SqlWriter w, PropertyMeta property) {
         Object naming = w.attribute(NamingStrategy.class);
         String column = source.column(property, naming == null ? NamingStrategy.AS_IS : (NamingStrategy) naming);
         Renderable qualified = c -> c.alias(alias(c)).sql(".").identifier(column);

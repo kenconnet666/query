@@ -1,6 +1,7 @@
+import { parseDate, parseDateTime } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { addDays, addHours, addMinutes, addMonths, addSeconds, addYears, date, day, daysBetween, from, hour, lit, minute, month, monthStart, second, year } from "@zerodep-dev/query-core";
+import { from, lit } from "@zerodep-dev/query-core";
 import { Event } from "../../fixtures/erp.js";
 import { liveSuite } from "../support/live.js";
 
@@ -17,11 +18,11 @@ liveSuite("日期与时间", (live) => {
       for (const zone of ["Europe/Berlin", "Pacific/Apia", "Asia/Shanghai"]) {
         process.env.TZ = zone;
         const events = await live.db.list(from(Event).orderBy((e) => e.id).selectAs(Event));
-        assert.equal(events[0]!.onDay, "2024-03-31", zone);
-        assert.equal(events[0]!.atTime, "2024-03-31 02:30:00", zone);
-        assert.equal(events[1]!.onDay, "2011-12-30", zone);
-        assert.deepEqual(await live.db.list(from(Event).where((e) => e.onDay.eq("2011-12-30")).select((e) => e.id)), [2], zone);
-        assert.deepEqual(await live.db.list(from(Event).where((e) => e.atTime.eq("2024-03-31 02:30:00")).select((e) => e.id)), [1], zone);
+        assert.equal(events[0]!.onDay.toString(), "2024-03-31", zone);
+        assert.equal(events[0]!.atTime.toString(), "2024-03-31T02:30:00", zone);
+        assert.equal(events[1]!.onDay.toString(), "2011-12-30", zone);
+        assert.deepEqual(await live.db.list(from(Event).where((e) => e.onDay.eq(parseDate("2011-12-30"))).select((e) => e.id)), [2], zone);
+        assert.deepEqual(await live.db.list(from(Event).where((e) => e.atTime.eq(parseDateTime("2024-03-31T02:30:00"))).select((e) => e.id)), [1], zone);
       }
     } finally {
       if (original === undefined) delete process.env.TZ;
@@ -33,17 +34,17 @@ liveSuite("日期与时间", (live) => {
     // 半开区间 [2011-01-01, 2025-01-01) 里的两行；2024-03-31 减一个月是 2 月 29 日（闰年月末）。
     const rows = await live.db.list(
       from(Event)
-        .where((e) => e.onDay.range("2011-01-01", "2025-01-01"))
+        .where((e) => e.onDay.range(parseDate("2011-01-01"), parseDate("2025-01-01")))
         .orderBy((e) => e.id)
         .select((e) => ({
           id: e.id,
-          y: year(e.onDay),
-          m: month(e.atTime),
-          d: day(e.onDay),
-          plusDays: addDays(e.onDay, 3),
-          minusMonth: addMonths(e.onDay, -1),
-          plusYear: addYears(e.onDay, 1),
-          days: daysBetween(e.onDay, lit("2024-04-30", date)),
+          y: e.onDay.year(),
+          m: e.atTime.month(),
+          d: e.onDay.day(),
+          plusDays: e.onDay.addDays(3),
+          minusMonth: e.onDay.addMonths(-1),
+          plusYear: e.onDay.addYears(1),
+          days: e.onDay.daysBetween(lit(parseDate("2024-04-30"))),
         })),
     );
     const days = (Date.UTC(2024, 3, 30) - Date.UTC(2011, 11, 30)) / 86_400_000;
@@ -59,18 +60,18 @@ liveSuite("日期与时间", (live) => {
         .orderBy((e) => e.id)
         .select((e) => ({
           id: e.id,
-          h: hour(e.atTime),
-          mi: minute(e.atTime),
-          s: second(e.atTime),
-          plusHours: addHours(e.atTime, 25),
-          minusMinutes: addMinutes(e.atTime, -31),
-          plusSeconds: addSeconds(e.atTime, 59),
-          monthStart: monthStart(e.onDay),
+          h: e.atTime.hour(),
+          mi: e.atTime.minute(),
+          s: e.atTime.second(),
+          plusHours: e.atTime.addHours(25),
+          minusMinutes: e.atTime.addMinutes(-31),
+          plusSeconds: e.atTime.addSeconds(59),
+          monthStart: e.onDay.monthStart(),
         })),
     );
     assert.deepEqual(rows.map((r) => `${r.id}:${r.h}:${r.mi}:${r.s}:${r.plusHours}:${r.minusMinutes}:${r.plusSeconds}:${r.monthStart}`), [
-      "1:2:30:0:2024-04-01 03:30:00:2024-03-31 01:59:00:2024-03-31 02:30:59:2024-03-01",
-      "2:0:0:0:2011-12-31 01:00:00:2011-12-29 23:29:00:2011-12-30 00:00:59:2011-12-01",
+      "1:2:30:0:2024-04-01T03:30:00:2024-03-31T01:59:00:2024-03-31T02:30:59:2024-03-01",
+      "2:0:0:0:2011-12-31T01:00:00:2011-12-29T23:29:00:2011-12-30T00:00:59:2011-12-01",
     ]);
   });
 });

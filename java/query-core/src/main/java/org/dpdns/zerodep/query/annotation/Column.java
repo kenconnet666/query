@@ -39,9 +39,6 @@ public @interface Column {
     /** 默认值的 SQL 文本，例如 {@code "0"}、{@code "'open'"}、{@code "CURRENT_TIMESTAMP"}；为空表示没有默认值。 */
     String defaultValue() default "";
 
-    /** 不限长度的文本或字节（HANA 的 NCLOB / BLOB、PostgreSQL 的 TEXT / BYTEA、MySQL 的 LONGTEXT / LONGBLOB）。 */
-    boolean lob() default false;
-
     /** 列的注释。 */
     String comment() default "";
 

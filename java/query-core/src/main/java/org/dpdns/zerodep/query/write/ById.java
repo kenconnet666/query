@@ -1,12 +1,11 @@
 package org.dpdns.zerodep.query.write;
 
-import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.expr.Cond;
-import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.WriteMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -77,9 +76,10 @@ record ById(List<Object> rows, List<RowColumns.Column> columns, WriteMeta writes
             if (!locates(c)) continue;
             Object value = c.value(row);
             if (value == null) throw new IllegalArgumentException(row.getClass().getSimpleName() + "." + c.name() + " is null; byId(...) needs it");
-            conds.add(((Col) new Col<>(ref, c.column())).eq(value));
+            Col<?> column = Col.of(ref, c.column());
+            conds.add(Nodes.compare(column, "=", new Nodes.Param(column.type(), value)));
         }
-        return Sql.all(conds);
+        return Nodes.all(conds);
     }
 
     /**
@@ -93,12 +93,11 @@ record ById(List<Object> rows, List<RowColumns.Column> columns, WriteMeta writes
         for (RowColumns.Column c : columns) {
             if (!writes.updates(c.name())) continue;
             if (originals != null && same(c.value(row), c.value(originals.get(i)))) continue;
-            out.add(((Col) new Col<>(ref, c.column())).to(c.value(row)));
+            out.add(Assignment.value(Col.of(ref, c.column()), c.value(row)));
         }
         if (originals != null && out.isEmpty()) return out;
         if (writes.version() != null) {
-            Col version = new Col<>(ref, columns.stream().filter(c -> c.name().equals(writes.version())).findFirst().orElseThrow().column());
-            out.add(version.to((Expr) Sql.plus(version, Sql.lit(1))));
+            out.add(Assignment.increment(Col.of(ref, columns.stream().filter(c -> c.name().equals(writes.version())).findFirst().orElseThrow().column())));
         }
         return out;
     }
@@ -109,7 +108,7 @@ record ById(List<Object> rows, List<RowColumns.Column> columns, WriteMeta writes
         if (originals == null) return List.of();
         List<Assignment> out = new ArrayList<>();
         for (RowColumns.Column c : columns) {
-            if (!same(c.value(rows.get(i)), c.value(originals.get(i)))) out.add(((Col) new Col<>(ref, c.column())).to(c.value(rows.get(i))));
+            if (!same(c.value(rows.get(i)), c.value(originals.get(i)))) out.add(Assignment.value(Col.of(ref, c.column()), c.value(rows.get(i))));
         }
         return out;
     }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { Decimal } from "decimal.js";
 import { describe, it } from "node:test";
-import { all, count, filter, from, many, table, column, type Many } from "@zerodep-dev/query-core";
+import { count, filter, from, many, table, column, type Many } from "@zerodep-dev/query-core";
 import { ClientEntity, Lips, Mara, SCHEMA } from "../fixtures/erp.js";
 import { TestDatabase, TestDialect } from "../fixtures/support.js";
 
@@ -57,7 +58,10 @@ WHERE LIPS.MANDT = ?`,
 
   it("一对多用 EXISTS 和相关子查询", () => {
     const sql = from(Mara)
-      .where((m) => all(m.deliveries.any((l) => l.quantity.gt("1")), m.deliveries.where((l) => l.unit.eq("KG")).none()))
+      .where((m) => {
+        m.deliveries.any((l) => l.quantity.gt(new Decimal(1)));
+        m.deliveries.where((l) => l.unit.eq("KG")).none();
+      })
       .select((m) => ({ material: m.material, lines: m.deliveries.count(), total: m.deliveries.sum((l) => l.quantity) }))
       .toSql(DIALECT).sql;
     assert.equal(

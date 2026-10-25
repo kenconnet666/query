@@ -1,27 +1,28 @@
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, cte, date, from, max, rowNumber, sum, values, type Query } from "@zerodep-dev/query-core";
+import { count, cte, date, from, rowNumber, values, type ExprDecimal, type Query } from "@zerodep-dev/query-core";
+import { Decimal } from "decimal.js";
 import { DeliveryVO, LineVO, Lips, Mara } from "../fixtures/erp.js";
 import { deliveries, lines, partTotals } from "../fixtures/scenarios.js";
 import { answering, FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
 describe("投影与映射", () => {
-
   it("对象投影的键就是列标签，结果按位置解码", async () => {
-    const q = deliveries("2026-01-01", "2026-06-30", null);
+    const q = deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), null);
     assert.deepEqual(q.labels, ["partNumber", "name", "quantity"]);
     const { db } = answering(["PARTNUMBER", "NAME", "QUANTITY"], ["P1", "Pump", "5.000"], ["P2", null, 5]);
     assert.deepEqual(await db.list(q), [
-      { partNumber: "P1", name: "Pump", quantity: "5.000" },
-      { partNumber: "P2", name: null, quantity: "5" },
+      { partNumber: "P1", name: "Pump", quantity: new Decimal("5.000") },
+      { partNumber: "P2", name: null, quantity: new Decimal(5) },
     ]);
   });
 
   it("嵌套对象得到嵌套结果，标签用点连接", async () => {
-    const q = from(Lips).select((l) => ({ id: l.delivery, stock: { quantity: sum(l.quantity), unit: max(l.unit) } }));
+    const q = from(Lips).select((l) => ({ id: l.delivery, stock: { quantity: l.quantity.sum(), unit: l.unit.max() } }));
     assert.deepEqual(q.labels, ["id", "stock.quantity", "stock.unit"]);
     const { db } = answering([], ["D1", "3.000", "EA"]);
-    assert.deepEqual(await db.list(q), [{ id: "D1", stock: { quantity: "3.000", unit: "EA" } }]);
+    assert.deepEqual(await db.list(q), [{ id: "D1", stock: { quantity: new Decimal("3.000"), unit: "EA" } }]);
   });
 
   it("展开引用选出实体的全部列", () => {
@@ -33,7 +34,7 @@ describe("投影与映射", () => {
     const { db } = answering([], ["D1", "M1", "20260115", "Pump"], ["D2", "M1", "00000000", null]);
     const result = await db.list(lines());
     assert.ok(result[0] instanceof LineVO);
-    assert.equal(result[0]!.createdOn, "2026-01-15");
+    assert.equal(result[0]!.createdOn?.toString(), "2026-01-15");
     assert.equal(result[1]!.createdOn, null, "an empty SAP date reads as null");
     assert.equal(result[0]!.materialNo, "M1");
   });
@@ -41,19 +42,19 @@ describe("投影与映射", () => {
   it("JS 端计算用 map 套在结果上", async () => {
     const { db } = answering([], ["P1", "25000"]);
     const [total] = await db.list(partTotals());
-    assert.deepEqual(total, { partNumber: "P1", amount: { quantity: "25000", wan: 2.5 } });
+    assert.deepEqual(total, { partNumber: "P1", amount: { quantity: new Decimal(25000), wan: 2.5 } });
   });
 
   it("同一个查询可以映射成不同的类", async () => {
     const q = from(Lips)
       .groupBy((l) => l.material)
-      .select((l) => ({ partNumber: l.material, name: max(l.unit), quantity: sum(l.quantity), extra: count() }));
+      .select((l) => ({ partNumber: l.material, name: l.unit.max(), quantity: l.quantity.sum(), extra: count() }));
     const { db } = answering([], ["M1", "EA", "6.000", 2]);
     const [vo] = await db.list(q.into(DeliveryVO));
     assert.ok(vo instanceof DeliveryVO);
     assert.equal(vo.label, "M1:EA");
     assert.equal((vo as unknown as Record<string, unknown>).extra, undefined, "columns the class does not have are ignored");
-    assert.deepEqual(await db.list(q.map((r) => `${r.partNumber}:${r.quantity}`)), ["M1:6.000"]);
+    assert.deepEqual(await db.list(q.map((r) => `${r.partNumber}:${r.quantity?.toFixed(3)}`)), ["M1:6.000"]);
   });
 
   it("单列查询直接返回值", async () => {
@@ -133,19 +134,19 @@ describe("投影与映射", () => {
 
   it("常量行按值推断列类型，也可以指定类型", async () => {
     const q = values([
-      { code: "A", rate: 1, day: "2026-01-31" },
-      { code: "B", rate: 1.5, day: "2026-02-28" },
+      { code: "A", rate: 1, day: parseDate("2026-01-31") },
+      { code: "B", rate: 1.5, day: parseDate("2026-02-28") },
     ], { day: date });
     const { db, driver } = answering([], ["A", "1", "2026-01-31"], ["B", "1.5", "2026-02-28"]);
     assert.deepEqual(await db.list(q), [
-      { code: "A", rate: 1, day: "2026-01-31" },
-      { code: "B", rate: 1.5, day: "2026-02-28" },
+      { code: "A", rate: 1, day: parseDate("2026-01-31") },
+      { code: "B", rate: 1.5, day: parseDate("2026-02-28") },
     ]);
     assert.ok(driver.statements[0]!.sql.includes("DATE '2026-01-31'"), driver.statements[0]!.sql);
   });
 
-  it("SUM 等数值函数拒绝文本列", () => {
-    assert.throws(() => from(Lips).select((l) => sum(l.material)), /SUM needs a numeric expression, got text/);
+  it("绕过类型检查时 SUM 等数值函数仍拒绝文本列", () => {
+    assert.throws(() => from(Lips).select((l) => (l.material as unknown as ExprDecimal<Decimal>).sum()), /SUM needs a numeric expression, got text/);
   });
 
   it("没有驱动流式能力时逐行交付全部结果", async () => {

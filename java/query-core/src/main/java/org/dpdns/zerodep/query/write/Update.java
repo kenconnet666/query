@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -20,8 +22,10 @@ import java.util.function.Supplier;
  * UPDATE 语句，由 {@code update(Lips.class)} 开始：
  * <pre>{@code
  * db.execute(update(Lips.class)
- *     .set(l -> l.unit().to("KG"))
- *     .set(l -> l.quantity().to(plus(l.quantity(), val(BigDecimal.ONE))))
+ *     .set(l -> {
+ *         l.unit().to("KG");
+ *         l.quantity().to(l.quantity().plus(BigDecimal.ONE));
+ *     })
  *     .where(l -> l.delivery().eq("D1")));
  * }</pre>
  * 没有 where 条件时报错（全表更新要写 {@code .all()}）；全局过滤器的条件也加进 WHERE。不可变，每个方法返回新的语句。
@@ -83,22 +87,20 @@ public final class Update<T extends Entity> implements Write {
      */
     public List<Object> changedRows() { return byId == null ? List.of() : List.copyOf(byId.changed()); }
 
-    /** 追加一个 SET 项：{@code set(l -> l.unit().to("KG"))}；skipEmpty 下值为空的项被省略；{@code @ReadOnly} 的列不能写。 */
-    public Update<T> set(Function<T, Assignment> assignment) {
-        Assignment a = SkipEmpty.within(target.skipping(), () -> assignment.apply(target.row()));
-        if (a == null) throw new IllegalArgumentException("set(...) returned null; write col.to(value)");
-        if (a.skipped()) return this;
-        if (a.column().ref() != target.ref()) throw new IllegalArgumentException("set(...) must assign a column of the updated table");
-        if (Metadata.entity(target.ref().entity()).writes().readOnly().contains(a.column().property().name())) {
-            throw new IllegalArgumentException(target.ref().entity().getSimpleName() + "." + a.column().property().name() + "() is @ReadOnly");
-        }
+    /**
+     * SET 项，一行写一个：{@code set(l -> { l.unit().to("KG"); l.quantity().to(l.quantity().plus(BigDecimal.ONE)); })}；
+     * 多次调用依次追加。skipEmpty 下值为空的项被省略；{@code @ReadOnly} 的列不能写。
+     */
+    public Update<T> set(Consumer<T> assignments) {
+        List<Assignment> written = SkipEmpty.within(target.skipping(),
+            () -> Conditions.outside(() -> Assignments.collect(() -> assignments.accept(target.row()))));
         List<Assignment> all = new ArrayList<>(sets);
-        all.add(a);
+        for (Assignment a : written) all.add(target.assignable(a));
         return new Update<>(target, List.copyOf(all), byId);
     }
 
-    /** 追加 WHERE 条件；多次调用之间是 AND。 */
-    public Update<T> where(Function<T, Cond> condition) { return new Update<>(target.where(condition), sets, byId); }
+    /** 追加 WHERE 条件，一行写一个；多次调用之间是 AND。 */
+    public Update<T> where(Consumer<T> condition) { return new Update<>(target.where(condition), sets, byId); }
 
     /** 条件对象：每个非空字段一个条件，规则同查询的 {@code where(filter)}。 */
     public Update<T> where(Object filter) { return new Update<>(target.where(filter), sets, byId); }

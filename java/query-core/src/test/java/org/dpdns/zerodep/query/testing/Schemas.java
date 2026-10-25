@@ -11,8 +11,12 @@ import org.dpdns.zerodep.query.ddl.ColumnType;
 import org.dpdns.zerodep.query.ddl.Migration;
 import org.dpdns.zerodep.query.ddl.TableBuilder;
 import org.dpdns.zerodep.query.ddl.TableDef;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -31,10 +35,10 @@ public final class Schemas {
     @Table(schema = SCHEMA, value = "S_OWNER")
     public interface SOwner extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 名称。 */
-        @Column(value = "NAME", length = 30) Col<String> name();
+        @Column(value = "NAME", length = 30) ColText<String> name();
     }
 
     /** 初版：自增主键、唯一索引、外键、默认值和注释。 */
@@ -43,25 +47,25 @@ public final class Schemas {
     @ForeignKey(name = "FK_S_ITEM_OWNER", columns = "ownerId", references = SOwner.class)
     public interface SItem extends Entity {
         /** 编号，数据库生成。 */
-        @Id @Generated @Column("ID") Col<Long> id();
+        @Id @Generated @Column("ID") ColBigint<Long> id();
 
         /** 编码。 */
-        @Column(value = "CODE", length = 20, nullable = false) Col<String> code();
+        @Column(value = "CODE", length = 20, nullable = false) ColText<String> code();
 
         /** 标题。 */
-        @Column(value = "TITLE", length = 40, comment = "title") Col<String> title();
+        @Column(value = "TITLE", length = 40, comment = "title") ColText<String> title();
 
         /** 价格。 */
-        @Column(value = "PRICE", precision = 13, scale = 3) Col<BigDecimal> price();
+        @Column(value = "PRICE", precision = 13, scale = 3) ColDecimal<BigDecimal> price();
 
         /** 状态。 */
-        @Column(value = "STATUS", length = 10, nullable = false, defaultValue = "'open'") Col<String> status();
+        @Column(value = "STATUS", length = 10, nullable = false, defaultValue = "'open'") ColText<String> status();
 
         /** 所属者。 */
-        @Column("OWNER_ID") Col<Long> ownerId();
+        @Column("OWNER_ID") ColBigint<Long> ownerId();
 
         /** 创建日期。 */
-        @Column("CREATED_ON") Col<LocalDate> createdOn();
+        @Column("CREATED_ON") ColDate<LocalDate> createdOn();
     }
 
     /** 安全的变更：放宽标题和价格、加一列、按旧名把 STATUS 改名为 STATE、加一个索引。 */
@@ -71,28 +75,28 @@ public final class Schemas {
     @ForeignKey(name = "FK_S_ITEM_OWNER", columns = "ownerId", references = SOwner.class)
     public interface SItemV2 extends Entity {
         /** 编号，数据库生成。 */
-        @Id @Generated @Column("ID") Col<Long> id();
+        @Id @Generated @Column("ID") ColBigint<Long> id();
 
         /** 编码。 */
-        @Column(value = "CODE", length = 20, nullable = false) Col<String> code();
+        @Column(value = "CODE", length = 20, nullable = false) ColText<String> code();
 
         /** 标题，放宽到 80。 */
-        @Column(value = "TITLE", length = 80, comment = "title") Col<String> title();
+        @Column(value = "TITLE", length = 80, comment = "title") ColText<String> title();
 
         /** 价格，放宽到 15 位。 */
-        @Column(value = "PRICE", precision = 15, scale = 3) Col<BigDecimal> price();
+        @Column(value = "PRICE", precision = 15, scale = 3) ColDecimal<BigDecimal> price();
 
         /** 状态，改名。 */
-        @Column(value = "STATE", length = 10, nullable = false, defaultValue = "'open'", previousName = "STATUS") Col<String> state();
+        @Column(value = "STATE", length = 10, nullable = false, defaultValue = "'open'", previousName = "STATUS") ColText<String> state();
 
         /** 所属者。 */
-        @Column("OWNER_ID") Col<Long> ownerId();
+        @Column("OWNER_ID") ColBigint<Long> ownerId();
 
         /** 创建日期。 */
-        @Column("CREATED_ON") Col<LocalDate> createdOn();
+        @Column("CREATED_ON") ColDate<LocalDate> createdOn();
 
         /** 新加的备注。 */
-        @Column(value = "NOTE", length = 100) Col<String> note();
+        @Column(value = "NOTE", length = 100) ColText<String> note();
     }
 
     /** 有风险的变更：缩窄标题、创建日期改成 NOT NULL。 */
@@ -102,41 +106,41 @@ public final class Schemas {
     @ForeignKey(name = "FK_S_ITEM_OWNER", columns = "ownerId", references = SOwner.class)
     public interface SItemV3 extends Entity {
         /** 编号，数据库生成。 */
-        @Id @Generated @Column("ID") Col<Long> id();
+        @Id @Generated @Column("ID") ColBigint<Long> id();
 
         /** 编码。 */
-        @Column(value = "CODE", length = 20, nullable = false) Col<String> code();
+        @Column(value = "CODE", length = 20, nullable = false) ColText<String> code();
 
         /** 标题，缩窄到 10。 */
-        @Column(value = "TITLE", length = 10, comment = "title") Col<String> title();
+        @Column(value = "TITLE", length = 10, comment = "title") ColText<String> title();
 
         /** 价格。 */
-        @Column(value = "PRICE", precision = 15, scale = 3) Col<BigDecimal> price();
+        @Column(value = "PRICE", precision = 15, scale = 3) ColDecimal<BigDecimal> price();
 
         /** 状态。 */
-        @Column(value = "STATE", length = 10, nullable = false, defaultValue = "'open'") Col<String> state();
+        @Column(value = "STATE", length = 10, nullable = false, defaultValue = "'open'") ColText<String> state();
 
         /** 所属者。 */
-        @Column("OWNER_ID") Col<Long> ownerId();
+        @Column("OWNER_ID") ColBigint<Long> ownerId();
 
         /** 创建日期，改成 NOT NULL。 */
-        @Column(value = "CREATED_ON", nullable = false) Col<LocalDate> createdOn();
+        @Column(value = "CREATED_ON", nullable = false) ColDate<LocalDate> createdOn();
 
         /** 备注。 */
-        @Column(value = "NOTE", length = 100) Col<String> note();
+        @Column(value = "NOTE", length = 100) ColText<String> note();
     }
 
     /** 迁移建的表，供迁移里的数据步骤写入。 */
     @Table(schema = SCHEMA, value = "M_TASK")
     public interface MTask extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 标题。 */
-        @Column("TITLE") Col<String> title();
+        @Column("TITLE") ColText<String> title();
 
         /** 优先级，第二个迁移加上。 */
-        @Column("PRIORITY") Col<Integer> priority();
+        @Column("PRIORITY") ColInteger<Integer> priority();
     }
 
     /** M_TASK 的一行。 */
@@ -162,19 +166,19 @@ public final class Schemas {
     @Table(schema = SCHEMA, value = "LIPS", external = true)
     public interface LipsExternal extends Entity {
         /** 交货单号。 */
-        @Column("VBELN") Col<String> delivery();
+        @Column("VBELN") ColText<String> delivery();
 
         /** 数量。 */
-        @Column("LFIMG") Col<BigDecimal> quantity();
+        @Column("LFIMG") ColDecimal<BigDecimal> quantity();
     }
 
     /** 外部表的错误声明：一列不存在，一列类型装不下。 */
     @Table(schema = SCHEMA, value = "LIPS", external = true)
     public interface LipsBroken extends Entity {
         /** 不存在的列。 */
-        @Column("NO_SUCH") Col<String> missing();
+        @Column("NO_SUCH") ColText<String> missing();
 
         /** 小数列当作日期读。 */
-        @Column("LFIMG") Col<LocalDate> quantityAsDate();
+        @Column("LFIMG") ColDate<LocalDate> quantityAsDate();
     }
 }

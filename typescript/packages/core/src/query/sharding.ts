@@ -1,4 +1,6 @@
-import { all, Between, Column, Comparison, Conjunction, Disjunction, InList, Literal, Param, type Cond } from "../sql/expr.js";
+import { CalendarDate, CalendarDateTime } from "@internationalized/date";
+import { and, Between, Comparison, Conjunction, Disjunction, InList, type Cond } from "../sql/cond.js";
+import { Column, Literal, Param } from "../sql/expr.js";
 import type { SqlWriter } from "../sql/writer.js";
 import { columnName, entityMeta, type Ctor, type PropertyMeta, type Table } from "../schema/metadata.js";
 import type { RefOwner } from "./source.js";
@@ -31,8 +33,9 @@ export function shard<T>(table: Table<T>, rule: ShardRule): ShardConfig {
 
 const MONTH = /^(\d{4})-(\d{2})/;
 
-/** 'YYYY-MM' 或日期、时间戳文本所在的月份，写成可以比较的 YYYYMM 数。 */
+/** 'YYYY-MM' 文本，或日期、时间戳（值或文本）所在的月份，写成可以比较的 YYYYMM 数。 */
 function monthOf(value: unknown, key: string): number {
+  if (value instanceof CalendarDate || value instanceof CalendarDateTime) return value.year * 100 + value.month;
   const m = typeof value === "string" ? MONTH.exec(value) : null;
   if (m === null) throw new TypeError(`monthly shards need a 'YYYY-MM-DD' date or timestamp for ${key}, got ${String(value)}`);
   return Number(m[1]) * 100 + Number(m[2]);
@@ -48,8 +51,10 @@ function previousMonth(m: number): number {
   return m % 100 === 1 ? (Math.floor(m / 100) - 1) * 100 + 12 : m - 1;
 }
 
-/** 是不是某月一日的零点：`< '2026-02-01'` 不含二月。 */
+/** 是不是某月一日的零点：`< 2026-02-01` 不含二月。 */
 function startOfMonth(value: unknown): boolean {
+  if (value instanceof CalendarDate) return value.day === 1;
+  if (value instanceof CalendarDateTime) return value.day === 1 && value.hour === 0 && value.minute === 0 && value.second === 0 && value.millisecond === 0;
   return typeof value === "string" && /^\d{4}-\d{2}-01(?:[ T]00:00(?::00(?:\.0+)?)?)?$/.test(value);
 }
 
@@ -200,7 +205,7 @@ export class Sharding {
       return tables.filter((t) => choice.onShards.includes(t));
     }
     if (choice.allShards) return tables;
-    const routed = analyze(all(...where), owner, rule, table);
+    const routed = analyze(and(...where), owner, rule, table);
     if (routed === undefined) {
       throw new Error(`Cannot tell which shards of ${table} the statement needs: filter on ${entity!.name}.${rule.key} with =, IN, BETWEEN or a range (combined with AND or OR), or add allShards() or onShards(...)`);
     }

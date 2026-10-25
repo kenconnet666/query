@@ -3,7 +3,9 @@ package org.dpdns.zerodep.query.write;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.FilterObject;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
@@ -18,6 +20,7 @@ import org.dpdns.zerodep.query.table.SourceFilters;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -41,13 +44,21 @@ record Target<T extends Entity>(Ref<T> ref, List<Cond> where, boolean skipping, 
     T row() { return ref.param(); }
 
     /** 追加 WHERE 条件；skipEmpty 下与空值比较的条件被省略。 */
-    Target<T> where(Function<T, Cond> condition) {
-        Cond c = SkipEmpty.within(skipping, () -> condition.apply(row()));
-        if (c == null) throw new IllegalArgumentException("A condition is null; use Cond.EMPTY for no condition");
+    Target<T> where(Consumer<T> condition) {
+        Cond c = SkipEmpty.within(skipping, () -> Conditions.collect(() -> condition.accept(row())));
         return withWhere(c);
     }
 
     /** 追加条件对象生成的条件，规则同查询的 {@code where(filter)}。 */
+    /** 检查 SET 项属于被写的表、不是 {@code @ReadOnly} 的列，原样返回。 */
+    Assignment assignable(Assignment a) {
+        if (a.column().ref() != ref) throw new IllegalArgumentException("set(...) must assign a column of the updated table");
+        if (Metadata.entity(ref.entity()).writes().readOnly().contains(a.column().property().name())) {
+            throw new IllegalArgumentException(ref.entity().getSimpleName() + "." + a.column().property().name() + "() is @ReadOnly");
+        }
+        return a;
+    }
+
     Target<T> where(Object filter) { return withWhere(FilterObject.condition(SelectSpec.from(ref), filter)); }
 
     /** 追加一个已经构造好的条件。 */

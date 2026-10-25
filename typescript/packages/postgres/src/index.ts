@@ -8,8 +8,8 @@ export * from "@zerodep-dev/query-core";
 export { deleteJoin, updateJoin } from "./join.js";
 export { PostgresDialect } from "./dialect.js";
 export { pgDriver } from "./driver.js";
-export { arrayAgg, arrayContains, arrayOf, arrayOverlaps, cardinality, eqAny, jsonb, jsonContains, jsonHasKey, jsonText, textMatches, textRank, webMatches } from "./functions.js";
-export { corr, cube, daysFollowing, daysPreceding, distinctOn, exceptAll, forShare, forUpdateOf, greatest, groupingSets, ilike, intersectAll, least, mode, percentileCont, percentileDisc, range, recursiveCte } from "./functions.js";
+export { arrayAgg, arrayContains, arrayOf, arrayOverlaps, cardinality, jsonb, textMatches, textRank, webMatches } from "./functions.js";
+export { corr, cube, daysFollowing, daysPreceding, distinctOn, exceptAll, forShare, forUpdateOf, greatest, groupingSets, intersectAll, least, mode, percentileCont, percentileDisc, postgres, range, recursiveCte, ViewAny, ViewText } from "./functions.js";
 
 /** PostgreSQL 数据库：查询渲染成 PostgreSQL SQL，经由给定的驱动执行。 */
 export class PostgresDatabase extends Database {

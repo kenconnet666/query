@@ -1,10 +1,12 @@
 package org.dpdns.zerodep.query.select;
 
-import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
@@ -54,10 +56,10 @@ public final class FilterObject {
                 if (group == null) any.add(along(start, 1, step));
                 else group.steps.add(step);
             }
-            all.add(Sql.any(any));
+            all.add(Nodes.any(any));
         }
-        for (Group g : groups.values()) all.add(exists(g.many, r -> Sql.all(g.steps.stream().map(st -> along(r, g.rest, st)).toList())));
-        return Sql.all(all);
+        for (Group g : groups.values()) all.add(exists(g.many, r -> Nodes.all(g.steps.stream().map(st -> along(r, g.rest, st)).toList())));
+        return Nodes.all(all);
     }
 
     /** 一个字段沿一条路径的比较：steps 是拆开的路径，其余是字段的比较方式（custom 不为 null 时用它）、值和报错用的名字。 */
@@ -107,39 +109,42 @@ public final class FilterObject {
             if (at == null) throw new IllegalArgumentException(step.owner + ": the query's tables have no " + step.path);
         }
         if (!(at instanceof Expr<?> column)) throw new IllegalArgumentException(step.owner + ": " + step.path + " is a relation, not a column");
-        if (step.custom != null) return SkipEmpty.within(true, () -> SkipEmpty.skips(step.value) ? Cond.EMPTY : step.custom.apply(column, step.value));
-        return SkipEmpty.within(true, () -> compare(column, step.op, step.value, step.owner));
+        if (step.custom != null) {
+            return SkipEmpty.within(true, () -> SkipEmpty.skips(step.value) ? Cond.EMPTY : Conditions.collect(() -> step.custom.apply(column, step.value)));
+        }
+        return SkipEmpty.within(true, () -> Conditions.collect(() -> compare(column, step.op, step.value, step.owner)));
     }
 
     /** {@code EXISTS (目标行满足 inner)}；inner 为空条件（值都为空）时整个条件省略，而不是变成"至少有一行"。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Cond exists(Many many, Function<Object, Cond> inner) {
         Cond[] built = new Cond[1];
-        Cond c = many.any(r -> built[0] = inner.apply(r));
+        Cond c = Conditions.collect(() -> many.any(r -> Conditions.add(built[0] = inner.apply(r))));
         return built[0].isEmpty() ? Cond.EMPTY : c;
     }
 
-    /** 一个字段的条件；值为空时由 skipEmpty 规则省略。 */
+    /** 写下一个字段的条件；值为空时由 skipEmpty 规则省略。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Cond compare(Expr column, Where.Op op, Object value, String owner) {
+    private static void compare(Expr column, Where.Op op, Object value, String owner) {
         if (value instanceof Collection<?> values) {
-            return switch (op) {
+            switch (op) {
                 case EQ -> column.in(values);
                 case NE -> column.notIn(values);
                 default -> throw new IllegalArgumentException(owner + ": a collection can only be compared with EQ (IN) or NE (NOT IN)");
-            };
+            }
+            return;
         }
-        return switch (op) {
+        switch (op) {
             case EQ -> column.eq(value);
             case NE -> column.ne(value);
             case GT -> column.gt(value);
             case GE -> column.ge(value);
             case LT -> column.lt(value);
             case LE -> column.le(value);
-            case CONTAINS -> Sql.contains(column, text(value));
-            case STARTS_WITH -> Sql.startsWith(column, text(value));
-            case ENDS_WITH -> Sql.endsWith(column, text(value));
-        };
+            case CONTAINS -> ExprText.of(column).contains(text(value));
+            case STARTS_WITH -> ExprText.of(column).startsWith(text(value));
+            case ENDS_WITH -> ExprText.of(column).endsWith(text(value));
+        }
     }
 
     /** 文本比较的值；null 保持为 null，以便被省略。 */

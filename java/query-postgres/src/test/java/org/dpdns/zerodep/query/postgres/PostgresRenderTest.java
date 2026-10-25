@@ -35,7 +35,7 @@ class PostgresRenderTest {
     @Test
     void 条件聚合与类型转换用NUMERIC() {
         String sql = from(Lips.class)
-            .select(l -> sum(cast(l.quantity(), CastType.decimal(15, 3))).filter(l.material().eq("M1")))
+            .select(l -> l.quantity().cast(CastType.decimal(15, 3)).sum().filter(() -> l.material().eq("M1")))
             .toSql(PostgresDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT SUM(CASE WHEN lips.\"MATNR\" = 'M1' THEN CAST(lips.\"LFIMG\" AS NUMERIC(15,3)) END)"), sql);
     }
@@ -50,7 +50,7 @@ class PostgresRenderTest {
 
     @Test
     void PostgreSQL专属操作不能在别的方言上渲染() {
-        Query<String> q = from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> l.delivery());
+        Query<String> q = from(Lips.class).where(l -> postgres(l.unit()).ilike("ea")).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> q.toSql(new TestDialect()));
         Query<String> d = from(Lips.class).with(l -> distinctOn(l.material())).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> d.toSql(new TestDialect()));

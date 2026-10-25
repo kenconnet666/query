@@ -52,18 +52,19 @@ class PostgresSpecTest extends RenderSpec {
                 .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
             "postgres-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(l -> distinctOn(l.material()))
-                .where(l -> all(
-                    ilike(l.unit(), "e%"),
-                    l.material().isDistinctFrom(val("M9")),
-                    l.unit().isNotDistinctFrom(l.unit())))
+                .where(l -> {
+                    postgres(l.unit()).ilike("e%");
+                    l.material().isDistinctFrom(val("M9"));
+                    l.unit().isNotDistinctFrom(l.unit());
+                })
                 .orderBy(l -> orders(l.material(), l.delivery().desc()))
                 .select(l -> cols(l.material(), l.delivery()))),
             "postgres-aggregates", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> l.material())
                 .select(l -> cols(
                     l.material(),
-                    sum(l.quantity()).filter(l.unit().eq("EA")).as("each"),
-                    stringAgg(l.delivery(), ";", l.delivery().desc()).as("deliveries")))));
+                    l.quantity().sum().filter(() -> l.unit().eq("EA")).as("each"),
+                    l.delivery().stringAgg(";", l.delivery().desc()).as("deliveries")))));
     }
 
     /** 集合运算的 ALL 变体、RANGE 窗口帧、递归 CTE、FULL JOIN 以外的加锁子句。 */
@@ -79,7 +80,7 @@ class PostgresSpecTest extends RenderSpec {
                 Cte<Step> steps = recursiveCte("steps",
                     from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> cols(l.delivery(), lit(1).as("depth"))).into(Step.class),
                     self -> from(self).where(s -> s.col(Step::depth).lt(3))
-                        .select(s -> cols(s.col(Step::delivery), plus(s.col(Step::depth), lit(1)).as("depth"))).into(Step.class));
+                        .select(s -> cols(s.col(Step::delivery), s.col(Step::depth).plus(lit(1)).as("depth"))).into(Step.class));
                 return from(steps).orderBy(s -> s.col(Step::depth)).select(s -> s.col(Step::depth));
             }),
             "postgres-locks", SpecCase.plain(() -> from(Lips.class)
@@ -106,17 +107,27 @@ class PostgresSpecTest extends RenderSpec {
     private Map<String, SpecCase> functionCases() {
         return Map.of(
             "postgres-arrays", SpecCase.plain(() -> from(Tagged.class)
-                .where(t -> all(eqAny(t.id(), List.of(1, 2)), arrayContains(t.tags(), new String[] {"red"}), arrayOverlaps(t.tags(), new String[] {"blue", "green"})))
+                .where(t -> {
+                    postgres(t.id()).eqAny(List.of(1, 2));
+                    arrayContains(t.tags(), new String[] {"red"});
+                    arrayOverlaps(t.tags(), new String[] {"blue", "green"});
+                })
                 .orderBy(t -> t.id())
                 .select(t -> cols(t.id(), t.tags(), cardinality(t.tags()).as("count")))),
             "postgres-array-agg", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> l.material())
                 .select(l -> cols(l.material(), arrayAgg(l.delivery(), String[].class, l.delivery().desc()).as("deliveries")))),
             "postgres-json", SpecCase.plain(() -> from(Tagged.class)
-                .where(t -> all(jsonContains(t.doc(), "{\"status\":\"open\"}"), jsonHasKey(t.doc(), "owner")))
-                .select(t -> cols(t.id(), jsonText(t.doc(), "owner", "name").as("owner")))),
+                .where(t -> {
+                    postgres(t.doc()).jsonContains("{\"status\":\"open\"}");
+                    postgres(t.doc()).jsonHasKey("owner");
+                })
+                .select(t -> cols(t.id(), postgres(t.doc()).jsonText("owner", "name").as("owner")))),
             "postgres-text-search", SpecCase.plain(() -> from(Tagged.class)
-                .where(t -> any(textMatches("simple", t.body(), "pump"), webMatches("english", t.body(), "valve -leak")))
+                .where(t -> any(() -> {
+                    textMatches("simple", t.body(), "pump");
+                    webMatches("english", t.body(), "valve -leak");
+                }))
                 .orderBy(t -> textRank("simple", t.body(), "pump").desc())
                 .select(t -> t.id())));
     }

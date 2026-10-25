@@ -1,7 +1,11 @@
 import { columnName, deletedValue, entityMeta, inserts, updates, type EntityMeta, type One, type PropertyMeta, type Table, type WriteMeta } from "../schema/metadata.js";
-import { all, bindValue, Column, Cond, Expr, Param, skips, withSkipEmpty } from "../sql/expr.js";
+import { Decimal } from "decimal.js";
+import { and, collect, Cond, outside, skips, withSkipEmpty } from "../sql/cond.js";
+import { bindValue, Column, ExprNode, Literal, Param, type Expr } from "../sql/expr.js";
+import type { Col, ExprOf } from "../sql/typed.js";
 import type { Renderable, Rendered, SqlWriter } from "../sql/writer.js";
-import { currentTimestamp, lit, plus } from "../sql/functions.js";
+import { currentTimestamp } from "../sql/functions.js";
+import { integer } from "../schema/types.js";
 import { filterCondition, type FilterObject } from "../query/filter.js";
 import type { AnyMany } from "../query/many.js";
 import { applyFiltering, conditionsFor, emitRelations, FILTERING_ON, implicitJoins, renderNamed, shardsBy, unfilteredBy, type AppliedFilters, type Filtering, type Query, type SourceFilter } from "../query/query.js";
@@ -12,8 +16,11 @@ import type { Clause, JoinWrite, Lock, Upsert } from "../sql/dialect.js";
 /** 表实体里的列字段：去掉 `@one`、`@many` 关系字段。 */
 export type Columns<T> = { [K in keyof T as T[K] extends AnyMany | One<any> ? never : K]: T[K] };
 
-/** `update(...).set(...)` 回调返回的对象：列字段到新值（值或表达式）。 */
-export type Assignments<T> = { readonly [K in keyof Columns<T>]?: Columns<T>[K] | null | Expr<Columns<T>[K]> | Expr<NonNullable<Columns<T>[K]>> };
+/**
+ * `update(...).set(...)` 回调返回的对象：列字段到新值（值或表达式）。表达式要是这一列的那一类，
+ * 所以以文本存的日期（`Stored`）不能直接赋日期表达式。
+ */
+export type Assignments<T> = { readonly [K in keyof Columns<T>]?: Columns<T>[K] | null | ExprOf<Columns<T>[K]> | ExprOf<NonNullable<Columns<T>[K]>> };
 
 /** `insertInto(...).values(...)` 的一行：列字段到值，没有的列不写，null 写成 NULL。 */
 export type InsertRow<T> = { readonly [K in keyof Columns<T>]?: Columns<T>[K] | null };
@@ -51,7 +58,7 @@ export function deleteFrom<T>(table: Table<T>): Delete<T> {
  */
 export interface Fill {
   readonly type: abstract new (...args: never[]) => unknown;
-  readonly column: (ref: never) => Expr<unknown>;
+  readonly column: (ref: never) => Col<unknown>;
   /** 每条语句取一次值；返回表达式时原样写出（例如 `currentTimestamp()`），否则按列的类型绑定。 */
   readonly value: () => unknown;
   readonly onInsert: boolean;
@@ -63,17 +70,17 @@ export interface Fill {
  * 插入 type（或它的子类）的表时逐行生成一列的值，只填行里为 null 或没有这个字段的行，例如主键：
  * `generate(Keyed, (k) => k.id, () => randomUUID())`。生成的值不写回行对象，之后还要用这个值时在代码里先生成。
  */
-export function generate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => NonNullable<V>): Fill {
+export function generate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Col<V>, value: () => NonNullable<V>): Fill {
   return Object.freeze({ type, column: column as Fill["column"], value, onInsert: true, generate: true });
 }
 
 /** 插入 type（或它的子类）的表时自动填充一列，例如创建时间：`onInsert(Audited, (a) => a.createdAt, () => now())`。 */
-export function onInsert<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
+export function onInsert<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Col<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
   return Object.freeze({ type, column: column as Fill["column"], value, onInsert: true });
 }
 
 /** 更新 type（或它的子类）的表时自动填充一列，例如修改人：`onUpdate(Audited, (a) => a.updatedBy, () => user())`。 */
-export function onUpdate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Expr<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
+export function onUpdate<E, V>(type: abstract new (...args: never[]) => E, column: (ref: Ref<E>) => Col<V>, value: () => V | Expr<V> | Expr<NonNullable<V>>): Fill {
   return Object.freeze({ type, column: column as Fill["column"], value, onInsert: false });
 }
 
@@ -81,7 +88,7 @@ export function onUpdate<E, V>(type: abstract new (...args: never[]) => E, colum
 function fillsFor(w: SqlWriter, ref: object, insert: boolean): (readonly [Column<unknown>, Expr<unknown>])[] {
   return matchingFills(w, ref, insert, false).map(([column, f]) => {
     const value = f.value();
-    return [column, value instanceof Expr ? value : bindValue(column.type, value)] as const;
+    return [column, value instanceof ExprNode ? (value as Expr<unknown>) : bindValue(column.type, value)] as const;
   });
 }
 
@@ -420,9 +427,8 @@ export class Target<T> {
   }
 
   /** 追加 WHERE 条件：回调或条件对象。 */
-  where(cond: ((t: Ref<T>) => Cond) | FilterObject): Target<T> {
-    const c = typeof cond === "function" ? withSkipEmpty(this.skipping, () => (cond as (t: Ref<T>) => Cond)(this.ref)) : filterCondition([this.ref], cond);
-    if (c == null) throw new TypeError("A condition is missing; return Cond.EMPTY for no condition");
+  where(cond: ((t: Ref<T>) => void) | FilterObject): Target<T> {
+    const c = typeof cond === "function" ? withSkipEmpty(this.skipping, () => collect(() => (cond as (t: Ref<T>) => void)(this.ref))) : filterCondition([this.ref], cond);
     return this.with({ conditions: [...this.conditions, c] });
   }
 
@@ -438,10 +444,10 @@ export class Target<T> {
    * located 是 byId 按主键（和版本）定位一行的条件。
    */
   renderWhere(w: SqlWriter, statement: string, located: Cond = Cond.EMPTY): void {
-    const own = all(...this.conditions, located);
+    const own = and(...this.conditions, located);
     if (own.isEmpty && !this.everyRow) throw new Error(`${statement} without where(...) would touch every row of ${this.table.name}; add .all() if that is intended`);
     const filters = this.filters(w);
-    const where = all(...conditionsFor(filters, this.ref as object), this.#navigated(w, own, filters));
+    const where = and(...conditionsFor(filters, this.ref as object), this.#navigated(w, own, filters));
     if (!where.isEmpty) w.sql("\nWHERE ").render(where);
   }
 
@@ -509,7 +515,7 @@ export class Target<T> {
 }
 
 /**
- * UPDATE 语句：`update(Lips).set((l) => ({ unit: "KG", quantity: plus(l.quantity, val("1")) })).where((l) => l.delivery.eq("D1"))`。
+ * UPDATE 语句：`update(Lips).set((l) => ({ unit: "KG", quantity: l.quantity.plus(1) })).where((l) => l.delivery.eq("D1"))`。
  * 没有 where 条件时报错（全表更新要写 `.all()`）；全局过滤器的条件也加进 WHERE。不可变，每个方法返回新的语句。
  */
 export class Update<T> extends Write {
@@ -544,22 +550,22 @@ export class Update<T> extends Write {
     const target = this.#target;
     const sets = [...this.#sets];
     withSkipEmpty(target.skipping, () => {
-      for (const [name, value] of Object.entries(assign(target.ref) as object)) {
+      for (const [name, value] of Object.entries(outside(() => assign(target.ref)) as object)) {
         const column = (target.ref as Record<string, unknown>)[name];
         if (!(column instanceof Column) || column.owner !== ownerOf(target.ref as object)) throw new Error(`set(...): ${name} is not a column of ${target.table.name}`);
         if (entityMeta(target.table).writes.readOnly.includes(name)) throw new Error(`set(...): ${target.table.name}.${name} is @readOnly`);
-        if (value instanceof Expr) sets.push([column, value]);
+        if (value instanceof ExprNode) sets.push([column, value as Expr<unknown>]);
         else if (value !== undefined && !skips(value)) sets.push([column, bindValue(column.type, value)]);
       }
     });
     return new Update(target, sets, this.#byId);
   }
 
-  /** 追加 WHERE 条件；多次调用之间是 AND。 */
-  where(cond: (t: Ref<T>) => Cond): Update<T>;
+  /** 追加 WHERE 条件块；多次调用之间是 AND。 */
+  where(cond: (t: Ref<T>) => void): Update<T>;
   /** 条件对象：每个非空字段一个条件，规则同查询的 `where(filter)`。 */
   where<F extends FilterObject>(filter: F): Update<T>;
-  where(cond: ((t: Ref<T>) => Cond) | FilterObject): Update<T> {
+  where(cond: ((t: Ref<T>) => void) | FilterObject): Update<T> {
     return new Update(this.#target.where(cond), this.#sets, this.#byId);
   }
 
@@ -704,10 +710,10 @@ export class Delete<T> extends Write {
   }
 
   /** 追加 WHERE 条件；多次调用之间是 AND。 */
-  where(cond: (t: Ref<T>) => Cond): Delete<T>;
+  where(cond: (t: Ref<T>) => void): Delete<T>;
   /** 条件对象：每个非空字段一个条件，规则同查询的 `where(filter)`。 */
   where<F extends FilterObject>(filter: F): Delete<T>;
-  where(cond: ((t: Ref<T>) => Cond) | FilterObject): Delete<T> {
+  where(cond: ((t: Ref<T>) => void) | FilterObject): Delete<T> {
     return new Delete(this.#target.where(cond), this.#byId, this.#physical);
   }
 
@@ -794,7 +800,7 @@ export class Delete<T> extends Write {
     const column = ref[logic.property]!;
     const sets: (readonly [Column<unknown>, Expr<unknown>])[] = [[column, logic.timestamp ? (currentTimestamp() as Expr<unknown>) : bindValue(column.type, deletedValue(logic))]];
     const version = meta.writes.version;
-    if (this.#byId !== undefined && version !== undefined) sets.push([ref[version]!, plus(ref[version] as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
+    if (this.#byId !== undefined && version !== undefined) sets.push([ref[version]!, increment(ref[version]!)]);
     return renderSet(w, this.#target as Target<unknown>, sets, located, "deleteFrom(...)");
   }
 }
@@ -846,7 +852,7 @@ export class ById {
     const row = this.rows[i] as Record<string, unknown>;
     const old = this.originals?.[i] as Record<string, unknown> | undefined;
     if (old === undefined) return [];
-    return Object.keys(row).filter((name) => row[name] !== undefined && !same(row[name], old[name], this.meta.property(name)?.type.kind));
+    return Object.keys(row).filter((name) => row[name] !== undefined && !same(row[name], old[name]));
   }
 
   /** 要写的行，按原顺序：有 diffFrom 时只含有变化的行，否则是全部行。 */
@@ -861,7 +867,7 @@ export class ById {
 
   /** 一行的定位条件：主键相等，有版本列时版本也相等。 */
   locate(ref: object, row: object): Cond {
-    return all(...ById.#keys(this.writes).map((k) => ((ref as Record<string, Expr<unknown>>)[k] as Expr<never>).eq((row as Record<string, never>)[k])));
+    return collect(() => ById.#keys(this.writes).forEach((k) => ((ref as Record<string, Expr<unknown>>)[k] as Expr<never>).eq((row as Record<string, never>)[k])));
   }
 
   /**
@@ -879,7 +885,7 @@ export class ById {
     }
     if (this.originals !== undefined && out.length === 0) return out;
     const version = this.writes.version;
-    if (version !== undefined) out.push([column(version), plus(column(version) as unknown as Expr<number>, lit(1)) as Expr<unknown>]);
+    if (version !== undefined) out.push([column(version), increment(column(version))]);
     return out;
   }
 
@@ -888,7 +894,7 @@ export class ById {
     const row = this.rows[i] as Record<string, unknown>;
     const old = this.originals?.[i] as Record<string, unknown> | undefined;
     return Object.keys(row).filter(
-      (name) => row[name] !== undefined && updates(this.writes, name) && (old === undefined || !same(row[name], old[name], this.meta.property(name)?.type.kind)),
+      (name) => row[name] !== undefined && updates(this.writes, name) && (old === undefined || !same(row[name], old[name])),
     );
   }
 
@@ -898,17 +904,20 @@ export class ById {
   }
 }
 
-/** 两个值是否相同；decimal 列的文本按数值比较（"1.0" 与 "1.00" 相同），Uint8Array 按内容比较。 */
-function same(a: unknown, b: unknown, kind: string | undefined): boolean {
+/** 两个值是否相同：小数按数值比较（1.0 与 1.00 相同），日期、时间戳按时刻比较，Uint8Array 按内容比较。 */
+function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (kind === "decimal" && typeof a === "string" && typeof b === "string") return normalize(a) === normalize(b);
+  if (a == null || b == null) return false;
+  if (Decimal.isDecimal(a) && Decimal.isDecimal(b)) return a.eq(b);
   if (a instanceof Uint8Array && b instanceof Uint8Array) return a.length === b.length && a.every((x, i) => x === b[i]);
+  // CalendarDate、CalendarDateTime 的 compare 只比较同一类的值，toString 是规整的 ISO 文本
+  if (typeof a === "object" && typeof b === "object" && a.constructor === b.constructor && "calendar" in a) return String(a) === String(b);
   return false;
 }
 
-/** 去掉小数末尾的 0 和多余的小数点，用于比较精确小数的文本。 */
-function normalize(decimal: string): string {
-  return decimal.includes(".") ? decimal.replace(/0+$/, "").replace(/\.$/, "") : decimal;
+/** 版本列加一：`version + 1`。 */
+function increment(column: Column<unknown>): Expr<unknown> {
+  return (column as ExprNode<unknown>).plus(new Literal(integer, 1));
 }
 
 /**
@@ -935,7 +944,7 @@ export class JoinUpdate<T, S> extends Write {
   }
 
   /** 更新 table，连接 joined；由方言包的 `updateJoin` 调用。 */
-  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): JoinUpdate<T, S> {
+  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => void): JoinUpdate<T, S> {
     const target = Target.of(table);
     const source = createRef(tableSource(joined));
     return new JoinUpdate(target, source, joinCondition(target, source, on), []);
@@ -945,19 +954,19 @@ export class JoinUpdate<T, S> extends Write {
   set(assign: (t: Ref<T>, s: Ref<S>) => Assignments<T>): JoinUpdate<T, S> {
     const target = this.#target;
     const sets = [...this.#sets];
-    for (const [name, value] of Object.entries(assign(target.ref, this.#source) as object)) {
+    for (const [name, value] of Object.entries(outside(() => assign(target.ref, this.#source)) as object)) {
       const column = (target.ref as Record<string, unknown>)[name];
       if (!(column instanceof Column) || column.owner !== ownerOf(target.ref as object)) throw new Error(`set(...): ${name} is not a column of ${target.table.name}`);
       if (entityMeta(target.table).writes.readOnly.includes(name)) throw new Error(`set(...): ${target.table.name}.${name} is @readOnly`);
       if (value === undefined) continue;
-      sets.push([column, value instanceof Expr ? value : bindValue(column.type, value)]);
+      sets.push([column, value instanceof ExprNode ? (value as Expr<unknown>) : bindValue(column.type, value)]);
     }
     return new JoinUpdate(target, this.#source, this.#on, sets);
   }
 
-  /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
-  where(cond: (t: Ref<T>, s: Ref<S>) => Cond): JoinUpdate<T, S> {
-    return new JoinUpdate(withCondition(this.#target, cond(this.#target.ref, this.#source)), this.#source, this.#on, this.#sets);
+  /** 追加 WHERE 条件块，可以引用两张表；多次调用之间是 AND。 */
+  where(cond: (t: Ref<T>, s: Ref<S>) => void): JoinUpdate<T, S> {
+    return new JoinUpdate(withCondition(this.#target, collect(() => cond(this.#target.ref, this.#source))), this.#source, this.#on, this.#sets);
   }
 
   /** 两张表都不套用全局过滤器，也不加逻辑删除的条件；给出名字时只关闭这些名字的过滤器。 */
@@ -1022,15 +1031,15 @@ export class JoinDelete<T, S> extends Write {
   }
 
   /** 从 table 删除，连接 joined；由方言包的 `deleteJoin` 调用。 */
-  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): JoinDelete<T, S> {
+  static of<T, S>(table: Table<T>, joined: Table<S>, on: (t: Ref<T>, s: Ref<S>) => void): JoinDelete<T, S> {
     const target = Target.of(table);
     const source = createRef(tableSource(joined));
     return new JoinDelete(target, source, joinCondition(target, source, on), false);
   }
 
   /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
-  where(cond: (t: Ref<T>, s: Ref<S>) => Cond): JoinDelete<T, S> {
-    return new JoinDelete(withCondition(this.#target, cond(this.#target.ref, this.#source)), this.#source, this.#on, this.#physical);
+  where(cond: (t: Ref<T>, s: Ref<S>) => void): JoinDelete<T, S> {
+    return new JoinDelete(withCondition(this.#target, collect(() => cond(this.#target.ref, this.#source))), this.#source, this.#on, this.#physical);
   }
 
   /** 表上有 `@logicDelete` 列时仍然真正删除。 */
@@ -1084,16 +1093,14 @@ export class JoinDelete<T, S> extends Write {
 }
 
 /** 用两张表的引用算出连接条件。 */
-function joinCondition<T, S>(target: Target<T>, source: Ref<S>, on: (t: Ref<T>, s: Ref<S>) => Cond): Cond {
-  const c = on(target.ref, source);
-  if (c == null) throw new TypeError("A condition is missing; return Cond.EMPTY for no condition");
+function joinCondition<T, S>(target: Target<T>, source: Ref<S>, on: (t: Ref<T>, s: Ref<S>) => void): Cond {
+  const c = collect(() => on(target.ref, source));
   if (c.isEmpty) throw new Error("A join needs a condition");
   return c;
 }
 
 /** 给 target 追加一个已经算好的条件。 */
 function withCondition<T>(target: Target<T>, c: Cond): Target<T> {
-  if (c == null) throw new TypeError("A condition is missing; return Cond.EMPTY for no condition");
   return target.with({ conditions: [...target.conditions, c] });
 }
 
@@ -1113,7 +1120,7 @@ function joinParts(
   if (sharding.rule(target.table) !== undefined || sharding.rule(ownerOf(source as object).source.entity) !== undefined) {
     throw new Error(`${statement} cannot use a sharded table; update or delete each shard with update(...) or deleteFrom(...)`);
   }
-  const own = all(...target.conditions);
+  const own = and(...target.conditions);
   if (own.isEmpty && !target.everyRow) {
     throw new Error(`${statement} without where(...) would touch every joined row of ${target.table.name}; add .all() if that is intended`);
   }
@@ -1129,7 +1136,7 @@ function joinParts(
     throw new Error(`${statement} cannot follow relations; join the table you need instead`);
   }
   const filters = target.filters(w);
-  const where = all(...conditionsFor(filters, target.ref as object), own);
+  const where = and(...conditionsFor(filters, target.ref as object), own);
   const meta = entityMeta(target.table);
   const name = (c: Column<unknown>): Renderable => ({ render: (x: SqlWriter) => void x.identifier(columnName(c.column as PropertyMeta, x.naming)) });
   const keys = meta.writes.ids.map((id) => (target.ref as Record<string, Column<unknown>>)[id]!);
@@ -1138,7 +1145,7 @@ function joinParts(
     targetAlias: { render: (x) => void x.alias(owner.alias(x)) },
     table: { render: (x) => tableName(x, meta) },
     source: { render: (x) => sourceOwner.renderSource(x) },
-    on: all(on, ...conditionsFor(filters, source as object)),
+    on: and(on, ...conditionsFor(filters, source as object)),
     where: where.isEmpty ? undefined : where,
     columns: sets.map(([c]) => name(c)),
     targetColumns: sets.map(([c]) => c),

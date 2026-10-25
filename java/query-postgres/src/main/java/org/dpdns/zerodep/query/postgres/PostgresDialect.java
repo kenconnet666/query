@@ -154,7 +154,7 @@ public class PostgresDialect extends Dialect {
     private static String[] toText(Object[] values) { return Arrays.stream(values).map(v -> v == null ? null : v.toString()).toArray(String[]::new); }
 
     /** CAST 的目标类型：小数写成 NUMERIC(精度,小数位)，其余沿用默认。 */
-    @Override public String castType(CastType<?> type) {
+    @Override public String castType(CastType<?, ?> type) {
         return switch (type.kind()) {
             case DECIMAL -> "NUMERIC(" + type.length() + "," + type.scale() + ")";
             default -> super.castType(type);

@@ -1,6 +1,8 @@
+import { Decimal } from "decimal.js";
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { avgDistinct, count, from, grouping, stddevPop, stddevSamp, stringAgg, sum, sumDistinct, varPop, varSamp } from "@zerodep-dev/query-core";
+import { count, from, grouping } from "@zerodep-dev/query-core";
 import { Lips } from "../../fixtures/erp.js";
 import { liveSuite } from "../support/live.js";
 
@@ -14,7 +16,7 @@ liveSuite("分组与聚合", (live) => {
     const rollup = from(Lips)
       .groupByRollup((l) => [l.material, l.unit])
       .orderBy((l) => [grouping(l.material), l.material, grouping(l.unit)])
-      .select((l) => ({ material: l.material, unit: l.unit, total: sum(l.quantity), level: grouping(l.material) }));
+      .select((l) => ({ material: l.material, unit: l.unit, total: l.quantity.sum(), level: grouping(l.material) }));
     if (live.is("sqlite", "sqlite-wasm")) {
       await assert.rejects(live.db.list(rollup), /ROLLUP/, "SQLite 没有 ROLLUP，渲染时报错");
       return;
@@ -31,9 +33,9 @@ liveSuite("分组与聚合", (live) => {
         .orderBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          recent: sum(l.quantity).filter(l.createdOn.ge("2026-01-01")),
-          big: count().filter(l.quantity.gt("2")),
-          deliveries: stringAgg(l.delivery, ",", l.delivery.desc()),
+          recent: l.quantity.sum().filter(() => l.createdOn.ge(parseDate("2026-01-01"))),
+          big: count().filter(() => l.quantity.gt(new Decimal("2"))),
+          deliveries: l.delivery.stringAgg(",", l.delivery.desc()),
         })),
     );
     assert.deepEqual(rows.map((r) => `${r.material}:${Number(r.recent)}:${r.big}:${r.deliveries}`), ["M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"]);
@@ -46,12 +48,12 @@ liveSuite("分组与聚合", (live) => {
         .orderBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          distinctTotal: sumDistinct(l.quantity),
-          distinctAverage: avgDistinct(l.quantity),
-          sampleDeviation: stddevSamp(l.quantity),
-          populationDeviation: stddevPop(l.quantity),
-          sampleVariance: varSamp(l.quantity),
-          populationVariance: varPop(l.quantity),
+          distinctTotal: l.quantity.sumDistinct(),
+          distinctAverage: l.quantity.avgDistinct(),
+          sampleDeviation: l.quantity.stddevSamp(),
+          populationDeviation: l.quantity.stddevPop(),
+          sampleVariance: l.quantity.varSamp(),
+          populationVariance: l.quantity.varPop(),
         })),
     );
     const f = (v: number | null) => v!.toFixed(4);
@@ -67,7 +69,7 @@ liveSuite("分组与聚合", (live) => {
       from(Lips)
         .groupBy((l) => [l.material, l.unit, l.mara.partNumber])
         .orderBy((l) => [l.material.asc(), l.unit.asc()])
-        .select((l) => ({ material: l.material, unit: l.unit, partNumber: l.mara.partNumber, total: sum(l.quantity) }))
+        .select((l) => ({ material: l.material, unit: l.unit, partNumber: l.mara.partNumber, total: l.quantity.sum() }))
         .exclude("unit", "partNumber")
         .sortBy("total desc, material"),
     );

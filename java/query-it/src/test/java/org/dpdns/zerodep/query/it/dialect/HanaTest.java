@@ -10,8 +10,11 @@ import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.it.support.SampleData;
 import org.dpdns.zerodep.query.select.Query;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.Writes.Doc;
@@ -47,23 +50,23 @@ class HanaTest {
     @Table(schema = "QUERY_IT", value = "FN_LIPS")
     interface LipsByUnit extends Entity {
         /** 交货单号。 */
-        @Column("VBELN") Col<String> delivery();
+        @Column("VBELN") ColText<String> delivery();
 
         /** 数量。 */
-        @Column("LFIMG") Col<BigDecimal> quantity();
+        @Column("LFIMG") ColDecimal<BigDecimal> quantity();
     }
 
     /** 组织：用上级编号连成树。 */
     @Table(schema = "QUERY_IT", value = "H_ORG")
     interface Org extends Entity {
         /** 编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 上级编号，根为 NULL。 */
-        @Column("PARENT_ID") Col<String> parent();
+        @Column("PARENT_ID") ColText<String> parent();
 
         /** 名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
     }
 
     /** 层级的一行：来源的列加上层级函数生成的列。 */
@@ -75,13 +78,13 @@ class HanaTest {
     @TableOption(dialect = HanaDialect.class, value = "PARTITION BY RANGE (DAY) (PARTITION '2025-01-01' <= VALUES < '2026-01-01', PARTITION '2026-01-01' <= VALUES < '2027-01-01', PARTITION OTHERS)")
     interface PartLog extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 日期，分区键。 */
-        @Id @Column("DAY") Col<LocalDate> day();
+        @Id @Column("DAY") ColDate<LocalDate> day();
 
         /** 金额。 */
-        @Column(value = "AMOUNT", precision = 10, scale = 2) Col<BigDecimal> amount();
+        @Column(value = "AMOUNT", precision = 10, scale = 2) ColDecimal<BigDecimal> amount();
     }
 
     record PartLogRow(Long id, LocalDate day, BigDecimal amount) { }
@@ -103,8 +106,8 @@ class HanaTest {
     @Test
     void 日期函数() {
         LocalDate day = LocalDate.of(2026, 1, 1);
-        assertEquals(31, (int) live.db().one(from(Lips.class).limit(1).select(l -> daysBetween(lit(day), addMonths(lit(day), 1)))));
-        assertEquals("20260105", live.db().one(from(Lips.class).limit(1).select(l -> toVarchar(addDays(lit(day), 4), "YYYYMMDD"))));
+        assertEquals(31, (int) live.db().one(from(Lips.class).limit(1).select(l -> lit(day).daysBetween(lit(day).addMonths(1)))));
+        assertEquals("20260105", live.db().one(from(Lips.class).limit(1).select(l -> hana(lit(day).addDays(4)).toVarchar("YYYYMMDD"))));
     }
 
     @Test
@@ -113,7 +116,7 @@ class HanaTest {
             .with(hint("NO_CS_JOIN"))
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
-            .select(l -> row((m, d) -> m + "=" + d, l.material(), stringAgg(l.delivery(), ",", l.delivery().asc()))));
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), l.delivery().stringAgg(",", l.delivery().asc()))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), rows);
     }
 
@@ -122,7 +125,7 @@ class HanaTest {
         List<String> sets = live.db().list(from(Lips.class)
             .groupBy(l -> groupingSets(keys(l.material()), keys()))       // 按物料，加上总计
             .orderBy(l -> orders(grouping(l.material()), l.material()))
-            .select(l -> row((m, total) -> m + "=" + total.stripTrailingZeros().toPlainString(), l.material(), sum(l.quantity()))));
+            .select(l -> row((m, total) -> m + "=" + total.stripTrailingZeros().toPlainString(), l.material(), l.quantity().sum())));
         assertEquals(List.of("M1=6", "M2=12", "null=18"), sets);
         List<Long> cells = live.db().list(from(Lips.class).groupBy(l -> cube(l.material(), l.unit())).select(l -> count()));
         assertEquals(6, cells.size(), "material x unit, material, unit and the grand total");
@@ -141,7 +144,7 @@ class HanaTest {
 
     @Test
     void TO_INTEGER把文本转成整数() {
-        assertEquals(List.of(1, 2, 3, 4, 5), live.db().list(from(Lips.class).orderBy(l -> l.delivery()).select(l -> toInteger(substring(l.delivery(), 2)))));
+        assertEquals(List.of(1, 2, 3, 4, 5), live.db().list(from(Lips.class).orderBy(l -> l.delivery()).select(l -> hana(l.delivery().substring(2)).toInteger())));
     }
 
     @Test
@@ -180,7 +183,7 @@ class HanaTest {
         assertEquals(List.of("M1:2.0:1", "M2:6.0:1"), live.db().list(from(Lips.class)
                 .groupBy(l -> l.material())
                 .orderBy(l -> l.material())
-                .select(l -> cols(l.material(), median(l.quantity()).as("median"), corr(l.quantity(), l.quantity()).as("self"))))
+                .select(l -> cols(l.material(), hana(l.quantity()).median().as("median"), corr(l.quantity(), l.quantity()).as("self"))))
             .stream().map(r -> r.get("material") + ":" + r.get("median") + ":" + Math.round((Double) r.get("self"))).toList());
     }
 
@@ -222,7 +225,7 @@ class HanaTest {
         List<Map<String, Object>> fuzzy = live.db().list(from(Lips.class).where(l -> containsFuzzy(0.8, "D1", l.delivery())).select(l -> cols(l.delivery(), score().as("score"))));
         assertEquals("D1", fuzzy.get(0).get("delivery"));
         assertEquals(1.0, (Double) fuzzy.get(0).get("score"), 1e-9);
-        assertEquals("x", live.db().one(from(Lips.class).limit(1).select(l -> jsonValue(lit("{\"a\":{\"b\":\"x\"}}"), "$.a.b"))));
+        assertEquals("x", live.db().one(from(Lips.class).limit(1).select(l -> hana(lit("{\"a\":{\"b\":\"x\"}}")).jsonValue("$.a.b"))));
     }
 
     @Test

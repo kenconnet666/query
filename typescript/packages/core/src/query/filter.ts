@@ -1,6 +1,6 @@
 import { entityMeta, type Ctor, type WhereOp } from "../schema/metadata.js";
-import { all, any, Cond, Expr, skips, withSkipEmpty } from "../sql/expr.js";
-import { contains, endsWith, startsWith } from "../sql/functions.js";
+import { addCondition, and, collect, Cond, or, skips, withSkipEmpty } from "../sql/cond.js";
+import { ExprNode } from "../sql/expr.js";
 import { Many } from "./many.js";
 
 /**
@@ -16,7 +16,6 @@ export type FilterObject = object & { readonly call?: never; readonly apply?: ne
  * 即要求同一个子行满足这些字段，例如 `@where("eq", "deliveries.unit")` 与 `@where("ge", "deliveries.quantity")`。
  */
 export function filterCondition(refs: readonly object[], filter: FilterObject): Cond {
-  if (filter instanceof Cond) throw new TypeError("where(...) takes a callback or a filter object; write where((t) => condition)");
   const type = Object.getPrototypeOf(filter)?.constructor as Ctor<unknown> | undefined;
   const meta = type !== undefined && type !== Object ? entityMeta(type) : undefined;
   const owner = meta === undefined ? "filter" : type!.name;
@@ -37,10 +36,10 @@ export function filterCondition(refs: readonly object[], filter: FilterObject): 
       if (group === undefined) alternatives.push(along(start, 1, step));
       else group.steps.push(step);
     }
-    conds.push(any(...alternatives));
+    conds.push(or(...alternatives));
   }
-  for (const g of groups.values()) conds.push(exists(g.many, (t) => all(...g.steps.map((s) => along(t, g.rest, s)))));
-  return all(...conds);
+  for (const g of groups.values()) conds.push(exists(g.many, (t) => and(...g.steps.map((s) => along(t, g.rest, s)))));
+  return and(...conds);
 }
 
 /** 一个字段沿一条路径的比较：steps 是拆开的路径，其余是字段的比较方式、值和报错用的名字。 */
@@ -99,26 +98,34 @@ function along(at: unknown, i: number, step: Step): Cond {
     at = member(at, step.steps[i]!);
     if (at === undefined) throw new Error(`${step.field}: the query's tables have no ${step.path}`);
   }
-  if (!(at instanceof Expr)) throw new Error(`${step.field}: ${step.path} is a relation, not a column`);
-  const column = at as Expr<unknown>;
-  return withSkipEmpty(true, () => compare(column, step.op, step.value, step.field));
+  if (!(at instanceof ExprNode)) throw new Error(`${step.field}: ${step.path} is a relation, not a column`);
+  const column = at as ExprNode<never>;
+  return withSkipEmpty(true, () => collect(() => compare(column, step.op, step.value, step.field)));
 }
 
 /** `EXISTS (目标行满足 inner)`；inner 为空条件（值都为空）时整个条件省略，而不是变成"至少有一行"。 */
 function exists(many: Many<unknown>, inner: (target: unknown) => Cond): Cond {
   let built = Cond.EMPTY;
-  const c = many.any((t) => (built = inner(t)));
+  const c = collect(() =>
+    many.any((t) => {
+      built = inner(t);
+      addCondition(built);
+    }),
+  );
   return built.isEmpty ? Cond.EMPTY : c;
 }
 
-/** 一个字段的条件；值为空时由 skipEmpty 规则省略。 */
-function compare(column: Expr<unknown>, op: WhereOp, value: unknown, field: string): Cond {
-  if (typeof op === "function") return skips(value) ? Cond.EMPTY : op(column, value);
-  const c = column as Expr<never>;
+/** 一个字段的条件，写进当前的条件块；值为空时由 skipEmpty 规则省略。 */
+function compare(c: ExprNode<never>, op: WhereOp, value: unknown, field: string): void {
+  if (typeof op === "function") {
+    if (!skips(value)) op(c, value);
+    return;
+  }
   if (Array.isArray(value)) {
-    if (op === "eq") return c.in(value as never[]);
-    if (op === "ne") return c.notIn(value as never[]);
-    throw new TypeError(`${field}: an array can only be compared with eq (IN) or ne (NOT IN)`);
+    if (op === "eq") c.in(value as never[]);
+    else if (op === "ne") c.notIn(value as never[]);
+    else throw new TypeError(`${field}: an array can only be compared with eq (IN) or ne (NOT IN)`);
+    return;
   }
   const v = value as never;
   const text = (value == null ? value : String(value)) as string | null | undefined;
@@ -136,10 +143,10 @@ function compare(column: Expr<unknown>, op: WhereOp, value: unknown, field: stri
     case "le":
       return c.le(v);
     case "contains":
-      return contains(c, text);
+      return c.contains(text);
     case "startsWith":
-      return startsWith(c, text);
+      return c.startsWith(text);
     case "endsWith":
-      return endsWith(c, text);
+      return c.endsWith(text);
   }
 }

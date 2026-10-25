@@ -58,7 +58,7 @@ Query<Row> sorted = from(rows)
 
 - **条件**：请求参数写成一个 record，`where(search)` 把每个非空字段变成条件，字段用 `@Where` 指定列和比较方式；或者在作用域上开 `skipEmpty()`，与 null、空白字符串、空集合比较的条件自动省略。
 - **"全部"选项**：在 Java 里把 `"ALL"` 换成 null，配合 `skipEmpty()` 或条件对象即可。
-- **多分支的模式**：用 `switch` 返回条件，`Cond.EMPTY` 会被自动丢弃。
+- **多分支的模式**：写成返回 `void` 的方法，在条件块里调用；`switch` 的各分支写各自的条件，不写就是没有条件。
 - **用户选的列和维度**：查询里列出全部可选列，再用 `only(request.columns())` 或 `exclude(...)`，没选的列写成 NULL，相同的分组键一起去掉，只被它们用到的连接也不再出现。
 - **用户给的排序**：`sortBy(request.sort())`，只认结果里的列名，不会拼进原样的文本。
 
@@ -73,13 +73,15 @@ public record DeliverySearch(
 按状态的多分支模式：
 
 ```java
-static Cond byStatus(Lips l, Mode mode) {
-    return switch (mode) {
+static void byStatus(Lips l, Mode mode) {
+    switch (mode) {
         case OPEN -> l.status().ne("C");
         case CLOSED -> l.status().eq("C");
-        case ALL -> Cond.EMPTY;
-    };
+        case ALL -> { }
+    }
 }
+
+from(Lips.class).where(l -> byStatus(l, mode))
 ```
 
 #### 拼接出的列名
@@ -94,7 +96,7 @@ Function<Mard, Expr<BigDecimal>> column = switch (kind) {
 };
 from(Mard.class)
     .groupBy(s -> s.material())
-    .select(s -> row(Total::new, s.material(), sum(column.apply(s))));
+    .select(s -> row(Total::new, s.material(), column.apply(s).sum()));
 ```
 
 #### 拼接出的表名
@@ -103,12 +105,12 @@ from(Mard.class)
 
 ```java
 public interface PeriodStock extends Entity {
-    @Column("MATNR") Col<String> material();
-    @Column("LFGJA") Col<String> year();
-    Col<BigDecimal> quantity();
+    @Column("MATNR") ColText<String> material();
+    @Column("LFGJA") ColText<String> year();
+    ColDecimal<BigDecimal> quantity();
 }
-@Table("MARDH") public interface Mardh extends PeriodStock { @Override @Column("LABST") Col<BigDecimal> quantity(); }
-@Table("MCHBH") public interface Mchbh extends PeriodStock { @Override @Column("CLABS") Col<BigDecimal> quantity(); }
+@Table("MARDH") public interface Mardh extends PeriodStock { @Override @Column("LABST") ColDecimal<BigDecimal> quantity(); }
+@Table("MCHBH") public interface Mchbh extends PeriodStock { @Override @Column("CLABS") ColDecimal<BigDecimal> quantity(); }
 
 static <E extends PeriodStock> Query<StockRow> stockArm(Class<E> table, String year) {
     return from(table)
@@ -124,9 +126,10 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 "有供应商参数时才 JOIN 供应商表并加条件"，改成可选的 EXISTS。作用域里的表不变，类型也不变：
 
 ```java
-from(Lips.class).skipEmpty().where(l -> all(
-    l.createdOn().between(start, end),
-    ifPresent(vendor, v -> exists(from(Ekko.class).where(e -> all(e.order().eq(l.purchaseOrder()), e.vendor().eq(v)))))));
+from(Lips.class).skipEmpty().where(l -> {
+    l.createdOn().between(start, end);
+    if (vendor != null) exists(from(Ekko.class).where(e -> { e.order().eq(l.purchaseOrder()); e.vendor().eq(vendor); }));
+});
 ```
 
 只为取描述列的 JOIN 写成多对一关系就不必判断：没有用到时 SQL 里不会出现。
@@ -158,7 +161,7 @@ Cte<Bucket> buckets = cte("buckets", values(Bucket.class, List.of(new Bucket("�
 整数相除时 PostgreSQL 取整（`7 / 2` 得 3），HANA 和 MySQL 得到小数（3.5），所以 `divide` 只接受 BigDecimal 的被除数。原 SQL 在 HANA 上依赖的是小数结果，改写时先把整数 CAST 成小数：
 
 ```java
-divide(count(l.delivery()).cast(CastType.decimal(18, 4)), count())
+l.delivery().count().cast(CastType.decimal(18, 4)).divide(count())
 ```
 
 ### 4. 已知的限制
@@ -169,11 +172,14 @@ divide(count(l.delivery()).cast(CastType.decimal(18, 4)), count())
 
 ## 从 1.x 升级到 2.0
 
-2.0 把表声明从带 getter 的类改成接口，列直接是方法，所以 lambda 里写 `l.material()` 而不是 `l.col(Lips::getMaterial)`；重复和复杂的写法删掉了，只留一种。TypeScript 的实体写法不变，变化集中在下表的 TS 一列。
+2.0 把表声明从带 getter 的类改成接口，列直接是方法，所以 lambda 里写 `l.material()` 而不是 `l.col(Lips::getMaterial)`；重复和复杂的写法删掉了，只留一种。TypeScript 的实体仍是带装饰器的类，小数和日期字段改成值对象，变化集中在下表的 TS 一列。
 
 | 1.x | 2.0（Java） | 2.0（TypeScript） |
 | --- | --- | --- |
-| `@Table` 类加字段（Lombok `@Data`） | `@Table` 接口继承 `Entity`，列是返回 `Col<T>` 的抽象方法；结果类、CTE 的行仍用 record 或类 | 不变 |
+| `@Table` 类加字段（Lombok `@Data`） | `@Table` 接口继承 `Entity`，列是返回列接口的抽象方法，接口按逻辑 SQL 类型选（`ColText<String>`、`ColDecimal<BigDecimal>`、以文本存的日期 `ColText<LocalDate>`），见 [API 第 2 节](api.md#2-声明表)；结果类、CTE 的行仍用 record 或类 | 实体写法不变；`decimal`、`date`、`timestamp` 列的字段从 `string` 改成 `Decimal`、`CalendarDate`、`CalendarDateTime`（新的 peerDependencies `decimal.js`、`@internationalized/date`），以文本存的日期写成 `Stored<CalendarDate, string>`，见 [TS API 第 2 节](api-typescript.md#2-声明实体) |
+| `upper(e)`、`sum(e)`、`addDays(d, 3)` 等静态函数 | 主操作数的实例方法：`e.upper()`、`e.sum()`、`d.addDays(3)`；方言函数经由视图：`hana(e).toVarchar(fmt)` | 同 Java：`e.upper()`、`e.sum()`、`d.addDays(3)`、`hana(e).toVarchar(fmt)`（见 [0014](decisions/0014-typed-expressions.md)） |
+| `all(a, b)`、`a.and(b)`、`any(a, b)`、`onlyIf`、`ifPresent` | 条件块一行一个条件：`where(l -> { a; b; })`、`any(() -> { a; b; })`，可选条件写 `if` | 同 Java：`where((l) => { a; b; })`、`any(() => { a; b; })`；返回 `Cond` 的辅助函数改成返回 `void` |
+| `set(t -> t.x().to(v)).set(...)` | 赋值块：`set(t -> { t.x().to(v); t.y().to(w); })` | 不变：`set((t) => ({ x: v, y: t.y.plus(1) }))`，对象字面量本来就一次写多列 |
 | `l.col(Lips::getMaterial)` | `l.material()`；CTE、派生表等行类来源仍是 `r.col(Row::x)` | 不变（`l.material`） |
 | `a.eq(l, Lips::getMaterial)` 等简写 | `a.eq(l.material())` | 不变 |
 | `eqIfPresent`、`likeIfPresent` 等 | 作用域上 `skipEmpty()`，或条件对象 `where(search)` | `skipEmpty()`，或 `where(search)` |
@@ -184,7 +190,7 @@ divide(count(l.delivery()).cast(CastType.decimal(18, 4)), count())
 | `selectValue(...)` | `select(l -> 表达式)` | `select((l) => 表达式)` |
 | `Nest.into(...)` / `nest(...)` | `many.list(...)` 或带 `List<X>` 属性的 `selectAs` VO | `many.list(...)` |
 | `SimpleCase` | `Case.Simple`（由 `caseOf(...)` 得到，写法不变） | 不变 |
-| `coalesce(Expr)` 单参数重载 | `a.coalesce(b, c)` 多参数 | 不变 |
+| `coalesce(Expr)` 单参数重载 | `a.coalesce(b)`、`a.coalesce(b, c)` | 不变 |
 | `Entity.all()` | `columns()` | 展开引用 `{ ...l }` |
 | `sql(Type.class, 模板, Expr...)` | 参数可以混用表达式和值，集合展开；`.on(方言类, 模板)` | `sql(type)\`...\`` 支持数组展开和 `.on(方言类)\`...\`` |
 | 作用域最多 8 张表 | 16 张，`row(...)` 22 个参数 | 不限 |

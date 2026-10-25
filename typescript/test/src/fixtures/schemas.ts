@@ -1,3 +1,5 @@
+import type { CalendarDate } from "@internationalized/date";
+import type { Decimal } from "decimal.js";
 import { bigint, column, columnType, date, decimal, generated, id, insertInto, integer, migration, namedTable, table, tableBuilder, text } from "@zerodep-dev/query-core";
 
 /**
@@ -25,10 +27,10 @@ export class SItem {
   @id @generated @column("ID", bigint) id!: bigint;
   @column("CODE", text, { length: 20, nullable: false }) code!: string;
   @column("TITLE", text, { length: 40, comment: "title" }) title!: string | null;
-  @column("PRICE", decimal, { precision: 13, scale: 3 }) price!: string | null;
+  @column("PRICE", decimal, { precision: 13, scale: 3 }) price!: Decimal | null;
   @column("STATUS", text, { length: 10, nullable: false, default: "'open'" }) status!: string;
   @column("OWNER_ID", bigint) ownerId!: bigint | null;
-  @column("CREATED_ON", date) createdOn!: string | null;
+  @column("CREATED_ON", date) createdOn!: CalendarDate | null;
 }
 
 /** 安全的变更：放宽标题和价格、加一列、按旧名把 STATUS 改名为 STATE、加一个索引。 */
@@ -45,10 +47,10 @@ export class SItemV2 {
   @id @generated @column("ID", bigint) id!: bigint;
   @column("CODE", text, { length: 20, nullable: false }) code!: string;
   @column("TITLE", text, { length: 80, comment: "title" }) title!: string | null;
-  @column("PRICE", decimal, { precision: 15, scale: 3 }) price!: string | null;
+  @column("PRICE", decimal, { precision: 15, scale: 3 }) price!: Decimal | null;
   @column("STATE", text, { length: 10, nullable: false, default: "'open'", previousName: "STATUS" }) state!: string;
   @column("OWNER_ID", bigint) ownerId!: bigint | null;
-  @column("CREATED_ON", date) createdOn!: string | null;
+  @column("CREATED_ON", date) createdOn!: CalendarDate | null;
   @column("NOTE", text, { length: 100 }) note!: string | null;
 }
 
@@ -66,10 +68,10 @@ export class SItemV3 {
   @id @generated @column("ID", bigint) id!: bigint;
   @column("CODE", text, { length: 20, nullable: false }) code!: string;
   @column("TITLE", text, { length: 10, comment: "title" }) title!: string | null;
-  @column("PRICE", decimal, { precision: 15, scale: 3 }) price!: string | null;
+  @column("PRICE", decimal, { precision: 15, scale: 3 }) price!: Decimal | null;
   @column("STATE", text, { length: 10, nullable: false, default: "'open'" }) state!: string;
   @column("OWNER_ID", bigint) ownerId!: bigint | null;
-  @column("CREATED_ON", date, { nullable: false }) createdOn!: string;
+  @column("CREATED_ON", date, { nullable: false }) createdOn!: CalendarDate;
   @column("NOTE", text, { length: 100 }) note!: string | null;
 }
 
@@ -77,14 +79,14 @@ export class SItemV3 {
 @table("LIPS", { schema: SCHEMA, external: true })
 export class LipsExternal {
   @column("VBELN") delivery!: string;
-  @column("LFIMG", decimal) quantity!: string;
+  @column("LFIMG", decimal) quantity!: Decimal;
 }
 
 /** 外部表的错误声明：一列不存在，一列类型装不下。 */
 @table("LIPS", { schema: SCHEMA, external: true })
 export class LipsBroken {
   @column("NO_SUCH") missing!: string;
-  @column("LFIMG", date) quantityAsDate!: string;
+  @column("LFIMG", date) quantityAsDate!: CalendarDate;
 }
 
 /** 迁移建的表，供迁移里的数据步骤写入。 */

@@ -63,7 +63,7 @@ class ProjectionTest {
     @Test
     void cols的列名取列方法名且函数和聚合沿用所包的列名() {
         Query<Map<String, Object>> q = from(Lips.class).groupBy(l -> l.material())
-            .select(l -> cols(l.material(), sum(l.quantity()), max(trim(l.unit())), count().as("lines")));
+            .select(l -> cols(l.material(), l.quantity().sum(), l.unit().trim().max(), count().as("lines")));
         assertEquals(List.of("material", "quantity", "unit", "lines"), q.labels());
         assertEquals(Map.of("material", "M1", "quantity", BigDecimal.TEN, "unit", "EA", "lines", 2L),
             q.mapRow(new Object[] {"M1", BigDecimal.TEN, "EA", 2L}));
@@ -73,14 +73,14 @@ class ProjectionTest {
     void cols里没有名字或重名的列立刻报错() {
         var unnamed = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).select(l -> cols(l.material(), count())));
         assertTrue(unnamed.getMessage().contains("Column 2 of cols(...) has no name"), unnamed.getMessage());
-        var twice = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).select(l -> cols(l.quantity(), sum(l.quantity()))));
+        var twice = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).select(l -> cols(l.quantity(), l.quantity().sum())));
         assertTrue(twice.getMessage().contains("Two columns are named 'quantity'"), twice.getMessage());
     }
 
     @Test
     void into按名映射并把列重排成类的属性顺序() {
         Query<MaterialScope> q = from(Mara.class)
-            .select(m -> cols(upper(m.partNumber()).as("partNumber"), m.material(), m.client()))
+            .select(m -> cols(m.partNumber().upper().as("partNumber"), m.material(), m.client()))
             .into(MaterialScope.class);
         assertEquals(List.of("client", "material", "partNumber"), q.labels());
         assertTrue(q.toSql(DIALECT).sql().startsWith("SELECT MARA.MANDT AS \"client\", MARA.MATNR AS \"material\", UPPER(MARA.MFRPN) AS \"partNumber\""));
@@ -112,7 +112,7 @@ class ProjectionTest {
     void 同一个查询可以映射成不同的类() {
         Query<Delivery> q = from(Lips.class)
             .groupBy(l -> l.material())
-            .select(l -> cols(l.material().as("partNumber"), max(l.unit()).as("name"), sum(l.quantity())))
+            .select(l -> cols(l.material().as("partNumber"), l.unit().max().as("name"), l.quantity().sum()))
             .into(Delivery.class);
         Object[] row = {"M1", "EA", new BigDecimal("6.000")};
         assertEquals(6.0, q.into(DeliveryVO.class).mapRow(row).getQuantity());
@@ -156,7 +156,7 @@ class ProjectionTest {
 
     @Test
     void 表接口的default方法可以是计算列且不公开的接口也能用() {
-        String sql = from(Lips.class).select(l -> cols(l.columns(), times(l.quantity(), lit(2)).as("doubled"))).toSql(DIALECT).sql();
+        String sql = from(Lips.class).select(l -> cols(l.columns(), l.quantity().times(lit(2)).as("doubled"))).toSql(DIALECT).sql();
         assertTrue(sql.startsWith("SELECT LIPS.MANDT AS \"client\", LIPS.ERDAT AS \"createdOn\", LIPS.VBELN AS \"delivery\""), sql);
         assertTrue(sql.contains("(LIPS.LFIMG * 2) AS \"doubled\""), sql);
         assertTrue(PrivateTables.render(DIALECT).startsWith("SELECT UPPER(HIDDEN.MATNR) AS \"value\""));

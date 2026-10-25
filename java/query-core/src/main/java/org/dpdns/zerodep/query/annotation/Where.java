@@ -1,6 +1,5 @@
 package org.dpdns.zerodep.query.annotation;
 
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 
 import java.lang.annotation.Documented;
@@ -41,8 +40,8 @@ public @interface Where {
 
     /** 自定义的比较：字段值为 null、空白字符串或空集合时不调用，直接省略条件。 */
     interface Operator {
-        /** 由列和字段值构造条件；返回 {@code Cond.EMPTY} 表示不加条件。 */
-        Cond apply(Expr<?> column, Object value);
+        /** 由列和字段值写下条件，写法与 where 块里相同，例如 {@code ((ExprDate<?>) column).range(start, end)}；不写表示不加条件。 */
+        void apply(Expr<?> column, Object value);
     }
 
     /** 字段值与列的比较方式。值是集合时 EQ 为 IN，NE 为 NOT IN。 */

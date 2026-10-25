@@ -12,7 +12,14 @@ importers:
         specifier: 7.1.0-dev.20261023.1
         version: 7.1.0-dev.20261023.1
 
-  packages/core: {}
+  packages/core:
+    devDependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
+      decimal.js:
+        specifier: 10.6.0
+        version: 10.6.0
 
   packages/hana:
     dependencies:
@@ -20,12 +27,18 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
       '@sap/hana-client':
         specifier: 2.30.27
         version: 2.30.27
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      decimal.js:
+        specifier: 10.6.0
+        version: 10.6.0
 
   packages/idb: {}
 
@@ -51,6 +64,9 @@ importers:
         specifier: workspace:*
         version: link:../mysql
     devDependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
@@ -89,6 +105,9 @@ importers:
 
   test:
     dependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
       '@zerodep-dev/query-core':
         specifier: workspace:*
         version: link:../packages/core
@@ -107,6 +126,9 @@ importers:
       '@zerodep-dev/query-sqlite':
         specifier: workspace:*
         version: link:../packages/sqlite
+      decimal.js:
+        specifier: 10.6.0
+        version: 10.6.0
     devDependencies:
       '@sap/hana-client':
         specifier: 2.30.27
@@ -138,6 +160,9 @@ importers:
 
 packages:
 
+  '@internationalized/date@3.12.4':
+    resolution: {integrity: sha512-M1dEn4c1U1HsSlaVR8upZtSqvXrTkHDfv18H01uCSJyjVLDxnBR38v/fMxecmlwXKR4i9HeZcmgQAPE6A+aGJQ==}
+
   '@sap/hana-client@2.30.27':
     resolution: {integrity: sha512-yXkwRcErq4BGfeNCtpkX7ZhZyjfz/IcP0H+QxQQtjrxA/prgm72pv3YC2GbHi5PMpHjjagQZrmaPUKXwYyEIJg==}
     engines: {node: '>=4.0.0'}
@@ -145,6 +170,9 @@ packages:
   '@sqlite.org/sqlite-wasm@3.54.1-build1':
     resolution: {integrity: sha512-foW427VBLJ3G87bsnvQTZCc9zYe0Fq1wH0pz1I6BlKLKXcArIAyTkHtq0iT2llmhcMQt9T/p6l5PpQQh+6O8uQ==}
     engines: {node: '>=22'}
+
+  '@swc/helpers@0.5.23':
+    resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
 
   '@types/node@24.19.2':
     resolution: {integrity: sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==}
@@ -205,6 +233,9 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  decimal.js@10.6.0:
+    resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
   fake-indexeddb@6.2.5:
     resolution: {integrity: sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w==}
@@ -306,6 +337,9 @@ packages:
     resolution: {integrity: sha512-6CKD38c31SENivxOADeMNLdukOnUxUcflKtzVWzace7Riv1v7cAEym5Cx9Q7gYZ3ezIJI7ZpqecQq8cqNeSSFg==}
     engines: {bun: '>=1.0.0', deno: '>=2.0.0', node: '>=12.0.0'}
 
+  tslib@2.8.1:
+    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
+
   typescript@7.1.0-dev.20261023.1:
     resolution: {integrity: sha512-rXl75ZFpa58TydmEIgAkc8vaLxs10DBO7CMYgsQzQeGbKULmvifWLzSwo/nB20qrsIQKVwDxR2Fkm1xm5joErw==}
     engines: {node: '>=16.20.0'}
@@ -320,6 +354,10 @@ packages:
 
 snapshots:
 
+  '@internationalized/date@3.12.4':
+    dependencies:
+      '@swc/helpers': 0.5.23
+
   '@sap/hana-client@2.30.27':
     dependencies:
       debug: 3.1.0
@@ -327,6 +365,10 @@ snapshots:
       - supports-color
 
   '@sqlite.org/sqlite-wasm@3.54.1-build1': {}
+
+  '@swc/helpers@0.5.23':
+    dependencies:
+      tslib: 2.8.1
 
   '@types/node@24.19.2':
     dependencies:
@@ -364,6 +406,8 @@ snapshots:
   debug@3.1.0:
     dependencies:
       ms: 2.0.0
+
+  decimal.js@10.6.0: {}
 
   fake-indexeddb@6.2.5: {}
 
@@ -450,6 +494,8 @@ snapshots:
   split2@4.2.0: {}
 
   sql-escaper@1.5.2: {}
+
+  tslib@2.8.1: {}
 
   typescript@7.1.0-dev.20261023.1:
     optionalDependencies:

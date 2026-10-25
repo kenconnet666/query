@@ -1,7 +1,6 @@
 package org.dpdns.zerodep.query.testing;
 
-import org.dpdns.zerodep.query.expr.Cond;
-import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Delivery;
@@ -28,34 +27,44 @@ public final class Scenarios {
 
     // ---------- 业务口径就是普通方法 ----------
 
-    /** 有效物料：物料类型为 ZMAT。 */
-    public static Cond activeMaterial(Mara ma) { return ma.materialType().eq("ZMAT"); }
+    /** 有效物料：物料类型为 ZMAT；在条件块里调用，条件写进调用处的块。 */
+    public static void activeMaterial(Mara ma) { ma.materialType().eq("ZMAT"); }
 
     /** 零件号去掉首尾空格后与原值不同时取去空格的值。 */
-    public static Expr<String> normalizedPart(Expr<String> part) {
-        return caseWhen(part.ne(trim(part)), trim(part)).otherwise(part);
+    public static ExprText<String> normalizedPart(ExprText<String> part) {
+        return caseWhen(() -> part.ne(part.trim()), part.trim()).otherwise(part);
     }
 
     /** CTE、EXISTS、LEFT JOIN、可选条件和分组，按位置投影；列名与 TypeScript 的键一致。 */
     public static Query<Delivery> deliveries(LocalDate start, LocalDate end, String maker) {
         Cte<MaterialScope> scope = cte("material_scope", from(Mara.class)
             .skipEmpty()
-            .where(ma -> all(activeMaterial(ma), ma.manufacturer().eq(maker)))
+            .where(ma -> {
+                activeMaterial(ma);
+                ma.manufacturer().eq(maker);
+            })
             .distinct()
             .select(ma -> cols(ma.client(), ma.material(), normalizedPart(ma.partNumber()).as("partNumber")))
             .into(MaterialScope.class));
         return from(scope)
-            .join(Lips.class, (ms, l) -> l.client().eq(ms.col(MaterialScope::client)).and(l.material().eq(ms.col(MaterialScope::material))))
-            .leftJoin(Makt.class, (ms, l, mk) -> mk.material().eq(ms.col(MaterialScope::material)).and(mk.language().eq("1")))
-            .where((ms, l, mk) -> all(
-                l.createdOn().between(start, end),
-                exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())))))
+            .join(Lips.class, (ms, l) -> {
+                l.client().eq(ms.col(MaterialScope::client));
+                l.material().eq(ms.col(MaterialScope::material));
+            })
+            .leftJoin(Makt.class, (ms, l, mk) -> {
+                mk.material().eq(ms.col(MaterialScope::material));
+                mk.language().eq("1");
+            })
+            .where((ms, l, mk) -> {
+                l.createdOn().between(start, end);
+                exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())));
+            })
             .groupBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
             .orderBy((ms, l, mk) -> ms.col(MaterialScope::partNumber))
             .select((ms, l, mk) -> row(Delivery::new,
                 ms.col(MaterialScope::partNumber),
-                max(mk.text().coalesce(ms.col(MaterialScope::partNumber))).as("name"),
-                sum(l.quantity()).as("quantity")));
+                mk.text().coalesce(ms.col(MaterialScope::partNumber)).max().as("name"),
+                l.quantity().sum().as("quantity")));
     }
 
     /** 一个模板套用到所有 PeriodStock 形状的表；数量列由各表自己声明。 */
@@ -89,7 +98,10 @@ public final class Scenarios {
     /** 按名映射：改名的列写 as。 */
     public static Query<LineVO> lines() {
         return from(Lips.class)
-            .leftJoin(Makt.class, (l, mk) -> mk.material().eq(l.material()).and(mk.language().eq("1")))
+            .leftJoin(Makt.class, (l, mk) -> {
+                mk.material().eq(l.material());
+                mk.language().eq("1");
+            })
             .orderBy((l, mk) -> l.delivery())
             .select((l, mk) -> cols(l.delivery(), l.material().as("materialNo"), l.createdOn(), mk.text()))
             .into(LineVO.class);
@@ -103,6 +115,6 @@ public final class Scenarios {
             .orderBy((l, ma) -> ma.partNumber())
             .select((l, ma) -> row((quantity, part) -> new PartTotal(part,
                     new PartTotal.Amount(quantity, quantity == null ? 0 : quantity.doubleValue() / 10_000)),
-                sum(l.quantity()), ma.partNumber()));
+                l.quantity().sum(), ma.partNumber()));
     }
 }

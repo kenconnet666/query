@@ -8,6 +8,7 @@ import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -187,14 +188,14 @@ public final class Sharding {
 
     /** e 是不是 ref 这次出现的分表键列。 */
     private static boolean isKey(Expr<?> e, Ref<?> ref, ShardRule rule) {
-        return e instanceof Col<?> col && col.ref() == ref && col.property().name().equals(rule.key());
+        return Nodes.unwrap(e) instanceof Col<?> col && col.ref() == ref && col.property().name().equals(rule.key());
     }
 
     /** e 是不是参数或字面量。 */
-    private static boolean constant(Expr<?> e) { return e instanceof Nodes.Param<?> || e instanceof Nodes.Literal<?>; }
+    private static boolean constant(Expr<?> e) { return Nodes.unwrap(e) instanceof Nodes.Param<?> || Nodes.unwrap(e) instanceof Nodes.Literal<?>; }
 
     /** 参数或字面量的值。 */
-    private static Object value(Expr<?> e) { return e instanceof Nodes.Param<?> p ? p.value() : ((Nodes.Literal<?>) e).value(); }
+    private static Object value(Expr<?> e) { return Nodes.unwrap(e) instanceof Nodes.Param<?> p ? p.value() : ((Nodes.Literal<?>) Nodes.unwrap(e)).value(); }
 
     /**
      * 写出 ref 的物理表：只有一张时直接写它，多张时写成 {@code (SELECT 列 FROM 表1 UNION ALL SELECT 列 FROM 表2 ...)}，

@@ -1,3 +1,5 @@
+import { Decimal } from "decimal.js";
+import { CalendarDate, parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { before, it } from "node:test";
 import {
@@ -6,7 +8,6 @@ import {
   column,
   count,
   date,
-  daysBetween,
   daysPreceding,
   decimal,
   deleteFrom,
@@ -18,8 +19,6 @@ import {
   id,
   insertInto,
   intersectAll,
-  jsonContains,
-  jsonText,
   least,
   lit,
   match,
@@ -29,12 +28,11 @@ import {
   MysqlDialect,
   noIndex,
   nullOf,
-  plus,
   range,
   recursiveCte,
-  stringAgg,
   table,
   update,
+  mysql,
 } from "@zerodep-dev/query-mysql";
 import { Article } from "../../fixtures/dialect-tables.js";
 import { Event, Lips, Mara } from "../../fixtures/erp.js";
@@ -47,8 +45,8 @@ import { liveSuite } from "../support/live.js";
 })
 class PartLog {
   @id @column("ID", bigint) id!: bigint;
-  @id @column("DAY", date) day!: string;
-  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: string | null;
+  @id @column("DAY", date) day!: CalendarDate;
+  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: Decimal | null;
 }
 
 /**
@@ -69,13 +67,13 @@ liveSuite("MySQL 专属写法", { only: ["mysql", "polardb"] }, (live) => {
   );
 
   it("DATEDIFF 与 GROUP_CONCAT", async () => {
-    assert.equal(await live.db.one(from(Lips).limit(1).select(() => daysBetween(lit("2026-01-01", date), lit("2026-02-01", date)))), 31);
+    assert.equal(await live.db.one(from(Lips).limit(1).select(() => lit(parseDate("2026-01-01")).daysBetween(lit(parseDate("2026-02-01"))))), 31);
     const rows = await live.db.list(
       from(Lips)
         .with(maxExecutionTime(5000))
         .groupBy((l) => l.material)
         .orderBy((l) => l.material)
-        .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc()) }))
+        .select((l) => ({ material: l.material, deliveries: l.delivery.stringAgg(",", l.delivery.asc()) }))
         .map((r) => `${r.material}=${r.deliveries}`),
     );
     assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);
@@ -86,7 +84,7 @@ liveSuite("MySQL 专属写法", { only: ["mysql", "polardb"] }, (live) => {
   });
 
   it("GREATEST 与 LEAST 遇到 NULL 时返回 NULL", async () => {
-    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, "4"), low: least(l.quantity, "4") })));
+    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, new Decimal("4")), low: least(l.quantity, new Decimal("4")) })));
     assert.deepEqual(rows.map((r) => `${r.delivery}:${Number(r.high)}:${Number(r.low)}`), ["D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"]);
     assert.equal(await live.db.one(from(Lips).where((l) => l.delivery.eq("D1")).select((l) => greatest(l.quantity, nullOf(decimal)))), null, "PostgreSQL 跳过 NULL，HANA 和 MySQL 返回 NULL");
   });
@@ -115,7 +113,7 @@ liveSuite("MySQL 专属写法", { only: ["mysql", "polardb"] }, (live) => {
     const steps = recursiveCte(
       "steps",
       from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
-      (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: s.depth.plus(lit(1)) })),
     );
     assert.deepEqual(await live.db.list(from(steps).orderBy((s) => s.depth).select((s) => s.depth)), [1, 2, 3]);
   });
@@ -158,7 +156,7 @@ liveSuite("MySQL 专属写法", { only: ["mysql", "polardb"] }, (live) => {
   });
 
   it("JSON 的包含与路径文本", async () => {
-    const rows = await live.db.list(from(Article).where((a) => jsonContains(a.doc, '{"status":"open"}')).orderBy((a) => a.id).select((a) => ({ id: a.id, owner: jsonText(a.doc, "$.owner.name") })));
+    const rows = await live.db.list(from(Article).where((a) => mysql(a.doc).jsonContains('{"status":"open"}')).orderBy((a) => a.id).select((a) => ({ id: a.id, owner: mysql(a.doc).jsonText("$.owner.name") })));
     assert.deepEqual(rows.map((r) => `${r.id}:${r.owner}`), ["1:ann", "3:null"]);
   });
 
@@ -171,8 +169,8 @@ liveSuite("MySQL 专属写法", { only: ["mysql", "polardb"] }, (live) => {
 
   it("按 options 建原生分区表且查询不变", async () => {
     await live.recreate(PartLog);
-    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
-    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: parseDate("2025-06-01"), amount: new Decimal("1") }, { id: 2n, day: parseDate("2026-06-01"), amount: new Decimal("10") }));
+    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge(parseDate("2026-01-01"))).select((p) => p.id)), [2n]);
     const result = await live.driver.query("SELECT COUNT(*) FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = 'QUERY_IT' AND TABLE_NAME = 'PART_LOG'", []);
     assert.equal(Number(result.rows[0]![0]), 3, "partitions of PART_LOG");
   });

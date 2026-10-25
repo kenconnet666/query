@@ -35,6 +35,12 @@ export function generatedTypeName(table: string): string {
   return p.charAt(0).toUpperCase() + p.slice(1).replace(/Column$/, "") + "Columns";
 }
 
+/** 值类型来自哪个包：模块名到它导出的类型名。 */
+const VALUE_MODULES: Readonly<Record<string, readonly string[]>> = {
+  "@internationalized/date": ["CalendarDate", "CalendarDateTime"],
+  "decimal.js": ["Decimal"],
+};
+
 /** 列的 SQL 类型常量和字段的 TypeScript 类型。 */
 function tsType(t: ColumnType): [string, string] {
   switch (t.kind) {
@@ -42,7 +48,7 @@ function tsType(t: ColumnType): [string, string] {
     case "CLOB":
       return ["text", "string"];
     case "DECIMAL":
-      return ["decimal", "string"];
+      return ["decimal", "Decimal"];
     case "SMALLINT":
       return ["smallint", "number"];
     case "INTEGER":
@@ -54,9 +60,9 @@ function tsType(t: ColumnType): [string, string] {
     case "BOOLEAN":
       return ["boolean", "boolean"];
     case "DATE":
-      return ["date", "string"];
+      return ["date", "CalendarDate"];
     case "TIMESTAMP":
-      return ["timestamp", "string"];
+      return ["timestamp", "CalendarDateTime"];
     case "BYTES":
     case "BLOB":
       return ["bytes", "Uint8Array"];
@@ -98,15 +104,17 @@ function fail(message: string): never {
 
 /**
  * 基类 typeName 的源码；columns 不为空时只生成这些列（列名，不分大小写），否则生成全部列。
- * 装饰器从 `@zerodep-dev/query-core` 导入，三个方言包都依赖它。
+ * 装饰器从 `@zerodep-dev/query-core` 导入，各方言包都依赖它；小数、日期的值类型从它的 peerDependencies 导入。
  */
 export function typescriptSource(table: TableDef, typeName: string, columns: readonly string[] = []): string {
   const imports = new Set(["column"]);
+  const values = new Set<string>();
   const body: string[] = [];
   for (const c of choose(table, columns)) {
     const id = table.primaryKey.some((k) => k.toLowerCase() === c.name.toLowerCase());
     const [sqlType, valueType] = tsType(c.type);
     imports.add(sqlType);
+    if (Object.values(VALUE_MODULES).some((names) => names.includes(valueType))) values.add(valueType);
     if (id) imports.add("id");
     if (c.identity) imports.add("generated");
     const nullable = c.nullable && !id && !c.identity;
@@ -117,7 +125,14 @@ export function typescriptSource(table: TableDef, typeName: string, columns: rea
   body.pop();
   const comment = table.comment === "" ? " " : `（${table.comment.replaceAll("*/", "* /")}）`;
   const schema = table.schema === "" ? "" : `, { schema: ${JSON.stringify(table.schema)} }`;
+  const valueImports = Object.entries(VALUE_MODULES)
+    .map(([module, names]) => [module, names.filter((n) => values.has(n))] as const)
+    .filter(([, names]) => names.length > 0)
+    .map(([module, names]) => `import type { ${names.join(", ")} } from "${module}";\n`)
+    .sort()
+    .join("");
   return (
+    valueImports +
     `import { ${[...imports].sort().join(", ")} } from "@zerodep-dev/query-core";\n\n` +
     `/**\n * ${qualifiedName(table)}${comment}的列，由 query-pull 从数据库生成；重新生成会覆盖这个文件，不要手改。\n` +
     ` * 在自己的表类里继承它：\`@table(${JSON.stringify(table.name)}${schema}) export class X extends ${typeName} { ... }\`。\n */\n` +

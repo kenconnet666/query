@@ -1,72 +1,48 @@
+import { Decimal } from "decimal.js";
+import { CalendarDate, parseDate, parseDateTime } from "@internationalized/date";
 import {
-  abs,
   all,
   any,
-  avg,
   Bound,
   caseOf,
   caseWhen,
-  cast,
-  ceil,
   CastType,
-  concat,
   count,
-  countDistinct,
   cte,
   date,
   decimal,
   identifier,
   denseRank,
-  divide,
   exists,
-  floor,
   from,
   grouping,
   lag,
   lead,
-  left,
-  like,
   lit,
-  locate,
-  lower,
-  max,
-  min,
-  minus,
-  negate,
   not,
   notExists,
-  notLike,
-  plus,
   rank,
-  replace,
-  right,
-  round,
   rowNumber,
   scalar,
   sql,
   sqlCond,
   sqlTable,
-  substring,
-  sum,
   text,
   timestamp,
-  times,
-  trim,
-  upper,
   val,
   where,
   values,
   type Query,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { addDays, addHours, addMinutes, addMonths, addSeconds, addYears, day, daysBetween, firstValue, hour, lastValue, lpad, minute, mod, month, monthStart, ntile, power, rpad, second, sign, sqrt, stringAgg, year } from "@zerodep-dev/query-core";
-import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, length, likeRegexpr, toDate, toInteger, toNvarchar, toVarchar } from "@zerodep-dev/query-hana";
-import { dateFormat, greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime } from "@zerodep-dev/query-mysql";
-import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, ilike, least as pgLeast } from "@zerodep-dev/query-postgres";
+import { firstValue, lastValue, ntile } from "@zerodep-dev/query-core";
+import { cube as hanaCube, greatest as hanaGreatest, groupingSets as hanaGroupingSets, hint, least as hanaLeast, hana } from "@zerodep-dev/query-hana";
+import { greatest as mysqlGreatest, least as mysqlLeast, maxExecutionTime, mysql } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, greatest as pgGreatest, groupingSets as pgGroupingSets, least as pgLeast, postgres } from "@zerodep-dev/query-postgres";
 import * as pgx from "@zerodep-dev/query-postgres";
 import * as mysqlx from "@zerodep-dev/query-mysql";
 import * as hanax from "@zerodep-dev/query-hana";
-import { glob, median as sqliteMedian, percentileCont as sqlitePercentileCont, percentileDisc as sqlitePercentileDisc } from "@zerodep-dev/query-sqlite";
+import { percentileCont as sqlitePercentileCont, percentileDisc as sqlitePercentileDisc, sqlite } from "@zerodep-dev/query-sqlite";
 import { Article, LipsByUnit, orgSource, SalesView, Tagged } from "./dialect-tables.js";
 import { Event, Lips, Makt, Mara, MaraView, Order, Vbkd } from "./erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "./scenarios.js";
@@ -75,7 +51,7 @@ import * as writes from "./writes.js";
 import { ShEvent, ShOrder } from "./shards.js";
 import { deleteFrom, insertInto, update, type Write } from "@zerodep-dev/query-core";
 import { fromAsOf, inventory } from "@zerodep-dev/query-polardb";
-import { allOf, anyOf, avgDistinct, bool, cumeDist, keys, nthValue, percentRank, stddevPop, stddevSamp, sumDistinct, varPop, varSamp } from "@zerodep-dev/query-core";
+import { allOf, anyOf, bool, cumeDist, keys, nthValue, percentRank } from "@zerodep-dev/query-core";
 
 /**
  * The golden-SQL cases of spec/render, built the TypeScript way. The Java tests build the same
@@ -90,11 +66,11 @@ export interface SpecCase {
 }
 
 const plain = (query: () => Query<unknown> | Write): SpecCase => ({ filtered: false, query });
-const DAY = "2026-01-31";
+const DAY = new CalendarDate(2026, 1, 31);
 
 export const sharedCases: Readonly<Record<string, SpecCase>> = {
-  deliveries: plain(() => deliveries("2026-01-01", "2026-06-30", null)),
-  "deliveries-filtered": { filtered: true, query: () => deliveries("2026-01-01", "2026-06-30", "MK1") },
+  deliveries: plain(() => deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), null)),
+  "deliveries-filtered": { filtered: true, query: () => deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), "MK1") },
   "lines-filtered": { filtered: true, query: () => lines() },
   stock: plain(() => stock("2026")),
   "latest-deliveries": plain(() => latestDeliveries()),
@@ -120,27 +96,34 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   conditions: plain(() =>
     from(Mara)
       .skipEmpty()
-      .where((m) =>
-        all(
-          any(m.material.eq("A"), m.partNumber.ne("B").and(m.manufacturer.isNull())),
-          not(m.materialType.in(["ZMAT", "ZOTH"])),
-          m.material.notIn(["X"]),
-          like(m.partNumber, "P%"),
-          notLike(m.manufacturer, "%X"),
-          m.material.between("A", "Z"),
-          m.manufacturer.isNotNull(),
-          m.material.gt("0").and(m.material.ge("1")).and(m.material.lt("9")).and(m.material.le("8")),
-          m.material.eq(null),
-          like(m.material, null),
-          m.material.between("A", null),
-        ),
-      )
+      .where((m) => {
+        any(() => {
+          m.material.eq("A");
+          all(() => {
+            m.partNumber.ne("B");
+            m.manufacturer.isNull();
+          });
+        });
+        not(() => m.materialType.in(["ZMAT", "ZOTH"]));
+        m.material.notIn(["X"]);
+        m.partNumber.like("P%");
+        m.manufacturer.notLike("%X");
+        m.material.between("A", "Z");
+        m.manufacturer.isNotNull();
+        m.material.gt("0");
+        m.material.ge("1");
+        m.material.lt("9");
+        m.material.le("8");
+        m.material.eq(null);
+        m.material.like(null);
+        m.material.between("A", null);
+      })
       .select((m) => m.material),
   ),
   "case-template": plain(() =>
     from(Mara).select((m) =>
-      caseWhen(m.materialType.eq("ZMAT"), "material")
-        .when(m.materialType.eq("ZOTH"), "other")
+      caseWhen(() => m.materialType.eq("ZMAT"), "material")
+        .when(() => m.materialType.eq("ZOTH"), "other")
         .otherwise(sql(text)`LOWER(${m.materialType})`),
     ),
   ),
@@ -149,33 +132,33 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       quote: lit("O'Brien"),
       unicode: lit("Größe"),
       backslash: lit("a\\b"),
-      day: lit(DAY, date),
-      moment: lit("2026-01-31 08:15:30", timestamp),
+      day: lit(DAY),
+      moment: lit(parseDateTime("2026-01-31T08:15:30")),
       integer: lit(42),
-      decimal: lit("12.50", decimal),
+      decimal: lit(new Decimal("12.5")),
       flag: lit(true),
     })),
   ),
   functions: plain(() =>
     from(Lips).select((l) => ({
-      upper: upper(l.material),
-      lower: lower(l.unit),
-      trimmed: trim(l.delivery),
-      joined: concat(l.material, val("-"), l.unit),
+      upper: l.material.upper(),
+      lower: l.unit.lower(),
+      trimmed: l.delivery.trim(),
+      joined: l.material.concat(val("-"), l.unit),
       fallback: l.unit.coalesce("EA"),
       emptyUnit: l.unit.nullif(""),
-      total: plus(l.quantity, l.quantity),
-      difference: minus(l.quantity, val(1)),
-      product: times(l.quantity, val(2)),
-      ratio: divide(l.quantity, val(3)),
-      magnitude: abs(l.quantity),
-      rounded: round(l.quantity, 1),
-      asText: cast(l.quantity, CastType.text(20)),
+      total: l.quantity.plus(l.quantity),
+      difference: l.quantity.minus(val(1)),
+      product: l.quantity.times(val(2)),
+      ratio: l.quantity.divide(val(3)),
+      magnitude: l.quantity.abs(),
+      rounded: l.quantity.round(1),
+      asText: l.quantity.cast(CastType.text(20)),
       asDecimal: l.material.cast(CastType.decimal(15, 3)),
-      asInteger: cast(l.quantity, CastType.integer()),
-      asDouble: cast(l.quantity, CastType.double()),
-      asDate: cast(l.salesOrder, CastType.date()),
-      asTimestamp: cast(l.salesOrder, CastType.timestamp()),
+      asInteger: l.quantity.cast(CastType.integer()),
+      asDouble: l.quantity.cast(CastType.double()),
+      asDate: l.salesOrder.cast(CastType.date()),
+      asTimestamp: l.salesOrder.cast(CastType.timestamp()),
     })),
   ),
   aggregates: plain(() =>
@@ -185,11 +168,11 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       .select((l) => ({
         material: l.material,
         lines: count(),
-        orders: countDistinct(l.salesOrder),
-        average: avg(l.quantity),
-        smallest: min(l.quantity),
-        largest: max(l.quantity),
-        total: sum(l.quantity),
+        orders: l.salesOrder.countDistinct(),
+        average: l.quantity.avg(),
+        smallest: l.quantity.min(),
+        largest: l.quantity.max(),
+        total: l.quantity.sum(),
       })),
   ),
   windows: plain(() =>
@@ -200,8 +183,8 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       dense: denseRank().over((w) => w.orderBy(l.quantity.desc())),
       previous: lag(l.delivery, 1).over((w) => w.orderBy(l.delivery.asc())),
       next: lead(l.delivery, 2).over((w) => w.orderBy(l.delivery.asc())),
-      running: sum(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery.asc()).rows(Bound.unboundedPreceding(), Bound.currentRow())),
-      moving: avg(l.quantity).over((w) => w.orderBy(l.delivery.asc()).rows(Bound.preceding(2), Bound.following(1))),
+      running: l.quantity.sum().over((w) => w.partitionBy(l.material).orderBy(l.delivery.asc()).rows(Bound.unboundedPreceding(), Bound.currentRow())),
+      moving: l.quantity.avg().over((w) => w.orderBy(l.delivery.asc()).rows(Bound.preceding(2), Bound.following(1))),
     })),
   ),
   values: plain(() => {
@@ -218,34 +201,37 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   }),
   "text-functions": plain(() =>
     from(Lips).select((l) => ({
-      prefix: left(l.delivery, 2),
-      suffix: right(l.delivery, 3),
-      middle: substring(l.material, 2, 3),
-      tail: substring(l.material, 2),
-      cleaned: replace(l.unit, "-", ""),
-      negative: negate(l.quantity),
-      periods: plus([l.quantity, l.quantity.coalesce("0")]),
+      prefix: l.delivery.left(2),
+      suffix: l.delivery.right(3),
+      middle: l.material.substring(2, 3),
+      tail: l.material.substring(2),
+      cleaned: l.unit.replace("-", ""),
+      negative: l.quantity.negate(),
+      periods: l.quantity.plus(l.quantity.coalesce(new Decimal(0))),
     })),
   ),
   "grouped-constants": plain(() => {
-    const bucket = (l: Ref<Lips>) => caseWhen(l.quantity.le("2"), "small").when(l.quantity.le("5"), "medium").otherwise("large");
+    const bucket = (l: Ref<Lips>) => caseWhen(() => l.quantity.le(new Decimal(2)), "small").when(() => l.quantity.le(new Decimal(5)), "medium").otherwise("large");
     return from(Lips)
       .where((l) => l.unit.eq("EA"))
-      .groupBy((l) => [bucket(l), substring(l.delivery, 1, 1)])
+      .groupBy((l) => [bucket(l), l.delivery.substring(1, 1)])
       .having(() => count().gt(1))
       .orderBy((l) => bucket(l))
       .select((l) => ({
         bucket: bucket(l),
-        prefix: substring(l.delivery, 1, 1),
+        prefix: l.delivery.substring(1, 1),
         lines: count(),
-        total: sum(caseWhen(l.unit.eq("EA"), l.quantity).otherwise("0")),
+        total: caseWhen(() => l.unit.eq("EA"), l.quantity).otherwise(new Decimal(0)).sum(),
       }));
   }),
   "column-transforms": plain(() =>
     from(MaraView)
-      .where((m) => all(m.maker.isNotNull(), m.storedMaker.ne("")))
+      .where((m) => {
+        m.maker.isNotNull();
+        m.storedMaker.ne("");
+      })
       .groupBy((m) => m.partNumber)
-      .select((m) => ({ partNumber: m.partNumber, makers: countDistinct(m.maker) })),
+      .select((m) => ({ partNumber: m.partNumber, makers: m.maker.countDistinct() })),
   ),
   rollup: plain(() => rollup()),
   "union-grouping": plain(() => unionGrouping()),
@@ -269,7 +255,10 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
     filtered: true,
     query: () =>
       from(Mara)
-        .where((m) => all(m.materialType.eq("ZMAT"), m.deliveries.any((l) => l.unit.eq("EA"))))
+        .where((m) => {
+          m.materialType.eq("ZMAT");
+          m.deliveries.any((l) => l.unit.eq("EA"));
+        })
         .orderBy((m) => m.material)
         .select((m) => ({
           material: m.material,
@@ -291,25 +280,31 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
   "distribution-windows": plain(() => distributionWindows()),
   "shard-month-range": plain(() =>
     from(ShEvent)
-      .where((e) => e.day.range("2026-01-15", "2026-03-01"))
+      .where((e) => e.day.range(parseDate("2026-01-15"), parseDate("2026-03-01")))
       .groupBy((e) => e.note)
-      .select((e) => ({ note: e.note, total: sum(e.amount) })),
+      .select((e) => ({ note: e.note, total: e.amount.sum() })),
   ),
   "shard-single": plain(() =>
     from(ShEvent)
-      .where((e) => all(e.day.eq("2026-02-10"), like(e.note, "a%")))
+      .where((e) => {
+        e.day.eq(parseDate("2026-02-10"));
+        e.note.like("a%");
+      })
       .select((e) => e.id),
   ),
   "shard-modulo-in": plain(() =>
     from(ShOrder)
-      .where((o) => any(o.customer.in([1, 3]), o.customer.eq(5)))
+      .where((o) => any(() => {
+        o.customer.in([1, 3]);
+        o.customer.eq(5);
+      }))
       .select((o) => ({ customer: o.customer, total: o.total })),
   ),
   "shard-all": plain(() => from(ShOrder).allShards().select(() => count())),
   "shard-update": plain(() =>
     update(ShEvent)
       .set(() => ({ note: "x" }))
-      .where((e) => e.day.between("2026-03-01", "2026-03-31")),
+      .where((e) => e.day.between(parseDate("2026-03-01"), parseDate("2026-03-31"))),
   ),
   "group-join": { filtered: true, query: () => groupJoin() },
   "workflow-todo": plain(() => wf.todo("alice", ["managers", "leads"], Object.assign(new wf.TodoSearch(), { process: "leave", name: "app" }))),
@@ -353,13 +348,16 @@ export const sharedCases: Readonly<Record<string, SpecCase>> = {
       .select((m) => m.material);
     const open = from(Lips).select((l) => ({ delivery: l.delivery, material: l.material }));
     return from(open.asTable())
-      .where((o) => all(o.material.in(parts), notExists(from(Vbkd).where((v) => v.salesOrder.eq(o.delivery)))))
+      .where((o) => {
+        o.material.in(parts);
+        notExists(from(Vbkd).where((v) => v.salesOrder.eq(o.delivery)));
+      })
       .select((o) => ({
         delivery: o.delivery,
         text: scalar(
           from(Makt)
             .where((mk) => mk.material.eq(o.material))
-            .select((mk) => max(mk.text)),
+            .select((mk) => mk.text.max()),
         ),
       }));
   }),
@@ -376,7 +374,7 @@ export function groupJoin() {
       material: m.material,
       lines: m.deliveries.count(),
       total: m.deliveries.sum((l) => l.quantity),
-      recent: m.deliveries.where((l) => l.createdOn.ge("2026-01-01")).count(),
+      recent: m.deliveries.where((l) => l.createdOn.ge(parseDate("2026-01-01"))).count(),
     }));
 }
 
@@ -387,13 +385,13 @@ export function timeFunctions() {
     .orderBy((e) => e.id)
     .select((e) => ({
       id: e.id,
-      h: hour(e.atTime),
-      mi: minute(e.atTime),
-      s: second(e.atTime),
-      plusHours: addHours(e.atTime, 25),
-      minusMinutes: addMinutes(e.atTime, -31),
-      plusSeconds: addSeconds(e.atTime, 59),
-      monthStart: monthStart(e.onDay),
+      h: e.atTime.hour(),
+      mi: e.atTime.minute(),
+      s: e.atTime.second(),
+      plusHours: e.atTime.addHours(25),
+      minusMinutes: e.atTime.addMinutes(-31),
+      plusSeconds: e.atTime.addSeconds(59),
+      monthStart: e.onDay.monthStart(),
     }));
 }
 
@@ -402,28 +400,28 @@ export function numberTextFunctions() {
   return from(Lips)
     .where((l) => l.delivery.eq("D1"))
     .select((l) => ({
-      padded: lpad(l.material, 5, "0"),
-      unit: rpad(l.unit, 4, "*"),
-      remainder: mod(l.quantity, 2),
-      squared: power(l.quantity, 2),
-      root: sqrt(l.quantity),
-      sign: sign(minus(l.quantity, lit("4", decimal))),
+      padded: l.material.lpad(5, "0"),
+      unit: l.unit.rpad(4, "*"),
+      remainder: l.quantity.mod(2),
+      squared: l.quantity.power(2),
+      root: l.quantity.sqrt(),
+      sign: l.quantity.minus(lit(new Decimal("4"))).sign(),
     }));
 }
 
 export function dateFunctions() {
   return from(Event)
-    .where((e) => e.onDay.range("2011-01-01", "2025-01-01"))
+    .where((e) => e.onDay.range(parseDate("2011-01-01"), parseDate("2025-01-01")))
     .orderBy((e) => e.id)
     .select((e) => ({
       id: e.id,
-      y: year(e.onDay),
-      m: month(e.atTime),
-      d: day(e.onDay),
-      plusDays: addDays(e.onDay, 3),
-      minusMonth: addMonths(e.onDay, -1),
-      plusYear: addYears(e.onDay, 1),
-      days: daysBetween(e.onDay, lit("2024-04-30", date)),
+      y: e.onDay.year(),
+      m: e.atTime.month(),
+      d: e.onDay.day(),
+      plusDays: e.onDay.addDays(3),
+      minusMonth: e.onDay.addMonths(-1),
+      plusYear: e.onDay.addYears(1),
+      days: e.onDay.daysBetween(lit(parseDate("2024-04-30"))),
     }));
 }
 
@@ -443,7 +441,7 @@ export function windowValues() {
       delivery: l.delivery,
       first: firstValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
       last: lastValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery).rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())),
-      previous: lag(l.quantity, 1, "0").over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
+      previous: lag(l.quantity, 1, new Decimal(0)).over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
       half: ntile(2).over((w) => w.orderBy(l.delivery)),
     }));
 }
@@ -468,17 +466,15 @@ export function setOperations() {
 export function subqueryComparisons() {
   return from(Mara)
     .rightJoin(Lips, (m, l) => m.material.eq(l.material))
-    .where((m, l) =>
-      all(
-        keys(l.delivery, l.material).in(from(Lips).where((x) => x.unit.eq("EA")).select((x) => ({ delivery: x.delivery, material: x.material }))),
-        l.quantity.ge(anyOf(from(Lips).where((x) => x.unit.eq("KG")).select((x) => x.quantity))),
-        l.quantity.lt(allOf(from(Lips).where((x) => x.unit.eq("PC")).select((x) => x.quantity))),
-        m.manufacturer.isNotDistinctFrom(m.partNumber).not(),
-        l.unit.isDistinctFrom(m.materialType),
-      ),
-    )
+    .where((m, l) => {
+      keys(l.delivery, l.material).in(from(Lips).where((x) => x.unit.eq("EA")).select((x) => ({ delivery: x.delivery, material: x.material })));
+      l.quantity.ge(anyOf(from(Lips).where((x) => x.unit.eq("KG")).select((x) => x.quantity)));
+      l.quantity.lt(allOf(from(Lips).where((x) => x.unit.eq("PC")).select((x) => x.quantity)));
+      not(() => m.manufacturer.isNotDistinctFrom(m.partNumber));
+      l.unit.isDistinctFrom(m.materialType);
+    })
     .orderBy((m, l) => l.delivery)
-    .select((m, l) => ({ delivery: l.delivery, partNumber: m.partNumber, big: bool(l.quantity.gt("1")) }));
+    .select((m, l) => ({ delivery: l.delivery, partNumber: m.partNumber, big: bool(() => l.quantity.gt(new Decimal(1))) }));
 }
 
 /** 去重的求和与平均、样本与总体的标准差和方差。 */
@@ -488,12 +484,12 @@ export function statistics() {
     .orderBy((l) => l.material)
     .select((l) => ({
       material: l.material,
-      distinctTotal: sumDistinct(l.quantity),
-      distinctAverage: avgDistinct(l.quantity),
-      sampleDeviation: stddevSamp(l.quantity),
-      populationDeviation: stddevPop(l.quantity),
-      sampleVariance: varSamp(l.quantity),
-      populationVariance: varPop(l.quantity),
+      distinctTotal: l.quantity.sumDistinct(),
+      distinctAverage: l.quantity.avgDistinct(),
+      sampleDeviation: l.quantity.stddevSamp(),
+      populationDeviation: l.quantity.stddevPop(),
+      sampleVariance: l.quantity.varSamp(),
+      populationVariance: l.quantity.varPop(),
     }));
 }
 
@@ -527,10 +523,10 @@ export function conditionalAggregates() {
     .orderBy((l) => l.material)
     .select((l) => ({
       material: l.material,
-      kg: sum(l.quantity).filter(l.unit.eq("KG")),
-      eachLines: count().filter(l.unit.eq("EA")),
-      units: countDistinct(l.unit).filter(l.quantity.gt("0")),
-      deliveries: stringAgg(l.delivery, ",", l.delivery.asc()),
+      kg: l.quantity.sum().filter(() => l.unit.eq("KG")),
+      eachLines: count().filter(() => l.unit.eq("EA")),
+      units: l.unit.countDistinct().filter(() => l.quantity.gt(new Decimal(0))),
+      deliveries: l.delivery.stringAgg(",", l.delivery.asc()),
     }));
 }
 
@@ -538,7 +534,7 @@ export function rollup() {
   return from(Lips)
     .groupByRollup((l) => [l.material, l.unit])
     .orderBy((l) => [grouping(l.material), l.material, grouping(l.unit)])
-    .select((l) => ({ material: l.material, unit: l.unit, total: sum(l.quantity), level: grouping(l.material) }));
+    .select((l) => ({ material: l.material, unit: l.unit, total: l.quantity.sum(), level: grouping(l.material) }));
 }
 
 /** Cuts each comma-separated code where LOCATE finds the comma: computed SUBSTRING positions. */
@@ -547,12 +543,12 @@ export function textPositions() {
   return from(codes)
     .orderBy((c) => c.text)
     .select((c) => {
-      const comma = locate(c.text, ",");
+      const comma = c.text.locate(",");
       return {
         text: c.text,
         comma,
-        head: caseWhen(comma.gt(0), substring(c.text, 1, minus(comma, lit(1)))).otherwise(c.text),
-        tail: caseWhen(comma.gt(0), substring(c.text, plus(comma, lit(1)))).end(),
+        head: caseWhen(() => comma.gt(0), c.text.substring(1, comma.minus(lit(1)))).otherwise(c.text),
+        tail: caseWhen(() => comma.gt(0), c.text.substring(comma.plus(lit(1)))).end(),
       };
     });
 }
@@ -573,8 +569,8 @@ export function floorCeil() {
   return from(Lips)
     .orderBy((l) => l.delivery)
     .select((l) => {
-      const half = divide(l.quantity, lit("2", decimal));
-      return { delivery: l.delivery, down: floor(half), up: ceil(half) };
+      const half = l.quantity.divide(lit(new Decimal("2")));
+      return { delivery: l.delivery, down: half.floor(), up: half.ceil() };
     });
 }
 
@@ -626,7 +622,7 @@ export function dynamicColumns() {
   return from(Lips)
     .groupBy((l) => [l.material, l.unit, l.mara.partNumber])
     .orderBy((l) => [l.material.asc(), l.unit.asc()])
-    .select((l) => ({ material: l.material, unit: l.unit, partNumber: l.mara.partNumber, total: sum(l.quantity) }))
+    .select((l) => ({ material: l.material, unit: l.unit, partNumber: l.mara.partNumber, total: l.quantity.sum() }))
     .exclude("unit", "partNumber")
     .sortBy("total desc, material");
 }
@@ -665,18 +661,18 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
   hana: {
     ...groupingCases(hanaGroupingSets, hanaCube, "hana"),
     "hana-extremes": plain(() =>
-      from(Lips).select((l) => ({ atLeast4: hanaGreatest(l.quantity, val("4", decimal)), atMost4: hanaLeast(l.quantity, val("4", decimal)), number: toInteger(substring(l.delivery, 2)) })),
+      from(Lips).select((l) => ({ atLeast4: hanaGreatest(l.quantity, val(new Decimal("4"))), atMost4: hanaLeast(l.quantity, val(new Decimal("4"))), number: hana(l.delivery.substring(2)).toInteger() })),
     ),
     "hana-functions": plain(() =>
       from(Lips)
         .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
         .select((l) => ({
-          days: daysBetween(lit("2026-01-01", date), addDays(lit("2026-01-01", date), 3)),
-          months: addMonths(lit(DAY, date), 1),
-          years: addYears(lit(DAY, date), 2),
-          text: toVarchar(lit(DAY, date), "YYYYMMDD"),
-          day: toDate(l.delivery, "YYYYMMDD"),
-          size: length(l.material),
+          days: lit(parseDate("2026-01-01")).daysBetween(lit(parseDate("2026-01-01")).addDays(3)),
+          months: lit(DAY).addMonths(1),
+          years: lit(DAY).addYears(2),
+          text: hana(lit(DAY)).toVarchar("YYYYMMDD"),
+          day: hana(l.delivery).toDate("YYYYMMDD"),
+          size: hana(l.material).length(),
         })),
     ),
     "hana-statistics": plain(() =>
@@ -691,7 +687,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     "hana-median": plain(() =>
       from(Lips)
         .groupBy((l) => l.material)
-        .select((l) => ({ material: l.material, median: hanax.median(l.quantity), self: hanax.corr(l.quantity, l.quantity) })),
+        .select((l) => ({ material: l.material, median: hanax.hana(l.quantity).median(), self: hanax.corr(l.quantity, l.quantity) })),
     ),
     "hana-full-join": plain(() =>
       from(Lips)
@@ -700,7 +696,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     ),
     "hana-calculation-view": plain(() =>
       hanax.fromView(SalesView, { P_YEAR: "2026", P_REGION: null })
-        .where((v) => v.amount.gt("10"))
+        .where((v) => v.amount.gt(new Decimal(10)))
         .select((v) => ({ material: v.material, amount: v.amount })),
     ),
     "hana-table-function": plain(() =>
@@ -720,30 +716,37 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     ),
     "hana-search": plain(() =>
       from(Lips)
-        .where((l) => all(hanax.contains("M1", l.material), hanax.containsFuzzy(0.8, "D1", l.delivery, l.material)))
+        .where((l) => {
+          hanax.contains("M1", l.material);
+          hanax.containsFuzzy(0.8, "D1", l.delivery, l.material);
+        })
         .orderBy(() => hanax.score().desc())
-        .select((l) => ({ delivery: l.delivery, score: hanax.score(), json: hanax.jsonValue(l.unit, "$.unit") })),
+        .select((l) => ({ delivery: l.delivery, score: hanax.score(), json: hanax.hana(l.unit).jsonValue("$.unit") })),
     ),
     "hana-regexpr": plain(() =>
       from(Lips)
-        .where((l) => likeRegexpr(l.delivery, "^D[0-9]+$"))
-        .select((l) => ({ text: toNvarchar(l.quantity), day: toNvarchar(lit(DAY, date), "YYYYMMDD") })),
+        .where((l) => hana(l.delivery).likeRegexpr("^D[0-9]+$"))
+        .select((l) => ({ text: hana(l.quantity).toNvarchar(), day: hana(lit(DAY)).toNvarchar("YYYYMMDD") })),
     ),
     "hana-string-agg": plain(() =>
       from(Lips)
         .groupBy((l) => l.material)
-        .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc(), l.unit.desc()) })),
+        .select((l) => ({ material: l.material, deliveries: l.delivery.stringAgg(",", l.delivery.asc(), l.unit.desc()) })),
     ),
   },
   postgres: {
     ...groupingCases(pgGroupingSets, pgCube, "postgres"),
     "postgres-extremes": plain(() =>
-      from(Lips).select((l) => ({ atLeast4: pgGreatest(l.quantity, val("4", decimal)), atMost4: pgLeast(l.quantity, val("4", decimal)) })),
+      from(Lips).select((l) => ({ atLeast4: pgGreatest(l.quantity, val(new Decimal("4"))), atMost4: pgLeast(l.quantity, val(new Decimal("4"))) })),
     ),
     "postgres-functions": plain(() =>
       from(Lips)
         .with((l) => distinctOn(l.material))
-        .where((l) => all(ilike(l.unit, "e%"), l.material.isDistinctFrom(val("M9")), l.unit.isNotDistinctFrom(l.unit)))
+        .where((l) => {
+          postgres(l.unit).ilike("e%");
+          l.material.isDistinctFrom(val("M9"));
+          l.unit.isNotDistinctFrom(l.unit);
+        })
         .orderBy((l) => [l.material.asc(), l.delivery.desc()])
         .select((l) => ({ material: l.material, delivery: l.delivery })),
     ),
@@ -762,7 +765,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
       const steps = pgx.recursiveCte(
         "steps",
         from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
-        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: s.depth.plus(lit(1)) })),
       );
       return from(steps).orderBy((s) => s.depth).select((s) => s.depth);
     }),
@@ -791,7 +794,11 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     ),
     "postgres-arrays": plain(() =>
       from(Tagged)
-        .where((t) => all(pgx.eqAny(t.id, [1, 2]), pgx.arrayContains(t.tags, ["red"]), pgx.arrayOverlaps(t.tags, ["blue", "green"])))
+        .where((t) => {
+          pgx.postgres(t.id).eqAny([1, 2]);
+          pgx.arrayContains(t.tags, ["red"]);
+          pgx.arrayOverlaps(t.tags, ["blue", "green"]);
+        })
         .orderBy((t) => t.id)
         .select((t) => ({ id: t.id, tags: t.tags, count: pgx.cardinality(t.tags) })),
     ),
@@ -802,12 +809,18 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     ),
     "postgres-json": plain(() =>
       from(Tagged)
-        .where((t) => all(pgx.jsonContains(t.doc, '{"status":"open"}'), pgx.jsonHasKey(t.doc, "owner")))
-        .select((t) => ({ id: t.id, owner: pgx.jsonText(t.doc, "owner", "name") })),
+        .where((t) => {
+          pgx.postgres(t.doc).jsonContains('{"status":"open"}');
+          pgx.postgres(t.doc).jsonHasKey("owner");
+        })
+        .select((t) => ({ id: t.id, owner: pgx.postgres(t.doc).jsonText("owner", "name") })),
     ),
     "postgres-text-search": plain(() =>
       from(Tagged)
-        .where((t) => any(pgx.textMatches("simple", t.body, "pump"), pgx.webMatches("english", t.body, "valve -leak")))
+        .where((t) => any(() => {
+          pgx.textMatches("simple", t.body, "pump");
+          pgx.webMatches("english", t.body, "valve -leak");
+        }))
         .orderBy((t) => pgx.textRank("simple", t.body, "pump").desc())
         .select((t) => t.id),
     ),
@@ -816,14 +829,14 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
         .groupBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          each: sum(l.quantity).filter(l.unit.eq("EA")),
-          deliveries: stringAgg(l.delivery, ";", l.delivery.desc()),
+          each: l.quantity.sum().filter(() => l.unit.eq("EA")),
+          deliveries: l.delivery.stringAgg(";", l.delivery.desc()),
         })),
     ),
   },
   mysql: {
     "mysql-extremes": plain(() =>
-      from(Lips).select((l) => ({ atLeast4: mysqlGreatest(l.quantity, val("4", decimal)), atMost4: mysqlLeast(l.quantity, val("4", decimal)) })),
+      from(Lips).select((l) => ({ atLeast4: mysqlGreatest(l.quantity, val(new Decimal("4"))), atMost4: mysqlLeast(l.quantity, val(new Decimal("4"))) })),
     ),
 
     "mysql-set-all": plain(() => mysqlx.exceptAll(mysqlx.intersectAll(materialsOf("EA"), materialsOf("KG")), materialsOf("PC"))),
@@ -840,7 +853,7 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
       const steps = mysqlx.recursiveCte(
         "steps",
         from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
-        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+        (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: s.depth.plus(lit(1)) })),
       );
       return from(steps).orderBy((s) => s.depth).select((s) => s.depth);
     }),
@@ -861,12 +874,15 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
     ),
     "mysql-json": plain(() =>
       from(Article)
-        .where((a) => mysqlx.jsonContains(a.doc, '{"status":"open"}'))
-        .select((a) => ({ id: a.id, owner: mysqlx.jsonText(a.doc, "$.owner.name") })),
+        .where((a) => mysqlx.mysql(a.doc).jsonContains('{"status":"open"}'))
+        .select((a) => ({ id: a.id, owner: mysqlx.mysql(a.doc).jsonText("$.owner.name") })),
     ),
     "mysql-fulltext": plain(() =>
       from(Article)
-        .where((a) => any(mysqlx.match("pump", a.title, a.body), mysqlx.matchBoolean("+valve -leak", a.title, a.body)))
+        .where((a) => any(() => {
+          mysqlx.match("pump", a.title, a.body);
+          mysqlx.matchBoolean("+valve -leak", a.title, a.body);
+        }))
         .orderBy((a) => mysqlx.matchScore("pump", a.title, a.body).desc())
         .select((a) => a.id),
     ),
@@ -876,9 +892,9 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
         .groupBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          days: daysBetween(lit("2026-01-01", date), lit("2026-02-01", date)),
-          formatted: dateFormat(lit(DAY, date), "%Y%m%d"),
-          deliveries: stringAgg(l.delivery, "|", l.delivery.asc()),
+          days: lit(parseDate("2026-01-01")).daysBetween(lit(parseDate("2026-02-01"))),
+          formatted: mysql(lit(DAY)).dateFormat("%Y%m%d"),
+          deliveries: l.delivery.stringAgg("|", l.delivery.asc()),
         })),
     ),
     "mysql-update-hints": {
@@ -901,15 +917,15 @@ export const dialectCases: Readonly<Record<"hana" | "postgres" | "mysql" | "sqli
   sqlite: {
     "sqlite-functions": plain(() =>
       from(Lips)
-        .where((l) => glob(l.unit, "E*"))
+        .where((l) => sqlite(l.unit).glob("E*"))
         .groupBy((l) => l.material)
         .select((l) => ({
           material: l.material,
-          middle: sqliteMedian(l.quantity),
+          middle: sqlite(l.quantity).median(),
           p90: sqlitePercentileCont(0.9, l.quantity),
           p50: sqlitePercentileDisc(0.5, l.quantity),
-          padded: lpad(l.material, 5, "0"),
-          head: left(l.material, 1),
+          padded: l.material.lpad(5, "0"),
+          head: l.material.left(1),
         })),
     ),
   },
@@ -924,7 +940,7 @@ export const polardbCases: Readonly<Record<string, SpecCase>> = {
   "polardb-flashback": {
     filtered: true,
     query: () =>
-      fromAsOf(Lips, "2026-01-15 08:30:00")
+      fromAsOf(Lips, parseDateTime("2026-01-15T08:30:00"))
         .where((l) => l.material.eq("M1"))
         .orderBy((l) => l.delivery)
         .select((l) => ({ delivery: l.delivery, quantity: l.quantity })),
@@ -933,8 +949,11 @@ export const polardbCases: Readonly<Record<string, SpecCase>> = {
     update(Lips)
       .with(() => inventory(1))
       .with((l) => mysqlx.noIndex(l))
-      .set((l) => ({ quantity: minus(l.quantity, val("1", decimal)) }))
-      .where((l) => all(l.delivery.eq("D1"), l.quantity.gt("0"))),
+      .set((l) => ({ quantity: l.quantity.minus(val(new Decimal("1"))) }))
+      .where((l) => {
+        l.delivery.eq("D1");
+        l.quantity.gt(new Decimal(0));
+      }),
   ),
 };
 

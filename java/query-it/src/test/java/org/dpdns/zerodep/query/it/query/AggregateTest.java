@@ -15,20 +15,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import static org.dpdns.zerodep.query.Sql.avgDistinct;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.grouping;
 import static org.dpdns.zerodep.query.Sql.keys;
 import static org.dpdns.zerodep.query.Sql.orders;
-import static org.dpdns.zerodep.query.Sql.stddevPop;
-import static org.dpdns.zerodep.query.Sql.stddevSamp;
-import static org.dpdns.zerodep.query.Sql.stringAgg;
-import static org.dpdns.zerodep.query.Sql.sum;
-import static org.dpdns.zerodep.query.Sql.sumDistinct;
-import static org.dpdns.zerodep.query.Sql.varPop;
-import static org.dpdns.zerodep.query.Sql.varSamp;
 import static org.dpdns.zerodep.query.it.support.Db.SQLITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,7 +39,7 @@ class AggregateTest {
         Query<Map<String, Object>> rollup = from(Lips.class)
             .groupByRollup(l -> keys(l.material(), l.unit()))
             .orderBy(l -> orders(grouping(l.material()), l.material(), grouping(l.unit())))
-            .select(l -> cols(l.material(), l.unit(), sum(l.quantity()).as("total"), grouping(l.material()).as("level")));
+            .select(l -> cols(l.material(), l.unit(), l.quantity().sum().as("total"), grouping(l.material()).as("level")));
         if (live.is(SQLITE)) {
             assertThrows(UnsupportedOperationException.class, () -> live.db().list(rollup), "SQLite 没有 ROLLUP，渲染时报错");
             return;
@@ -65,9 +57,9 @@ class AggregateTest {
                 .groupBy(l -> l.material())
                 .orderBy(l -> l.material())
                 .select(l -> cols(l.material(),
-                    sum(l.quantity()).filter(l.createdOn().ge(LocalDate.of(2026, 1, 1))).as("recent"),
-                    count().filter(l.quantity().gt(new BigDecimal("2"))).as("big"),
-                    stringAgg(l.delivery(), ",", l.delivery().desc()).as("deliveries"))))
+                    l.quantity().sum().filter(() -> l.createdOn().ge(LocalDate.of(2026, 1, 1))).as("recent"),
+                    count().filter(() -> l.quantity().gt(new BigDecimal("2"))).as("big"),
+                    l.delivery().stringAgg(",", l.delivery().desc()).as("deliveries"))))
             .stream().map(r -> r.get("material") + ":" + plain(r.get("recent")) + ":" + r.get("big") + ":" + r.get("deliveries")).toList();
         assertEquals(List.of("M1:6:1:D5,D2,D1", "M2:5:2:D4,D3"), rows);
     }
@@ -78,12 +70,12 @@ class AggregateTest {
                 .groupBy(l -> l.material())
                 .orderBy(l -> l.material())
                 .select(l -> cols(l.material(),
-                    sumDistinct(l.quantity()).as("distinctTotal"),
-                    avgDistinct(l.quantity()).as("distinctAverage"),
-                    stddevSamp(l.quantity()).as("sampleDeviation"),
-                    stddevPop(l.quantity()).as("populationDeviation"),
-                    varSamp(l.quantity()).as("sampleVariance"),
-                    varPop(l.quantity()).as("populationVariance"))))
+                    l.quantity().sumDistinct().as("distinctTotal"),
+                    l.quantity().avgDistinct().as("distinctAverage"),
+                    l.quantity().stddevSamp().as("sampleDeviation"),
+                    l.quantity().stddevPop().as("populationDeviation"),
+                    l.quantity().varSamp().as("sampleVariance"),
+                    l.quantity().varPop().as("populationVariance"))))
             .stream().map(r -> r.get("material") + ":" + plain(r.get("distinctTotal")) + ":" + plain(r.get("distinctAverage")) + ":"
                 + String.format(Locale.ROOT, "%.4f:%.4f:%.4f:%.4f", r.get("sampleDeviation"), r.get("populationDeviation"),
                     r.get("sampleVariance"), r.get("populationVariance")))
@@ -97,7 +89,7 @@ class AggregateTest {
         List<String> rows = live.db().list(from(Lips.class)
                 .groupBy(l -> keys(l.material(), l.unit(), l.mara().partNumber()))
                 .orderBy(l -> orders(l.material().asc(), l.unit().asc()))
-                .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), sum(l.quantity()).as("total")))
+                .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), l.quantity().sum().as("total")))
                 .exclude("unit", "partNumber")
                 .sortBy("total desc, material"))
             .stream().map(r -> r.get("material") + ":" + r.get("unit") + ":" + r.get("partNumber") + ":" + plain(r.get("total")))

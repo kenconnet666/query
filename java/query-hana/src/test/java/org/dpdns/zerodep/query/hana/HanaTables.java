@@ -2,8 +2,9 @@ package org.dpdns.zerodep.query.hana;
 
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Table;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColText;
 
 import java.math.BigDecimal;
 
@@ -15,33 +16,33 @@ final class HanaTables {
     @Table(schema = "QUERY_IT", value = "CV_SALES")
     interface SalesView extends Entity {
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 金额。 */
-        @Column("AMOUNT") Col<BigDecimal> amount();
+        @Column("AMOUNT") ColDecimal<BigDecimal> amount();
     }
 
     /** 表函数：某个单位的交货行。 */
     @Table(schema = "QUERY_IT", value = "FN_LIPS")
     interface LipsByUnit extends Entity {
         /** 交货单号。 */
-        @Column("VBELN") Col<String> delivery();
+        @Column("VBELN") ColText<String> delivery();
 
         /** 数量。 */
-        @Column("LFIMG") Col<BigDecimal> quantity();
+        @Column("LFIMG") ColDecimal<BigDecimal> quantity();
     }
 
     /** 组织：用上级编号连成树。 */
     @Table(schema = "QUERY_IT", value = "H_ORG")
     interface Org extends Entity {
         /** 编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 上级编号，根为 NULL。 */
-        @Column("PARENT_ID") Col<String> parent();
+        @Column("PARENT_ID") ColText<String> parent();
 
         /** 名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
     }
 
     /** 层级的一行：来源的列加上层级函数生成的列。 */

@@ -3,7 +3,6 @@ package org.dpdns.zerodep.query.select;
 import org.dpdns.zerodep.query.annotation.Ignore;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Rendered;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -54,9 +53,9 @@ class FilterObjectTest {
     public static final class InMonth implements Where.Operator {
         /** 写成 {@code col >= 月初 AND col < 下月初}。 */
         @SuppressWarnings("unchecked")
-        @Override public Cond apply(Expr<?> column, Object value) {
+        @Override public void apply(Expr<?> column, Object value) {
             YearMonth month = (YearMonth) value;
-            return ((Expr<LocalDate>) column).range(month.atDay(1), month.plusMonths(1).atDay(1));
+            ((Expr<LocalDate>) column).range(month.atDay(1), month.plusMonths(1).atDay(1));
         }
     }
 
@@ -118,7 +117,7 @@ class FilterObjectTest {
     @Test
     void contains等转义通配符且空值按skipEmpty处理() {
         Rendered r = from(Lips.class).skipEmpty()
-            .where(l -> all(startsWith(l.unit(), "a_b"), endsWith(l.unit(), "c!"), contains(l.unit(), null)))
+            .where(l -> { l.unit().startsWith("a_b"); l.unit().endsWith("c!"); l.unit().contains(null); })
             .select(l -> l.delivery())
             .toSql(DIALECT);
         assertEquals("""
@@ -126,6 +125,6 @@ class FilterObjectTest {
             FROM QUERY_IT.LIPS LIPS
             WHERE LIPS.VRKME LIKE ? ESCAPE '!' AND LIPS.VRKME LIKE ? ESCAPE '!'""", r.sql());
         assertEquals(List.of("a!_b%", "%c!!"), r.parameters());
-        assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(l -> contains(l.unit(), null)));
+        assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(l -> l.unit().contains(null)));
     }
 }

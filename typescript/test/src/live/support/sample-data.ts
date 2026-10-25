@@ -1,3 +1,5 @@
+import { Decimal } from "decimal.js";
+import { parseDate, parseDateTime } from "@internationalized/date";
 import { insertInto } from "@zerodep-dev/query-core";
 import { Event, Lips, Makt, Mara, Mardh, Mchbh, Vbkd } from "../../fixtures/erp.js";
 import type { Live } from "./live.js";
@@ -60,12 +62,12 @@ export async function createSampleData(live: Live): Promise<void> {
   );
   await db.execute(
     insertInto(Lips).values(
-      { client: "100", delivery: "D1", material: "M1", createdOn: "2026-01-15", quantity: "3.000", unit: "EA", salesOrder: "S1" },
-      { client: "100", delivery: "D2", material: "M1", createdOn: "2026-01-20", quantity: "2.000", unit: "EA", salesOrder: "S2" },
-      { client: "100", delivery: "D3", material: "M2", createdOn: "2026-02-10", quantity: "5.000", unit: "EA", salesOrder: "S1" },
-      { client: "100", delivery: "D4", material: "M2", createdOn: "2025-12-31", quantity: "7.000", unit: "EA", salesOrder: "S1" },
-      { client: "100", delivery: "D5", material: "M1", createdOn: "2026-03-01", quantity: "1.000", unit: "EA", salesOrder: "S9" },
-      { client: "200", delivery: "D6", material: "M1", createdOn: "2026-01-15", quantity: "100.000", unit: "EA", salesOrder: "S1" },
+      { client: "100", delivery: "D1", material: "M1", createdOn: parseDate("2026-01-15"), quantity: new Decimal("3.000"), unit: "EA", salesOrder: "S1" },
+      { client: "100", delivery: "D2", material: "M1", createdOn: parseDate("2026-01-20"), quantity: new Decimal("2.000"), unit: "EA", salesOrder: "S2" },
+      { client: "100", delivery: "D3", material: "M2", createdOn: parseDate("2026-02-10"), quantity: new Decimal("5.000"), unit: "EA", salesOrder: "S1" },
+      { client: "100", delivery: "D4", material: "M2", createdOn: parseDate("2025-12-31"), quantity: new Decimal("7.000"), unit: "EA", salesOrder: "S1" },
+      { client: "100", delivery: "D5", material: "M1", createdOn: parseDate("2026-03-01"), quantity: new Decimal("1.000"), unit: "EA", salesOrder: "S9" },
+      { client: "200", delivery: "D6", material: "M1", createdOn: parseDate("2026-01-15"), quantity: new Decimal("100.000"), unit: "EA", salesOrder: "S1" },
     ),
   );
   await db.execute(
@@ -78,16 +80,16 @@ export async function createSampleData(live: Live): Promise<void> {
   await db.execute(insertInto(Vbkd).values({ client: "100", salesOrder: "S1" }, { client: "100", salesOrder: "S2" }, { client: "200", salesOrder: "S1" }));
   await db.execute(
     insertInto(Mardh).values(
-      { client: "100", material: "M1", year: "2026", period: "01", unrestricted: "10.000" },
+      { client: "100", material: "M1", year: "2026", period: "01", unrestricted: new Decimal("10.000") },
       { client: "100", material: "M2", year: "2026", period: "01", unrestricted: null },
-      { client: "100", material: "M1", year: "2025", period: "12", unrestricted: "4.000" },
+      { client: "100", material: "M1", year: "2025", period: "12", unrestricted: new Decimal("4.000") },
     ),
   );
-  await db.execute(insertInto(Mchbh).values({ client: "100", material: "M1", year: "2026", period: "02", batchUnrestricted: "6.000" }));
+  await db.execute(insertInto(Mchbh).values({ client: "100", material: "M1", year: "2026", period: "02", batchUnrestricted: new Decimal("6.000") }));
   await db.execute(
     insertInto(Event).values(
-      { id: 1, onDay: "2024-03-31", atTime: "2024-03-31 02:30:00" },
-      { id: 2, onDay: "2011-12-30", atTime: "2011-12-30 00:00:00" },
+      { id: 1, onDay: parseDate("2024-03-31"), atTime: parseDateTime("2024-03-31T02:30:00") },
+      { id: 2, onDay: parseDate("2011-12-30"), atTime: parseDateTime("2011-12-30T00:00:00") },
     ),
   );
 }

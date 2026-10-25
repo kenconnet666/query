@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { all, contains, endsWith, from, ignore, startsWith, where, type Cond, type Expr } from "@zerodep-dev/query-core";
+import { parseDate, type CalendarDate } from "@internationalized/date";
+import { from, ignore, where, type Expr } from "@zerodep-dev/query-core";
+import { Decimal } from "decimal.js";
 import { Lips, Mara } from "../fixtures/erp.js";
 import { TestDialect } from "../fixtures/support.js";
 
@@ -9,8 +11,8 @@ const DIALECT = new TestDialect();
 /** 交货查询的请求参数。 */
 class DeliverySearch {
   material?: string[];
-  @where("ge", "createdOn") from?: string;
-  @where("lt", "createdOn") to?: string;
+  @where("ge", "createdOn") from?: CalendarDate;
+  @where("lt", "createdOn") to?: CalendarDate;
   @where("contains", "mara.partNumber", "text.text") keyword?: string;
   @where("ne") unit?: string;
   @ignore sort?: string;
@@ -21,7 +23,7 @@ const render = (s: DeliverySearch) => from(Lips).where(s).select((l) => l.delive
 
 describe("条件对象", () => {
   it("每个字段按装饰器变成条件且关系按需连接", () => {
-    const r = render(search({ material: ["M1", "M2"], from: "2026-01-01", to: "2026-07-01", keyword: "50%", unit: "KG", sort: "x" }));
+    const r = render(search({ material: ["M1", "M2"], from: parseDate("2026-01-01"), to: parseDate("2026-07-01"), keyword: "50%", unit: "KG", sort: "x" }));
     assert.equal(
       r.sql,
       `SELECT LIPS.VBELN AS "delivery"
@@ -35,10 +37,9 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
   });
 
   it("自定义比较由函数指定且字段为空时不调用", () => {
-    const inMonth = (column: Expr<string | null>, month: string): Cond => {
-      const [y, m] = month.split("-").map(Number) as [number, number];
-      const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
-      return column.range(`${month}-01`, `${next}-01`);
+    const inMonth = (column: Expr<CalendarDate | null>, month: string): void => {
+      const start = parseDate(`${month}-01`);
+      column.range(start, start.add({ months: 1 }));
     };
     class Search {
       @where(inMonth, "createdOn") month?: string | null;
@@ -56,7 +57,7 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
   it("普通对象按同名列比较，可与回调条件一起用", () => {
     const sql = from(Lips)
       .where({ unit: ["EA", "KG"], salesOrder: "S1" })
-      .where((l) => l.quantity.gt("1"))
+      .where((l) => l.quantity.gt(new Decimal(1)))
       .select((l) => l.delivery)
       .toSql(DIALECT).sql;
     assert.equal(sql, 'SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME IN (?, ?) AND LIPS.VGBEL = ? AND LIPS.LFIMG > ?');
@@ -65,12 +66,12 @@ WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFR
   it("经过一对多关系的字段写成 EXISTS，同一关系的字段合并", () => {
     class Search {
       @where("eq", "deliveries.unit") unit?: string;
-      @where("ge", "deliveries.quantity") min?: string;
+      @where("ge", "deliveries.quantity") min?: Decimal;
       @where("eq", "deliveries.delivery", "partNumber") code?: string;
     }
     const render = (s: Partial<Search>) => from(Mara).where(Object.assign(new Search(), s)).select((m) => m.material).toSql(DIALECT).sql;
     assert.equal(
-      render({ unit: "EA", min: "10", code: "D1" }),
+      render({ unit: "EA", min: new Decimal(10), code: "D1" }),
       `SELECT MARA.MATNR AS "material"
 FROM QUERY_IT.MARA MARA
 WHERE ((EXISTS (SELECT 1
@@ -98,11 +99,15 @@ FROM QUERY_IT.MARA MARA`);
   it("contains 等转义通配符且空值按 skipEmpty 处理", () => {
     const r = from(Lips)
       .skipEmpty()
-      .where((l) => all(startsWith(l.unit, "a_b"), endsWith(l.unit, "c!"), contains(l.unit, null)))
+      .where((l) => {
+        l.unit.startsWith("a_b");
+        l.unit.endsWith("c!");
+        l.unit.contains(null);
+      })
       .select((l) => l.delivery)
       .toSql(DIALECT);
     assert.equal(r.sql, `SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME LIKE ? ESCAPE '!' AND LIPS.VRKME LIKE ? ESCAPE '!'`);
     assert.deepEqual(r.parameters, ["a!_b%", "%c!!"]);
-    assert.throws(() => from(Lips).where((l) => contains(l.unit, null)), TypeError);
+    assert.throws(() => from(Lips).where((l) => l.unit.contains(null)), TypeError);
   });
 });

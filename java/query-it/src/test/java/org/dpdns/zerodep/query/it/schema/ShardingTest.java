@@ -4,9 +4,9 @@ import org.dpdns.zerodep.query.ddl.SchemaPlan;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
-import org.dpdns.zerodep.query.testing.Shards;
 import org.dpdns.zerodep.query.testing.Shards.ShEvent;
 import org.dpdns.zerodep.query.testing.Shards.ShEventRow;
+import org.dpdns.zerodep.query.testing.Shards;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.Parameter;
@@ -15,13 +15,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
 import static org.dpdns.zerodep.query.Sql.deleteFrom;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
-import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.update;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,8 +55,11 @@ class ShardingTest {
         assertEquals(List.of(2L, 1L), List.of(january, march), "rows land in the table of their month");
         // 日期范围 [1 月 1 日, 3 月 1 日) 只查 1 月和 2 月的表：备注 a 的是 1.50 + 4.00。
         assertEquals(0, new BigDecimal("5.50").compareTo(sharded.one(from(ShEvent.class)
-            .where(e -> all(e.day().range(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 1)), e.note().eq("a")))
-            .select(e -> sum(e.amount())))));
+            .where(e -> {
+                e.day().range(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 3, 1));
+                e.note().eq("a");
+            })
+            .select(e -> e.amount().sum()))));
         assertEquals(List.of(1L, 3L, 4L), sharded.list(from(ShEvent.class).allShards().where(e -> e.note().eq("a")).orderBy(e -> e.id()).select(e -> e.id())));
         assertEquals(1, sharded.execute(update(ShEvent.class).set(e -> e.note().to("c")).where(e -> e.day().eq(LocalDate.of(2026, 2, 3)))));
         assertEquals(1, sharded.execute(update(ShEvent.class).byId(new ShEventRow(4L, LocalDate.of(2026, 3, 9), new BigDecimal("9.00"), "a"))));

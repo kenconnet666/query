@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Decimal } from "decimal.js";
 import { describe, it } from "node:test";
 import { decimal, Dialect, from, identifier, lit, sql, sqlCond, sqlTable, text } from "@zerodep-dev/query-core";
 import { Lips, Mara } from "../fixtures/erp.js";
@@ -32,15 +33,15 @@ describe("原生 SQL 片段", () => {
       .on(Dialect)`ANY(${lit("x")})`
       .on(TestDialect)`TEST(${lit("x")})`;
     assert.equal(from(Lips).select(() => ({ value: e })).toSql(DIALECT).sql.split("\n")[0], `SELECT TEST('x') AS "value"`);
-    const c = sqlCond`1 = 1`.on(Dialect)`2 = 2`;
-    assert.ok(from(Lips).where(() => c).select((l) => l.delivery).toSql(DIALECT).sql.endsWith("WHERE 2 = 2"));
+    // sqlCond 一写下就在条件块里，.on(...) 改的是块里的这个条件
+    assert.ok(from(Lips).where(() => sqlCond`1 = 1`.on(Dialect)`2 = 2`).select((l) => l.delivery).toSql(DIALECT).sql.endsWith("WHERE 2 = 2"));
   });
 
   it("sqlTable 作为数据源并可与表连接", () => {
     const totals = sqlTable({ material: text, total: decimal })`SELECT ${identifier("MATNR")} AS ${identifier("material")}, SUM(LFIMG) AS ${identifier("total")} FROM QUERY_IT.LIPS WHERE VRKME = ${"EA"} GROUP BY ${identifier("MATNR")}`;
     const r = from(totals)
       .join(Mara, (t, m) => m.material.eq(t.material))
-      .where((t) => t.total.gt("1"))
+      .where((t) => t.total.gt(new Decimal(1)))
       .select((t, m) => ({ partNumber: m.partNumber, total: t.total }))
       .toSql(DIALECT);
     assert.equal(

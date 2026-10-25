@@ -1,5 +1,9 @@
 import type { Clause, Dialect } from "../sql/dialect.js";
-import { all, Cond, Expr, isWindow, Literal, toOrder, withSkipEmpty, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import type { CalendarDate, CalendarDateTime } from "@internationalized/date";
+import type { Decimal } from "decimal.js";
+import { and, collect, Cond, outside, withSkipEmpty } from "../sql/cond.js";
+import { ExprNode, isWindow, Literal, toOrder, type Expr, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import type { Col, ColOf } from "../sql/typed.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
@@ -18,19 +22,20 @@ declare const rowType: unique symbol;
 export interface SourceFilter {
   readonly name: string | undefined;
   readonly type: Ctor<unknown>;
-  readonly condition: (ref: Ref<never>) => Cond;
+  /** 条件块，参数是这张表的这次出现。 */
+  readonly condition: (ref: Ref<never>) => void;
 }
 
-/** FROM 的表加到 WHERE，连接的表加到 ON；`.unfiltered()` 可跳过。 */
-export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => Cond): SourceFilter;
+/** FROM 的表加到 WHERE，连接的表加到 ON；`.unfiltered()` 可跳过。条件写成块：`filter(Client, (c) => c.client.eq(tenant()))`。 */
+export function filter<E>(type: Ctor<E>, condition: (ref: Ref<E>) => void): SourceFilter;
 /**
  * 具名的全局过滤器，其余同上；单个查询或写语句可以用 `.unfiltered(name)` 只关闭它，例如
  * `filter("tenant", Client, (c) => c.client.eq(tenant()))` 后，`from(...).unfiltered("tenant")` 跨租户查询，逻辑删除的条件仍然生效。
  */
-export function filter<E>(name: string, type: Ctor<E>, condition: (ref: Ref<E>) => Cond): SourceFilter;
-export function filter<E>(...args: [Ctor<E>, (ref: Ref<E>) => Cond] | [string, Ctor<E>, (ref: Ref<E>) => Cond]): SourceFilter {
+export function filter<E>(name: string, type: Ctor<E>, condition: (ref: Ref<E>) => void): SourceFilter;
+export function filter<E>(...args: [Ctor<E>, (ref: Ref<E>) => void] | [string, Ctor<E>, (ref: Ref<E>) => void]): SourceFilter {
   const [name, type, condition] = args.length === 3 ? args : [undefined, ...args];
-  return Object.freeze({ name, type, condition: condition as (ref: Ref<never>) => Cond });
+  return Object.freeze({ name, type, condition: condition as (ref: Ref<never>) => void });
 }
 
 /**
@@ -86,7 +91,7 @@ export function conditionsFor(applied: AppliedFilters | undefined, ref: object):
   const owner = ownerOf(ref);
   const entity = owner.source.entity;
   if (applied === undefined || entity === undefined || !owner.source.filtered) return [];
-  const out = applied.filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => f.condition(ref as Ref<never>));
+  const out = applied.filters.filter((f) => entity === f.type || entity.prototype instanceof f.type).map((f) => collect(() => f.condition(ref as Ref<never>)));
   const active = applied.logicDelete ? activeCondition(ref) : undefined;
   if (active !== undefined) out.push(active);
   return out;
@@ -98,7 +103,7 @@ export function activeCondition(ref: object): Cond | undefined {
   const logic = entity === undefined ? undefined : entityMeta(entity).writes.logicDelete;
   if (logic === undefined) return undefined;
   const column = (ref as Record<string, Expr<never>>)[logic.property]!;
-  return logic.timestamp ? column.isNull() : column.eq(logic.active as never);
+  return collect(() => (logic.timestamp ? column.isNull() : column.eq(logic.active as never)));
 }
 
 // ---------- 不含投影的一个 SELECT ----------
@@ -112,8 +117,8 @@ const SET_OPERATORS = new Set(["UNION", "UNION ALL", "INTERSECT", "INTERSECT ALL
 /** RIGHT JOIN 之后，之前各数据源的列都可能为 null。 */
 type NullableAll<T extends readonly unknown[]> = { [K in keyof T]: NullableColumns<T[K]> };
 
-/** 一个数据源的引用里，列表达式都变成可空的；关系等其他成员不变。 */
-type NullableColumns<R> = { readonly [K in keyof R]: R[K] extends Expr<infer V> ? Expr<V | null> : R[K] };
+/** 一个数据源的引用里，列都变成可空的；关系等其他成员不变。 */
+type NullableColumns<R> = { readonly [K in keyof R]: R[K] extends Col<infer V> ? ColOf<V | null> : R[K] };
 
 /** 一个已加入的数据源：连接方式、引用和 ON 条件。 */
 interface Join {
@@ -149,12 +154,6 @@ interface SelectSpec {
 function rows(n: number, what: string): number {
   if (!Number.isSafeInteger(n) || n < 0) throw new RangeError(`${what} must be a non-negative integer`);
   return n;
-}
-
-/** 条件回调返回 null 或 undefined 是调用错误，没有条件应返回 Cond.EMPTY。 */
-function nonNull(c: Cond): Cond {
-  if (c == null) throw new TypeError("A condition is null or undefined; use Cond.EMPTY for no condition");
-  return c;
 }
 
 /** 把单个值或数组统一成数组。 */
@@ -193,7 +192,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function flatten(p: object, path: readonly string[], items: Expr<unknown>[], paths: (string[] | null)[], labels: string[], slots: Slot[]): void {
   for (const [key, value] of Object.entries(p)) {
     const label = [...path, key].join(".");
-    if (value instanceof Expr) {
+    if (value instanceof ExprNode) {
       items.push(value as Expr<unknown>);
       paths.push([...path, key]);
       labels.push(label);
@@ -554,7 +553,7 @@ function normalize(name: string): string {
  * {@link Query.exclude} 去掉的一列：SQL 里写成 NULL，所以结果的形态不变，这一列读出来是 null。
  * 保留原来的表达式，渲染时用它找出要一起去掉的分组键。
  */
-class Omitted extends Expr<unknown> {
+class Omitted extends ExprNode<unknown> {
   constructor(readonly original: Expr<unknown>) {
     super(original.type);
   }
@@ -687,7 +686,7 @@ function renderArm(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: b
 /** {@link renderArm} 的主体；分表的选择已经登记在写入器上。 */
 function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled: boolean, ordered: boolean): void {
   const s = arm.spec;
-  if (!all(...s.qualify).isEmpty) return renderQualified(w, arm, labels, labeled, ordered);
+  if (!and(...s.qualify).isEmpty) return renderQualified(w, arm, labels, labeled, ordered);
   // 按连接顺序分配别名，这样即使 SELECT 先提到被连接的表，FROM 的表仍得到最简单的名字。
   for (const j of s.joins) ownerOf(j.ref).alias(w);
   const dialect: Dialect = w.dialect;
@@ -760,25 +759,25 @@ function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled
     } else if (j.kind === "RIGHT JOIN") {
       w.sql("\nRIGHT JOIN ");
       owner.renderSource(w);
-      w.sql(" ON ").render(all(j.on, ...pending));
+      w.sql(" ON ").render(and(j.on, ...pending));
       pending = [...extra];
     } else {
       w.sql(`\n${j.kind} `);
       owner.renderSource(w);
       // 被连接的表的过滤条件放进 ON，LEFT JOIN 才仍是 LEFT JOIN。
-      w.sql(" ON ").render(all(j.on, ...extra));
+      w.sql(" ON ").render(and(j.on, ...extra));
     }
     emitRelations(w, owner, implicit, filters);
     for (const g of groupJoins) if (g.owner === owner) emitGroupJoin(w, g);
   }
-  const whereAll = all(...pending, ...s.where);
+  const whereAll = and(...pending, ...s.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
   w.inline(grouped);
   if (groupBy.length > 0) {
     w.sql("\nGROUP BY ");
     w.dialect.groupBy(w, groupBy, s.rollup);
   }
-  const having = all(...s.having);
+  const having = and(...s.having);
   if (!having.isEmpty) w.sql("\nHAVING ").render(having);
   const limited = s.limit !== undefined || s.offset !== undefined;
   if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
@@ -894,7 +893,7 @@ function renderQualified(w: SqlWriter, arm: Arm, labels: readonly string[], labe
     const name = columns.get(node);
     return name === undefined ? node : { render: (x: SqlWriter) => void x.alias(alias).sql(".").identifier(name) };
   });
-  w.sql("\nWHERE ").render(all(...s.qualify));
+  w.sql("\nWHERE ").render(and(...s.qualify));
   const limited = s.limit !== undefined || s.offset !== undefined;
   if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
   w.substitute(previous);
@@ -949,13 +948,13 @@ export function implicitJoins(w: SqlWriter, roots: readonly RefOwner[], parts: r
   let grew = true;
   while (grew) {
     grew = false;
-    for (const root of roots) grew = collect(root, probe, used) || grew;
+    for (const root of roots) grew = collectUsed(root, probe, used) || grew;
   }
   return used;
 }
 
 /** 把 owner 出发的、用到了的关系加入 used，并试渲染它们的连接条件；有新增时返回 true。 */
-function collect(owner: RefOwner, probe: SqlWriter, used: Set<Relation>): boolean {
+function collectUsed(owner: RefOwner, probe: SqlWriter, used: Set<Relation>): boolean {
   let grew = false;
   for (const r of owner.relations) {
     if (!used.has(r) && reaches(r.owner, probe.touched)) {
@@ -963,7 +962,7 @@ function collect(owner: RefOwner, probe: SqlWriter, used: Set<Relation>): boolea
       probe.render(r.on);
       grew = true;
     }
-    if (used.has(r)) grew = collect(r.owner, probe, used) || grew;
+    if (used.has(r)) grew = collectUsed(r.owner, probe, used) || grew;
   }
   return grew;
 }
@@ -979,7 +978,7 @@ export function emitRelations(w: SqlWriter, owner: RefOwner, used: ReadonlySet<R
     if (!used.has(r)) continue;
     w.sql("\nLEFT JOIN ");
     r.owner.renderSource(w);
-    w.sql(" ON ").render(all(r.on, ...conditionsFor(filters, r.ref)));
+    w.sql(" ON ").render(and(r.on, ...conditionsFor(filters, r.ref)));
     emitRelations(w, r.owner, used, filters);
   }
 }
@@ -1015,23 +1014,23 @@ export class From<T extends readonly unknown[]> {
     makeFrom = <T extends readonly unknown[]>(spec: SelectSpec, refs: T) => new From<T>(spec, refs);
   }
 
-  /** INNER JOIN；`on` 的参数依次是已连接的全部数据源。 */
-  join<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...T, Ref<E>]> {
+  /** INNER JOIN；`on` 是条件块，参数依次是已连接的全部数据源：`join(Vbak, (l, k) => k.order.eq(l.order))`。 */
+  join<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => void): From<[...T, Ref<E>]> {
     return this.#join("JOIN", target, on);
   }
 
   /** LEFT JOIN；新数据源的列在回调里是可空的。 */
-  leftJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...T, NullableRef<E>]> {
+  leftJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => void): From<[...T, NullableRef<E>]> {
     return this.#join("LEFT JOIN", target, on);
   }
 
   /** RIGHT JOIN；之前各数据源的列在之后的回调里是可空的，新数据源的行全部保留。 */
-  rightJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...NullableAll<T>, Ref<E>]> {
+  rightJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => void): From<[...NullableAll<T>, Ref<E>]> {
     return this.#join("RIGHT JOIN", target, on);
   }
 
   /** FULL JOIN（HANA、PostgreSQL）：两侧都可能没有匹配，所有参数的列都变成可空；有全局过滤条件的表不能参与。 */
-  fullJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => Cond): From<[...NullableAll<T>, NullableRef<E>]> {
+  fullJoin<E>(target: Target<E>, on: (...refs: [...T, Ref<E>]) => void): From<[...NullableAll<T>, NullableRef<E>]> {
     return this.#join("FULL JOIN", target, on);
   }
 
@@ -1041,44 +1040,47 @@ export class From<T extends readonly unknown[]> {
   }
 
   /** 加入一个数据源；除 CROSS JOIN 外，连接条件不能为空。 */
-  #join<U extends readonly unknown[], E>(kind: JoinKind, target: Target<E>, on: ((...refs: [...T, Ref<E>]) => Cond) | undefined): From<U> {
+  #join<U extends readonly unknown[], E>(kind: JoinKind, target: Target<E>, on: ((...refs: [...T, Ref<E>]) => void) | undefined): From<U> {
     const ref = refTo(target);
     const refs = [...this.#refs, ref] as unknown as [...T, Ref<E>];
-    const condition = on === undefined ? Cond.EMPTY : nonNull(withSkipEmpty(this.#spec.skipEmpty, () => on(...refs)));
+    const condition = on === undefined ? Cond.EMPTY : this.#condition(() => on(...refs));
     if (kind !== "CROSS JOIN" && condition.isEmpty) throw new Error(`${kind} needs a condition; use crossJoin for a cartesian product`);
     return makeFrom({ ...this.#spec, joins: [...this.#spec.joins, { kind, ref, on: condition }] }, refs as unknown as U);
   }
 
-  /** WHERE 条件；多次调用之间是 AND，空条件（Cond.EMPTY）被丢弃。 */
-  where(cond: (...refs: T) => Cond): From<T>;
+  /**
+   * WHERE 条件块：块里每个条件之间是 AND，可选条件直接写 `if`：
+   * `where((l) => { l.unit.eq("KG"); if (from) l.createdOn.ge(from); })`。多次调用之间也是 AND。
+   */
+  where(cond: (...refs: T) => void): From<T>;
   /**
    * 按条件对象筛选：对象的每个字段变成一个条件，默认与同名列比较相等（数组用 IN），用 `@where` 指定比较方式和列；
    * 值为空的字段不产生条件，所以可以直接传入请求参数：`from(Lips).where(search)`。字段名找不到对应的列时报错，
    * 不作为条件的字段（分页、排序）标上 `@ignore`。
    */
   where<F extends FilterObject>(filter: F): From<T>;
-  where(arg: ((...refs: T) => Cond) | FilterObject): From<T> {
-    const cond = typeof arg === "function" ? nonNull(withSkipEmpty(this.#spec.skipEmpty, () => arg(...this.#refs))) : filterCondition(this.#refs as readonly object[], arg);
+  where(arg: ((...refs: T) => void) | FilterObject): From<T> {
+    const cond = typeof arg === "function" ? this.#condition(() => arg(...this.#refs)) : filterCondition(this.#refs as readonly object[], arg);
     return this.#with({ where: [...this.#spec.where, cond] });
   }
 
   /** GROUP BY；多次调用的键依次追加。 */
   groupBy(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
     if (this.#spec.rollup) throw new Error("groupByRollup already lists every grouping key");
-    return this.#with({ groupBy: [...this.#spec.groupBy, ...list(keys(...this.#refs))] });
+    return this.#with({ groupBy: [...this.#spec.groupBy, ...list(outside(() => keys(...this.#refs)))] });
   }
 
   /** 对全部键做 GROUP BY ROLLUP：按键的每个前缀小计，再加总计。 */
   groupByRollup(keys: (...refs: T) => Expr<unknown> | readonly Expr<unknown>[]): From<T> {
     if (this.#spec.groupBy.length > 0) throw new Error("groupByRollup must list every grouping key; it cannot follow groupBy");
-    const all = list(keys(...this.#refs));
-    if (all.length === 0) throw new Error("groupByRollup needs at least one key");
-    return this.#with({ groupBy: all, rollup: true });
+    const every = list(outside(() => keys(...this.#refs)));
+    if (every.length === 0) throw new Error("groupByRollup needs at least one key");
+    return this.#with({ groupBy: every, rollup: true });
   }
 
-  /** HAVING 条件；多次调用之间是 AND。 */
-  having(cond: (...refs: T) => Cond): From<T> {
-    return this.#with({ having: [...this.#spec.having, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
+  /** HAVING 条件块；多次调用之间是 AND。 */
+  having(cond: (...refs: T) => void): From<T> {
+    return this.#with({ having: [...this.#spec.having, this.#condition(() => cond(...this.#refs))] });
   }
 
   /**
@@ -1086,7 +1088,7 @@ export class From<T extends readonly unknown[]> {
    * 代替每个运算一个相关子查询：`groupJoin((m) => m.deliveries)`。同一关系上的 where 筛选写成各自聚合的 CASE WHEN。
    */
   groupJoin(relation: (...refs: T) => AnyMany): From<T> {
-    const many = relation(...this.#refs);
+    const many = outside(() => relation(...this.#refs));
     if (!(many instanceof Many)) throw new TypeError("groupJoin(...) needs a one-to-many relation such as (m) => m.deliveries");
     return this.#with({ groupJoins: [...this.#spec.groupJoins, many] });
   }
@@ -1096,13 +1098,13 @@ export class From<T extends readonly unknown[]> {
    * `qualify((l) => rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.createdOn.desc())).eq(1))`。
    * 查询会包成派生表，在外层按条件过滤；条件只能用窗口函数，其他条件写在 where 或 having 里。多次调用之间是 AND。
    */
-  qualify(cond: (...refs: T) => Cond): From<T> {
-    return this.#with({ qualify: [...this.#spec.qualify, nonNull(withSkipEmpty(this.#spec.skipEmpty, () => cond(...this.#refs)))] });
+  qualify(cond: (...refs: T) => void): From<T> {
+    return this.#with({ qualify: [...this.#spec.qualify, this.#condition(() => cond(...this.#refs))] });
   }
 
   /** 表达式默认升序；需要其他排序用 `.desc()`、`.nullsLast()` 等。 */
   orderBy(items: (...refs: T) => OrderItem | readonly OrderItem[]): From<T> {
-    return this.#with({ orderBy: [...this.#spec.orderBy, ...list(items(...this.#refs)).map(toOrder)] });
+    return this.#with({ orderBy: [...this.#spec.orderBy, ...list(outside(() => items(...this.#refs))).map(toOrder)] });
   }
 
   /** SELECT DISTINCT。 */
@@ -1154,7 +1156,7 @@ export class From<T extends readonly unknown[]> {
 
   /** 加入方言专属子句，例如 HANA 包的 `hint("NO_CS_JOIN")`。 */
   with(clause: Clause | ((...refs: T) => Clause)): From<T> {
-    const c = typeof clause === "function" ? clause(...this.#refs) : clause;
+    const c = typeof clause === "function" ? outside(() => clause(...this.#refs)) : clause;
     return this.#with({ clauses: [...this.#spec.clauses, c] });
   }
 
@@ -1170,8 +1172,8 @@ export class From<T extends readonly unknown[]> {
   select<V>(projection: (...refs: T) => Expr<V>): Query<V>;
   select<P extends Projection>(projection: (...refs: T) => P): Query<Shape<P>>;
   select(projection: (...refs: T) => Expr<unknown> | Projection): Query<unknown> {
-    const selected = projection(...this.#refs);
-    if (selected instanceof Expr) return this.#single(selected as Expr<unknown>, selected.label ?? "value");
+    const selected = outside(() => projection(...this.#refs));
+    if (selected instanceof ExprNode) return this.#single(selected as Expr<unknown>, selected.label ?? "value");
     const items: Expr<unknown>[] = [];
     const paths: (string[] | null)[] = [];
     const labels: string[] = [];
@@ -1251,6 +1253,11 @@ export class From<T extends readonly unknown[]> {
     });
   }
 
+  /** 运行条件块，按本作用域的 skipEmpty 开关。 */
+  #condition(block: () => void): Cond {
+    return withSkipEmpty(this.#spec.skipEmpty, () => collect(block));
+  }
+
   /** 返回修改了部分内容的新作用域。 */
   #with(change: Partial<SelectSpec>): From<T> {
     return makeFrom({ ...this.#spec, ...change }, this.#refs);
@@ -1289,7 +1296,7 @@ export function cte<E>(name: string, body: Query<E>): Cte<E> {
 }
 
 /** 常量行中的一个值。 */
-export type ConstantValue = string | number | bigint | boolean;
+export type ConstantValue = string | number | bigint | boolean | Decimal | CalendarDate | CalendarDateTime;
 
 /**
  * 常量行，例如代码表：每行一个由字面量组成的 SELECT，用 UNION ALL 连接（HANA 上带

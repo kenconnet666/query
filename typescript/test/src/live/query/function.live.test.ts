@@ -1,6 +1,7 @@
+import { Decimal } from "decimal.js";
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { caseOf, caseWhen, ceil, count, cte, decimal, divide, floor, from, left, lit, locate, lpad, minus, mod, negate, plus, power, replace, right, rpad, sign, sqrt, substring, val, values } from "@zerodep-dev/query-core";
+import { caseOf, caseWhen, count, cte, decimal, from, lit, val, values } from "@zerodep-dev/query-core";
 import { Lips, Mara } from "../../fixtures/erp.js";
 import { liveSuite } from "../support/live.js";
 
@@ -14,20 +15,20 @@ liveSuite("文本与数值函数", (live) => {
       from(Lips)
         .where((l) => l.delivery.eq("D1"))
         .select((l) => ({
-          prefix: left(l.delivery, 1),
-          tail: substring(l.material, 2),
-          mid: substring(l.unit, 1, 1),
-          suffix: right(l.salesOrder, 1),
-          cleaned: replace(l.unit, "A", "-"),
-          negative: negate(l.quantity),
-          twice: plus([l.quantity, l.quantity]),
+          prefix: l.delivery.left(1),
+          tail: l.material.substring(2),
+          mid: l.unit.substring(1, 1),
+          suffix: l.salesOrder.right(1),
+          cleaned: l.unit.replace("A", "-"),
+          negative: l.quantity.negate(),
+          twice: l.quantity.plus(l.quantity),
         })),
     );
     assert.deepEqual({ ...pieces!, negative: Number(pieces!.negative), twice: Number(pieces!.twice) }, { prefix: "D", tail: "1", mid: "E", suffix: "1", cleaned: "E-", negative: -3, twice: 6 });
     const prefixes = await live.db.list(
       from(Lips)
-        .groupBy((l) => substring(l.delivery, 1, 1))
-        .select((l) => ({ prefix: substring(l.delivery, 1, 1), n: count() })),
+        .groupBy((l) => l.delivery.substring(1, 1))
+        .select((l) => ({ prefix: l.delivery.substring(1, 1), n: count() })),
     );
     assert.deepEqual(prefixes, [{ prefix: "D", n: 5 }]);
   });
@@ -39,12 +40,12 @@ liveSuite("文本与数值函数", (live) => {
       from(codes)
         .orderBy((c) => c.text)
         .select((c) => {
-          const comma = locate(c.text, ",");
+          const comma = c.text.locate(",");
           return {
             text: c.text,
             comma,
-            head: caseWhen(comma.gt(0), substring(c.text, 1, minus(comma, lit(1)))).otherwise(c.text),
-            tail: caseWhen(comma.gt(0), substring(c.text, plus(comma, lit(1)))).end(),
+            head: caseWhen(() => comma.gt(0), c.text.substring(1, comma.minus(lit(1)))).otherwise(c.text),
+            tail: caseWhen(() => comma.gt(0), c.text.substring(comma.plus(lit(1)))).end(),
           };
         }),
     );
@@ -70,8 +71,8 @@ liveSuite("文本与数值函数", (live) => {
       from(Lips)
         .orderBy((l) => l.delivery)
         .select((l) => {
-          const half = divide(l.quantity, lit("2", decimal));
-          return { delivery: l.delivery, down: floor(half), up: ceil(half) };
+          const half = l.quantity.divide(lit(new Decimal("2")));
+          return { delivery: l.delivery, down: half.floor(), up: half.ceil() };
         }),
     );
     assert.deepEqual(rows.map((r) => `${r.delivery}:${Number(r.down)}:${Number(r.up)}`), ["D1:1:2", "D2:1:1", "D3:2:3", "D4:3:4", "D5:0:1"]);
@@ -82,12 +83,12 @@ liveSuite("文本与数值函数", (live) => {
       from(Lips)
         .where((l) => l.delivery.eq("D1"))
         .select((l) => ({
-          padded: lpad(l.material, 5, "0"),
-          unit: rpad(l.unit, 4, "*"),
-          remainder: mod(l.quantity, 2),
-          squared: power(l.quantity, 2),
-          root: sqrt(l.quantity),
-          sign: sign(minus(l.quantity, lit("4", decimal))),
+          padded: l.material.lpad(5, "0"),
+          unit: l.unit.rpad(4, "*"),
+          remainder: l.quantity.mod(2),
+          squared: l.quantity.power(2),
+          root: l.quantity.sqrt(),
+          sign: l.quantity.minus(lit(new Decimal("4"))).sign(),
         })),
     );
     assert.equal(r.padded, "000M1");

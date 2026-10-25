@@ -1,9 +1,11 @@
+import { Decimal } from "decimal.js";
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { cast, CastType, from, lit, sum } from "@zerodep-dev/query-core";
-import { cube, greatest, groupingSets, HanaDatabase, hint, toInteger } from "@zerodep-dev/query-hana";
-import { dateFormat, greatest as mysqlGreatest, maxExecutionTime, MysqlDatabase } from "@zerodep-dev/query-mysql";
-import { cube as pgCube, distinctOn, groupingSets as pgGroupingSets, ilike, least as pgLeast, PostgresDatabase } from "@zerodep-dev/query-postgres";
+import { CastType, from, lit } from "@zerodep-dev/query-core";
+import { cube, greatest, groupingSets, HanaDatabase, hint, hana } from "@zerodep-dev/query-hana";
+import { greatest as mysqlGreatest, maxExecutionTime, MysqlDatabase, mysql } from "@zerodep-dev/query-mysql";
+import { cube as pgCube, distinctOn, groupingSets as pgGroupingSets, least as pgLeast, PostgresDatabase, postgres } from "@zerodep-dev/query-postgres";
 import { Lips } from "../fixtures/erp.js";
 import { deliveries } from "../fixtures/scenarios.js";
 import { TestDialect } from "../fixtures/support.js";
@@ -11,32 +13,32 @@ import { dryRunDriver } from "@zerodep-dev/query-core";
 import { SItem } from "../fixtures/schemas.js";
 
 const never = { query: () => Promise.reject(new Error("never connects")) };
-const hana = new HanaDatabase(never);
-const postgres = new PostgresDatabase(never);
-const mysql = new MysqlDatabase(never);
+const hanaDb = new HanaDatabase(never);
+const postgresDb = new PostgresDatabase(never);
+const mysqlDb = new MysqlDatabase(never);
 const other = new TestDialect();
 
 describe("方言", () => {
   it("PostgreSQL 的参数按 CTE 提升后的最终顺序编号", () => {
-    const r = postgres.render(deliveries("2026-01-01", "2026-06-30", "MK1"));
+    const r = postgresDb.render(deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), "MK1"));
     assert.deepEqual(r.sql.match(/\$\d+/g), ["$1", "$2", "$3", "$4", "$5"]);
     assert.deepEqual(r.parameters, ["ZMAT", "MK1", "1", "20260101", "20260630"]);
   });
 
   it("PostgreSQL 含反斜杠的字面量写成 E 字符串，以免受 standard_conforming_strings 影响", () => {
-    const escaped = postgres.render(from(Lips).select(() => lit("a\\'; --"))).sql;
+    const escaped = postgresDb.render(from(Lips).select(() => lit("a\\'; --"))).sql;
     assert.ok(escaped.startsWith("SELECT E'a\\\\''; --' AS "), escaped);
-    const plain = postgres.render(from(Lips).select(() => lit("O'Brien"))).sql;
+    const plain = postgresDb.render(from(Lips).select(() => lit("O'Brien"))).sql;
     assert.ok(plain.startsWith("SELECT 'O''Brien' AS "), plain);
   });
 
   it("HANA 与 MySQL 用问号占位", () => {
-    assert.equal(hana.render(deliveries("2026-01-01", "2026-06-30", null)).sql.match(/\?/g)?.length, 4);
-    assert.equal(mysql.render(deliveries("2026-01-01", "2026-06-30", null)).sql.match(/\?/g)?.length, 4);
+    assert.equal(hanaDb.render(deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), null)).sql.match(/\?/g)?.length, 4);
+    assert.equal(mysqlDb.render(deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), null)).sql.match(/\?/g)?.length, 4);
   });
 
   it("DISTINCT ON 替代 DISTINCT 并放在 SELECT 之后", () => {
-    const s = postgres.render(
+    const s = postgresDb.render(
       from(Lips)
         .with((l) => distinctOn(l.material))
         .distinct()
@@ -47,7 +49,7 @@ describe("方言", () => {
   });
 
   it("MySQL 没有到 BOOLEAN 的类型转换", () => {
-    assert.throws(() => mysql.render(from(Lips).select((l) => cast(l.quantity, CastType.boolean()))), /no CAST to BOOLEAN/);
+    assert.throws(() => mysqlDb.render(from(Lips).select((l) => l.quantity.cast(CastType.boolean()))), /no CAST to BOOLEAN/);
   });
 
   it("方言专属函数和子句不能在别的方言上渲染", () => {
@@ -55,43 +57,43 @@ describe("方言", () => {
       from(Lips)
         .with(hint("NO_CS_JOIN"))
         .select((l) => l.delivery),
-      from(Lips).select((l) => dateFormat(l.createdOn, "%Y")),
+      from(Lips).select((l) => mysql(l.createdOn).dateFormat("%Y")),
       from(Lips)
         .with(maxExecutionTime(10))
         .select((l) => l.delivery),
       from(Lips)
-        .where((l) => ilike(l.unit, "ea"))
+        .where((l) => postgres(l.unit).ilike("ea"))
         .select((l) => l.delivery),
       from(Lips)
         .with((l) => distinctOn(l.material))
         .select((l) => l.delivery),
       from(Lips)
         .groupBy((l) => cube(l.material))
-        .select(() => sum(lit(1))),
+        .select(() => lit(1).sum()),
       from(Lips)
         .groupBy((l) => groupingSets([l.material], []))
-        .select(() => sum(lit(1))),
+        .select(() => lit(1).sum()),
       from(Lips)
         .groupBy((l) => pgCube(l.material))
-        .select(() => sum(lit(1))),
+        .select(() => lit(1).sum()),
       from(Lips)
         .groupBy((l) => pgGroupingSets([l.material], []))
-        .select(() => sum(lit(1))),
-      from(Lips).select((l) => greatest(l.quantity, "4")),
-      from(Lips).select((l) => toInteger(l.delivery)),
-      from(Lips).select((l) => pgLeast(l.quantity, "4")),
-      from(Lips).select((l) => mysqlGreatest(l.quantity, "4")),
+        .select(() => lit(1).sum()),
+      from(Lips).select((l) => greatest(l.quantity, new Decimal(4))),
+      from(Lips).select((l) => hana(l.delivery).toInteger()),
+      from(Lips).select((l) => pgLeast(l.quantity, new Decimal(4))),
+      from(Lips).select((l) => mysqlGreatest(l.quantity, new Decimal(4))),
     ];
     for (const q of cases) assert.throws(() => q.toSql(other), /HanaDialect|MysqlDialect|PostgreSQL|PostgresDialect/);
-    assert.throws(() => postgres.render(cases[10]!), /TO_INTEGER is a HanaDialect function; this database uses PostgreSQL/);
-    assert.throws(() => mysql.render(cases[5]!), /CUBE is a HanaDialect function/);
-    assert.throws(() => mysql.render(cases[8]!), /GROUPING SETS is a PostgresDialect function/);
+    assert.throws(() => postgresDb.render(cases[10]!), /TO_INTEGER is a HanaDialect function; this database uses PostgreSQL/);
+    assert.throws(() => mysqlDb.render(cases[5]!), /CUBE is a HanaDialect function/);
+    assert.throws(() => mysqlDb.render(cases[8]!), /GROUPING SETS is a PostgresDialect function/);
   });
 
   it("HANA 的非 ASCII 字面量带 N 前缀，类型转换用 NVARCHAR", () => {
-    const s = hana.render(from(Lips).select((l) => cast(l.unit, CastType.text(10)))).sql;
+    const s = hanaDb.render(from(Lips).select((l) => l.unit.cast(CastType.text(10)))).sql;
     assert.ok(s.startsWith("SELECT CAST(LIPS.VRKME AS NVARCHAR(10))"), s);
-    assert.ok(hana.render(from(Lips).select(() => lit("件"))).sql.startsWith("SELECT N'件'"));
+    assert.ok(hanaDb.render(from(Lips).select(() => lit("件"))).sql.startsWith("SELECT N'件'"));
   });
 
   it("hana 按声明建表的语句与 Java 相同", () => {

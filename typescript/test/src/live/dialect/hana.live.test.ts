@@ -1,8 +1,8 @@
+import { Decimal } from "decimal.js";
+import { CalendarDate, parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { before, it } from "node:test";
 import {
-  addDays,
-  addMonths,
   ancestors,
   bigint,
   column,
@@ -12,7 +12,6 @@ import {
   count,
   cube,
   date,
-  daysBetween,
   decimal,
   deleteFrom,
   descendants,
@@ -26,22 +25,16 @@ import {
   hint,
   id,
   insertInto,
-  jsonValue,
   least,
   lit,
-  median,
   nullOf,
   percentileCont,
   percentileDisc,
   QueryExecutionError,
   score,
-  stringAgg,
-  substring,
-  sum,
   table,
-  toInteger,
-  toVarchar,
   updateJoin,
+  hana,
 } from "@zerodep-dev/query-hana";
 import { LipsByUnit, orgSource } from "../../fixtures/dialect-tables.js";
 import { Lips, Mara } from "../../fixtures/erp.js";
@@ -52,8 +45,8 @@ import { liveSuite } from "../support/live.js";
 @table("PART_LOG", { schema: "QUERY_IT", options: [{ dialect: HanaDialect, sql: "PARTITION BY RANGE (DAY) (PARTITION '2025-01-01' <= VALUES < '2026-01-01', PARTITION '2026-01-01' <= VALUES < '2027-01-01', PARTITION OTHERS)" }] })
 class PartLog {
   @id @column("ID", bigint) id!: bigint;
-  @id @column("DAY", date) day!: string;
-  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: string | null;
+  @id @column("DAY", date) day!: CalendarDate;
+  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: Decimal | null;
 }
 
 /**
@@ -78,10 +71,10 @@ liveSuite("HANA 专属写法", { only: ["hana"] }, (live) => {
   });
 
   it("日期函数", async () => {
-    const day = lit("2026-01-01", date);
+    const day = lit(parseDate("2026-01-01"));
     const one = from(Lips).limit(1);
-    assert.equal(await live.db.one(one.select(() => daysBetween(day, addMonths(day, 1)))), 31);
-    assert.equal(await live.db.one(one.select(() => toVarchar(addDays(day, 4), "YYYYMMDD"))), "20260105");
+    assert.equal(await live.db.one(one.select(() => day.daysBetween(day.addMonths(1)))), 31);
+    assert.equal(await live.db.one(one.select(() => hana(day.addDays(4)).toVarchar("YYYYMMDD"))), "20260105");
   });
 
   it("超时按整秒交给客户端，短于超时的语句照常完成", async () => {
@@ -97,7 +90,7 @@ liveSuite("HANA 专属写法", { only: ["hana"] }, (live) => {
         .with(hint("NO_CS_JOIN"))
         .groupBy((l) => l.material)
         .orderBy((l) => l.material)
-        .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc()) }))
+        .select((l) => ({ material: l.material, deliveries: l.delivery.stringAgg(",", l.delivery.asc()) }))
         .map((r) => `${r.material}=${r.deliveries}`),
     );
     assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);
@@ -108,20 +101,20 @@ liveSuite("HANA 专属写法", { only: ["hana"] }, (live) => {
       from(Lips)
         .groupBy((l) => groupingSets([l.material], [])) // 按物料，加上总计
         .orderBy((l) => [grouping(l.material), l.material])
-        .select((l) => ({ material: l.material, total: sum(l.quantity) })),
+        .select((l) => ({ material: l.material, total: l.quantity.sum() })),
     );
     assert.deepEqual(sets.map((r) => `${r.material}=${Number(r.total)}`), ["M1=6", "M2=12", "null=18"]);
     assert.equal((await live.db.list(from(Lips).groupBy((l) => cube(l.material, l.unit)).select(() => count()))).length, 6, "material x unit, material, unit and the grand total");
   });
 
   it("GREATEST 与 LEAST 遇到 NULL 时返回 NULL", async () => {
-    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, "4"), low: least(l.quantity, "4") })));
+    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, new Decimal("4")), low: least(l.quantity, new Decimal("4")) })));
     assert.deepEqual(rows.map((r) => `${r.delivery}:${Number(r.high)}:${Number(r.low)}`), ["D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"]);
     assert.equal(await live.db.one(from(Lips).where((l) => l.delivery.eq("D1")).select((l) => greatest(l.quantity, nullOf(decimal)))), null, "PostgreSQL 跳过 NULL，HANA 和 MySQL 返回 NULL");
   });
 
   it("TO_INTEGER 把文本转成整数", async () => {
-    assert.deepEqual(await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => toInteger(substring(l.delivery, 2)))), [1, 2, 3, 4, 5]);
+    assert.deepEqual(await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => hana(l.delivery.substring(2)).toInteger())), [1, 2, 3, 4, 5]);
   });
 
   it("联表更新一行匹配多行时整条语句报错且没有行被改", async () => {
@@ -158,7 +151,7 @@ liveSuite("HANA 专属写法", { only: ["hana"] }, (live) => {
       from(Lips)
         .groupBy((l) => l.material)
         .orderBy((l) => l.material)
-        .select((l) => ({ material: l.material, median: median(l.quantity), self: corr(l.quantity, l.quantity) })),
+        .select((l) => ({ material: l.material, median: hana(l.quantity).median(), self: corr(l.quantity, l.quantity) })),
     );
     assert.deepEqual(grouped.map((r) => `${r.material}:${r.median}:${Math.round(r.self!)}`), ["M1:2:1", "M2:6:1"]);
   });
@@ -187,13 +180,13 @@ liveSuite("HANA 专属写法", { only: ["hana"] }, (live) => {
     const fuzzy = await live.db.list(from(Lips).where((l) => containsFuzzy(0.8, "D1", l.delivery)).select((l) => ({ delivery: l.delivery, score: score() })));
     assert.equal(fuzzy[0]!.delivery, "D1");
     assert.equal(fuzzy[0]!.score, 1);
-    assert.equal(await live.db.one(from(Lips).limit(1).select(() => jsonValue(lit('{"a":{"b":"x"}}'), "$.a.b"))), "x");
+    assert.equal(await live.db.one(from(Lips).limit(1).select(() => hana(lit('{"a":{"b":"x"}}')).jsonValue("$.a.b"))), "x");
   });
 
   it("按 options 建原生分区表且查询不变", async () => {
     await live.recreate(PartLog);
-    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
-    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: parseDate("2025-06-01"), amount: new Decimal("1") }, { id: 2n, day: parseDate("2026-06-01"), amount: new Decimal("10") }));
+    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge(parseDate("2026-01-01"))).select((p) => p.id)), [2n]);
     const result = await live.driver.query("SELECT COUNT(*) FROM SYS.TABLE_PARTITIONS WHERE SCHEMA_NAME = 'QUERY_IT' AND TABLE_NAME = 'PART_LOG'", []);
     assert.equal(Number(result.rows[0]![0]), 3, "partitions of PART_LOG");
   });

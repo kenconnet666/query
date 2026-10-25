@@ -1,21 +1,20 @@
 package org.dpdns.zerodep.query.write;
 
-import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
-import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -63,7 +62,7 @@ public final class Delete<T extends Entity> implements Write {
     }
 
     /** 追加 WHERE 条件；多次调用之间是 AND。 */
-    public Delete<T> where(Function<T, Cond> condition) { return new Delete<>(target.where(condition), byId, physical); }
+    public Delete<T> where(Consumer<T> condition) { return new Delete<>(target.where(condition), byId, physical); }
 
     /** 条件对象：每个非空字段一个条件，规则同查询的 {@code where(filter)}。 */
     public Delete<T> where(Object filter) { return new Delete<>(target.where(filter), byId, physical); }
@@ -131,14 +130,10 @@ public final class Delete<T extends Entity> implements Write {
             target.renderWhere(w, "deleteFrom(...)", located);
             return w.statement();
         }
-        Col column = new Col<>(target.ref(), meta.property(logic.property()));
         List<Assignment> sets = new ArrayList<>();
-        sets.add(logic.timestamp() ? column.to((Expr) Sql.currentTimestamp()) : column.to(logic.deletedValue()));
+        sets.add(Assignment.deleted(target.ref(), meta, logic));
         String version = meta.writes().version();
-        if (byId != null && version != null) {
-            Col v = new Col<>(target.ref(), meta.property(version));
-            sets.add(v.to((Expr) Sql.plus(v, Sql.lit(1))));
-        }
+        if (byId != null && version != null) sets.add(Assignment.increment(Col.of(target.ref(), meta.property(version))));
         return Update.set(w, target, sets, located, "deleteFrom(...)");
     }
 }

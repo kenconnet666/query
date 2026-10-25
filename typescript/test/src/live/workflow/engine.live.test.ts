@@ -1,6 +1,7 @@
+import { parseDateTime, type CalendarDateTime } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { beforeEach, it } from "node:test";
-import { all, any, bigint, column, from, id, insertInto, integer, many, plus, table, text, timestamp, UnexpectedRowCountError, update, val, version, type Cond, type Many, type Ref } from "@zerodep-dev/query-core";
+import { all, any, bigint, column, from, id, insertInto, integer, many, table, text, timestamp, UnexpectedRowCountError, update, val, version, type Many, type Ref } from "@zerodep-dev/query-core";
 import { liveSuite } from "../support/live.js";
 
 const SCHEMA = "QUERY_IT";
@@ -12,7 +13,7 @@ class Instance {
   @column("STATUS", text, { length: 20, nullable: false }) status!: string;
   @column("VARIABLES", text, { lob: true }) variables!: string | null;
   @version @column("REV", integer, { nullable: false }) rev!: number;
-  @column("STARTED_AT", timestamp) startedAt!: string | null;
+  @column("STARTED_AT", timestamp) startedAt!: CalendarDateTime | null;
 }
 
 /** 待办：state 为 open、done、canceled；在岗位收件箱里等认领时 assignee 为空。 */
@@ -24,7 +25,7 @@ class WorkItem {
   @column("POOL", text, { length: 40 }) pool!: string | null;
   @column("ASSIGNEE", text, { length: 40 }) assignee!: string | null;
   @column("STATE", text, { length: 10, nullable: false }) state!: string;
-  @column("CREATED_AT", timestamp) createdAt!: string | null;
+  @column("CREATED_AT", timestamp) createdAt!: CalendarDateTime | null;
 
   /** 候选人、候选组与被排除的人。 */
   @many(() => Candidate, (w, c) => c.workItemId.eq(w.id)) candidates!: Many<Candidate>;
@@ -45,40 +46,51 @@ class FlowEvent {
   @id @column("ID", bigint) id!: bigint;
   @column("INSTANCE_ID", bigint, { nullable: false }) instanceId!: bigint;
   @column("TYPE", text, { length: 20, nullable: false }) type!: string;
-  @column("AT", timestamp, { nullable: false }) at!: string;
+  @column("AT", timestamp, { nullable: false }) at!: CalendarDateTime;
 }
 
 /** 作业：到期后由工作进程领取。 */
 @table("E_JOB", { schema: SCHEMA })
 class Job {
   @id @column("ID", bigint) id!: bigint;
-  @column("DUE_AT", timestamp, { nullable: false }) dueAt!: string;
+  @column("DUE_AT", timestamp, { nullable: false }) dueAt!: CalendarDateTime;
   @column("LOCKED_BY", text, { length: 40 }) lockedBy!: string | null;
 }
 
 /** 测试数据的时间基准（UTC 的本地时间值）。 */
-const AT = "2026-10-24 08:00:00";
+const AT = parseDateTime("2026-10-24T08:00:00");
 
 /** AT 之后若干分钟，可带毫秒。 */
-const minutesLater = (minutes: number, millis = 0) =>
-  `2026-10-24 ${String(8 + Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00${millis ? "." + String(millis).padStart(3, "0") : ""}`;
+const minutesLater = (minutes: number, millis = 0) => AT.add({ minutes, milliseconds: millis });
 
 /** 停 ms 毫秒。 */
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** user 的待办：办理人是自己；或者没有办理人、自己或自己的组是候选，而且自己没有被排除。 */
-function todo(w: Ref<WorkItem>, user: string, groups: readonly string[]): Cond {
-  return all(
-    w.state.eq("open"),
-    any(
-      w.assignee.eq(user),
-      all(
-        w.assignee.isNull(),
-        w.candidates.any((c) => any(all(c.kind.eq("user"), c.value.eq(user)), all(c.kind.eq("group"), c.value.in(groups)))),
-        w.candidates.none((c) => all(c.kind.eq("excluded"), c.value.eq(user))),
-      ),
-    ),
-  );
+/** user 的待办，写进调用处的条件块：办理人是自己；或者没有办理人、自己或自己的组是候选，而且自己没有被排除。 */
+function todo(w: Ref<WorkItem>, user: string, groups: readonly string[]): void {
+  w.state.eq("open");
+  any(() => {
+    w.assignee.eq(user);
+    all(() => {
+      w.assignee.isNull();
+      w.candidates.any((c) =>
+        any(() => {
+          all(() => {
+            c.kind.eq("user");
+            c.value.eq(user);
+          });
+          all(() => {
+            c.kind.eq("group");
+            c.value.in(groups);
+          });
+        }),
+      );
+      w.candidates.none((c) => {
+        c.kind.eq("excluded");
+        c.value.eq(user);
+      });
+    });
+  });
 }
 
 /**
@@ -95,8 +107,7 @@ liveSuite("流程引擎的并发写法", (live) => {
     await live.db.execute(
       insertInto(WorkItem).values(
         { id: 11n, instanceId: 1n, node: "sign", pool: null, assignee: "alice", state: "open", createdAt: AT },
-        { id: 12n, instanceId: 1n, node: "sign", pool: null, assignee: "bob", state: "open", createdAt: AT },
-      ),
+        { id: 12n, instanceId: 1n, node: "sign", pool: null, assignee: "bob", state: "open", createdAt: AT }),
     );
   };
 
@@ -106,10 +117,17 @@ liveSuite("流程引擎的并发写法", (live) => {
    */
   const completeSign = (item: bigint, next: bigint) =>
     live.db.transaction(async (tx) => {
-      await tx.execute(update(Instance).set((i) => ({ rev: plus(i.rev, val(1)) })).where((i) => i.id.eq(1n)).expect(1));
-      await tx.execute(update(WorkItem).set(() => ({ state: "done" })).where((w) => all(w.id.eq(item), w.state.eq("open"))).expect(1));
+      await tx.execute(update(Instance).set((i) => ({ rev: i.rev.plus(val(1)) })).where((i) => i.id.eq(1n)).expect(1));
+      await tx.execute(update(WorkItem).set(() => ({ state: "done" })).where((w) => {
+        w.id.eq(item);
+        w.state.eq("open");
+      }).expect(1));
       await pause(300);
-      const open = await tx.count(from(WorkItem).where((w) => all(w.instanceId.eq(1n), w.node.eq("sign"), w.state.eq("open"))).select((w) => w.id));
+      const open = await tx.count(from(WorkItem).where((w) => {
+        w.instanceId.eq(1n);
+        w.node.eq("sign");
+        w.state.eq("open");
+      }).select((w) => w.id));
       if (open === 0) await tx.execute(insertInto(WorkItem).values({ id: next, instanceId: 1n, node: "after", pool: "review", assignee: null, state: "open", createdAt: AT }));
     });
 
@@ -123,7 +141,10 @@ liveSuite("流程引擎的并发写法", (live) => {
 
   it("同一个待办提交两次时第二次改到 0 行就报错", async () => {
     await signInstance();
-    const complete = update(WorkItem).set(() => ({ state: "done" })).where((w) => all(w.id.eq(11n), w.state.eq("open"))).expect(1);
+    const complete = update(WorkItem).set(() => ({ state: "done" })).where((w) => {
+      w.id.eq(11n);
+      w.state.eq("open");
+    }).expect(1);
     await live.db.execute(complete);
     await assert.rejects(live.db.execute(complete), UnexpectedRowCountError);
   });
@@ -137,15 +158,20 @@ liveSuite("流程引擎的并发写法", (live) => {
         { id: 2n, dueAt: minutesLater(1), lockedBy: null },
         { id: 3n, dueAt: minutesLater(2), lockedBy: null },
         { id: 4n, dueAt: minutesLater(3), lockedBy: null },
-        { id: 5n, dueAt: "2026-10-25 08:00:00", lockedBy: null },
-      ),
+        { id: 5n, dueAt: parseDateTime("2026-10-25T08:00:00"), lockedBy: null }),
     );
     const worker = async (name: string) => {
-      const due = await live.db.list(from(Job).where((j) => all(j.lockedBy.isNull(), j.dueAt.le(minutesLater(60)))).orderBy((j) => [j.dueAt, j.id]).limit(10).select((j) => j.id));
+      const due = await live.db.list(from(Job).where((j) => {
+        j.lockedBy.isNull();
+        j.dueAt.le(minutesLater(60));
+      }).orderBy((j) => [j.dueAt, j.id]).limit(10).select((j) => j.id));
       const mine: bigint[] = [];
       for (const job of due) {
         if (mine.length === 2) break;
-        if ((await live.db.execute(update(Job).set(() => ({ lockedBy: name })).where((j) => all(j.id.eq(job), j.lockedBy.isNull())))) === 1) mine.push(job);
+        if ((await live.db.execute(update(Job).set(() => ({ lockedBy: name })).where((j) => {
+          j.id.eq(job);
+          j.lockedBy.isNull();
+        }))) === 1) mine.push(job);
         await pause(50);
       }
       return mine;
@@ -162,15 +188,13 @@ liveSuite("流程引擎的并发写法", (live) => {
         { id: 31n, instanceId: 1n, node: "check", pool: "cost", assignee: null, state: "open", createdAt: AT },
         { id: 32n, instanceId: 1n, node: "fix", pool: null, assignee: "alice", state: "open", createdAt: AT },
         { id: 33n, instanceId: 2n, node: "check", pool: null, assignee: null, state: "open", createdAt: AT },
-        { id: 34n, instanceId: 2n, node: "fix", pool: null, assignee: "alice", state: "done", createdAt: AT },
-      ),
+        { id: 34n, instanceId: 2n, node: "fix", pool: null, assignee: "alice", state: "done", createdAt: AT }),
     );
     await live.db.execute(
       insertInto(Candidate).values(
         { id: 1n, workItemId: 31n, kind: "group", value: "cost" },
         { id: 2n, workItemId: 31n, kind: "excluded", value: "alice" },
-        { id: 3n, workItemId: 33n, kind: "user", value: "alice" },
-      ),
+        { id: 3n, workItemId: 33n, kind: "user", value: "alice" }),
     );
     assert.deepEqual(await live.db.list(from(WorkItem).where((w) => todo(w, "alice", ["cost"])).orderBy((w) => w.id).select((w) => w.id)), [32n, 33n]);
     assert.deepEqual(await live.db.list(from(WorkItem).where((w) => todo(w, "bob", ["cost"])).orderBy((w) => w.id).select((w) => w.id)), [31n]);
@@ -193,6 +217,6 @@ liveSuite("流程引擎的并发写法", (live) => {
     const second = await live.db.page(from(FlowEvent).where((e) => e.instanceId.eq(1n)).orderBy((e) => [e.at.desc(), e.id]).select((e) => e.id), 2, 10);
     assert.equal(second.total, 30);
     assert.deepEqual(second.rows, [20n, 19n, 18n, 17n, 16n, 15n, 14n, 13n, 12n, 11n]);
-    assert.equal(await live.db.one(from(FlowEvent).where((e) => e.id.eq(7n)).select((e) => e.at)), "2026-10-24 08:07:00.123");
+    assert.equal((await live.db.one(from(FlowEvent).where((e) => e.id.eq(7n)).select((e) => e.at))).toString(), "2026-10-24T08:07:00.123");
   });
 });

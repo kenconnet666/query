@@ -4,11 +4,10 @@ import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.select.FilterObject;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.SelectSpec;
-
-import java.util.function.Supplier;
 
 /** 所有作用域（From1 ... From16）共有的部分。不可变：每次调用都返回新的作用域。 */
 public abstract class AbstractFrom<S extends AbstractFrom<S>> {
@@ -65,6 +64,6 @@ public abstract class AbstractFrom<S extends AbstractFrom<S>> {
     /** 本作用域上的 SELECT 1，供 {@code exists(from(...).where(...))} 使用。 */
     public final Query<Integer> selectOne() { return Query.select(spec, Sql.lit(1)); }
 
-    /** 在本作用域的 skipEmpty 模式下构造条件。 */
-    final Cond condition(Supplier<Cond> body) { return SkipEmpty.within(spec.skipEmpty, body); }
+    /** 在本作用域的 skipEmpty 模式下运行条件块，收集写下的条件。 */
+    final Cond condition(Runnable block) { return SkipEmpty.within(spec.skipEmpty, () -> Conditions.collect(block)); }
 }

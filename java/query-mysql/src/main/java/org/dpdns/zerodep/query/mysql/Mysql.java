@@ -10,8 +10,13 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.ExprNode;
+import org.dpdns.zerodep.query.expr.Family;
 import org.dpdns.zerodep.query.expr.Window;
+import org.dpdns.zerodep.query.expr.typed.ExprDouble;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
@@ -24,7 +29,7 @@ import org.dpdns.zerodep.query.write.JoinUpdate;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.sql.DataSource;
@@ -136,10 +141,54 @@ public class Mysql extends Sql {
         return new MysqlDatabase(connections, configure);
     }
 
-    // ---------- 函数 ----------
+    // ---------- 视图：有主操作数的 MySQL 函数 ----------
 
-    /** DATE_FORMAT(value, format)，例如 {@code dateFormat(date, "%Y%m%d")}。 */
-    public static Expr<String> dateFormat(Expr<?> value, String format) { return call(DATE_FORMAT, String.class, value, lit(format)); }
+    /** 文本上的 MySQL 函数：{@code mysql(t.payload()).jsonText("$.order.id")}。 */
+    public static <T> ViewText<T> mysql(ExprText<T> e) { return new ViewText<>(e); }
+
+    /** 任意值上的 MySQL 函数：{@code mysql(e.onDay()).dateFormat("%Y%m%d")}。 */
+    public static <T> ViewAny<T> mysql(Expr<T> e) { return new ViewAny<>(e); }
+
+    /** 任意值上的 MySQL 函数，由 {@code mysql(e)} 得到。 */
+    public static class ViewAny<T> {
+        /** 视图的主操作数。 */
+        final Expr<T> e;
+
+        ViewAny(Expr<T> e) { this.e = Objects.requireNonNull(e, "e"); }
+
+        /** DATE_FORMAT(this, format)，例如日期写成 {@code dateFormat("%Y%m%d")}。 */
+        public ExprText<String> dateFormat(String format) { return ExprText.of(call(DATE_FORMAT, String.class, e, lit(format))); }
+    }
+
+    /** 文本上的 MySQL 函数，由 {@code mysql(文本表达式)} 得到。 */
+    public static final class ViewText<T> extends ViewAny<T> {
+        ViewText(ExprText<T> e) { super(e); }
+
+        /**
+         * JSON 文档里一个路径上的标量文本：{@code JSON_UNQUOTE(JSON_EXTRACT(doc, ?))}，路径如 {@code "$.order.id"} 绑定成参数；
+         * 路径不存在、是 JSON null、对象或数组时为 NULL。
+         */
+        public ExprText<String> jsonText(String path) {
+            Expr<String> p = utf8(Objects.requireNonNull(path, "path"));
+            return ExprText.of(new ExprNode<>(SqlType.of(String.class)) {
+                @Override public void render(SqlWriter w) {
+                    requireMysql(w);
+                    w.sql("CASE WHEN JSON_TYPE(JSON_EXTRACT(").render(e).sql(", ").render(p).sql(")) IN ('OBJECT', 'ARRAY', 'NULL') THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(")
+                        .render(e).sql(", ").render(p).sql(")) END");
+                }
+            });
+        }
+
+        /** JSON 文档包含 json 这段内容 {@code JSON_CONTAINS(doc, CAST(? AS JSON))}，写进当前的条件块。 */
+        public void jsonContains(String json) {
+            if (SkipEmpty.skips(json)) {
+                Conditions.add(Cond.EMPTY);
+                return;
+            }
+            Expr<String> value = utf8(json);
+            Conditions.add(cond(w -> w.sql("JSON_CONTAINS(").render(e).sql(", CAST(").render(value).sql(" AS JSON))")));
+        }
+    }
 
     // ---------- 子句 ----------
 
@@ -206,34 +255,12 @@ public class Mysql extends Sql {
     // ---------- JSON ----------
 
     /**
-     * JSON 文档里一个路径上的标量文本：{@code JSON_UNQUOTE(JSON_EXTRACT(doc, ?))}，路径如 {@code "$.order.id"} 绑定成参数；
-     * 路径不存在、是 JSON null、对象或数组时为 NULL。
-     */
-    public static Expr<String> jsonText(Expr<String> document, String path) {
-        Expr<String> p = utf8(Objects.requireNonNull(path, "path"));
-        return new Expr<>(SqlType.of(String.class)) {
-            @Override public void render(SqlWriter w) {
-                requireMysql(w);
-                w.sql("CASE WHEN JSON_TYPE(JSON_EXTRACT(").render(document).sql(", ").render(p).sql(")) IN ('OBJECT', 'ARRAY', 'NULL') THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(")
-                    .render(document).sql(", ").render(p).sql(")) END");
-            }
-        };
-    }
-
-    /** JSON 文档包含 json 这段内容 {@code JSON_CONTAINS(doc, CAST(? AS JSON))}，例如 {@code jsonContains(t.payload(), "{\"status\":\"open\"}")}。 */
-    public static Cond jsonContains(Expr<String> document, String json) {
-        if (SkipEmpty.skips(json)) return Cond.EMPTY;
-        Expr<String> value = utf8(json);
-        return cond(w -> w.sql("JSON_CONTAINS(").render(document).sql(", CAST(").render(value).sql(" AS JSON))"));
-    }
-
-    /**
      * 绑定成 utf8mb4 文本的参数 {@code CONVERT(? USING utf8mb4)}：Connector/J 在客户端预处理且开着 NO_BACKSLASH_ESCAPES 时
      * 会把字符串绑成二进制，JSON 函数遇到二进制会报错（前身仓库实测）。
      */
     private static Expr<String> utf8(String text) {
         Expr<String> value = val(text);
-        return new Expr<>(SqlType.of(String.class)) {
+        return new ExprNode<>(SqlType.of(String.class)) {
             @Override public void render(SqlWriter w) { w.sql("CONVERT(").render(value).sql(" USING utf8mb4)"); }
         };
     }
@@ -241,31 +268,28 @@ public class Mysql extends Sql {
     // ---------- 全文检索 ----------
 
     /**
-     * 全文检索 {@code MATCH (a, b) AGAINST (? IN NATURAL LANGUAGE MODE)}；列必须正好是某个 FULLTEXT 索引的列。
+     * 全文检索 {@code MATCH (a, b) AGAINST (? IN NATURAL LANGUAGE MODE)}，写进当前的条件块；列必须正好是某个 FULLTEXT 索引的列。
      * InnoDB 的全文索引在提交时才更新，同一个事务里刚插入的行搜不到。skipEmpty 下搜索词为空时没有条件。
      */
-    @SafeVarargs
-    public static Cond match(String query, Expr<String>... columns) { return fulltext("NATURAL LANGUAGE MODE", query, columns); }
+    public static void match(String query, ExprText<?>... columns) { Conditions.add(fulltext("NATURAL LANGUAGE MODE", query, columns)); }
 
     /** 布尔模式的全文检索 {@code AGAINST (? IN BOOLEAN MODE)}：{@code +必须 -排除 "短语" 前缀*}。 */
-    @SafeVarargs
-    public static Cond matchBoolean(String query, Expr<String>... columns) { return fulltext("BOOLEAN MODE", query, columns); }
+    public static void matchBoolean(String query, ExprText<?>... columns) { Conditions.add(fulltext("BOOLEAN MODE", query, columns)); }
 
     /** 自然语言模式的相关度，用来排序；不能跨库比较。 */
-    @SafeVarargs
-    public static Expr<Double> matchScore(String query, Expr<String>... columns) {
+    public static ExprDouble<Double> matchScore(String query, ExprText<?>... columns) {
         Cond c = fulltext("NATURAL LANGUAGE MODE", Objects.requireNonNull(query, "query"), columns);
-        return new Expr<>(SqlType.of(Double.class)) {
+        return ExprDouble.of(new ExprNode<>(SqlType.of(Double.class)) {
             @Override public void render(SqlWriter w) { w.render(c); }
-        };
+        });
     }
 
     /** {@code MATCH (...) AGAINST (? IN mode)}。 */
-    private static Cond fulltext(String mode, String query, Expr<String>[] columns) {
+    private static Cond fulltext(String mode, String query, ExprText<?>[] columns) {
         if (columns.length == 0) throw new IllegalArgumentException("match(...) needs at least one column");
         if (SkipEmpty.skips(query)) return Cond.EMPTY;
         Expr<String> q = val(query);
-        List<Expr<String>> list = List.of(columns);
+        List<ExprText<?>> list = List.of(columns);
         return cond(w -> w.sql("MATCH (").join(list, ", ").sql(") AGAINST (").render(q).sql(" IN ").sql(mode).sql(")"));
     }
 
@@ -279,27 +303,27 @@ public class Mysql extends Sql {
         };
     }
 
-    /** GREATEST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
+    /** GREATEST(a, b, ...)，结果与 first 同一类型，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
-    public static <T> Expr<T> greatest(Expr<T> first, Expr<? extends T>... rest) {
-        return call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest));
+    public static <T, F extends Expr<T>> F greatest(Family<T, F> first, Expr<? extends T>... rest) {
+        return first.retype(call(GREATEST, first.type(), twoOrMore("GREATEST", first, rest)));
     }
 
-    /** LEAST(a, b, ...)，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
+    /** LEAST(a, b, ...)，结果与 first 同一类型，常量写作 {@code val(x)}：只要有一个参数为 NULL，结果就是 NULL。 */
     @SafeVarargs
-    public static <T> Expr<T> least(Expr<T> first, Expr<? extends T>... rest) {
-        return call(LEAST, first.type(), twoOrMore("LEAST", first, rest));
+    public static <T, F extends Expr<T>> F least(Family<T, F> first, Expr<? extends T>... rest) {
+        return first.retype(call(LEAST, first.type(), twoOrMore("LEAST", first, rest)));
     }
 
     // ---------- 联表写入 ----------
 
     /** 联表更新：SET 和 WHERE 可以引用 joined 表，写成 UPDATE ... JOIN ... SET；见 {@link JoinUpdate}。 */
-    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinUpdate.of(table, joined, on);
     }
 
     /** 联表删除：WHERE 可以引用 joined 表，写成 DELETE 别名 FROM ... JOIN；见 {@link JoinDelete}。 */
-    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinDelete.of(table, joined, on);
     }
 }

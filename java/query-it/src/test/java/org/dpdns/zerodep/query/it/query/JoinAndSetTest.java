@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.it.query;
 
-import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.typed.ExprDecimal;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.it.support.SampleData;
@@ -21,7 +22,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.allOf;
 import static org.dpdns.zerodep.query.Sql.anyOf;
 import static org.dpdns.zerodep.query.Sql.bool;
@@ -32,7 +32,6 @@ import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.keys;
 import static org.dpdns.zerodep.query.Sql.nullOf;
 import static org.dpdns.zerodep.query.Sql.row;
-import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.Sql.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -51,15 +50,22 @@ class JoinAndSetTest {
         Query<BigDecimal> d2 = from(Lips.class).where(x -> x.delivery().eq("D2")).select(x -> x.quantity());
         Query<BigDecimal> m2 = from(Lips.class).where(x -> x.material().eq("M2")).select(x -> x.quantity());
         List<String> rows = live.db().list(from(Mara.class)
-                .rightJoin(Lips.class, (m, l) -> m.material().eq(l.material()).and(m.materialType().eq("NONE")))
-                .where((m, l) -> all(
-                    keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material()))),
-                    l.quantity().ge(anyOf(d2)),                        // 不少于 2
-                    l.quantity().lt(allOf(m2)),                        // 少于 M2 的每一行（5 和 7）
-                    m.partNumber().isNotDistinctFrom(nullOf(String.class)),  // NULL 也算相等
-                    l.unit().isDistinctFrom(m.partNumber())))          // EA 与 NULL 算不同
+                .rightJoin(Lips.class, (m, l) -> {
+                    m.material().eq(l.material());
+                    m.materialType().eq("NONE");
+                })
+                .where((m, l) -> {
+                    keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material())));
+                    l.quantity().ge(anyOf(d2));
+                    // 不少于 2
+                        l.quantity().lt(allOf(m2));
+                    // 少于 M2 的每一行（5 和 7）
+                        m.partNumber().isNotDistinctFrom(nullOf(String.class));
+                    // NULL 也算相等
+                        l.unit().isDistinctFrom(m.partNumber());
+                })          // EA 与 NULL 算不同
                 .orderBy((m, l) -> l.delivery())
-                .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(l.quantity().gt(new BigDecimal("2"))).as("big"))))
+                .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(() -> l.quantity().gt(new BigDecimal("2"))).as("big"))))
             .stream().map(r -> r.get("delivery") + ":" + r.get("partNumber") + ":" + r.get("big")).toList();
         assertEquals(List.of("D1:null:true", "D2:null:false"), rows);
     }
@@ -113,7 +119,7 @@ class JoinAndSetTest {
         Cte<Size> sizes = cte("sizes", values(Size.class, List.of(new Size("small", 1), new Size("medium", 2), new Size("large", 3))));
         Cte<SizeTotal> totals = cte("totals", from(Lips.class)
             .groupBy(l -> size(l))
-            .select(l -> cols(size(l).as("bucket"), sum(l.quantity()).as("total")))
+            .select(l -> cols(size(l).as("bucket"), l.quantity().sum().as("total")))
             .into(SizeTotal.class));
         List<String> rows = live.db().list(from(sizes)
             .leftJoin(totals, (s, t) -> t.col(SizeTotal::bucket).eq(s.col(Size::name)))
@@ -124,8 +130,8 @@ class JoinAndSetTest {
     }
 
     /** 数量分档：不超过 2 是 small，不超过 5 是 medium，其余 large。 */
-    private static Expr<String> size(Lips l) {
-        Expr<BigDecimal> quantity = l.quantity();
-        return caseWhen(quantity.le(new BigDecimal("2")), "small").when(quantity.le(new BigDecimal("5")), "medium").otherwise("large");
+    private static ExprText<String> size(Lips l) {
+        ExprDecimal<BigDecimal> quantity = l.quantity();
+        return caseWhen(() -> quantity.le(new BigDecimal("2")), "small").when(() -> quantity.le(new BigDecimal("5")), "medium").otherwise("large");
     }
 }

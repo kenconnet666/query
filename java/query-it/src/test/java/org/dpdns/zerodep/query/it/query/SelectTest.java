@@ -1,7 +1,7 @@
 package org.dpdns.zerodep.query.it.query;
 
 import org.dpdns.zerodep.query.exec.TooManyRowsException;
-import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.it.support.SampleData;
@@ -29,14 +29,10 @@ import java.util.stream.Stream;
 import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.caseWhen;
 import static org.dpdns.zerodep.query.Sql.cols;
-import static org.dpdns.zerodep.query.Sql.countDistinct;
 import static org.dpdns.zerodep.query.Sql.cte;
 import static org.dpdns.zerodep.query.Sql.exists;
 import static org.dpdns.zerodep.query.Sql.from;
-import static org.dpdns.zerodep.query.Sql.max;
 import static org.dpdns.zerodep.query.Sql.row;
-import static org.dpdns.zerodep.query.Sql.sum;
-import static org.dpdns.zerodep.query.Sql.trim;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -63,25 +59,32 @@ class SelectTest {
     private static Query<Delivery> deliveries(String maker) {
         Cte<MaterialScope> scope = cte("material_scope", from(Mara.class)
             .skipEmpty()
-            .where(m -> all(m.materialType().eq("ZMAT"), m.manufacturer().eq(maker)))
+            .where(m -> { m.materialType().eq("ZMAT"); m.manufacturer().eq(maker); })
             .distinct()
             .select(m -> {
-                Expr<String> part = m.partNumber();
-                return cols(m.client(), m.material(), caseWhen(part.ne(trim(part)), trim(part)).otherwise(part).as("partNumber"));
+                ExprText<String> part = m.partNumber();
+                return cols(m.client(), m.material(), caseWhen(() -> part.ne(part.trim()), part.trim()).otherwise(part).as("partNumber"));
             })
             .into(MaterialScope.class));
         return from(scope)
-            .join(Lips.class, (s, l) -> l.client().eq(s.col(MaterialScope::client)).and(l.material().eq(s.col(MaterialScope::material))))
-            .leftJoin(Makt.class, (s, l, t) -> t.material().eq(s.col(MaterialScope::material)).and(t.language().eq("1")))
-            .where((s, l, t) -> all(
-                l.createdOn().between(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30)),
-                exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())))))
+            .join(Lips.class, (s, l) -> {
+                l.client().eq(s.col(MaterialScope::client));
+                l.material().eq(s.col(MaterialScope::material));
+            })
+            .leftJoin(Makt.class, (s, l, t) -> {
+                t.material().eq(s.col(MaterialScope::material));
+                t.language().eq("1");
+            })
+            .where((s, l, t) -> {
+                l.createdOn().between(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30));
+                exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())));
+            })
             .groupBy((s, l, t) -> s.col(MaterialScope::partNumber))
             .orderBy((s, l, t) -> s.col(MaterialScope::partNumber))
             .select((s, l, t) -> row(Delivery::new,
                 s.col(MaterialScope::partNumber),
-                max(t.text().coalesce(s.col(MaterialScope::partNumber))).as("name"),
-                sum(l.quantity()).as("quantity")));
+                t.text().coalesce(s.col(MaterialScope::partNumber)).max().as("name"),
+                l.quantity().sum().as("quantity")));
     }
 
     /** 汇总行写成 零件号:名称:数量。 */
@@ -97,7 +100,10 @@ class SelectTest {
     void 按名映射到结果类并按SAP日期转换() {
         // 改名的列写 as；LEFT JOIN 的表上也有全局过滤条件，它进 ON 而不是 WHERE，所以没有描述的行照样保留。
         List<LineVO> rows = live.db().list(from(Lips.class)
-            .leftJoin(Makt.class, (l, t) -> t.material().eq(l.material()).and(t.language().eq("1")))
+            .leftJoin(Makt.class, (l, t) -> {
+                t.material().eq(l.material());
+                t.language().eq("1");
+            })
             .orderBy((l, t) -> l.delivery())
             .select((l, t) -> cols(l.delivery(), l.material().as("materialNo"), l.createdOn(), t.text()))
             .into(LineVO.class));
@@ -118,7 +124,7 @@ class SelectTest {
             .groupBy((l, m) -> m.partNumber())
             .orderBy((l, m) -> m.partNumber())
             .select((l, m) -> row((quantity, part) -> new PartTotal(part, new PartTotal.Amount(quantity, quantity.doubleValue() / 10_000)),
-                sum(l.quantity()), m.partNumber())));
+                l.quantity().sum(), m.partNumber())));
         assertEquals(List.of("P1:6", "P2:12"), rows.stream().map(r -> r.partNumber().strip() + ":" + r.amount().quantity().stripTrailingZeros().toPlainString()).toList(),
             "M4 的零件号也是 P1，但它没有交货，内连接里不出现");
         assertEquals(0.0006, rows.get(0).amount().wan(), 1e-12);
@@ -151,7 +157,7 @@ class SelectTest {
             .groupBy(m -> m.partNumber())
             .orderBy(m -> m.partNumber())
             .select(m -> row((part, makers, stored) -> part + ":" + makers + ":" + stored,
-                m.partNumber(), countDistinct(m.maker()), countDistinct(m.storedMaker()))));
+                m.partNumber(), m.maker().countDistinct(), m.storedMaker().countDistinct())));
         assertEquals(List.of("P1:1:2", "P2:1:1", "P3:1:1"), rows, "P1 组有 M1（MK1）和 M4（空串）：去掉空串后只有一个制造商");
         assertEquals(List.of("M4"), live.db().list(from(MaraView.class).where(m -> m.maker().isNull()).select(m -> m.material())));
     }

@@ -4,9 +4,13 @@ import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Id;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.exec.Database;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.ShardRule;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -25,16 +29,16 @@ public final class Shards {
     @Table(schema = SCHEMA, value = "SH_EVENT")
     public interface ShEvent extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 发生日，分表键。 */
-        @Column(value = "DAY", nullable = false) Col<LocalDate> day();
+        @Column(value = "DAY", nullable = false) ColDate<LocalDate> day();
 
         /** 金额。 */
-        @Column(value = "AMOUNT", precision = 10, scale = 2) Col<BigDecimal> amount();
+        @Column(value = "AMOUNT", precision = 10, scale = 2) ColDecimal<BigDecimal> amount();
 
         /** 备注。 */
-        @Column(value = "NOTE", length = 20) Col<String> note();
+        @Column(value = "NOTE", length = 20) ColText<String> note();
     }
 
     /** 事件的一行。 */
@@ -44,13 +48,13 @@ public final class Shards {
     @Table(schema = SCHEMA, value = "SH_ORDER")
     public interface ShOrder extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 客户编号，分表键。 */
-        @Column(value = "CUSTOMER", nullable = false) Col<Integer> customer();
+        @Column(value = "CUSTOMER", nullable = false) ColInteger<Integer> customer();
 
         /** 金额。 */
-        @Column(value = "TOTAL", precision = 10, scale = 2) Col<BigDecimal> total();
+        @Column(value = "TOTAL", precision = 10, scale = 2) ColDecimal<BigDecimal> total();
     }
 
     /** 订单的一行。 */

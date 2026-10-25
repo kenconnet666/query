@@ -1,6 +1,6 @@
 # API 使用说明（Java）
 
-本文是 2.0 Java API 的用法。设计理由见 [0002](decisions/0002-api-architecture.md) 和 [0006](decisions/0006-query-model-direction.md)；从 1.x 升级见 [迁移指南](migration.md)。文中示例都能在测试里找到可运行的版本：`java/query-core/src/test/java/.../testing/`（`Erp` 是表声明，`Scenarios`、`SpecCases` 是查询）以及三个方言模块的 `*LiveTest`。示例 SQL 取自测试：schema 写作 `ERP`，别名是测试方言的大写形式（`LIPS`），真实方言的引号和别名写法见 `spec/render/` 的金样例。
+本文是 2.0 Java API 的用法。设计理由见 [0002](decisions/0002-api-architecture.md)、[0006](decisions/0006-query-model-direction.md) 和 [0014](decisions/0014-typed-expressions.md)（按逻辑 SQL 类型分的列与表达式、语句式条件）；从 1.x 升级见 [迁移指南](migration.md)。文中示例都能在测试里找到可运行的版本：`java/query-core/src/test/java/.../testing/`（`Erp` 是表声明，`Scenarios`、`SpecCases` 是查询）以及 `java/query-it` 的实库测试。示例 SQL 取自测试：schema 写作 `ERP`，别名是测试方言的大写形式（`LIPS`），真实方言的引号和别名写法见 `spec/render/` 的金样例。
 
 TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两端渲染出的 SQL 由金样例保证一致。
 
@@ -11,13 +11,16 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | SQL | 写法 |
 | --- | --- |
 | `FROM LIPS l JOIN MARA m ON m.MATNR = l.MATNR` | `from(Lips.class).join(Mara.class, (l, m) -> m.material().eq(l.material()))` |
-| `WHERE a = ? AND b BETWEEN ? AND ?` | `.where(l -> all(a.eq(x), b.between(low, high)))` |
-| 参数为空时不加这个条件 | 作用域 `.skipEmpty()`；单个条件用 `ifPresent(x, v -> ...)`、`onlyIf(flag, () -> ...)`；整个请求对象用 `.where(search)` |
+| `WHERE a = ? AND b BETWEEN ? AND ?` | `.where(l -> { a.eq(x); b.between(low, high); })`，条件一行写一个 |
+| `WHERE (a = ?) OR (b = ? AND c = ?)` | `.where(l -> any(() -> { a.eq(x); all(() -> { b.eq(y); c.eq(z); }); }))` |
+| 参数为空时不加这个条件 | 作用域 `.skipEmpty()`；单个条件直接写 `if (x != null) a.eq(x);`；整个请求对象用 `.where(search)` |
 | `LEFT JOIN MARA` 只为取几列 | 表接口声明关系 `mara()`，查询里写 `l.mara().partNumber()`，用到才连接 |
 | `EXISTS (SELECT 1 FROM 子表 WHERE ...)`、`COUNT(*)` 子查询 | `m.deliveries().any()`、`m.deliveries().count()` |
 | `GROUP BY a, b`、`ORDER BY a, b DESC` | `.groupBy(l -> keys(a, b))`、`.orderBy(l -> orders(a, b.desc()))` |
-| `SELECT` 命名列（Map） | `.select(l -> cols(l.material(), sum(l.quantity()).as("total")))` |
-| `SELECT` 构造对象 | `.select(l -> row(Delivery::new, l.material(), sum(l.quantity())))` |
+| `SELECT` 命名列（Map） | `.select(l -> cols(l.material(), l.quantity().sum().as("total")))` |
+| `SELECT` 构造对象 | `.select(l -> row(Delivery::new, l.material(), l.quantity().sum()))` |
+| 函数 | 主操作数的实例方法：`l.unit().upper()`、`l.quantity().times(2)`、`e.onDay().addDays(3)`，见第 9 节 |
+| 方言函数 | 方言门面的视图：`hana(l.createdOn()).toVarchar("YYYYMMDD")`、`postgres(l.text()).ilike("ea%")` |
 | `SELECT` 同名列到 VO（含对象树） | `.selectAs(Dto.class)` |
 | 父行带子行列表 | `m.deliveries().list(l -> row(Line::new, ...))` |
 | `WITH x AS (...)` | `Cte<X> x = cte("x", query.into(X.class))`，然后 `from(x)` |
@@ -26,7 +29,7 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | 每组取前 N 行（`QUALIFY`） | `.qualify(l -> rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc())).le(3L))` |
 | 原生 SQL 片段 | `sql(String.class, "LPAD({0}, {1}, '0')", l.material(), 18)` |
 | 执行 | `db.list(q)`、`db.one(q)`、`db.optional(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
-| `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T.class).values(rows))`、`update(T.class).set(t -> t.x().to(v)).where(...)`、`deleteFrom(T.class).where(...)`；按主键 `.byId(row)`，见第 15 节 |
+| `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T.class).values(rows))`、`update(T.class).set(t -> { t.x().to(v); t.y().to(w); }).where(...)`、`deleteFrom(T.class).where(...)`；按主键 `.byId(row)`，见第 15 节 |
 | 插入或更新、`FOR UPDATE` | `.onConflict().update(t -> t.x())`、`.with(forUpdate(Lock.SKIP_LOCKED))` |
 | 联表 `UPDATE` / `DELETE` | 方言门面的 `updateJoin(T.class, S.class, (t, s) -> on).set(...).where(...)`、`deleteJoin(...)`，见第 15 节 |
 
@@ -78,7 +81,7 @@ Database db = Sql.database(SpringConnections.of(dataSource, transactionManager),
 
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
 
-- `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；过滤器每次渲染都调用，返回 `Cond.EMPTY` 就不加条件，所以"管理员看全部租户"这类动态开关写在回调里：`t -> currentTenant() == null ? Cond.EMPTY : t.tenant().eq(currentTenant())`。多个过滤器按添加顺序生效；
+- `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；过滤器是条件块，每次渲染都运行，块里没写条件就不加条件，所以"管理员看全部租户"这类动态开关写在块里：`t -> { if (currentTenant() != null) t.tenant().eq(currentTenant()); }`。多个过滤器按添加顺序生效；
 - `schema("ERP", "SAPHANADB")` 或 `schema(s -> s + "_TEST")`：表接口里写的 schema 换成实际的名字，SAP 各环境 schema 不同时不用改代码，查询、写语句和关系里的表都换，原生 SQL 文本不换；
 - `onInsert`、`onUpdate`：审计字段自动填充；`generate(Keyed.class, k -> k.id(), ids::next)`：插入时逐行给值为 null 的列生成值（例如雪花主键），见第 15 节；
 - `intercept(statement -> ...)`：语句执行前的钩子，可以改写 SQL 或抛出异常拦下语句，见第 12 节；
@@ -103,29 +106,47 @@ HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource,
 
 ## 2. 声明表
 
-表是带 `@Table` 的接口，继承 `Entity`；列是返回 `Col<T>` 的无参抽象方法，方法名就是列在结果里的名字。库为查询里的每次表出现生成该接口的实现，所以 lambda 里直接写 `l.material()`。接口不依赖 Lombok，也不需要代码生成。
+表是带 `@Table` 的接口，继承 `Entity`；列是返回列接口的无参抽象方法，方法名就是列在结果里的名字。库为查询里的每次表出现生成该接口的实现，所以 lambda 里直接写 `l.material()`。接口不依赖 Lombok，也不需要代码生成。
+
+**列接口按库里的逻辑 SQL 类型选，泛型参数是 Java 一侧的类型**。逻辑类型与建表、CAST 用的是同一套词，与方言无关，所以同一个表接口能在各个库上用：
+
+| 逻辑类型 | 列接口（表达式接口） | 默认的 Java 类型 | 自己的方法（举例） |
+| --- | --- | --- | --- |
+| 文本 | `ColText`（`ExprText`） | `String` | `contains`、`like`、`upper`、`substring`、`concat`、`stringAgg` |
+| 不限长度的文本 | `ColClob`（`ExprText`） | `String` | 同文本；建表时写成 NCLOB / TEXT / LONGTEXT |
+| 短整数、整数、长整数 | `ColSmallint`、`ColInteger`、`ColBigint` | `Short`、`Integer`、`Long` | 加减乘、`mod`、`abs`、`sum`、`avg` |
+| 定点小数、浮点数 | `ColDecimal`、`ColDouble` | `BigDecimal`、`Double` | 同上，另有 `divide`、`round` |
+| 布尔值 | `ColBoolean` | `Boolean` | — |
+| 日期、时间戳、时间 | `ColDate`、`ColTimestamp`、`ColTime` | `LocalDate`、`LocalDateTime`、`LocalTime` | `year`、`addDays`、`daysBetween`、`hour`、`addHours` |
+| 带时区的时间戳 | `ColTimestampTz` | `Instant` | — |
+| 字节串、不限长度的字节串 | `ColBinary`、`ColBlob` | `byte[]` | — |
+| 其他（JSON、数组、UUID） | `Col<T>` | — | 只有比较、空值等通用方法 |
+
+- `Byte`、`Float`、`BigInteger` 分别存成短整数、浮点数、定点小数，写 `ColSmallint<Byte>`、`ColDouble<Float>`、`ColDecimal<BigInteger>`。
+- 经转换器存成另一种类型的值，按**库里存的类型**选接口：SAP 以 'yyyyMMdd' 文本存的日期是 `ColText<LocalDate>`，比较时传 `LocalDate`，能用文本函数（`left(4)` 取年份），日期函数在编译期就点不出来，免得生成错误的 SQL；按名字存的枚举是 `ColText<Status>`，按整数编码存的是 `ColInteger<Priority>`。声明的接口与存储类型对不上时，首次使用时报错并给出应写的接口。
+- 只有个别库才有的物理类型（例如 MySQL 的无符号整数、HANA 的 NVARCHAR 与 VARCHAR 之分）不进接口；长度、精度这类细节写在 `@Column` 上。
 
 ```java
 /** 各表共有的集团列放进不带 @Table 的基接口，全局过滤器按它匹配。 */
 public interface Client extends Entity {
-    @Column("MANDT") Col<String> client();
+    @Column("MANDT") ColText<String> client();
 }
 
 @Table(schema = "ERP", value = "LIPS")
 public interface Lips extends Client {
-    @Column("VBELN") Col<String> delivery();
-    @Column("MATNR") Col<String> material();
-    @Column("ERDAT") @SapDate Col<LocalDate> createdOn();      // 组合注解挂载转换器
-    @Column("LFIMG") Col<BigDecimal> quantity();
+    @Column("VBELN") ColText<String> delivery();
+    @Column("MATNR") ColText<String> material();
+    @Column("ERDAT") @SapDate ColText<LocalDate> createdOn();      // 组合注解挂载转换器；库里是文本，所以是 ColText
+    @Column("LFIMG") ColDecimal<BigDecimal> quantity();
 
     /** default 方法放计算列和关系，同一次表出现上的结果会被记住。 */
-    default Expr<BigDecimal> doubled() { return times(quantity(), lit(2)); }
+    default ExprDecimal<BigDecimal> doubled() { return quantity().times(2); }
 }
 ```
 
 - 不写 `@Column` 的列由数据库的命名策略从方法名推导。`l.columns()` 是这张表的全部列，配合 `cols(l.columns(), 额外列...)` 使用。
-- 子接口重新声明某个列方法并带上自己的 `@Column`，就改了这一列的列名：库存历史的共同形状 `PeriodStock` 声明 `Col<BigDecimal> quantity()`，`Mardh` 和 `Mchbh` 各自映射到不同的数量列。
-- 抽象方法既不是 `Col<T>` 也不是声明了注解的关系时，首次使用时报错。接口可以不是 public；在具名模块里，要把包 `opens` 给 `org.dpdns.zerodep.query`，default 方法才能被调用。
+- 子接口重新声明某个列方法并带上自己的 `@Column`，就改了这一列的列名：库存历史的共同形状 `PeriodStock` 声明 `ColDecimal<BigDecimal> quantity()`，`Mardh` 和 `Mchbh` 各自映射到不同的数量列。
+- 抽象方法既不是列接口也不是声明了注解的关系时，首次使用时报错。接口可以不是 public；在具名模块里，要把包 `opens` 给 `org.dpdns.zerodep.query`，default 方法才能被调用。
 - 结果类、CTE 行、常量行、派生表行是不带 `@Table` 的普通类：record、Lombok `@Data`（含链式 setter）或 `@Builder`。把表声明成类或 record 会报错。
 
 | 注解 | 作用 |
@@ -157,20 +178,20 @@ public enum Status implements CodeEnum<String> {
     Status(String code) { this.code = code; }
     @Override public String code() { return code; }
 }
-@Column("STATUS") Col<Status> status();       // 读写和条件里都是 'A'、'C'
+@Column("STATUS") ColText<Status> status();   // 编码是文本，读写和条件里都是 'A'、'C'
 ```
 
-编码的类型取自泛型参数（`String`、`Integer`、`Long` 等）；同一个枚举里编码不能重复，读到表里没有的编码时报错。
+编码的类型取自泛型参数（`String`、`Integer`、`Long` 等），列接口跟着编码的类型（`CodeEnum<Integer>` 是 `ColInteger<Status>`）；同一个枚举里编码不能重复，读到表里没有的编码时报错。
 
 **SQL 级列转换**：转换器只在 Java 端改值，数据库看到的仍是原值；列转换写进 SQL，分组、聚合和条件看到的都是转换后的值。
 
 ```java
 @Table(schema = "ERP", value = "MARA")
 public interface MaraView extends Client {
-    @Column("MATNR") Col<String> material();
-    @Column("MFRPN") @Trimmed Col<String> partNumber();        // TRIM(MARAVIEW.MFRPN)
-    @Column("MFRNR") @BlankAsNull Col<String> maker();         // NULLIF(MARAVIEW.MFRNR, '')
-    @Column("MFRNR") Col<String> storedMaker();                // 同一列的原值
+    @Column("MATNR") ColText<String> material();
+    @Column("MFRPN") @Trimmed ColText<String> partNumber();        // TRIM(MARAVIEW.MFRPN)
+    @Column("MFRNR") @BlankAsNull ColText<String> maker();         // NULLIF(MARAVIEW.MFRNR, '')
+    @Column("MFRNR") ColText<String> storedMaker();                // 同一列的原值
 }
 ```
 
@@ -185,19 +206,19 @@ public interface MaraView extends Client {
 ```java
 @Table(schema = "ERP", value = "MARA")
 public interface Mara extends Client {
-    @Column("MATNR") Col<String> material();
-    @Column("MFRPN") Col<String> partNumber();
-    @Column("MFRNR") Col<String> manufacturer();
+    @Column("MATNR") ColText<String> material();
+    @Column("MFRPN") ColText<String> partNumber();
+    @Column("MFRNR") ColText<String> manufacturer();
 
     /** 一对多：这个物料的交货行。 */
-    default Many<Lips> deliveries() { return many(Lips.class, l -> all(l.material().eq(material()), l.client().eq(client()))); }
+    default Many<Lips> deliveries() { return many(Lips.class, l -> { l.material().eq(material()); l.client().eq(client()); }); }
 
     /** 多对一：语言 1 的物料描述。 */
-    default Makt text() { return one(Makt.class, t -> all(t.material().eq(material()), t.client().eq(client()), t.language().eq("1"))); }
+    default Makt text() { return one(Makt.class, t -> { t.material().eq(material()); t.client().eq(client()); t.language().eq("1"); }); }
 }
 
 public interface Lips extends Client {
-    default Mara mara() { return one(Mara.class, m -> all(m.material().eq(material()), m.client().eq(client()))); }
+    default Mara mara() { return one(Mara.class, m -> { m.material().eq(material()); m.client().eq(client()); }); }
     // text() 同 Mara.text()
 
     // 注解写法：按列方法名配对做等值连接，self 与 target 一一对应，可以多列
@@ -234,7 +255,7 @@ ORDER BY MARA.MFRPN ASC
 | --- | --- |
 | `m.deliveries().any()`、`any(l -> cond)` | `EXISTS (...)` |
 | `m.deliveries().none()`、`none(l -> cond)` | `NOT EXISTS (...)` |
-| `count()`、`countDistinct(l -> l.salesOrder())`、`sum(l -> l.quantity())`、`max`、`min`、`avg` | 相关标量子查询，没有行时 `sum` 等为 NULL |
+| `count()`、`countDistinct(l -> l.salesOrder())`、`sum(l -> l.quantity())`、`max`、`min`、`avg` | 相关标量子查询，没有行时 `sum` 等为 NULL。`sum` 的结果是 `ExprNumber`、`max`/`min` 是 `Expr`：值来自没写参数类型的 lambda，返回类型若是类型变量，`x.gt(m.items().sum(i -> i.amount()))` 会在 `gt(T)` 和 `gt(Expr<T>)` 之间引用不明确；要接着用某种类型的方法时包一层，如 `ExprDecimal.of(...)` |
 | `stringAgg(l -> l.delivery(), ",")` | 相关标量子查询拼接文本，顺序取 `orderBy(...)`：`m.deliveries().orderBy(l -> l.delivery()).stringAgg(...)` |
 | `where(l -> cond)` | 先筛选目标行，可接上面任一运算：`m.deliveries().where(l -> l.unit().eq("KG")).none()` |
 | `first(l -> l.createdOn().desc())` | 每组按顺序取第一行，返回那一行的表接口，可继续取列 |
@@ -271,14 +292,18 @@ from(Mara.class)
 Query<Map<String, Object>> q = from(Lips.class)
     .skipEmpty()                                                            // 其后的条件遇到空值就省略
     .join(Mara.class, (l, ma) -> ma.material().eq(l.material()))
-    .leftJoin(Makt.class, (l, ma, mk) -> mk.material().eq(l.material()).and(mk.language().eq("1")))
-    .where((l, ma, mk) -> all(
-        l.createdOn().between(start, end),
-        ma.manufacturer().eq(maker),                                        // maker 为 null 时省略
-        exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())))))
+    .leftJoin(Makt.class, (l, ma, mk) -> {                                 // 条件块：一行一个条件，用 AND 连起来
+        mk.material().eq(l.material());
+        mk.language().eq("1");
+    })
+    .where((l, ma, mk) -> {
+        l.createdOn().between(start, end);
+        ma.manufacturer().eq(maker);                                        // maker 为 null 时省略
+        exists(from(Vbkd.class).where(v -> v.salesOrder().eq(l.salesOrder())));
+    })
     .groupBy((l, ma, mk) -> ma.partNumber())
     .orderBy((l, ma, mk) -> ma.partNumber())
-    .select((l, ma, mk) -> cols(ma.partNumber(), max(mk.text()).as("name"), sum(l.quantity()).as("total")));
+    .select((l, ma, mk) -> cols(ma.partNumber(), mk.text().max().as("name"), l.quantity().sum().as("total")));
 
 List<Map<String, Object>> rows = db.list(q);
 ```
@@ -289,7 +314,7 @@ List<Map<String, Object>> rows = db.list(q);
 | --- | --- |
 | `join` / `leftJoin` / `rightJoin(表接口.class 或 Source, (…) -> cond)` | 连接条件里可以用到作用域内所有的表；`crossJoin(...)` 是笛卡尔积。`rightJoin` 时左侧各表的全局过滤条件放进它的 ON，补出来的行不会被 WHERE 过滤掉 |
 | `fullJoin(...)` | HANA、PostgreSQL 的 FULL JOIN（MySQL 渲染时报错）。两侧都会补空行，过滤条件放在哪里都会改变语义，所以有全局过滤条件的表不能参与，要先 `unfiltered()`，再在 CTE 或派生表里各自过滤 |
-| `where(… -> cond)`、`having(… -> cond)` | 条件；多次调用之间是 AND，空条件（`Cond.EMPTY`）自动丢弃 |
+| `where(… -> { 条件; ... })`、`having(...)`、`qualify(...)` | 条件块，见下文；多次调用之间是 AND |
 | `where(searchObject)` | 按条件对象筛选，见第 7 节 |
 | `skipEmpty()` | 其后的 WHERE、HAVING、ON 里，与 null、空白字符串或空集合比较的条件直接省略；`between` 只缺一端时留下另一端 |
 | `groupBy(… -> 键)` | 一个键直接写表达式；多个键写 `keys(a, b)` |
@@ -299,13 +324,33 @@ List<Map<String, Object>> rows = db.list(q);
 | `unfiltered()`、`unfiltered("tenant")`、`withDeleted()` | 本查询不加全局过滤器和逻辑删除条件；只关掉这些名字的过滤器；只关掉逻辑删除（看已删除的行） |
 | `with(clause)` / `with(… -> clause)` | 方言子句，例如 `Hana.hint(...)`、`Postgres.distinctOn(...)` |
 
-- 与 null 比较在 `skipEmpty()` 之外是错误（比较永远不成立，多半是漏传了参数）；确实要判空用 `isNull()`。单个条件也可以不开 `skipEmpty`，写成 `ifPresent(x, v -> ...)` 或 `onlyIf(flag, () -> ...)`。
+- 与 null 比较在 `skipEmpty()` 之外是错误（比较永远不成立，多半是漏传了参数）；确实要判空用 `isNull()`。单个条件也可以不开 `skipEmpty`，直接写 `if (x != null) l.unit().eq(x);`。
 - 自连接时，同一个表接口再 `join` 一次就是下一个参数，别名自动唯一。
 - 关联子查询直接捕获外层 lambda 的参数；`exists` / `notExists` 直接接收作用域，不用写 SELECT 列表。
 - 两列可以直接比较：`a.eq(m.material())`，`ne`、`gt`、`ge`、`lt`、`le` 同样可以。
 - NULL 也相等的比较：`a.isNotDistinctFrom(b)`、`a.isDistinctFrom(b)`，结果总是真或假；PostgreSQL 写成 `IS [NOT] DISTINCT FROM`，MySQL 写成 `<=>`，HANA 写成等价的 CASE。
 - 子查询比较：多列 `keys(l.delivery(), l.material()).in(q)` / `notIn(q)`（子查询选同样多的列）；与任一行或每一行比较 `l.quantity().gt(allOf(q))`、`x.eq(anyOf(q))`（`ANY` 遇到空子查询为假，`ALL` 为真）。
-- 条件作为列：`bool(l.quantity().gt(BigDecimal.ZERO)).as("positive")`，写成 `CASE WHEN ... THEN TRUE WHEN NOT (...) THEN FALSE END`，条件未知时为 NULL（HANA 不能把条件直接写在 SELECT 里）。
+- 条件作为列：`bool(() -> l.quantity().gt(BigDecimal.ZERO)).as("positive")`，写成 `CASE WHEN ... THEN TRUE WHEN NOT (...) THEN FALSE END`，条件未知时为 NULL（HANA 不能把条件直接写在 SELECT 里）。
+
+**条件块**：比较、`in`、`isNull`、`exists`、关系的 `any`/`none` 等条件方法不返回值，而是写进最内层的条件块；块结束时，块里的条件用 AND 连起来。
+
+```java
+from(Lips.class).where(l -> {
+    l.delivery().contains("D");
+    l.quantity().gt(new BigDecimal("2"));
+    if (maker != null) l.mara().manufacturer().eq(maker);   // 可选条件就是 if
+    any(() -> {                                             // OR：块里每行一个选项
+        l.unit().eq("EA");
+        all(() -> { l.unit().eq("KG"); l.quantity().lt(BigDecimal.TEN); });   // 一个选项由几个条件组成时用 all
+    });
+    not(() -> l.material().startsWith("X"));
+})
+```
+
+- 收条件块的地方：`where`、`having`、`qualify`、连接的 `on`、关系的 `one`/`many`/`where`/`any`/`none`、`any(() -> ...)`、`all(() -> ...)`、`not(() -> ...)`、`bool(() -> ...)`、`caseWhen(() -> ..., 结果)`、聚合的 `filter(() -> ...)`、全局过滤器。
+- 在条件块外写条件立即报错；在块里的投影、分组、排序 lambda 里写条件也报错，而不是悄悄并进外层的块。要把条件当值用时写 `bool(() -> ...)` 或 `caseWhen(() -> ..., 结果)`。
+- 复用条件写成返回 `void` 的方法，在块里调用：`static void active(Mara m) { m.materialType().eq("ZMAT"); }`，`where(m -> { active(m); m.manufacturer().eq(maker); })`。条件不能存进变量或当返回值传递。
+- 块按线程记录，lambda 在调用方的线程里同步执行；skipEmpty 省略的条件不进块，块里一个条件也没有时就是没有条件。
 
 **小计与总计**：
 
@@ -313,7 +358,7 @@ List<Map<String, Object>> rows = db.list(q);
 from(Lips.class)
     .groupByRollup(l -> keys(l.material(), l.unit()))
     .orderBy(l -> orders(grouping(l.material()), l.material(), grouping(l.unit())))
-    .select(l -> cols(l.material(), l.unit(), sum(l.quantity()).as("total"), grouping(l.material()).as("level")));
+    .select(l -> cols(l.material(), l.unit(), l.quantity().sum().as("total"), grouping(l.material()).as("level")));
 ```
 
 - HANA 和 PostgreSQL 渲染 `GROUP BY ROLLUP(a, b)`，MySQL 渲染 `GROUP BY a, b WITH ROLLUP`。汇总行里被汇总掉的列读出 NULL；`grouping(col)` 在汇总行为 1，用来区分汇总行和本身为 NULL 的值，也用来把小计排在明细之后。
@@ -336,19 +381,22 @@ record Delivery(String partNumber, String name, BigDecimal quantity) { }
 from(Lips.class)
     .join(Mara.class, (l, ma) -> ma.material().eq(l.material()))
     .groupBy((l, ma) -> ma.partNumber())
-    .select((l, ma) -> row(Delivery::new, ma.partNumber(), max(l.unit()).as("name"), sum(l.quantity()).as("quantity")));
+    .select((l, ma) -> row(Delivery::new, ma.partNumber(), l.unit().max().as("name"), l.quantity().sum().as("quantity")));
 
 // row 的第一个参数也可以是普通 lambda，做 Java 端计算，参数顺序与后面的列一致
-row((quantity, part) -> new PartTotal(part, new Amount(quantity, quantity.doubleValue() / 10_000)), sum(l.quantity()), ma.partNumber())
+row((quantity, part) -> new PartTotal(part, new Amount(quantity, quantity.doubleValue() / 10_000)), l.quantity().sum(), ma.partNumber())
 ```
 
-**`cols` 的列名**：列取列方法名；只包着一列的函数或聚合沿用该列名（`sum(l.quantity())` 叫 `quantity`）；其他表达式必须写 `.as("name")`。缺名字或名字重复（不分大小写）时立刻报错。
+**`cols` 的列名**：列取列方法名；只包着一列的函数或聚合沿用该列名（`l.quantity().sum()` 叫 `quantity`）；其他表达式必须写 `.as("name")`。缺名字或名字重复（不分大小写）时立刻报错。
 
 **映射到类**：`into(X.class)` 按列名映射，名字忽略大小写和下划线（`PART_NUMBER` 对应 `partNumber`）。类缺少的列被忽略，类的属性找不到列时报错；数值类型宽松转换（BigDecimal 可以赋给 Double）。目标可以是 record、`@Data`（含链式 setter）、`@Builder` 或标量，字段上的 `@Ignore` 跳过映射。按名的查询会把列重排成类的属性顺序，所以结果可以做 CTE 或派生表。
 
 ```java
 Query<Map<String, Object>> q = from(Lips.class)
-    .leftJoin(Makt.class, (l, mk) -> mk.material().eq(l.material()).and(mk.language().eq("1")))
+    .leftJoin(Makt.class, (l, mk) -> {
+        mk.material().eq(l.material());
+        mk.language().eq("1");
+    })
     .select((l, mk) -> cols(l.delivery(), l.material().as("materialNo"), l.createdOn(), mk.text()));
 
 Query<LineVO> lines = q.into(LineVO.class);
@@ -414,9 +462,9 @@ Query<MaterialTree> q = from(Mara.class).orderBy(m -> m.material()).selectAs(Mat
 
 ```java
 Query<Map<String, Object>> totals = from(Lips.class)
-    .groupBy(l -> keys(l.material(), l.unit(), substring(l.delivery(), 1, 1)))
+    .groupBy(l -> keys(l.material(), l.unit(), l.delivery().substring(1, 1)))
     .orderBy(l -> orders(l.material().asc(), l.unit().asc()))
-    .select(l -> cols(l.material(), l.unit(), substring(l.delivery(), 1, 1).as("prefix"), sum(l.quantity()).as("total")));
+    .select(l -> cols(l.material(), l.unit(), l.delivery().substring(1, 1).as("prefix"), l.quantity().sum().as("total")));
 
 totals.exclude("unit", "prefix")             // 这些列写成 NULL，分组键和按它的排序一起去掉
 totals.excludeIf(!withUnit, "unit")           // 条件成立才排除
@@ -445,33 +493,36 @@ from(Lips.class).where(search).select(l -> l.delivery());
 ```
 
 - 没有 `@Where` 的字段与同名列比较相等，集合用 `IN`。`op` 取 `EQ`、`NE`、`GT`、`GE`、`LT`、`LE`、`CONTAINS`、`STARTS_WITH`、`ENDS_WITH`；集合值只能配 `EQ`（`IN`）和 `NE`（`NOT IN`）。
-- 自定义的比较写成实现 `Where.Operator` 的类（要有无参构造方法），用 `using` 指定：`@Where(value = "createdOn", using = InMonth.class) YearMonth month`，`InMonth.apply(column, value)` 返回条件；字段为空时不调用。
+- 自定义的比较写成实现 `Where.Operator` 的类（要有无参构造方法），用 `using` 指定：`@Where(value = "createdOn", using = InMonth.class) YearMonth month`，`InMonth.apply(column, value)` 像条件块里一样写下条件，例如 `((Expr<LocalDate>) column).range(start, end)`；字段为空时不调用。
 - `value` 是列路径，默认是字段名；可以经过多对一关系（`"mara.partNumber"`）；写多个时任一满足即可（OR）。
 - 路径经过一对多关系时写成 EXISTS，例如物料查询里的 `@Where("deliveries.unit") String unit` 和 `@Where(value = "deliveries.quantity", op = Where.Op.GE) BigDecimal minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个交货行同时满足；这些字段的值都为空时整个 EXISTS 省略。
 - 值为 null、空白字符串或空集合的字段不产生条件，对应的关系也不会连接；所以可以直接传入请求参数。
 - 字段名在表里找不到、指向的是关系而不是列、或在多张表里重名时，无论有没有值都报错；不是条件的字段（分页、排序）标 `@Ignore`。
 - 条件对象可以与 lambda 条件混用：`from(Lips.class).where(search).where(l -> l.quantity().gt(BigDecimal.ONE))`，多次 `where` 之间是 AND。
 
-文本匹配也可以直接写在 lambda 里：`contains(e, text)`、`startsWith(e, text)`、`endsWith(e, text)` 渲染为 `LIKE ? ESCAPE '!'`，`text` 里的 `%`、`_`、`!` 按普通字符匹配，三个库的写法相同；`skipEmpty` 下 `text` 为空时没有条件。`like(e, pattern)` 的模式原样使用，`%` 和 `_` 是通配符。
+文本匹配也可以直接写在条件块里：`e.contains(text)`、`e.startsWith(text)`、`e.endsWith(text)` 渲染为 `LIKE ? ESCAPE '!'`，`text` 里的 `%`、`_`、`!` 按普通字符匹配，三个库的写法相同；`skipEmpty` 下 `text` 为空时没有条件。`e.like(pattern)` 的模式原样使用，`%` 和 `_` 是通配符。
 
 ## 8. CTE、派生表、UNION、窗口
 
-CTE、派生表和常量行的行结构由一个普通类（通常是 record）描述；它们在 lambda 里是 `Ref`，用 `r.col(Row::x)` 取列。
+CTE、派生表和常量行的行结构由一个普通类（通常是 record）描述；它们在 lambda 里是 `Ref`，用 `r.col(Row::x)` 取列，按属性的 Java 类型得到列接口（`String` 属性是 `ColText<String>`，`BigDecimal` 是 `ColDecimal<BigDecimal>`，枚举等其余类型是 `Col<T>`）；只限方法引用。
 
 ```java
 record MaterialScope(String client, String material, String partNumber) { }
 
 Cte<MaterialScope> scope = cte("material_scope", from(Mara.class)
     .skipEmpty()
-    .where(ma -> all(ma.materialType().eq("ZMAT"), ma.manufacturer().eq(maker)))
+    .where(ma -> { ma.materialType().eq("ZMAT"); ma.manufacturer().eq(maker); })
     .distinct()
-    .select(ma -> cols(ma.client(), ma.material(), upper(ma.partNumber()).as("partNumber")))
+    .select(ma -> cols(ma.client(), ma.material(), ma.partNumber().upper().as("partNumber")))
     .into(MaterialScope.class));
 
 from(scope)
-    .join(Lips.class, (ms, l) -> l.client().eq(ms.col(MaterialScope::client)).and(l.material().eq(ms.col(MaterialScope::material))))
+    .join(Lips.class, (ms, l) -> {
+        l.client().eq(ms.col(MaterialScope::client));
+        l.material().eq(ms.col(MaterialScope::material));
+    })
     .groupBy((ms, l) -> ms.col(MaterialScope::partNumber))
-    .select((ms, l) -> cols(ms.col(MaterialScope::partNumber), sum(l.quantity()).as("quantity")));
+    .select((ms, l) -> cols(ms.col(MaterialScope::partNumber), l.quantity().sum().as("quantity")));
 ```
 
 - **CTE**：只有已映射到类的查询（`into(Row.class)`、`selectAs(Row.class)`、`values(...)`）能作为 CTE，其他的报错。无论被引用多深，渲染时都只在语句开头的 `WITH` 里出现一次；全局过滤器同样作用于 CTE 和子查询里的表。
@@ -483,13 +534,15 @@ record OpenLine(String delivery, String material) { }
 Query<String> parts = from(Mara.class).where(m -> m.materialType().eq("ZMAT")).select(m -> m.material());
 Query<OpenLine> open = from(Lips.class).select(l -> cols(l.delivery(), l.material())).into(OpenLine.class);
 from(open.asTable())
-    .where(o -> all(o.col(OpenLine::material).in(parts),                       // IN 子查询
-        notExists(from(Vbkd.class).where(v -> v.salesOrder().eq(o.col(OpenLine::delivery))))))
+    .where(o -> {
+        o.col(OpenLine::material).in(parts);                               // IN 子查询
+        notExists(from(Vbkd.class).where(v -> v.salesOrder().eq(o.col(OpenLine::delivery))));
+    })
     .select(o -> o.col(OpenLine::delivery));
 ```
 
 - **UNION、INTERSECT、EXCEPT**：`q1.unionAll(q2)`、`union`、`intersect`、`except`（后两者去重）。两段的结果类型必须相同，否则编译失败；按名的查询（`cols`、`into`、`selectAs`）按列名对齐，其余按位置。各段不能自带 `orderBy`、`limit`，分页加在合并之后；合并后要排序，先包成 CTE（见 [迁移指南](migration.md#union-之后排序)）。调用顺序就是求值顺序：`a.union(b).intersect(c)` 是 `(a ∪ b) ∩ c`。PostgreSQL、MySQL 的 INTERSECT 优先于 UNION，HANA 从左到右，所以读法可能不同的地方都自动加括号。`INTERSECT ALL`、`EXCEPT ALL` 只有 PostgreSQL、MySQL 支持，在方言包。
-- **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`；聚合也可以 `.over(...)`；ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`（`Bound` 在 `Window` 里，还有 `preceding(n)`、`following(n)`）。窗口函数也有 `rank`、`denseRank`、`lag`、`lead`（第三个参数是越界时的默认值）、`firstValue`、`lastValue`、`nthValue(e, n)`（取整个分区里的行要写 ROWS 框架）、`ntile(n)`、`percentRank()`、`cumeDist()`。
+- **窗口**：`rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc()))`；聚合也可以 `.over(...)`；ROWS 框架用 `w.rows(Bound.unboundedPreceding(), Bound.currentRow())`（`Bound` 在 `Window` 里，还有 `preceding(n)`、`following(n)`）。窗口函数也有 `rank`、`denseRank`、`lag`、`lead`（第三个参数是越界时的默认值；结果与参数同一类型）、`firstValue`、`lastValue`、`nthValue(e, n)`（取整个分区里的行要写 ROWS 框架）、`ntile(n)`、`percentRank()`、`cumeDist()`。
 - **窗口条件（QUALIFY）**：`qualify(l -> rowNumber().over(w -> w.partitionBy(l.material()).orderBy(l.createdOn().desc())).le(3L))` 每组取前 3 行。HANA 没有 QUALIFY 子句，三个库都渲染成派生表：窗口函数和不在结果里的排序项作为额外的列，外层过滤、排序和分页。条件只能比较窗口函数，其他条件写在 `where` 或 `having` 里，否则报错。
 - **常量行**（码表）：`values(Shape.class, List.of(new Shape(...), ...))` 得到一个查询，每行渲染成一个字面量 SELECT，用 UNION ALL 连接，HANA 上加 `FROM DUMMY`，每个属性都要有值。用 `cte(...)` 包起来再参与连接。
 
@@ -513,51 +566,57 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 
 ## 9. 表达式、函数与原生 SQL
 
-**`Expr<T>` 的实例方法**（接收者固定 T，参数类型不符就编译失败）：
+**有主操作数的运算是它的实例方法**，方法在哪个类型接口上，由库里的逻辑类型决定（第 2 节），用错类型就点不出来：
 
-- 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`。参数可以是值或另一个表达式。
-- 区间与集合：`between`（含两端）、`range(from, until)`（半开区间 `>= from AND < until`，适合日期段；skipEmpty 下缺少的一端被忽略）、`in(Collection | Query)`、`notIn`、`isNull`、`isNotNull`。
-- 同类型函数：`coalesce`（可以给多个后备值：`a.coalesce(b, c, val("EA"))`，渲染成一个 COALESCE）、`nullif`。
-- 别名、排序与转换：`as("x")`、`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`。
-- 条件的组合：`cond.and(c)`、`cond.or(c)`、`cond.not()`。
+| 类型 | 方法 |
+| --- | --- |
+| 所有表达式（`Expr<T>`） | 条件：`eq`、`ne`、`gt`、`ge`、`lt`、`le`（参数是值或另一个表达式）、`between`（含两端）、`range(from, until)`（半开区间，适合日期段；skipEmpty 下缺少的一端被忽略）、`in(Collection 或 Query)`、`notIn`、`isNull`、`isNotNull`、`isDistinctFrom`、`isNotDistinctFrom`；结果仍是本类型的 `coalesce`（最多两个后备值，例如 `a.coalesce(b, val("EA"))`，渲染成一个 COALESCE）、`nullif`、`max()`、`min()`；`count()`、`countDistinct()`；`as("x")`、`asc()` / `desc()`（加 `.nullsFirst()` / `.nullsLast()`）、`cast(CastType.decimal(15, 3))`（结果是目标类型，例如 `ExprDecimal`） |
+| 文本 `ExprText` | 条件：`like`、`notLike`、`contains`、`startsWith`、`endsWith`；函数：`upper`、`lower`、`trim`、`substring(start[, length])`、`left`、`right`、`replace(from, to)`、`locate(search)`、`concat(b, c...)`（MySQL 自动渲染为 `CONCAT`）、`lpad(n, pad)`、`rpad(n, pad)`；聚合 `stringAgg(sep, order...)`（MySQL 写成 GROUP_CONCAT）。位置从 1 开始，`locate` 找不到时为 0；位置也可以是表达式，例如 `e.substring(e.locate(",").plus(1))`。补齐过长时截断（物料号补零 `m.material().lpad(18, "0")`） |
+| 数值（`ExprSmallint`、`ExprInteger`、`ExprBigint`、`ExprDecimal`、`ExprDouble`） | `plus`、`minus`、`times`（参数是常量 `int`/`long`/`double`/`BigDecimal` 或另一个数值表达式；结果取两边里"宽"的那个：浮点 > 小数 > 长整数 > 整数，例如整数加小数得到 `ExprDecimal`；`a.plus(b).plus(c)` 写成一个括号）、`divide`（只有小数和浮点数有；整数相除在各库上有的取整，先 `cast`）、`mod`（符号同被除数）、`negate`、`abs`、`round(n)`、`floor`、`ceil`、`power`、`sqrt`（结果是 `ExprDouble`）、`sign`；聚合 `sum`、`sumDistinct`、`avg`、`avgDistinct`（`ExprDecimal`）、`stddevSamp`、`stddevPop`、`varSamp`、`varPop`（`ExprDouble`；参数先转成 DOUBLE，三库结果一致；不提供不带后缀的 `stddev`，因为 MySQL 的 STDDEV 是总体标准差）。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 NULL |
+| 日期 `ExprDate` | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`（个数可为负，月末对齐）、`monthStart()`（当月第一天，按月汇总用）、`daysBetween(to)` |
+| 时间戳 `ExprTimestamp` | `year`、`month`、`day`、`hour`、`minute`、`second`（整数，舍去不足一秒的部分）、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(to)`（整秒） |
 
-**`Sql` 的静态函数**（各方言语义一致的部分）：
+- **聚合的过滤与窗口**：`l.quantity().sum().filter(() -> l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)`，多次 `filter` 按 AND 合并；`l.quantity().sum().over(w -> w.partitionBy(l.material()))` 变成窗口函数。两者只能接在聚合后面，接在别的表达式上立即报错。
+- **结果仍是同一类型**：`coalesce`、`nullif`、`max`、`min`、`filter`、`over` 之后还是原来的类型接口，可以接着写 `l.unit().coalesce("EA").upper()`。
+- **只有 `Expr<T>` 的地方**（标量子查询 `scalar(q)`、原生 SQL `sql(...)`、自定义函数 `call(...)`、关系的 `sum`/`max`）要用某种类型的方法时包一层：`ExprDecimal.of(scalar(q)).times(2)`、`ExprText.of(sql(String.class, ...)).upper()`。包一层不改 SQL。
+
+**`Sql` 的静态函数**（没有主操作数，或几个操作数地位相同）：
 
 | 类别 | 函数 |
 | --- | --- |
-| 条件 | `all`、`any`、`not`、`onlyIf(test, () -> cond)`、`ifPresent(v, x -> cond)`、`exists`、`notExists`、`like`、`notLike`、`contains`、`startsWith`、`endsWith` |
-| 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL |
-| 文本 | `upper`、`lower`、`trim`、`concat`（MySQL 自动渲染为 `CONCAT`）、`substring(e, start[, length])`、`left`、`right`、`replace(e, from, to)`、`locate(e, search)`；位置从 1 开始，`locate` 找不到时为 0。位置可以是整数常量，也可以是表达式，例如 `substring(e, plus(locate(e, ","), lit(1)))`。`lpad(e, n, pad)`、`rpad(e, n, pad)` 补足到 n 个字符（物料号补零 `lpad(m.material(), 18, "0")`），过长时截断 |
-| 数值 | `plus`（也接收 `List`）、`minus`、`times`、`divide`（仅 BigDecimal）、`negate`、`abs`、`round`、`floor`、`ceil`、`mod`（符号同被除数）、`power`、`sqrt`（结果是 Double）、`sign`。除数为 0 时 HANA、PostgreSQL 报错，MySQL 得到 NULL |
-| 日期 | `year`、`month`、`day`（日期或时间戳）、`addDays`、`addMonths`、`addYears`（日期，个数可为负，月末对齐）、`monthStart(d)`（当月第一天，按月汇总用）、`daysBetween(from, to)`；时间戳的 `hour`、`minute`、`second`（整数，舍去不足一秒的部分）、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(from, to)`（整秒）。字符长度各库计法不同（MySQL 的 LENGTH 按字节），用方言函数，例如 `Hana.length` |
-| 聚合 | `count()`、`count(e)`、`countDistinct`、`sum`、`sumDistinct`、`avg`、`avgDistinct`、`min`、`max`、`stringAgg(e, sep, order...)`（MySQL 写成 GROUP_CONCAT）、`grouping(e)`（汇总行为 1）；聚合加 `.filter(cond)` 只聚合满足条件的行：`sum(l.quantity()).filter(l.unit().eq("KG"))` 写成 `SUM(CASE WHEN ... THEN ... END)` |
-| 统计 | `stddevSamp`、`stddevPop`、`varSamp`、`varPop`（Double；样本的只有一行时为 NULL）。参数先转成 DOUBLE，三库结果一致；不提供不带后缀的 `stddev`，因为 MySQL 的 STDDEV 是总体标准差 |
-| 窗口 | `rowNumber`、`rank`、`denseRank`、`percentRank`、`cumeDist`、`lag`、`lead`、`firstValue`、`lastValue`、`nthValue`、`ntile`，再加 `.over(...)` |
-| 子查询与条件 | `scalar(query)`、`anyOf(query)`、`allOf(query)`、`bool(cond)`、`keys(a, b).in(query)` |
-| 其他 | `caseWhen(cond, x).when(...).otherwise(...)`、`caseOf(e).when(值, x).otherwise(...)`（简单 CASE，适合内联的码表）、`cast`、`currentDate`、`currentTimestamp` |
+| 条件块 | `any(() -> ...)`、`all(() -> ...)`、`not(() -> ...)`、`exists(q)`、`notExists(q)`、`bool(() -> ...)`（条件作为布尔值）、`sqlCond(...)`，见第 4 节 |
+| 值 | `val(x)`：常量值，默认用它，在 SELECT 列表等位置写成字面量、在条件里绑定为参数；`lit(x)`：始终写成字面量，只用于必须出现在 SQL 文本里的代码常量；`nullOf(Type.class)`：有类型的 NULL。`val`、`lit` 按值的类给出类型接口：`val("x").upper()`、`lit(1).plus(l.count())` |
+| 聚合 | `count()`（`COUNT(*)`；某列的个数写 `l.material().count()`）、`grouping(e)`（汇总行为 1） |
+| 窗口 | `rowNumber`、`rank`、`denseRank`、`percentRank`、`cumeDist`、`ntile(n)`，以及取某一行值的 `lag(e, n[, 默认值])`、`lead`、`firstValue`、`lastValue`、`nthValue(e, n)`，再加 `.over(...)`；取值的窗口函数结果与 e 同一类型，`lag(l.quantity(), 1).over(...).minus(l.quantity())` 能接着写 |
+| CASE | `caseWhen(() -> 条件, 结果).when(() -> ..., x).otherwise(...)`（搜索型）、`caseOf(e).when(值, 结果).otherwise(...)`（简单 CASE，适合内联的码表）；第一个分支的结果决定类型 |
+| 子查询 | `scalar(query)`、`anyOf(query)`、`allOf(query)`、`keys(a, b).in(query)` |
+| 其他 | `currentDate()`（`ExprDate`）、`currentTimestamp()`（`ExprTimestamp`）、`sql(...)`、`call(...)`、`identifier(...)` |
 
-**方言专属能力**只在对应门面里提供，放到别的方言上渲染时会明确报错：
+**方言专属能力**放在方言门面里，放到别的方言上渲染时会明确报错。有主操作数的经由**视图**调用：`hana(e)`、`postgres(e)`、`mysql(e)`、`sqlite(e)` 按 e 的类型给出能用的方法，结果回到核心的类型接口，可以接着写；表接口因此不绑任何一个库。
+
+```java
+hana(l.createdOn()).toVarchar("YYYYMMDD").upper()        // 视图的结果是 ExprText，接着点
+hana(l.delivery()).toDate("YYYYMMDD").addDays(1)          // 文本解析成日期，再做日期运算
+postgres(l.unit()).eqAny(units)                           // 条件同样写进当前的条件块
+```
 
 | HANA | PostgreSQL | MySQL |
 | --- | --- | --- |
-| `toVarchar(e, "YYYYMMDD")`、`toNvarchar`、`toDate` | `distinctOn(...)` 子句 | `dateFormat(e, "%Y%m")` |
-| `hint(...)` | — | — |
-| `likeRegexpr(e, pattern)` | — | — |
-| `length`（按 UTF-16 单元计） | `ilike` | `maxExecutionTime(ms)` 优化器提示 |
+| `hana(e).toVarchar("YYYYMMDD")`、`toNvarchar(...)`；文本的 `toDate(fmt)`、`toInteger()`、`length()`（按 UTF-16 单元计）、`likeRegexpr(pattern)`、`jsonValue("$.a")`（路径必须写在代码里）；数值的 `toInteger()`、`median()` | 文本的 `postgres(e).ilike(pattern)`、JSONB 的 `jsonText("owner", "name")`、`jsonContains(json)`、`jsonHasKey(key)`；任意值的 `eqAny(values)`（`= ANY(?)`，一个数组参数） | `mysql(e).dateFormat("%Y%m")`；JSON 的 `jsonText("$.owner.name")`、`jsonContains(json)` |
+| `hint(...)` | `distinctOn(...)` 子句 | `maxExecutionTime(ms)`、`index(l, "idx")`、`noIndex(m)` 优化器提示，合并进同一个 `/*+ ... */`（MySQL 只认第一个提示注释） |
 | `cube(a, b)`、`groupingSets(keys(a, b), keys(a), keys())` | 同左 | — |
-| `toInteger(e)`（即 TO_INT/TO_INTEGER） | — | — |
-| `greatest(a, b, ...)`、`least`：有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
-| `median(e)`、`percentileCont(p, e).over(...)`、`percentileDisc`（HANA 只把百分位数当窗口函数）、`corr(y, x)` | `percentileCont(p, e)`、`percentileDisc`、`mode(e)`（只作聚合）、`corr(y, x)` | — |
+| `greatest(a, b, ...)`、`least`：结果与 a 同一类型，有一个参数为 NULL 就返回 NULL | `greatest`、`least`：跳过 NULL 参数 | 同 HANA |
+| `percentileCont(p, e).over(...)`、`percentileDisc`（HANA 只把百分位数当窗口函数）、`corr(y, x)` | `percentileCont(p, e)`、`percentileDisc`、`mode(e)`（只作聚合）、`corr(y, x)` | — |
 | — | `intersectAll(a, b)`、`exceptAll(a, b)` | 同左（8.0.31 起） |
 | — | 窗口帧 `w.frame(range(daysPreceding(7), Bound.currentRow()))`，数值偏移用 `Bound.preceding(n)` | 同左 |
 | — | `recursiveCte(name, anchor, self -> step)`，写成 `WITH RECURSIVE` | 同左（受 `cte_max_recursion_depth` 限制） |
 | — | `forShare(lock)`、`forUpdateOf(lock, l)`（`FOR UPDATE OF 别名`） | 同左 |
 | — | `db.returning(write, Row.class)`：插入、更新、删除后用 RETURNING 读回行 | — |
-| 数据来源：`fromView(View.class, Map.of("P_YEAR", "2026"))`（计算视图的 PLACEHOLDER 参数）、`fromFunction(Fn.class, Map.of("P_UNIT", "EA"))`（表函数的命名实参） | 数组：`eqAny(e, values)`（`= ANY(?)`，一个数组参数）、`arrayContains`、`arrayOverlaps`、`cardinality`、`arrayAgg(e, String[].class, order...)`；数组列声明成 `Col<String[]>`（还有 Integer、Long、BigDecimal、LocalDate） | 优化器提示：`index(l, "idx")`、`noIndex(m)`，与 `maxExecutionTime` 合并进同一个 `/*+ ... */`（MySQL 只认第一个提示注释） |
-| 层级：`from(hierarchy(Node.class, 来源))`、`descendants(..., List.of("B"))`、`ancestors`，来源查询要有 nodeId、parentId 两列 | JSONB：`jsonText(doc, "owner", "name")`、`jsonContains(doc, json)`、`jsonHasKey(doc, key)`、写入用 `jsonb(text)` | JSON：`jsonText(doc, "$.owner.name")`、`jsonContains(doc, json)` |
-| 全文检索：`contains(term, cols...)`、`containsFuzzy(0.8, term, cols...)`、`score()`；JSON：`jsonValue(doc, "$.a")`（路径必须写在代码里） | 全文检索：`textMatches("simple", doc, q)`、`webMatches`、`textRank` | 全文检索：`match(q, cols...)`、`matchBoolean`、`matchScore`（列要正好是一个 FULLTEXT 索引） |
+| 数据来源：`fromView(View.class, Map.of("P_YEAR", "2026"))`（计算视图的 PLACEHOLDER 参数）、`fromFunction(Fn.class, Map.of("P_UNIT", "EA"))`（表函数的命名实参） | 数组：`arrayContains`、`arrayOverlaps`、`cardinality`、`arrayAgg(e, String[].class, order...)`；数组列声明成 `Col<String[]>`（还有 Integer、Long、BigDecimal、LocalDate） | — |
+| 层级：`from(hierarchy(Node.class, 来源))`、`descendants(..., List.of("B"))`、`ancestors`，来源查询要有 nodeId、parentId 两列 | 写入 JSONB 用 `jsonb(text)` | — |
+| 全文检索：`contains(term, cols...)`、`containsFuzzy(0.8, term, cols...)`、`score()` | 全文检索：`textMatches("simple", doc, q)`、`webMatches`、`textRank` | 全文检索：`match(q, cols...)`、`matchBoolean`、`matchScore`（列要正好是一个 FULLTEXT 索引） |
 
-`greatest`、`least` 的常量参数写成 `val(x)`。三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里，空的 `keys()` 是总计。
+SQLite 的 `sqlite(e).glob(pattern)`、`sqlite(e).median()` 见第 18 节。`greatest`、`least` 的常量参数写成 `val(x)`；三个库对 NULL 的处理不同，所以它们放在各自的方言门面里。`cube` 和 `groupingSets` 是分组键，写在 `groupBy` 里，空的 `keys()` 是总计。
 
 **常量与参数**：SELECT 列表里的常量写成字面量；带 GROUP BY 或 DISTINCT 的查询，GROUP BY、HAVING、ORDER BY 里的常量也写成字面量；WHERE 和 ON 里的值仍然绑定为参数。这样分组表达式（例如按 CASE 分桶）在三个库上都能执行，HANA 也能确定 SELECT 列的类型。
 
@@ -567,7 +626,7 @@ stockArm(Mardh.class, "2026").unionAll(stockArm(Mchbh.class, "2026"));
 
 ```java
 sql(String.class, "LPAD({0}, {1}, '0')", m.material(), 10)           // 表达式，类型由第一个参数声明
-sqlCond("{0} IN ({1})", l.unit(), List.of("EA", "KG"))                // 条件
+sqlCond("{0} IN ({1})", l.unit(), List.of("EA", "KG"))                // 条件，写进当前的条件块
 sqlCond("{0} <> {1}", m.materialType(), "ZOTH").on(MysqlDialect.class, "{0} != {1}")   // 给某个方言另一种写法
 ```
 
@@ -617,7 +676,10 @@ from(totals)
 
 ```java
 Query<String> q = from(Lips.class)
-    .where(l -> l.material().eq("O'Neil").and(l.createdOn().eq(LocalDate.of(2026, 1, 15))))
+    .where(l -> {
+        l.material().eq("O'Neil");
+        l.createdOn().eq(LocalDate.of(2026, 1, 15));
+    })
     .select(l -> lit("a?b").as("mark"));
 
 Rendered r = db.render(q);      // 本数据库会为这条查询执行的 SQL，已套用全局过滤器；同一个查询只渲染一次
@@ -656,7 +718,7 @@ assertTrue(events.get(0).statement().sql().contains("LIPS"));
 | --- | --- |
 | 值类型 | `Converter<J, D>` 加组合注解；或用 `config.type(Storage.class, reader, writer)` 覆盖某个存储类型的 JDBC 读写 |
 | 函数 | 写一个静态方法：`call(FunctionDef.of("MY_FN"), Integer.class, args...)`。只属于某个方言的用 `FunctionDef.only(HanaDialect.class, "...")`；单个数据库实例需要改写时用 `config.function(def, renderer)` |
-| 表达式节点 | 继承 `Expr<T>`，实现 `render(SqlWriter)` |
+| 表达式节点 | 继承 `ExprNode<T>`，实现 `render(SqlWriter)`；要用某种类型的方法时包一层 `ExprText.of(node)` 等 |
 | 子句 | 实现 `Clause`，声明位置（`HINT` / `DISTINCT` / `END`）和所属方言 |
 | 数据来源 | 实现 `Source<E>`，例如带参数的视图 |
 | 方言 | 继承 `Dialect`（或某个现成方言），覆盖引号、字面量、分页、排序项、类型名、函数渲染和 JDBC 读写 |
@@ -688,7 +750,9 @@ Database db = Hana.database(dataSource, c -> c.listener(e -> {
 
 ## 13. 编译期能拦住的错误
 
-以下错误写法由 `CompileTimeSafetyTest` 在每次构建时用 javac 验证：lambda 里用了不在查询中的表的列；比较值、连接键或 `coalesce` 参数的类型与列不符（包括日期列传入字符串）；对文本列 `sum`；`row(...)` 的参数个数或类型与构造器不符（包括嵌套的 `row`）；UNION 两段的结果类型不同；泛型模板套用到缺少共享接口的表；CTE 的 `col(...)` 用了不属于它的行类的 getter；窗口函数没有 `over`。
+以下错误写法由 `CompileTimeSafetyTest` 在每次构建时用 javac 验证：lambda 里用了不在查询中的表的列；比较值、连接键或 `coalesce` 参数的类型与列不符（包括日期列传入字符串）；对文本列 `sum`；文本列（包括以文本存的日期）调用日期函数；整数相除；给列以外的表达式 `to(...)`；把条件直接当投影；`row(...)` 的参数个数或类型与构造器不符（包括嵌套的 `row`）；UNION 两段的结果类型不同；泛型模板套用到缺少共享接口的表；CTE 的 `col(...)` 用了不属于它的行类的 getter；窗口函数没有 `over`。
+
+写错位置的条件和赋值在构造查询时立刻报错：条件写在条件块之外或投影、分组、排序 lambda 里，`to(...)` 写在 `set(...)` 之外，`filter`、`over` 接在聚合以外的表达式上。
 
 名字类的错误在构造查询时立刻报错，不等到执行：`cols` 缺名字或重名、`selectAs` 找不到同名列、条件对象的字段对应不上、`exclude` / `only` / `sortBy` 的列名不存在、表接口里有既不是列也不是关系的抽象方法。
 
@@ -703,7 +767,7 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 - `NaN`、`Infinity` 没有字面量形式：在 SELECT 列表里仍然绑定为参数，`lit(...)` 时直接报错。
 - `sql(Type.class, "模板", ...)`、`sqlCond(...)`、`sqlTable(...)` 的模板和 `db.sql("...")` 的文本原样执行。这些文本里只放代码中的常量，用户输入一律作为参数传入（模板参数或 `bind`）。
 - 标识符来自注解、方法名和 `as("x")`，渲染时加引号并转义；`sortBy`、`only`、`exclude` 只认查询自己的结果列名，用户传入的名字不会进入 SQL 文本。
-- 用户输入的文本匹配用 `contains` / `startsWith` / `endsWith`（或条件对象的 `CONTAINS` 等），通配符自动转义；`like(e, pattern)` 的模式原样使用，来自用户输入时要先自行转义。
+- 用户输入的文本匹配用 `contains` / `startsWith` / `endsWith`（或条件对象的 `CONTAINS` 等），通配符自动转义；`e.like(pattern)` 的模式原样使用，来自用户输入时要先自行转义。
 
 **上线前检查**：
 
@@ -717,7 +781,7 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 8. **全局过滤器**：多租户的条件配成 `filter(...)`，逻辑删除用 `@LogicDelete`，不要在每个查询里重复写；`unfiltered()` 只用于确实要跨租户或看已删除行的查询。
 9. **写入**：多行写入和 `byId` 已自动放进一个事务；跨多条语句的业务操作放进 `db.transaction(...)` 或 `@Transactional`。
 
-**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`Fn`；`table`、`expr`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`。
+**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`SqlValues`、`Fn`；`table`、`table.column`、`expr`、`expr.typed`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`。
 
 `dialect` 包是扩展点，方法签名可能在次版本中增加参数。`exec.JdbcExecutor`、`MappingPlan` 等其余公开类型只供库内部跨包使用，不在承诺范围内。
 
@@ -730,17 +794,17 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 ```java
 @Table(schema = "APP", value = "DOC")
 public interface Doc extends Audited {             // Audited 声明审计列，见下文
-    @Id @Column("ID") Col<String> id();            // 主键，可多列
-    @Column("TITLE") Col<String> title();
-    @Version @Column("VERSION") Col<Integer> version();      // 乐观锁版本，Integer 或 Long
-    @LogicDelete @Column("DELETED") Col<Integer> deleted();  // 逻辑删除，默认 0 未删除、1 已删除
-    @ReadOnly @Column("SOURCE") Col<String> source();        // 只读：数据库默认值或触发器维护，本库从不写
+    @Id @Column("ID") ColText<String> id();            // 主键，可多列
+    @Column("TITLE") ColText<String> title();
+    @Version @Column("VERSION") ColInteger<Integer> version();      // 乐观锁版本，Integer 或 Long
+    @LogicDelete @Column("DELETED") ColInteger<Integer> deleted();  // 逻辑删除，默认 0 未删除、1 已删除
+    @ReadOnly @Column("SOURCE") ColText<String> source();        // 只读：数据库默认值或触发器维护，本库从不写
 }
 
 @Table("SEQ")
 public interface Seq extends Entity {
-    @Id @Generated @Column("ID") Col<Long> id();   // 数据库生成的主键：插入时不写
-    @Column("NAME") Col<String> name();
+    @Id @Generated @Column("ID") ColBigint<Long> id();   // 数据库生成的主键：插入时不写
+    @Column("NAME") ColText<String> name();
 }
 ```
 
@@ -759,9 +823,11 @@ db.execute(insertInto(Doc.class).values(new DocRow("D1", "a", 1), new DocRow("D2
 db.execute(insertInto(Note.class).from(from(Note.class).where(...).select(n -> cols(lit("N9").as("id"), n.title()))));
 
 db.execute(update(Note.class)
-    .set(n -> n.qty().to(plus(n.qty(), val(10))))
-    .set(n -> n.status().to("closed"))
-    .where(n -> all(n.id().eq(id), n.status().eq("open")))
+    .set(n -> {                                   // 赋值块：一行一个 SET 项
+        n.qty().to(n.qty().plus(10));
+        n.status().to("closed");
+    })
+    .where(n -> { n.id().eq(id); n.status().eq("open"); })
     .expect(1));                                  // 影响的行数不是 1 时抛 UnexpectedRowCountException
 
 db.execute(deleteFrom(Note.class).where(n -> n.status().eq("closed")));
@@ -769,7 +835,7 @@ db.execute(deleteFrom(Note.class).where(n -> n.status().eq("closed")));
 
 - **行**：record 或 POJO，按属性名对应表的列，属性名找不到列时报错；所有属性都写，null 写成 NULL。多行插入按 JDBC 批量执行（每批 500 行），并自动放在一个事务里。
 - **从查询插入**：查询的列名（`cols` 的名字或 `as(...)`）对应表的属性名。
-- **SET**：`col.to(值)` 或 `col.to(表达式)`；`skipEmpty()` 下值为空的 SET 项省略，全部省略时不执行。
+- **SET**：`set(t -> { ... })` 是赋值块，块里一行一个 `col.to(值)` 或 `col.to(表达式)`，多次 `set` 依次追加；只有列有 `to`，所以给计算结果赋值在编译期就拦住。`skipEmpty()` 下值为空的 SET 项省略，全部省略时不执行；`to(...)` 写在赋值块外立即报错。
 - **WHERE**：lambda 条件或条件对象（同第 7 节）。没有条件的 UPDATE、DELETE 直接报错，确实要改整张表时写 `.all()`。全局过滤器和逻辑删除的条件照常加进 WHERE，`unfiltered()`、`unfiltered("tenant")`、`withDeleted()` 同查询。
 - **WHERE 里的导航**：`where(l -> l.mara().manufacturer().eq("MK1"))` 写成 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN MARA ... WHERE ...)`，与查询里导航的 LEFT JOIN 语义相同；SET 里不能用导航，要读别的表时用标量子查询或联表更新。
 
@@ -863,9 +929,9 @@ db.transaction(() -> {
 
 ```java
 public interface Audited extends Entity {
-    @Column("CREATED_AT") Col<LocalDateTime> createdAt();
-    @Column("UPDATED_AT") Col<LocalDateTime> updatedAt();
-    @Column("UPDATED_BY") Col<String> updatedBy();
+    @Column("CREATED_AT") ColTimestamp<LocalDateTime> createdAt();
+    @Column("UPDATED_AT") ColTimestamp<LocalDateTime> updatedAt();
+    @Column("UPDATED_BY") ColText<String> updatedBy();
 }
 
 Hana.database(dataSource, c -> c
@@ -914,16 +980,16 @@ db.execute(deleteJoin(Note.class, Doc.class, (n, d) -> n.id().eq(d.id())).where(
 @Index(name = "IX_S_ITEM_CODE", columns = "code", unique = true)
 @ForeignKey(name = "FK_S_ITEM_OWNER", columns = "ownerId", references = Owner.class)
 public interface Item extends Entity {
-    @Id @Generated @Column("ID") Col<Long> id();
-    @Column(value = "CODE", length = 20, nullable = false) Col<String> code();
-    @Column(value = "PRICE", precision = 13, scale = 3) Col<BigDecimal> price();
-    @Column(value = "STATUS", length = 10, nullable = false, defaultValue = "'open'") Col<String> status();
-    @Column("OWNER_ID") Col<Long> ownerId();
+    @Id @Generated @Column("ID") ColBigint<Long> id();
+    @Column(value = "CODE", length = 20, nullable = false) ColText<String> code();
+    @Column(value = "PRICE", precision = 13, scale = 3) ColDecimal<BigDecimal> price();
+    @Column(value = "STATUS", length = 10, nullable = false, defaultValue = "'open'") ColText<String> status();
+    @Column("OWNER_ID") ColBigint<Long> ownerId();
 }
 ```
 
-- `@Column` 的 `length`（文本默认 255）、`precision` / `scale`（小数默认 `DECIMAL(18,2)`）、`nullable`（主键总是 NOT NULL）、`defaultValue`（SQL 文本）、`lob`（不限长度）、`comment`、`previousName`（改名前的列名）只用于结构变更，查询不读它们。
-- 类型按存储类型（经过转换器之后）推断：文本、整数、长整数、小数、浮点、布尔、日期、时间戳、字节；`@Generated` 的列建成 IDENTITY / AUTO_INCREMENT。
+- `@Column` 的 `length`（文本默认 255）、`precision` / `scale`（小数默认 `DECIMAL(18,2)`）、`nullable`（主键总是 NOT NULL）、`defaultValue`（SQL 文本）、`comment`、`previousName`（改名前的列名）只用于结构变更，查询不读它们。
+- 类型按存储类型（经过转换器之后）推断：文本、整数、长整数、小数、浮点、布尔、日期、时间戳、字节；声明成 `ColClob`、`ColBlob` 的列建成不限长度的类型（HANA 的 NCLOB / BLOB、PostgreSQL 的 TEXT / BYTEA、MySQL 的 LONGTEXT / LONGBLOB）；`@Generated` 的列建成 IDENTITY / AUTO_INCREMENT。
 - 不归本库管的表（SAP 表）标 `@Table(external = true)`：只核对已声明的列存在、类型相容，从不生成 DDL。
 
 | 写法 | 说明 |
@@ -1000,21 +1066,21 @@ migrator.verify();           // 已执行的迁移被改过、历史里有未知
 // mvn query:pull 生成 src/generated/java/com/example/erp/generated/LipsColumns.java：
 public interface LipsColumns extends Entity {
     /** VBELN：TEXT(10)，主键 */
-    @Id @Column(value = "VBELN", length = 10) Col<String> vbeln();
+    @Id @Column(value = "VBELN", length = 10) ColText<String> vbeln();
     // ...
 }
 
 // 自己写的表接口
 @Table(schema = "SAPHANADB", value = "LIPS", external = true)
 public interface Lips extends LipsColumns {
-    default One<Mara> mara() { return one(Mara.class, (l, m) -> m.matnr().eq(l.matnr())); }
+    default Mara mara() { return one(Mara.class, m -> m.matnr().eq(matnr())); }
 }
 ```
 
 - 插件带着三个 JDBC 驱动，只在运行 `query:pull` 时连库，构建本身不连库；生成的文件提交进版本库，生成目录加进编译的源码根目录。
 - `columns` 只生成列出的列（宽表通常只用几列），不写时生成全部列；`typeName` 缺省由表名推导（`S_ITEM` → `SItemColumns`），列方法名是列名的驼峰写法，与 Java 关键字或 `Entity` 的方法重名时加 `Column`。
 - `mvn query:pull -Dquery.only=LIPS` 只重新生成某几张表；内容没变的文件不重写。
-- 生成的注解带长度、精度、可空、默认值和注释，所以继承它的表接口可以直接用 `db.schema().check(...)` 核对。三个库读回同一张表时生成的源码完全相同（默认值统一成 SQL 写法，例如 `'open'`）。
+- 列接口按读回的类型选（不限长度的文本、字节是 `ColClob`、`ColBlob`）；生成的注解带长度、精度、可空、默认值和注释，所以继承它的表接口可以直接用 `db.schema().check(...)` 核对。三个库读回同一张表时生成的源码完全相同（默认值统一成 SQL 写法，例如 `'open'`）。
 
 ## 17. 分区与分表
 
@@ -1030,9 +1096,9 @@ public interface Lips extends LipsColumns {
 @TableOption(dialect = MysqlDialect.class, value = "PARTITION BY RANGE COLUMNS(DAY) (PARTITION p2026 VALUES LESS THAN ('2027-01-01'), PARTITION pmax VALUES LESS THAN (MAXVALUE))")
 @TableOption(dialect = HanaDialect.class, value = "PARTITION BY RANGE (DAY) (PARTITION '2026-01-01' <= VALUES < '2027-01-01', PARTITION OTHERS)")
 public interface EventLog extends Entity {
-    @Id @Column("ID") Col<Long> id();
-    @Id @Column("DAY") Col<LocalDate> day();      // 三个库都要求分区键在主键里
-    @Column("AMOUNT") Col<BigDecimal> amount();
+    @Id @Column("ID") ColBigint<Long> id();
+    @Id @Column("DAY") ColDate<LocalDate> day();      // 三个库都要求分区键在主键里
+    @Column("AMOUNT") ColDecimal<BigDecimal> amount();
 }
 ```
 
@@ -1082,14 +1148,14 @@ SQLiteDataSource dataSource = new SQLiteDataSource(config);
 dataSource.setUrl("jdbc:sqlite:app.db");
 
 SqliteDatabase db = Sqlite.database(dataSource, c -> c.schema("ERP", "main"));
-db.list(from(Item.class).where(i -> glob(i.code(), "A*")).select(i -> median(i.price())));
+db.list(from(Item.class).where(i -> sqlite(i.code()).glob("A*")).select(i -> sqlite(i.price()).median()));
 ```
 
 - **schema** 是 ATTACH 进来的库名：要么在取连接时 ATTACH 同名的库，要么用 `schema("ERP", "main")` 映射到主库。
 - **类型**：小数列按 NUMERIC 亲和存储，比较和排序是数值的；但有效数字超过 15 位或要精确求和（金额）时不精确，金额建议存整数的最小单位。日期和时间戳存成 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM:SS.fff` 文本。
-- **语义差异**：`LIKE` 不区分 ASCII 大小写（与 MySQL 默认相同），要区分时用 `glob(e, "A*")`；`currentTimestamp()` 是本地时间。其余函数与三库语义一致，写法见金样例 `spec/render/*.sqlite.sql`。
+- **语义差异**：`LIKE` 不区分 ASCII 大小写（与 MySQL 默认相同），要区分时用 `sqlite(e).glob("A*")`；`currentTimestamp()` 是本地时间。其余函数与三库语义一致，写法见金样例 `spec/render/*.sqlite.sql`。
 - **超时**：sqlite-jdbc 不理会 `setQueryTimeout`，所以 `queryTimeout(...)` 到时由本库调用 `Statement.cancel()` 中断语句。
-- **需要编译选项的函数**：`sqrt`、`power`、`ceil`、`floor`、`mod` 和门面的 `median`、`percentileCont(p, e)`、`percentileDisc(p, e)` 照常渲染，每个数据库实例对每个函数第一次渲染时记一条警告（`System.Logger` `org.dpdns.zerodep.query.sqlite`）。sqlite-jdbc 的构建都带这些函数。
+- **需要编译选项的函数**：`sqrt`、`power`、`ceil`、`floor`、`mod` 和门面的 `sqlite(e).median()`、`percentileCont(p, e)`、`percentileDisc(p, e)` 照常渲染，每个数据库实例对每个函数第一次渲染时记一条警告（`System.Logger` `org.dpdns.zerodep.query.sqlite`）。sqlite-jdbc 的构建都带这些函数。
 - **不支持的**：ROLLUP / GROUPING SETS、`grouping()`、`forUpdate()` 渲染时抛出 `UnsupportedOperationException`。SQLite 只有一个写者，在写事务里读写即可。
 - **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有注释，建表时略过并警告一次。`query:pull` 的 `dialect` 写 `sqlite`。
 - 联表写入：`updateJoin` 写成 `UPDATE ... FROM`，`deleteJoin` 写成 `WHERE EXISTS`。

@@ -15,11 +15,11 @@ import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.meta.WriteMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.ShardRule;
 import org.dpdns.zerodep.query.table.Sharding;
+import org.dpdns.zerodep.query.table.column.Col;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
