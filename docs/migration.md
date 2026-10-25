@@ -172,14 +172,14 @@ l.delivery().count().cast(CastType.decimal(18, 4)).divide(count())
 
 ## 从 1.x 升级到 2.0
 
-2.0 把表声明从带 getter 的类改成接口，列直接是方法，所以 lambda 里写 `l.material()` 而不是 `l.col(Lips::getMaterial)`；重复和复杂的写法删掉了，只留一种。TypeScript 的实体写法不变，变化集中在下表的 TS 一列。
+2.0 把表声明从带 getter 的类改成接口，列直接是方法，所以 lambda 里写 `l.material()` 而不是 `l.col(Lips::getMaterial)`；重复和复杂的写法删掉了，只留一种。TypeScript 的实体仍是带装饰器的类，小数和日期字段改成值对象，变化集中在下表的 TS 一列。
 
 | 1.x | 2.0（Java） | 2.0（TypeScript） |
 | --- | --- | --- |
-| `@Table` 类加字段（Lombok `@Data`） | `@Table` 接口继承 `Entity`，列是返回列接口的抽象方法，接口按逻辑 SQL 类型选（`ColText<String>`、`ColDecimal<BigDecimal>`、以文本存的日期 `ColText<LocalDate>`），见 [API 第 2 节](api.md#2-声明表)；结果类、CTE 的行仍用 record 或类 | 不变 |
-| `upper(e)`、`sum(e)`、`addDays(d, 3)` 等静态函数 | 主操作数的实例方法：`e.upper()`、`e.sum()`、`d.addDays(3)`；方言函数经由视图：`hana(e).toVarchar(fmt)` | 暂未改（见 [0014](decisions/0014-typed-expressions.md)） |
-| `all(a, b)`、`a.and(b)`、`any(a, b)`、`onlyIf`、`ifPresent` | 条件块一行一个条件：`where(l -> { a; b; })`、`any(() -> { a; b; })`，可选条件写 `if` | 暂未改 |
-| `set(t -> t.x().to(v)).set(...)` | 赋值块：`set(t -> { t.x().to(v); t.y().to(w); })` | 暂未改 |
+| `@Table` 类加字段（Lombok `@Data`） | `@Table` 接口继承 `Entity`，列是返回列接口的抽象方法，接口按逻辑 SQL 类型选（`ColText<String>`、`ColDecimal<BigDecimal>`、以文本存的日期 `ColText<LocalDate>`），见 [API 第 2 节](api.md#2-声明表)；结果类、CTE 的行仍用 record 或类 | 实体写法不变；`decimal`、`date`、`timestamp` 列的字段从 `string` 改成 `Decimal`、`CalendarDate`、`CalendarDateTime`（新的 peerDependencies `decimal.js`、`@internationalized/date`），以文本存的日期写成 `Stored<CalendarDate, string>`，见 [TS API 第 2 节](api-typescript.md#2-声明实体) |
+| `upper(e)`、`sum(e)`、`addDays(d, 3)` 等静态函数 | 主操作数的实例方法：`e.upper()`、`e.sum()`、`d.addDays(3)`；方言函数经由视图：`hana(e).toVarchar(fmt)` | 同 Java：`e.upper()`、`e.sum()`、`d.addDays(3)`、`hana(e).toVarchar(fmt)`（见 [0014](decisions/0014-typed-expressions.md)） |
+| `all(a, b)`、`a.and(b)`、`any(a, b)`、`onlyIf`、`ifPresent` | 条件块一行一个条件：`where(l -> { a; b; })`、`any(() -> { a; b; })`，可选条件写 `if` | 同 Java：`where((l) => { a; b; })`、`any(() => { a; b; })`；返回 `Cond` 的辅助函数改成返回 `void` |
+| `set(t -> t.x().to(v)).set(...)` | 赋值块：`set(t -> { t.x().to(v); t.y().to(w); })` | 不变：`set((t) => ({ x: v, y: t.y.plus(1) }))`，对象字面量本来就一次写多列 |
 | `l.col(Lips::getMaterial)` | `l.material()`；CTE、派生表等行类来源仍是 `r.col(Row::x)` | 不变（`l.material`） |
 | `a.eq(l, Lips::getMaterial)` 等简写 | `a.eq(l.material())` | 不变 |
 | `eqIfPresent`、`likeIfPresent` 等 | 作用域上 `skipEmpty()`，或条件对象 `where(search)` | `skipEmpty()`，或 `where(search)` |

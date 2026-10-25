@@ -10,7 +10,7 @@
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。小数和日期是 `decimal.js`、`@internationalized/date` 的值对象（核心包的 peerDependencies，与 vue-tsx-pro 一致）；列和表达式按字段类型分接口（`sql/typed.ts`，0014），运行时只有 `ExprNode` 一个节点类。
 - **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。PolarDB 方言继承 MySQL 方言（写法相同，金样例沿用 MySQL 的文件，实库测试也跑 MySQL 的全部专属场景），只多 PolarDB 专属的能力；专属能力只纳入在开源 PolarDB-X 引擎上实测过、并且与阿里云 PolarDB 写法一致的（0012）。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
 - **方言不抹平**：核心包只包含各库语义一致的能力，方言专属能力只出现在对应的方言包里。实例由方言门面创建，或由通用门面按连接选方言创建（Java 的 `Sql.database(...)`、TS 核心包的 `database(driver)`，0013）。
 - **文档**：

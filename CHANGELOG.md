@@ -8,7 +8,7 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 
 ### 新增
 
-- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有 `glob`、`median`、`percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
+- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有视图 `sqlite(e)` 的 `glob`、`median`，以及 `percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
   - 需要编译选项的函数照常渲染，每个数据库实例第一次渲染时警告（TS 选项 `warn`）；ROLLUP、`grouping()`、`forUpdate()` 报错，TS 从 SQLite 包导入时写不出来。
   - 结构变更里不能就地改的列归入只报告（REBUILD）。
 - **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
@@ -31,7 +31,11 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - **Java：按逻辑 SQL 类型分的列与表达式**（[0014](docs/decisions/0014-typed-expressions.md)）：列声明成 `ColText<String>`、`ColInteger<Integer>`、`ColBigint<Long>`、`ColDecimal<BigDecimal>`、`ColDate<LocalDate>`、`ColTimestamp<LocalDateTime>` 等（包 `table.column`），表达式接口同名（`expr.typed`），泛型参数是 Java 类型；经转换器存成文本的日期是 `ColText<LocalDate>`。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`。`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。
 - **Java：有主操作数的函数改成实例方法**：`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)` 等约 55 个静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`；加减乘按"宽"的类型提升，`caseWhen`、`lag`、`greatest`、`val`、`lit` 的结果保住类型。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`。
 - **Java：语句式条件**：条件方法返回 `void`，写进条件块（`where(l -> { a; b; })`、`any(() -> {...})`、`all`、`not`、`bool(() -> ...)`、`caseWhen(() -> ..., x)`、`filter(() -> ...)`），可选条件直接写 `if`；`Cond.and`/`or`、`onlyIf`、`ifPresent` 删去。UPDATE 的 `set(t -> { t.x().to(v); ... })` 是赋值块。写错位置的条件和赋值立即报错。
-- 金样例没有变化：新写法渲染出的 SQL 与原来逐字相同。
+- **TypeScript：小数与日期是值对象**：`decimal`、`date`、`timestamp` 列读写 decimal.js 的 `Decimal`、@internationalized/date 的 `CalendarDate`、`CalendarDateTime`（与前端组件一致），两个库是核心包的 peerDependencies；字段从 `string` 改成这些类型。绑定时仍接受文本形式（按格式校验）。`CalendarDateTime` 精确到毫秒，更细的部分读出来时舍去；`Decimal` 不保留末尾的零。`query-pull` 生成的字段同改。
+- **TypeScript：按逻辑 SQL 类型分的列与表达式**：查询回调里的字段按字段类型成为 `ColText<T>`、`ColNumber<T>`、`ColBigint<T>`、`ColDecimal<T>`、`ColDate<T>`、`ColTimestamp<T>`（`Col<T>` 兜底），表达式接口同名，结果按值类型给出接口（`ExprOf<T>`）。以另一种类型存的转换器列写成 `Stored<CalendarDate, string>`，是 `ColText`；没写时 `@column` 在编译期报错。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`；`SqlType` 多了存储种类的类型参数。
+- **TypeScript：实例方法、语句式条件与方言视图**：与 Java 相同——`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)`、`like(e, p)` 等静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`、`e.like(p)`（加减乘按"宽"的类型提升，接着写的 `plus` 并成一个括号）；条件方法返回 `void`，写进条件块（`where((l) => { a; b; })`、`any(() => {...})`、`all`、`not`、`bool(() => ...)`、`caseWhen(() => ..., x)`、聚合的 `filter(() => ...)`、关系与全局过滤器的回调），`Cond.and`/`or`/`not`、`onlyIf`、`ifPresent` 删去；`sqlCond` 一写下就在块里，`.on(...)` 改的是它本身。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`；全文检索、数组等条件函数写进当前的块。UPDATE 的 `set` 仍是对象字面量，表达式要是这一列的那一类。PolarDB 的 `fromAsOf` 收 `CalendarDateTime`。
+- Java：方言视图 `ViewString` 改名 `ViewText`，与逻辑类型的命名一致。
+- 金样例只有 `literals` 一处变了：小数常量由 12.50 改成 12.5（`Decimal` 不保留末尾的零，两端的用例输入同改）；其余新写法渲染出的 SQL 与原来逐字相同。
 
 ## [2.0.0] - 未发布
 

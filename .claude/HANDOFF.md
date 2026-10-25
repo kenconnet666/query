@@ -2,16 +2,18 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）在分支 `feat/typed-expressions` 上：Java 已完成（各模块测试与五库实库测试通过，金样例不变），TypeScript 待做。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）在分支 `feat/typed-expressions` 上，两端都已完成（各模块测试、Java 五库与 TS 六个目标的实库测试通过；金样例只有 `literals` 的小数常量 12.50 改成 12.5），尚未开 PR。
 
 ## 当前状态
 
 ### 按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)，分支 `feat/typed-expressions`）
 
-用户 2026-10-25 决定：列改成具体类型、删掉多余写法；条件写成一条条语句；TS 引入小数与日期类型。命名几经讨论后定为按逻辑 SQL 类型（`ColText`、`ColInteger`、`ColBigint`、`ColDecimal`、`ColDate`、`ColTimestamp` 等，表达式接口同名，泛型是 Java 类型；无符号这类单个库才有的物理类型放注解），其余按调研的推荐。
+用户 2026-10-25 决定：列改成具体类型、删掉多余写法；条件写成一条条语句；TS 引入小数与日期类型。命名几经讨论后定为按逻辑 SQL 类型（`ColText`、`ColInteger`、`ColBigint`、`ColDecimal`、`ColDate`、`ColTimestamp` 等，表达式接口同名，泛型是 Java 类型；无符号这类单个库才有的物理类型放注解），TS 也用这套名字（`ColNumber` 代替整数、浮点数两类，泛型是 TS 字段类型），其余按调研的推荐。
 
 - **Java（已完成）**：`Expr` 改成接口，类型接口在 `expr/typed`、列接口在 `table/column`，多数由 `tools/generate-java.mjs` 生成；有主操作数的函数是实例方法，静态的类型函数删去；条件与 UPDATE 的赋值是语句块（`expr.Conditions`、`write.Assignments`）；方言函数走视图 `hana(e)`、`postgres(e)`、`mysql(e)`、`sqlite(e)`；`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。文档 api.md、迁移指南、场景对照、CHANGELOG 已更新。
-- **TypeScript（待做）**：先引入 `Decimal`（decimal.js）、`CalendarDate` / `CalendarDateTime`（@internationalized/date）作为 peerDependencies，再按字段类型分列接口、语句式条件；转换器列用 `Stored<J, D>` 标记（先做探针）。列接口的名字（沿用 Java 的逻辑类型名，还是按 TS 类型叫）待用户确认。
+- **TypeScript（已完成）**：`Decimal`（decimal.js）、`CalendarDate` / `CalendarDateTime`（@internationalized/date）是核心包的 peerDependencies（用到它们类型的 HANA、PolarDB 包也声明了）；`sql/typed.ts` 是按字段类型分的接口与 `ExprOf`/`ColOf`/`Stored`，运行时只有 `ExprNode` 一个节点类；条件块在 `sql/cond.ts`；`sql/expr.ts`（节点）、`window.ts`、`case.ts`、`builtins.ts`（函数定义）、`functions.ts`（没有主操作数的函数）分开；方言视图 `hana(e)` 等。`set` 仍是对象字面量。测试由一次性的语法树改写脚本迁移后逐个复核；`docs/api-typescript.md`、README、迁移指南、0014 第 7 节、CHANGELOG 已更新。
+- **顺手修的**：`range` 与缺一边的 `between` 在 `any` 的块里曾变成两个 OR 选项（两端，已加测试）；Java 的方言视图 `ViewString` 改名 `ViewText`。
+- **下一步**：开 PR（需用户同意）。
 
 ### 通用门面与实库测试的组织（[0013](../docs/decisions/0013-portable-facade-and-live-tests.md)，PR #17 已合并）
 

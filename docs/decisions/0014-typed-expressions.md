@@ -1,6 +1,6 @@
 # 0014 按逻辑 SQL 类型分的列与表达式、语句式条件
 
-- 状态：已采纳（2026-10-25）。Java 已实施（分支 `feat/typed-expressions`）；TypeScript 的值类型与写法见第 7 节，待实施。
+- 状态：已采纳（2026-10-25），两端都已实施（分支 `feat/typed-expressions`）；TypeScript 的值类型与做法见第 7 节。
 - 起因：
   - 用户决定把 `Col<T>` 改成按类型的具体接口，让文本、数值、日期上的写法可以直接点出来，并删除因此变得多余的写法；
   - 用户提出条件写成一条条语句，不必用 `.and(...)` 链起来，以避开"链到一半返回值是什么类型"的问题；
@@ -138,16 +138,20 @@ from(Lips.class).where(l -> {
 - `CastType<T, F>` 带上结果的类型接口，`cast(CastType.decimal(15, 3))` 是 `ExprDecimal`。
 - `query:pull` 生成的列方法按读回的类型写列接口（`ColClob`、`ColBlob` 代替 `lob = true`）。
 
-## 7. TypeScript（待实施）
+## 7. TypeScript
 
-TS 的字段类型就是值的类型，所以要先让小数和日期不再是 `string`：用 `decimal.js` 的 `Decimal`、`@internationalized/date` 的 `CalendarDate` / `CalendarDateTime`（与 vue-tsx-pro 一致），作为核心包的 peerDependencies，前端从接口拿到的值不用再转换；`bigint` 不变。之后按字段的 TS 类型选列接口，写法与 Java 对齐成 `l.unit.contains("E")`、`l.quantity.sum()`、`l.createdOn.addDays(3)`、语句式条件。
+用户 2026-10-25 定下 TS 也按逻辑 SQL 类型命名（`ColText`、`ColNumber`、`ColBigint`、`ColDecimal`、`ColDate`、`ColTimestamp`），泛型参数是字段的 TS 类型。
 
-转换器列（字段类型是 `CalendarDate`、库里存文本）在 TS 的类型系统里看不到装饰器，计划用字段类型上的标记 `Stored<CalendarDate, string>` 让 `Ref` 映射成文本列，实施前先用小探针验证。
-
-列接口的名字（沿用 Java 的逻辑类型名 `ColText`、`ColDecimal`，还是按 TS 类型叫）待用户确认。
+- **值类型**：TS 的字段类型就是值的类型，所以先让小数和日期不再是 `string`：decimal.js 的 `Decimal`、@internationalized/date 的 `CalendarDate` / `CalendarDateTime`（与 vue-tsx-pro 一致），作为核心包的 peerDependencies，前端从接口拿到的值不用再转换；`bigint` 不变。驱动仍按文本交接；绑定时也接受文本形式（按格式校验），条件对象和原生 SQL 的参数常是请求里的文本。`CalendarDateTime` 精确到毫秒，HANA 等更细的部分读出来时舍去；`Decimal` 不保留末尾的零，所以金样例 `literals` 的 12.50 两端都改成 12.5，这是唯一变了的金样例。
+- **列接口由字段类型推出**：`Ref<E>` 把每个字段映射成 `ColOf<字段类型>`：`string`（含字面量联合）是 `ColText`，`number` 是 `ColNumber`，`bigint`、`Decimal`、`CalendarDate`、`CalendarDateTime` 各有一类，其余是 `Col`。TS 的 `number` 不分整数和浮点数，所以只有一个 `ColNumber`，`divide` 在它上面，被除数是整数列时运行时报错。
+- **转换器列**：字段写成 `Stored<CalendarDate, string>`（`J & { [STORED]?: D }`，标记是可选的，普通的 `CalendarDate` 能直接赋给它），映射看到标记就按存储类型 D 选接口，是 `ColText`。探针（tsgo 7.1）验证了：映射、可选标记的赋值、查询结果的类型（仍是 `CalendarDate`）、以及 `@column` 的检查——`SqlType` 多了存储种类的类型参数 K，`converted(text, ...)` 得到 K 为 `"text"` 的类型，字段类型的逻辑类型与 K 不符又不是自定义类型时，装饰器的上下文参数要求一个不存在的属性，报错写着要声明成 `Stored<FieldType, StorageType>`。
+- **运行时只有一个节点类**：每个表达式都是 `ExprNode`，它实现各类型接口的全部方法，类型专属的方法先按 `type.kind` 检查种类；能点出哪些方法完全由接口决定，所以不需要 Java 的外壳（`Shells`）和 `unwrap`，替换渲染、按节点种类判断都照旧。结果的接口由值类型算出（`ExprOf<T>`），值不变的方法（`coalesce`、`max`、`filter`、`over`、`as`）和泛型函数（`lag`、`caseWhen`、`greatest`、`scalar`、`sql(type)`）不用逐个类型重写就保住类型；`typing.test.ts` 用类型检查确认接口里的每个方法名在 `ExprNode` 上都有实现。接口不加 `out` 协变标注：TS 会校验标注，条件类型过不了；泛型代码里构造结果时写明类型参数。
+- **语句式条件**与 Java 相同，接收处是模块级的栈（回调都是同步执行的），条件方法返回 `void`；单个条件仍可写成表达式体 `where((l) => l.unit.eq("KG"))`，`&&` 拼条件编译报错。UPDATE 的 `set` 保持对象字面量：TS 本来就一次写多列，对象的键还有多余属性检查，表达式要是这一列的那一类（`ExprOf<字段类型>`），以文本存的日期不能赋日期表达式。
+- **方言视图**同 Java：`hana(e)`、`postgres(e)`、`mysql(e)`、`sqlite(e)` 按参数的接口选重载，返回 `ViewText`、`ViewNumber`、`ViewAny`（Java 的 `ViewString` 同时改名 `ViewText`）。
+- **实施中发现并修掉的**：`range` 与缺一边的 `between` 写进两个比较，放在 `any` 的块里会变成两个 OR 选项；两端都改成合成一个条件，各加了测试。
 
 ## 8. 验证
 
 - 金样例（`spec/render`）一个都没有变：新写法渲染出的 SQL 与旧写法逐字相同，这是最主要的回归证据。
-- Java 各模块的测试与 HANA、PostgreSQL、MySQL、PolarDB、SQLite 五个库的实库测试全部通过；`CompileTimeSafetyTest` 加了文本列点日期函数、以文本存的日期点日期函数、整数相除、给非列赋值、条件当投影几种不能编译的写法；`TypedExprTest` 检查每个类型接口的协变重写、类型提升和写错位置的条件。
+- Java 各模块的测试与 HANA、PostgreSQL、MySQL、PolarDB、SQLite 五个库的实库测试全部通过；TS 的单元测试（含各方言的金样例）和六个目标（另有 SQLite WASM）的实库测试全部通过，`typing.test.ts` 加了对应的编译期检查；`CompileTimeSafetyTest` 加了文本列点日期函数、以文本存的日期点日期函数、整数相除、给非列赋值、条件当投影几种不能编译的写法；`TypedExprTest` 检查每个类型接口的协变重写、类型提升和写错位置的条件。
 - 测试与文档的旧写法由一次性的改写脚本转换后逐个复核，可选条件、`.and` 链和返回 `Cond` 的辅助方法手工改。

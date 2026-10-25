@@ -42,28 +42,30 @@ List<MaterialTotal> rows = db.list(from(Lips.class)
     .select(l -> row(MaterialTotal::new, l.material(), l.quantity().sum())));
 ```
 
-**TypeScript**：按方言安装 `@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`、`@zerodep-dev/query-hana` 或 `@zerodep-dev/query-sqlite`，核心包会随之安装，数据库驱动（`pg`、`mysql2`、`@sap/hana-client`、`@sqlite.org/sqlite-wasm`；`node:sqlite` 是 Node 内置的）由项目自己提供：
+**TypeScript**：按方言安装 `@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`、`@zerodep-dev/query-hana` 或 `@zerodep-dev/query-sqlite`，核心包会随之安装；数据库驱动（`pg`、`mysql2`、`@sap/hana-client`、`@sqlite.org/sqlite-wasm`；`node:sqlite` 是 Node 内置的）和小数、日期的值类型（peerDependencies `decimal.js`、`@internationalized/date`）由项目自己提供：
 
 ```ts
+import { parseDate, type CalendarDate } from "@internationalized/date";
+import type { Decimal } from "decimal.js";
 import pg from "pg";
-import { column, database, date, decimal, from, sum, table } from "@zerodep-dev/query-postgres";
+import { column, database, date, decimal, from, table } from "@zerodep-dev/query-postgres";
 
 @table("lips", { schema: "erp" })
 class Lips {
   @column("matnr") material!: string;
-  @column("erdat", date) createdOn!: string;
-  @column("lfimg", decimal) quantity!: string;
+  @column("erdat", date) createdOn!: CalendarDate;
+  @column("lfimg", decimal) quantity!: Decimal;
 }
 
 const db = database(new pg.Pool({ connectionString: process.env.DATABASE_URL }));
 
 const rows = await db.list(
   from(Lips)
-    .where((l) => l.createdOn.ge("2026-01-01"))
+    .where((l) => l.createdOn.ge(parseDate("2026-01-01")))
     .groupBy((l) => l.material)
     .orderBy((l) => l.material)
-    .select((l) => ({ material: l.material, quantity: sum(l.quantity) })),
-);   // { material: string; quantity: string | null }[]
+    .select((l) => ({ material: l.material, quantity: l.quantity.sum() })),
+);   // { material: string; quantity: Decimal | null }[]
 ```
 
 `db.render(q)` 可以查看将要执行的 SQL 和参数，`.debugSql()` 把参数写回原处便于复制执行。完整用法见上面的 API 使用说明。
