@@ -8,8 +8,8 @@ export * from "@zerodep-dev/query-core";
 export { deleteJoin, updateJoin } from "./join.js";
 export { HanaDialect } from "./dialect.js";
 export { hanaDriver } from "./driver.js";
-export { ancestors, contains, containsFuzzy, descendants, fromFunction, fromView, hierarchy, jsonValue, score, type HierarchyColumns, type NavigationColumns } from "./functions.js";
-export { corr, cube, greatest, groupingSets, hint, least, length, likeRegexpr, median, percentileCont, percentileDisc, toDate, toInteger, toNvarchar, toVarchar } from "./functions.js";
+export { ancestors, contains, containsFuzzy, descendants, fromFunction, fromView, hierarchy, score, type HierarchyColumns, type NavigationColumns } from "./functions.js";
+export { corr, cube, greatest, groupingSets, hana, hint, least, percentileCont, percentileDisc, ViewAny, ViewNumber, ViewText } from "./functions.js";
 
 /** HANA 数据库：查询渲染成 HANA SQL，经由给定的驱动执行。 */
 export class HanaDatabase extends Database {

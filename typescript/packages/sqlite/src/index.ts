@@ -13,7 +13,7 @@ export { grouping, forUpdate } from "./unsupported.js";
 export { deleteJoin, updateJoin } from "./join.js";
 export { SqliteDialect } from "./dialect.js";
 export { nodeSqliteDriver, wasmDriver } from "./driver.js";
-export { glob, median, percentileCont, percentileDisc } from "./functions.js";
+export { percentileCont, percentileDisc, sqlite, ViewNumber, ViewText } from "./functions.js";
 export { SqliteSchemaSyntax } from "./schema.js";
 
 /** SQLite 数据库：查询渲染成 SQLite SQL，经由给定的驱动执行。 */

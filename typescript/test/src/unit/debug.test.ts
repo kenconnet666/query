@@ -1,3 +1,4 @@
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { count, dryRunDriver, EmptyResultError, from, inMemoryCache, lit, Rendered } from "@zerodep-dev/query-core";
@@ -8,7 +9,10 @@ import { TestDatabase, TestDialect } from "../fixtures/support.js";
 describe("打印与测试 SQL", () => {
   it("调试 SQL 把参数写成字面量且不碰字符串里的问号", () => {
     const r = from(Lips)
-      .where((l) => l.material.eq("O'Neil").and(l.createdOn.eq("2026-01-15")))
+      .where((l) => {
+        l.material.eq("O'Neil");
+        l.createdOn.eq(parseDate("2026-01-15"));
+      })
       .select(() => ({ mark: lit("a?b") }))
       .toSql(new TestDialect());
     assert.equal(r.debugSql(), "SELECT 'a?b' AS \"mark\"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.MATNR = 'O''Neil' AND LIPS.ERDAT = '20260115'");

@@ -4,7 +4,7 @@ import { deleteFrom, dryRunDriver, filter, forUpdate, from, generate, insertInto
 import { FakeDriver, TestDatabase, TestDialect } from "../fixtures/support.js";
 import { Lips } from "../fixtures/erp.js";
 import { claimable } from "../fixtures/workflow.js";
-import { AppNote, Archive, audit, Code, syncNoteTitles, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, UPDATED, upsertDoc } from "../fixtures/writes.js";
+import { AppNote, Archive, audit, Code, syncNoteTitles, closeOpenNote, copyNote, CREATED, deleteClosed, deleteDoc, deleteTicket, Doc, insertNotes, Note, renameDoc, Seq, Tenanted, Ticket, upsertDoc } from "../fixtures/writes.js";
 
 const db = new TestDatabase();
 const tenant = new TestDatabase({ filters: [filter(Tenanted, (t) => t.tenant.eq("T1"))] });
@@ -28,14 +28,14 @@ describe("写入", () => {
     const audited = new TestDatabase({ fills: audit });
     const [insert] = audited.render(insertInto(Ticket).values({ id: "T1", title: "a" }));
     assert.equal(insert!.sql, "INSERT INTO QUERY_IT.W_TICKET (ID, TITLE, CREATED_AT, DELETED) VALUES (?, ?, ?, ?)");
-    assert.deepEqual(insert!.parameters, ["T1", "a", CREATED, 0]);
+    assert.deepEqual(insert!.parameters, ["T1", "a", "2026-01-01 08:00:00", 0]);
     const [changed] = audited.render(
       update(Ticket)
         .set(() => ({ title: "b", updatedBy: "me" }))
         .where((t) => t.id.eq("T1")),
     );
     assert.equal(changed!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET TITLE = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
-    assert.deepEqual(changed!.parameters, ["b", UPDATED, "bob", 0, "T1"], "the fill wins over the statement's own value");
+    assert.deepEqual(changed!.parameters, ["b", "2026-01-02 09:30:00", "bob", 0, "T1"], "the fill wins over the statement's own value");
     assert.equal(audited.render(deleteTicket("T1"))[0]!.sql, "UPDATE QUERY_IT.W_TICKET TICKET\nSET DELETED = ?, UPDATED_AT = ?, UPDATED_BY = ?\nWHERE TICKET.DELETED = ? AND TICKET.ID = ?");
     assert.equal(audited.render(insertNotes())[0]!.sql, "INSERT INTO QUERY_IT.W_NOTE (ID, TENANT, TITLE, QTY, STATUS) VALUES (?, ?, ?, ?, ?)", "tables outside Audited get no fill");
   });

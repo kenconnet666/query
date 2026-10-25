@@ -1,3 +1,5 @@
+import type { CalendarDate } from "@internationalized/date";
+import type { Decimal } from "decimal.js";
 import { bigint, column, date, decimal, generated, id, text } from "@zerodep-dev/query-core";
 
 /**
@@ -12,13 +14,13 @@ export class SItemColumns {
   @column("CODE", text, { length: 20, nullable: false }) code!: string;
 
   /** CREATED_ON：DATE */
-  @column("CREATED_ON", date) createdOn!: string | null;
+  @column("CREATED_ON", date) createdOn!: CalendarDate | null;
 
   /** OWNER_ID：BIGINT */
   @column("OWNER_ID", bigint) ownerId!: bigint | null;
 
   /** PRICE：DECIMAL(13,3) */
-  @column("PRICE", decimal, { precision: 13, scale: 3 }) price!: string | null;
+  @column("PRICE", decimal, { precision: 13, scale: 3 }) price!: Decimal | null;
 
   /** STATUS：TEXT(10)，NOT NULL */
   @column("STATUS", text, { length: 10, nullable: false, default: "'open'" }) status!: string;

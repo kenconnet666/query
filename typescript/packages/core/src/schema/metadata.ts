@@ -1,7 +1,8 @@
 import type { Many } from "../query/many.js";
 import type { Ref } from "../query/source.js";
-import type { Cond, Expr } from "../sql/expr.js";
-import { text, type SqlType } from "./types.js";
+import type { Expr } from "../sql/expr.js";
+import type { Family, FamilyOf } from "../sql/typed.js";
+import { text, type SqlType, type TypeKind } from "./types.js";
 import type { DialectClass } from "../sql/dialect.js";
 
 // 标准装饰器把元数据记录在 Symbol.metadata 上，而 Node 还没有定义它。编译后的类在
@@ -143,8 +144,8 @@ export function deletedValue(logic: LogicDeleteMeta): unknown {
 /** 条件对象字段的比较方式。 */
 export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | WhereOperator;
 
-/** 自定义的比较：由列和字段值构造条件，返回 `Cond.EMPTY` 表示不加条件；字段值为空时不调用，直接省略。 */
-export type WhereOperator = (column: Expr<any>, value: any) => Cond;
+/** 自定义的比较：在列上写条件（条件块），不写就是不加条件；字段值为空时不调用，直接省略。 */
+export type WhereOperator = (column: Expr<any>, value: any) => void;
 
 /** 条件对象里一个字段的比较方式和要比较的列（关系路径）。 */
 export interface WhereMeta {
@@ -159,8 +160,8 @@ export interface RelationMeta {
   readonly many: boolean;
   /** 目标表实体。 */
   readonly target: () => Table<unknown>;
-  /** 连接条件：本表的引用和目标表的引用。 */
-  readonly on: (self: never, target: never) => Cond;
+  /** 连接条件块：本表的引用和目标表的引用。 */
+  readonly on: (self: never, target: never) => void;
 }
 
 declare const ONE: unique symbol;
@@ -236,18 +237,30 @@ export function table(name: string, options: TableOptions = {}) {
   };
 }
 
-/** 字段装饰器；`V` 限定字段声明的类型。 */
-type FieldDecorator<V> = <F extends V>(value: undefined, context: ClassFieldDecoratorContext<unknown, F>) => void;
+/** 字段装饰器；`V` 限定字段声明的类型，K 是存储的种类，字段类型与它不是同一类时报错（见 {@link StorageCheck}）。 */
+type FieldDecorator<V, K extends TypeKind> = <F extends V>(value: undefined, context: ClassFieldDecoratorContext<unknown, F> & StorageCheck<F, K>) => void;
+
+/** 存储种类所属的逻辑类型；`unknown`（无类型）配任何字段。 */
+type KindFamily<K extends TypeKind> = K extends "integer" | "double" ? "number" : K extends "unknown" ? Family : K;
 
 /**
- * 声明一列。类型缺省为 `text`；字段声明的类型必须与列类型一致，可以另加 `| null`。
+ * 字段类型与存储种类是否相配：同一类，或字段类型不属于任何一类（自定义的值类型，只有通用的比较）。不相配时（以文本存的日期
+ * 声明成 `CalendarDate`）列会点出存储类型没有的函数，所以要求写成 `Stored<字段类型, 存储类型>`，报错就在装饰器上。
  */
-export function column(name?: string): FieldDecorator<string | null>;
-export function column<T>(type: SqlType<T>): FieldDecorator<T | null>;
-export function column<T>(name: string, type: SqlType<T>): FieldDecorator<T | null>;
+type StorageCheck<F, K extends TypeKind> = FamilyOf<NonNullable<F>> extends "other" | KindFamily<K>
+  ? unknown
+  : { readonly "the column is stored as another type; declare the field as Stored<FieldType, StorageType>": K };
+
+/**
+ * 声明一列。类型缺省为 `text`；字段声明的类型必须与列类型一致，可以另加 `| null`。转换器列的字段类型与存储类型不是同一类时
+ * （SAP 以文本存的日期），字段写成 `Stored<CalendarDate, string>`。
+ */
+export function column(name?: string): FieldDecorator<string | null, "text">;
+export function column<T, K extends TypeKind>(type: SqlType<T, K>): FieldDecorator<T | null, K>;
+export function column<T, K extends TypeKind>(name: string, type: SqlType<T, K>): FieldDecorator<T | null, K>;
 /** 声明一列，另带结构变更用的选项：`@column("TITLE", text, { length: 40, nullable: false })`。 */
-export function column<T>(name: string, type: SqlType<T>, options: ColumnOptions): FieldDecorator<T | null>;
-export function column(nameOrType?: string | SqlType<unknown>, type?: SqlType<unknown>, options?: ColumnOptions): FieldDecorator<unknown> {
+export function column<T, K extends TypeKind>(name: string, type: SqlType<T, K>, options: ColumnOptions): FieldDecorator<T | null, K>;
+export function column(nameOrType?: string | SqlType<unknown>, type?: SqlType<unknown>, options?: ColumnOptions): FieldDecorator<unknown, TypeKind> {
   const name = typeof nameOrType === "string" ? nameOrType : undefined;
   const sqlType = typeof nameOrType === "object" ? nameOrType : (type ?? (text as SqlType<unknown>));
   const ddl = options === undefined ? {} : { ddl: Object.freeze({ ...options }) };
@@ -273,9 +286,9 @@ export const trimmed = readAs("TRIM({0})");
 
 /**
  * 多对一或一对一关系：用 on 把目标表 LEFT JOIN 进来。同一个关系在一条查询里只连接一次，没有被用到时不连接。
- * 字段写成 `@one(() => Mara, (l, m) => m.material.eq(l.material)) mara!: One<Mara>;`，回调的 l 就是本表。
+ * 字段写成 `@one(() => Mara, (l, m) => m.material.eq(l.material)) mara!: One<Mara>;`，回调是条件块，l 就是本表。
  */
-export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => Cond) {
+export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => void) {
   return (_value: undefined, context: ClassFieldDecoratorContext<S, One<T>>): void =>
     record(context, { relation: { many: false, target, on: on as RelationMeta["on"] } });
 }
@@ -284,7 +297,7 @@ export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref
  * 一对多关系：目标表里满足 on 的那些行，通过 `any`、`none`、`count`、`sum`、`first` 等使用。
  * 字段写成 `@many(() => Lips, (m, l) => l.material.eq(m.material)) deliveries!: Many<Lips>;`。
  */
-export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => Cond) {
+export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => void) {
   return (_value: undefined, context: ClassFieldDecoratorContext<S, Many<T>>): void =>
     record(context, { relation: { many: true, target, on: on as RelationMeta["on"] } });
 }
@@ -292,7 +305,7 @@ export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Re
 /**
  * 条件对象（`from(...).where(filter)`）里一个字段怎样变成条件：op 是比较方式，columns 是比较的列，默认是字段名；
  * 列可以经过多对一关系（`"mara.partNumber"`），写多个时任一满足即可（OR）。没有这个装饰器的字段与同名列比较相等
- * （数组用 IN）。例如 `@where("ge", "createdOn") from?: string;`；op 也可以是自定义函数 `(column, value) => cond`。
+ * （数组用 IN）。例如 `@where("ge", "createdOn") from?: CalendarDate;`；op 也可以是自定义函数 `(column, value) => { 条件 }`。
  */
 export function where(op: WhereOp, ...columns: string[]) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });

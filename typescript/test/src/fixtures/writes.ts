@@ -1,4 +1,5 @@
-import { all, bigint, column, JoinDelete, JoinUpdate, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, text, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
+import { CalendarDateTime } from "@internationalized/date";
+import { bigint, column, JoinDelete, JoinUpdate, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, readOnly, table, text, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
 /** 写入场景的表和语句：单元测试、金样例和实库测试共用（实库测试按这些声明建表），与 Java 的 Writes 一一对应。 */
@@ -36,8 +37,8 @@ export class Seq {
 
 /** 带审计列的表：创建时间、修改时间和修改人由数据库实例的 fills 自动填。 */
 export abstract class Audited {
-  @writeOnce @column("CREATED_AT", timestamp) createdAt!: string | null;
-  @column("UPDATED_AT", timestamp) updatedAt!: string | null;
+  @writeOnce @column("CREATED_AT", timestamp) createdAt!: CalendarDateTime | null;
+  @column("UPDATED_AT", timestamp) updatedAt!: CalendarDateTime | null;
   @column("UPDATED_BY") updatedBy!: string | null;
 }
 
@@ -53,14 +54,14 @@ export class Ticket extends Audited {
 @table("W_ARCHIVE", { schema: SCHEMA })
 export class Archive {
   @id @column("ID") id!: string;
-  @logicDelete() @column("DELETED_AT", timestamp) deletedAt!: string | null;
+  @logicDelete() @column("DELETED_AT", timestamp) deletedAt!: CalendarDateTime | null;
 }
 
 /** 审计填充用的固定时间，便于核对。 */
-export const CREATED = "2026-01-01 08:00:00";
+export const CREATED = new CalendarDateTime(2026, 1, 1, 8, 0, 0);
 
 /** 同上，修改时间。 */
-export const UPDATED = "2026-01-02 09:30:00";
+export const UPDATED = new CalendarDateTime(2026, 1, 2, 9, 30, 0);
 
 /** 审计填充：插入时填创建时间，更新时填修改时间和修改人。 */
 export const audit: readonly Fill[] = [
@@ -139,8 +140,11 @@ export function insertNotes() {
 /** 把开着的便签数量加 10 并关闭："比较后更新"。 */
 export function closeOpenNote(noteId: string) {
   return update(Note)
-    .set((n) => ({ qty: plus(n.qty, val(10)), status: "closed" }))
-    .where((n) => all(n.id.eq(noteId), n.status.eq("open")))
+    .set((n) => ({ qty: n.qty.plus(val(10)), status: "closed" }))
+    .where((n) => {
+      n.id.eq(noteId);
+      n.status.eq("open");
+    })
     .expect(1);
 }
 

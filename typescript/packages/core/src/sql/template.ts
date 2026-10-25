@@ -1,6 +1,8 @@
+import { Cond } from "./cond.js";
 import type { Dialect, DialectClass } from "./dialect.js";
-import { Cond, Expr, renderTemplate, type TemplateArg } from "./expr.js";
+import { ExprNode, renderTemplate, type TemplateArg } from "./expr.js";
 import type { SqlType } from "../schema/types.js";
+import type { ExprOf } from "./typed.js";
 import type { Renderable, SqlWriter } from "./writer.js";
 
 /** 原生 SQL 的一种写法：模板片段、参数，以及适用的方言（undefined 是默认写法）。 */
@@ -24,11 +26,14 @@ export function renderVariant(w: SqlWriter, variants: readonly SqlVariant[]): vo
 /** 给原生 SQL 加一种方言写法的标签函数：`.on(MysqlDialect)\`...\``。 */
 export type VariantTag<R> = (parts: TemplateStringsArray, ...args: TemplateArg[]) => R;
 
+/** `sql(type)\`...\`` 的结果：按 T 给出的表达式接口，再加 `.on(方言类)\`...\``。 */
+export type SqlExprOf<T> = ExprOf<T> & { on(dialect: DialectClass): VariantTag<SqlExprOf<T>> };
+
 /**
  * 原生 SQL 写成的表达式，来自 `sql(text)\`LPAD(${l.material}, ${18}, '0')\``：表达式原位渲染，其他值绑定
  * （SELECT 列表里写成字面量），数组展开成逗号分隔的多个参数。`.on(方言类)\`...\`` 给某个方言另一种写法。
  */
-export class SqlExpr<T> extends Expr<T> {
+export class SqlExpr<T> extends ExprNode<T> {
   readonly #variants: readonly SqlVariant[];
 
   constructor(type: SqlType<NonNullable<T>>, variants: readonly SqlVariant[]) {
@@ -36,9 +41,9 @@ export class SqlExpr<T> extends Expr<T> {
     this.#variants = variants;
   }
 
-  /** 在 dialect 及其子类上改用另一段模板。 */
-  on(dialect: DialectClass): VariantTag<SqlExpr<T>> {
-    return (parts, ...args) => new SqlExpr<T>(this.type, [...this.#variants, { dialect, parts, args }]);
+  /** 在 dialect 及其子类上改用另一段模板，得到新的表达式。 */
+  on(dialect: DialectClass): VariantTag<SqlExprOf<T>> {
+    return (parts, ...args) => new SqlExpr<T>(this.type, [...this.#variants, { dialect, parts, args }]) as never;
   }
 
   /** 按当前方言写出模板。 */
@@ -47,9 +52,12 @@ export class SqlExpr<T> extends Expr<T> {
   }
 }
 
-/** 原生 SQL 写成的条件，来自 `sqlCond\`${l.unit} IN (${units})\``，规则同 {@link SqlExpr}。 */
+/**
+ * 原生 SQL 写成的条件，来自 `sqlCond\`${l.unit} IN (${units})\``，规则同 {@link SqlExpr}。它在创建时已经写进条件块，
+ * 所以 `.on(方言类)\`...\`` 改的是这个条件本身，而不是得到新的条件。
+ */
 export class SqlCond extends Cond {
-  readonly #variants: readonly SqlVariant[];
+  #variants: readonly SqlVariant[];
 
   constructor(variants: readonly SqlVariant[]) {
     super();
@@ -58,7 +66,10 @@ export class SqlCond extends Cond {
 
   /** 在 dialect 及其子类上改用另一段模板。 */
   on(dialect: DialectClass): VariantTag<SqlCond> {
-    return (parts, ...args) => new SqlCond([...this.#variants, { dialect, parts, args }]);
+    return (parts, ...args) => {
+      this.#variants = [...this.#variants, { dialect, parts, args }];
+      return this;
+    };
   }
 
   /** 按当前方言写出模板。 */
@@ -67,7 +78,7 @@ export class SqlCond extends Cond {
   }
 }
 
-/** 按方言加引号的标识符（列名、表名、别名），放进原生 SQL，让同一段模板在三个库上都能用。 */
+/** 按方言加引号的标识符（列名、表名、别名），放进原生 SQL，让同一段模板在各个库上都能用。 */
 export function identifier(name: string): Renderable {
   if (name.trim() === "") throw new Error("identifier needs a name");
   return { render: (w) => w.identifier(name) };

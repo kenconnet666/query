@@ -1,3 +1,4 @@
+import type { CalendarDateTime } from "@internationalized/date";
 import type { Connection, Pool, PoolConnection } from "mysql2/promise";
 import { customSource, from, param, tableSource, timestamp, type Clause, type DatabaseOptions, type Driver, type From, type Ref, type SqlWriter, type Table } from "@zerodep-dev/query-core";
 import { Hint, MysqlDatabase, MysqlDialect, mysqlDriver } from "@zerodep-dev/query-mysql";
@@ -35,12 +36,12 @@ function requirePolardb(w: SqlWriter): void {
 }
 
 /**
- * 读表在 at 那一刻的样子（闪回查询）：`fromAsOf(Stock, "2026-10-24 10:00:00").where(...).select(...)` 写成
+ * 读表在 at 那一刻的样子（闪回查询）：`fromAsOf(Stock, new CalendarDateTime(2026, 10, 24, 10, 0)).where(...).select(...)` 写成
  * `FROM \`S\`.\`STOCK\` AS OF TIMESTAMP CAST(? AS DATETIME(6)) \`stock\``。时刻是数据库所在时区的本地时间（同 `NOW()`），
- * 写成 `YYYY-MM-DD HH:MM:SS[.小数]`；要在 undo 的保留时间之内：社区版引擎由 `innodb_undo_retention`（秒）决定，
+ * 要在 undo 的保留时间之内：社区版引擎由 `innodb_undo_retention`（秒）决定，
  * 阿里云 PolarDB 要先打开闪回查询。超出范围、或表结构在这一刻之后变过时数据库报错。与 Java 的 `Polardb.fromAsOf` 一致。
  */
-export function fromAsOf<E>(table: Table<E>, at: string): From<[Ref<E>]> {
+export function fromAsOf<E>(table: Table<E>, at: CalendarDateTime): From<[Ref<E>]> {
   const base = tableSource(table);
   const moment = param(timestamp, at);
   return from(

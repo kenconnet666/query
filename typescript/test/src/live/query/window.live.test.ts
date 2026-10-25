@@ -1,3 +1,4 @@
+import { Decimal } from "decimal.js";
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { Bound, cte, cumeDist, firstValue, from, lag, lastValue, nthValue, ntile, percentRank, rowNumber } from "@zerodep-dev/query-core";
@@ -41,7 +42,7 @@ liveSuite("窗口函数", (live) => {
           delivery: l.delivery,
           first: firstValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
           last: lastValue(l.quantity).over((w) => w.partitionBy(l.material).orderBy(l.delivery).rows(Bound.unboundedPreceding(), Bound.unboundedFollowing())),
-          previous: lag(l.quantity, 1, "0").over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
+          previous: lag(l.quantity, 1, new Decimal("0")).over((w) => w.partitionBy(l.material).orderBy(l.delivery)),
           half: ntile(2).over((w) => w.orderBy(l.delivery)),
         })),
     );

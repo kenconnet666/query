@@ -1,6 +1,9 @@
+import { CalendarDate, CalendarDateTime } from "@internationalized/date";
+import { Decimal } from "decimal.js";
+
 /**
- * 值的逻辑种类。方言据此渲染字面量和 CAST 目标，SUM 等函数据此做检查，
- * 因为 TypeScript 区分不出 decimal 字符串和文本列。
+ * 值的逻辑种类，也就是库里怎样存：方言据此渲染字面量和 CAST 目标，列据此选择可用的函数
+ * （以文本存的日期是 `text`，只有文本函数）。与 Java 的逻辑 SQL 类型是同一套词。
  */
 export type TypeKind =
   | "text"
@@ -15,12 +18,13 @@ export type TypeKind =
   | "unknown";
 
 /**
- * TypeScript 类型 T 的值如何传入和读出数据库。驱动把 decimal、大整数、日期和时间戳都当作
- * 字符串交接，所以解码从不经过 `Date` 或进程时区。
+ * TypeScript 类型 T 的值如何传入和读出数据库，K 是存储的种类。小数是 decimal.js 的 `Decimal`，日期和时间戳是
+ * @internationalized/date 的 `CalendarDate`、`CalendarDateTime`（与前端组件一致）；驱动把它们都当作文本交接，
+ * 所以解码从不经过 `Date` 或进程时区。
  */
-export interface SqlType<T> {
+export interface SqlType<T, K extends TypeKind = TypeKind> {
   readonly name: string;
-  readonly kind: TypeKind;
+  readonly kind: K;
   /** 作为参数绑定的值；不会以 null 调用。 */
   encode(value: T): unknown;
   /** 从驱动读到的值；不会以 null 调用。 */
@@ -37,7 +41,7 @@ export interface Converter<J, D> {
 }
 
 /** 创建不可变的 {@link SqlType}。 */
-function type<T>(name: string, kind: TypeKind, encode: (value: T) => unknown, decode: (raw: unknown) => T): SqlType<T> {
+function type<T, K extends TypeKind>(name: string, kind: K, encode: (value: T) => unknown, decode: (raw: unknown) => T): SqlType<T, K> {
   return Object.freeze({ name, kind, encode, decode });
 }
 
@@ -52,26 +56,39 @@ const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
 
-/** 校验是真实存在的日历日期（含闰年），格式为 'YYYY-MM-DD'。 */
-function checkDate(value: string, type: string): string {
+/**
+ * 解析 'YYYY-MM-DD'，并校验是真实存在的日历日期（含闰年）：`CalendarDate` 的构造函数会把 2 月 30 日悄悄改成月末，所以先查。
+ */
+function parseDate(value: string, type: string): CalendarDate {
   const m = DATE.exec(value);
   if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD', got ${JSON.stringify(value)}`);
   const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
   if (days === undefined || day < 1 || day > days) throw new RangeError(`${JSON.stringify(value)} is not a calendar date`);
-  return value;
+  return new CalendarDate(year, month, day);
 }
 
-/** 无论驱动返回什么形式，都规整成 'YYYY-MM-DD HH:MM:SS' 加去掉末尾零的小数部分。 */
-function normalizeTimestamp(value: string, type: string): string {
+/** 解析 'YYYY-MM-DD HH:MM:SS[.fraction]'（也接受 T 分隔）；`CalendarDateTime` 精确到毫秒，更细的部分舍去。 */
+function parseTimestamp(value: string, type: string): CalendarDateTime {
   const m = TIMESTAMP.exec(value.trim());
   if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD HH:MM:SS[.fraction]', got ${JSON.stringify(value)}`);
-  checkDate(m[1]!, type);
+  const day = parseDate(m[1]!, type);
   const [hour, minute, second] = [Number(m[2]), Number(m[3]), Number(m[4] ?? "0")];
   if (hour > 23 || minute > 59 || second > 59) throw new RangeError(`${JSON.stringify(value)} has an invalid time of day`);
-  const fraction = (m[5] ?? "").replace(/0+$/, "");
-  return `${m[1]} ${m[2]}:${m[3]}:${m[4] ?? "00"}${fraction ? "." + fraction : ""}`;
+  const millisecond = Number((m[5] ?? "").padEnd(3, "0").slice(0, 3));
+  return new CalendarDateTime(day.year, day.month, day.day, hour, minute, second, millisecond);
+}
+
+/** 'YYYY-MM-DD HH:MM:SS' 加去掉末尾零的毫秒；`toString` 已经换算成公历，只把 T 换成空格，各库都认这种写法。 */
+function timestampText(value: CalendarDateTime): string {
+  return value.toString().replace("T", " ");
+}
+
+/** 小数文本是否合法，合法时原样返回。 */
+function decimalText(value: string, type: string): string {
+  if (!DECIMAL.test(value)) throw new TypeError(`${JSON.stringify(value)} is not a ${type} number`);
+  return value;
 }
 
 /** 把驱动返回的 number、bigint 或数字字符串读成 number。 */
@@ -91,7 +108,7 @@ function hexBytes(raw: string): Uint8Array {
 }
 
 /** 文本。 */
-export const text: SqlType<string> = type(
+export const text: SqlType<string, "text"> = type(
   "text",
   "text",
   (v) => v,
@@ -99,7 +116,7 @@ export const text: SqlType<string> = type(
 );
 
 /** 安全范围内的整数；超出时请改用 {@link bigint}。 */
-export const integer: SqlType<number> = type(
+export const integer: SqlType<number, "integer"> = type(
   "integer",
   "integer",
   (v) => {
@@ -114,10 +131,10 @@ export const integer: SqlType<number> = type(
 );
 
 /** 小整数：查询和写入与 {@link integer} 相同，只在结构变更里写成 SMALLINT。 */
-export const smallint: SqlType<number> = Object.freeze({ ...integer, name: "smallint" });
+export const smallint: SqlType<number, "integer"> = Object.freeze({ ...integer, name: "smallint" });
 
 /** 任意大小的整数，对应 JavaScript 的 bigint。 */
-export const bigint: SqlType<bigint> = type(
+export const bigint: SqlType<bigint, "bigint"> = type(
   "bigint",
   "bigint",
   (v) => v,
@@ -130,24 +147,27 @@ export const bigint: SqlType<bigint> = type(
 );
 
 /** 双精度浮点数。 */
-export const double: SqlType<number> = type("double", "double", (v) => v, (raw) => toNumber(raw, "double"));
+export const double: SqlType<number, "double"> = type("double", "double", (v) => v, (raw) => toNumber(raw, "double"));
 
-/** 精确的 decimal，以十进制文本表示，例如 '3.000'；只要普通数字就在该列上用 `double`。 */
-export const decimal: SqlType<string> = type(
+// 小数、日期、时间戳的值是对象，绑定时也接受它们的文本形式（按格式校验）：条件对象、原生 SQL 的参数常常是请求里的文本。
+
+/**
+ * 精确的小数，值是 decimal.js 的 `Decimal`，以十进制文本绑定和读取。`Decimal` 不保留末尾的零，`new Decimal("12.50")` 写出 12.5。
+ * 只要普通数字时在该列上用 `double`。
+ */
+export const decimal: SqlType<Decimal, "decimal"> = type(
   "decimal",
   "decimal",
-  (v) => {
-    if (!DECIMAL.test(v)) throw new TypeError(`${JSON.stringify(v)} is not a decimal number`);
-    return v;
-  },
+  (v) => (typeof v === "string" ? decimalText(v, "decimal") : v.toFixed()),
   (raw) => {
+    if (Decimal.isDecimal(raw)) return raw;
     const s = typeof raw === "string" ? raw.trim() : typeof raw === "number" || typeof raw === "bigint" ? String(raw) : fail("decimal", raw);
-    return DECIMAL.test(s) ? s : fail("decimal", raw);
+    return DECIMAL.test(s) ? new Decimal(s) : fail("decimal", raw);
   },
 );
 
 /** 布尔值；也接受 0 / 1（含 bigint，SQLite 按整数存布尔）和 't' / 'f' 等文本。 */
-export const boolean: SqlType<boolean> = type(
+export const boolean: SqlType<boolean, "boolean"> = type(
   "boolean",
   "boolean",
   (v) => v,
@@ -163,24 +183,33 @@ export const boolean: SqlType<boolean> = type(
   },
 );
 
-/** 日历日期，形如 'YYYY-MM-DD'。 */
-export const date: SqlType<string> = type(
+/** 日历日期，值是 `CalendarDate`，以 'YYYY-MM-DD' 绑定和读取。 */
+export const date: SqlType<CalendarDate, "date"> = type(
   "date",
   "date",
-  (v) => checkDate(v, "date"),
-  (raw) => (typeof raw === "string" ? checkDate(raw.trim().slice(0, 10), "date") : fail("date", raw)),
+  (v) => (typeof v === "string" ? parseDate(v, "date") : v).toString(),
+  (raw) => {
+    if (raw instanceof CalendarDate) return raw;
+    return typeof raw === "string" ? parseDate(raw.trim().slice(0, 10), "date") : fail("date", raw);
+  },
 );
 
-/** 不带时区的本地日期时间，形如 'YYYY-MM-DD HH:MM:SS[.fraction]'。 */
-export const timestamp: SqlType<string> = type(
+/**
+ * 不带时区的本地日期时间，值是 `CalendarDateTime`，以 'YYYY-MM-DD HH:MM:SS[.fraction]' 绑定和读取。
+ * `CalendarDateTime` 精确到毫秒：HANA 等更细的时间戳读出来时舍去毫秒以下的部分。
+ */
+export const timestamp: SqlType<CalendarDateTime, "timestamp"> = type(
   "timestamp",
   "timestamp",
-  (v) => normalizeTimestamp(v, "timestamp"),
-  (raw) => (typeof raw === "string" ? normalizeTimestamp(raw, "timestamp") : fail("timestamp", raw)),
+  (v) => timestampText(typeof v === "string" ? parseTimestamp(v, "timestamp") : v),
+  (raw) => {
+    if (raw instanceof CalendarDateTime) return raw;
+    return typeof raw === "string" ? parseTimestamp(raw, "timestamp") : fail("timestamp", raw);
+  },
 );
 
 /** 二进制数据。 */
-export const bytes: SqlType<Uint8Array> = type(
+export const bytes: SqlType<Uint8Array, "bytes"> = type(
   "bytes",
   "bytes",
   (v) => v,
@@ -192,10 +221,13 @@ export const bytes: SqlType<Uint8Array> = type(
 );
 
 /** 值原样取自驱动的返回；无类型的 SQL 片段使用它。 */
-export const untyped: SqlType<unknown> = type("untyped", "unknown", (v) => v, (raw) => raw);
+export const untyped: SqlType<unknown, "unknown"> = type("untyped", "unknown", (v) => v, (raw) => raw);
 
-/** 以另一种类型存储的字段类型，例如 SAP 把日期存成 'yyyyMMdd' 文本。 */
-export function converted<J, D>(storage: SqlType<D>, converter: Converter<J, D>, name = `converted ${storage.name}`): SqlType<J> {
+/**
+ * 以另一种类型存储的字段类型，例如 SAP 把日期存成 'yyyyMMdd' 文本：存储的种类 K 不变，所以这样的列只有存储类型的函数。
+ * 字段类型与存储类型不是同一类时（日期存成文本），字段要声明成 `Stored<字段类型, 存储类型>`，`@column` 会检查。
+ */
+export function converted<J, D, K extends TypeKind>(storage: SqlType<D, K>, converter: Converter<J, D>, name = `converted ${storage.name}`): SqlType<J, K> {
   return type(
     name,
     storage.kind,
@@ -217,11 +249,14 @@ export function typeOf(value: unknown): SqlType<unknown> {
       return boolean as SqlType<unknown>;
     default:
       if (value instanceof Uint8Array) return bytes as SqlType<unknown>;
+      if (Decimal.isDecimal(value)) return decimal as SqlType<unknown>;
+      if (value instanceof CalendarDateTime) return timestamp as SqlType<unknown>;
+      if (value instanceof CalendarDate) return date as SqlType<unknown>;
       throw new TypeError(`No SQL type for ${value === null ? "null" : typeof value}; pass a type explicitly`);
   }
 }
 
-/** 逻辑上的 CAST 目标；各方言渲染自己的类型名。 */
+/** 逻辑上的 CAST 目标；各方言渲染自己的类型名。结果的类型接口由 T 决定（`CastType.decimal(15, 3)` 得到 `ExprDecimal`）。 */
 export class CastType<T> {
   private constructor(
     readonly kind: Exclude<TypeKind, "bytes" | "unknown">,
@@ -237,7 +272,7 @@ export class CastType<T> {
   }
 
   /** DECIMAL(precision, scale)。 */
-  static decimal(precision: number, scale: number): CastType<string> {
+  static decimal(precision: number, scale: number): CastType<Decimal> {
     if (!Number.isInteger(precision) || !Number.isInteger(scale) || precision < 1 || scale < 0 || scale > precision) {
       throw new RangeError(`Invalid DECIMAL(${precision},${scale})`);
     }
@@ -260,12 +295,12 @@ export class CastType<T> {
   }
 
   /** 日期。 */
-  static date(): CastType<string> {
+  static date(): CastType<CalendarDate> {
     return new CastType("date", date);
   }
 
   /** 时间戳。 */
-  static timestamp(): CastType<string> {
+  static timestamp(): CastType<CalendarDateTime> {
     return new CastType("timestamp", timestamp);
   }
 

@@ -1,8 +1,9 @@
+import { Decimal } from "decimal.js";
+import { CalendarDate, parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { before, it } from "node:test";
 import pg from "pg";
 import {
-  all,
   arrayAgg,
   arrayContains,
   arrayOverlaps,
@@ -18,7 +19,6 @@ import {
   decimal,
   deleteFrom,
   distinctOn,
-  eqAny,
   exceptAll,
   forShare,
   forUpdateOf,
@@ -27,12 +27,8 @@ import {
   grouping,
   groupingSets,
   id,
-  ilike,
   insertInto,
   intersectAll,
-  jsonContains,
-  jsonHasKey,
-  jsonText,
   least,
   lit,
   mode,
@@ -40,17 +36,15 @@ import {
   percentileCont,
   percentileDisc,
   pgDriver,
-  plus,
   PostgresDatabase,
   PostgresDialect,
   range,
   recursiveCte,
-  stringAgg,
-  sum,
   table,
   textMatches,
   textRank,
   webMatches,
+  postgres,
 } from "@zerodep-dev/query-postgres";
 import { Tagged } from "../../fixtures/dialect-tables.js";
 import { Event, Lips, Mara } from "../../fixtures/erp.js";
@@ -61,8 +55,8 @@ import { liveSuite } from "../support/live.js";
 @table("PART_LOG", { schema: "QUERY_IT", options: [{ dialect: PostgresDialect, sql: 'PARTITION BY RANGE ("DAY")' }] })
 class PartLog {
   @id @column("ID", bigint) id!: bigint;
-  @id @column("DAY", date) day!: string;
-  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: string | null;
+  @id @column("DAY", date) day!: CalendarDate;
+  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: Decimal | null;
 }
 
 /**
@@ -101,8 +95,8 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
   });
 
   it("聚合 FILTER 与 ILIKE 以及 IS DISTINCT FROM", async () => {
-    assert.equal(Number(await live.db.one(from(Lips).select((l) => sum(l.quantity).filter(l.material.eq("M1"))))), 6);
-    assert.equal(await live.db.one(from(Lips).where((l) => ilike(l.unit, "ea")).select(() => count())), 5);
+    assert.equal(Number(await live.db.one(from(Lips).select((l) => l.quantity.sum().filter(() => l.material.eq("M1"))))), 6);
+    assert.equal(await live.db.one(from(Lips).where((l) => postgres(l.unit).ilike("ea")).select(() => count())), 5);
     assert.equal(await live.db.one(from(Lips).where((l) => l.material.isDistinctFrom(lit("M1"))).select(() => count())), 2);
   });
 
@@ -111,7 +105,7 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
       from(Lips)
         .groupBy((l) => l.material)
         .orderBy((l) => l.material)
-        .select((l) => ({ material: l.material, deliveries: stringAgg(l.delivery, ",", l.delivery.asc()) }))
+        .select((l) => ({ material: l.material, deliveries: l.delivery.stringAgg(",", l.delivery.asc()) }))
         .map((r) => `${r.material}=${r.deliveries}`),
     );
     assert.deepEqual(rows, ["M1=D1,D2,D5", "M2=D3,D4"]);
@@ -122,7 +116,7 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
       from(Lips)
         .groupBy((l) => groupingSets([l.material], []))
         .orderBy((l) => [grouping(l.material), l.material])
-        .select((l) => ({ material: l.material, total: sum(l.quantity) })),
+        .select((l) => ({ material: l.material, total: l.quantity.sum() })),
     );
     assert.deepEqual(sets.map((r) => `${r.material}=${Number(r.total)}`), ["M1=6", "M2=12", "null=18"]);
     assert.equal((await live.db.list(from(Lips).groupBy((l) => cube(l.material, l.unit)).select(() => count()))).length, 6, "material x unit, material, unit and the grand total");
@@ -133,7 +127,7 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
   });
 
   it("GREATEST 与 LEAST 跳过 NULL", async () => {
-    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, "4"), low: least(l.quantity, "4") })));
+    const rows = await live.db.list(from(Lips).orderBy((l) => l.delivery).select((l) => ({ delivery: l.delivery, high: greatest(l.quantity, new Decimal("4")), low: least(l.quantity, new Decimal("4")) })));
     assert.deepEqual(rows.map((r) => `${r.delivery}:${Number(r.high)}:${Number(r.low)}`), ["D1:4:3", "D2:4:2", "D3:5:4", "D4:7:4", "D5:4:1"]);
     assert.equal(Number(await live.db.one(from(Lips).where((l) => l.delivery.eq("D1")).select((l) => greatest(l.quantity, nullOf(decimal))))), 3, "HANA 和 MySQL 在这里返回 NULL");
   });
@@ -163,7 +157,7 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
     const steps = recursiveCte(
       "steps",
       from(Lips).where((l) => l.delivery.eq("D1")).select((l) => ({ delivery: l.delivery, depth: lit(1) })),
-      (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })),
+      (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: s.depth.plus(lit(1)) })),
     );
     assert.deepEqual(await live.db.list(from(steps).orderBy((s) => s.depth).select((s) => s.depth)), [1, 2, 3]);
   });
@@ -201,16 +195,19 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
   });
 
   it("数组参数与数组列", async () => {
-    const rows = await live.db.list(from(Tagged).where((t) => eqAny(t.id, [1, 2, 3])).orderBy((t) => t.id).select((t) => ({ id: t.id, tags: t.tags, count: cardinality(t.tags) })));
+    const rows = await live.db.list(from(Tagged).where((t) => postgres(t.id).eqAny([1, 2, 3])).orderBy((t) => t.id).select((t) => ({ id: t.id, tags: t.tags, count: cardinality(t.tags) })));
     assert.deepEqual(rows.map((r) => `${r.id}:${JSON.stringify(r.tags)}:${r.count}`), ['1:["red","blue"]:2', '2:["red"]:1', "3:[]:0"]);
     assert.deepEqual(await live.db.list(from(Tagged).where((t) => arrayContains(t.tags, ["red"])).orderBy((t) => t.id).select((t) => t.id)), [1, 2]);
     assert.deepEqual(await live.db.list(from(Tagged).where((t) => arrayOverlaps(t.tags, ["blue", "green"])).select((t) => t.id)), [1]);
-    assert.deepEqual(await live.db.list(from(Tagged).where((t) => eqAny(t.id, [])).select((t) => t.id)), [], "an empty array matches nothing");
+    assert.deepEqual(await live.db.list(from(Tagged).where((t) => postgres(t.id).eqAny([])).select((t) => t.id)), [], "an empty array matches nothing");
     assert.deepEqual(await live.db.one(from(Lips).where((l) => l.material.eq("M2")).select((l) => arrayAgg(l.delivery, l.delivery.desc()))), ["D4", "D3"]);
   });
 
   it("JSONB 的包含、键与路径文本", async () => {
-    const rows = await live.db.list(from(Tagged).where((t) => all(jsonContains(t.doc, '{"status":"open"}'), jsonHasKey(t.doc, "owner"))).select((t) => ({ id: t.id, owner: jsonText(t.doc, "owner", "name") })));
+    const rows = await live.db.list(from(Tagged).where((t) => {
+      postgres(t.doc).jsonContains('{"status":"open"}');
+      postgres(t.doc).jsonHasKey("owner");
+    }).select((t) => ({ id: t.id, owner: postgres(t.doc).jsonText("owner", "name") })));
     assert.deepEqual(rows.map((r) => `${r.id}:${r.owner}`), ["1:ann"]);
   });
 
@@ -227,8 +224,8 @@ liveSuite("PostgreSQL 专属写法", { only: ["postgres"] }, (live) => {
       `CREATE TABLE "QUERY_IT"."PART_LOG_2025" PARTITION OF "QUERY_IT"."PART_LOG" FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
       'CREATE TABLE "QUERY_IT"."PART_LOG_REST" PARTITION OF "QUERY_IT"."PART_LOG" DEFAULT',
     );
-    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: "2025-06-01", amount: "1" }, { id: 2n, day: "2026-06-01", amount: "10" }));
-    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge("2026-01-01")).select((p) => p.id)), [2n]);
+    await live.db.execute(insertInto(PartLog).values({ id: 1n, day: parseDate("2025-06-01"), amount: new Decimal("1") }, { id: 2n, day: parseDate("2026-06-01"), amount: new Decimal("10") }));
+    assert.deepEqual(await live.db.list(from(PartLog).where((p) => p.day.ge(parseDate("2026-01-01"))).select((p) => p.id)), [2n]);
     const result = await live.driver.query(
       "SELECT COUNT(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'QUERY_IT' AND c.relname = 'PART_LOG'",
       [],

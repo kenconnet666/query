@@ -1,13 +1,81 @@
-import { aliasOf, Bound, call, Cond, condition, Cte, double, Expr, expression, skips, text as textType, FunctionDef, lit, param, text, type Clause, type KeepNull, type Lock, type Query, type Renderable, type SqlWriter } from "@zerodep-dev/query-core";
+import {
+  addCondition,
+  aliasOf,
+  Bound,
+  call,
+  condition,
+  Cte,
+  double,
+  ExprNode,
+  expression,
+  FunctionDef,
+  lit,
+  param,
+  skips,
+  text as textType,
+  type Clause,
+  type Cond,
+  type Expr,
+  type ExprNumber,
+  type ExprOf,
+  type ExprText,
+  type KeepNull,
+  type Lock,
+  type Query,
+  type Renderable,
+  type SqlWriter,
+} from "@zerodep-dev/query-core";
 import { Hint, MysqlDialect } from "./dialect.js";
 
-/** MySQL 专有的函数和子句；在其他方言上拒绝渲染。 */
+/**
+ * MySQL 专有的函数和子句；在其他方言上拒绝渲染。有主操作数的函数经由视图 {@link mysql} 点出来：
+ * `mysql(e.onDay).dateFormat("%Y%m")`、`mysql(t.payload).jsonText("$.id")`。
+ */
 
 const DATE_FORMAT = FunctionDef.only(MysqlDialect, "DATE_FORMAT");
 
-/** DATE_FORMAT(value, format)，例如 `dateFormat(day, "%Y%m%d")`。 */
-export function dateFormat<T>(value: Expr<T>, format: string): Expr<KeepNull<T, string>> {
-  return call(DATE_FORMAT, text, value as Expr<unknown>, lit(format));
+// ---------- 视图 ----------
+
+/** 文本表达式上 MySQL 专有的方法。 */
+export function mysql<T>(e: ExprText<T>): ViewText<T>;
+/** 任意表达式上 MySQL 专有的方法。 */
+export function mysql<T>(e: Expr<T>): ViewAny<T>;
+export function mysql<T>(e: Expr<T>): ViewAny<T> {
+  return e.type.kind === "text" ? new ViewText(e) : new ViewAny(e);
+}
+
+/** 任意表达式上 MySQL 专有的方法，由 {@link mysql} 得到。 */
+export class ViewAny<T> {
+  constructor(protected readonly e: Expr<T>) {}
+
+  /** DATE_FORMAT(e, format)，例如 `mysql(day).dateFormat("%Y%m%d")`。 */
+  dateFormat(format: string): ExprText<KeepNull<T, string>> {
+    return call(DATE_FORMAT, textType, this.e as Expr<unknown>, lit(format)) as never;
+  }
+}
+
+/** 文本表达式上 MySQL 专有的方法；JSON 列也按文本声明。 */
+export class ViewText<T> extends ViewAny<T> {
+  /**
+   * JSON 文档里一个路径上的标量文本：`JSON_UNQUOTE(JSON_EXTRACT(doc, ?))`，路径如 `"$.order.id"` 绑定成参数；
+   * 路径不存在、是 JSON null、对象或数组时为 NULL。
+   */
+  jsonText(path: string): ExprText<string | null> {
+    const e = this.e;
+    const p = utf8(path);
+    return expression<string | null>(textType, (w) => {
+      requireMysql(w);
+      w.sql("CASE WHEN JSON_TYPE(JSON_EXTRACT(").render(e).sql(", ").render(p).sql(")) IN ('OBJECT', 'ARRAY', 'NULL') THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(").render(e).sql(", ").render(p).sql(")) END");
+    }) as never;
+  }
+
+  /** JSON 文档包含 json 这段内容 `JSON_CONTAINS(doc, CAST(? AS JSON))`，写进当前的条件块；skipEmpty 下 json 为空时没有条件。 */
+  jsonContains(json: string | null | undefined): void {
+    if (skips(json)) return;
+    const e = this.e;
+    const value = utf8(json as string);
+    addCondition(mysqlCond((w) => w.sql("JSON_CONTAINS(").render(e).sql(", CAST(").render(value).sql(" AS JSON))")));
+  }
 }
 
 /** 优化器提示 MAX_EXECUTION_TIME：语句超过给定毫秒数后中止。与其他提示合并进同一个注释。 */
@@ -39,19 +107,19 @@ const GREATEST = FunctionDef.only(MysqlDialect, "GREATEST");
 const LEAST = FunctionDef.only(MysqlDialect, "LEAST");
 
 /** GREATEST / LEAST 的参数：至少两个，值按第一个参数的类型绑定。 */
-function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<unknown>[] {
+function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly unknown[]): Expr<unknown>[] {
   if (rest.length === 0) throw new TypeError(`${name} needs at least two arguments`);
-  return [first, ...rest.map((v) => (v instanceof Expr ? v : param(first.type, v as NonNullable<T>)))];
+  return [first, ...rest.map((v) => (v instanceof ExprNode ? (v as Expr<unknown>) : param(first.type, v as NonNullable<T>)))];
 }
 
-/** GREATEST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL。 */
-export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
-  return call(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
+/** GREATEST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL；结果与第一个参数同一类。 */
+export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): ExprOf<T> {
+  return call<T>(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
 }
 
 /** LEAST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL。 */
-export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
-  return call(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
+export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): ExprOf<T> {
+  return call<T>(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
 }
 
 /** 渲染时确认当前方言是 MySQL，否则报错。 */
@@ -104,7 +172,7 @@ function wholeDays(days: number): number {
 
 /**
  * 递归 CTE：`anchor UNION ALL step(自己)`，step 里 `from(self)` 取上一轮的行，例如逐层展开：
- * `recursiveCte("steps", from(Lips).where(...).select((l) => ({ delivery: l.delivery, depth: lit(1) })), (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: plus(s.depth, lit(1)) })))`。
+ * `recursiveCte("steps", from(Lips).where(...).select((l) => ({ delivery: l.delivery, depth: lit(1) })), (self) => from(self).where((s) => s.depth.lt(3)).select((s) => ({ delivery: s.delivery, depth: s.depth.plus(1) })))`。
  * 语句里有递归 CTE 时写成 `WITH RECURSIVE`；step 必须有终止条件。
  */
 export function recursiveCte<E>(name: string, anchor: Query<E>, step: (self: Cte<E>) => Query<E>): Cte<E> {
@@ -141,7 +209,7 @@ function lockClause(mode: string, lock: Lock, tables: readonly object[]): Clause
 /** 绑定成 utf8mb4 文本的参数 `CONVERT(? USING utf8mb4)`，与 Java 端写法一致。 */
 function utf8(value: string): Expr<string> {
   const p = param(textType, value);
-  return expression(textType, (w) => void w.sql("CONVERT(").render(p).sql(" USING utf8mb4)"));
+  return expression<string>(textType, (w) => void w.sql("CONVERT(").render(p).sql(" USING utf8mb4)"));
 }
 
 /** MySQL 专属的条件，渲染时检查方言。 */
@@ -152,50 +220,30 @@ function mysqlCond(render: (w: SqlWriter) => void): Cond {
   });
 }
 
-/**
- * JSON 文档里一个路径上的标量文本：`JSON_UNQUOTE(JSON_EXTRACT(doc, ?))`，路径如 `"$.order.id"` 绑定成参数；
- * 路径不存在、是 JSON null、对象或数组时为 NULL。
- */
-export function jsonText(document: Expr<string | null>, path: string): Expr<string | null> {
-  const p = utf8(path);
-  return expression(textType, (w) => {
-    requireMysql(w);
-    w.sql("CASE WHEN JSON_TYPE(JSON_EXTRACT(").render(document).sql(", ").render(p).sql(")) IN ('OBJECT', 'ARRAY', 'NULL') THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(").render(document).sql(", ").render(p).sql(")) END");
-  });
-}
-
-/** JSON 文档包含 json 这段内容 `JSON_CONTAINS(doc, CAST(? AS JSON))`。 */
-export function jsonContains(document: Expr<string | null>, json: string | null | undefined): Cond {
-  if (skips(json)) return Cond.EMPTY;
-  const value = utf8(json as string);
-  return mysqlCond((w) => w.sql("JSON_CONTAINS(").render(document).sql(", CAST(").render(value).sql(" AS JSON))"));
-}
-
 // ---------- 全文检索 ----------
 
 /** `MATCH (...) AGAINST (? IN mode)`。 */
-function fulltext(mode: string, query: string | null | undefined, columns: readonly Expr<string | null>[]): Cond {
+function fulltext(mode: string, query: string, columns: readonly Expr<string | null>[]): Cond {
   if (columns.length === 0) throw new TypeError("match(...) needs at least one column");
-  if (skips(query)) return Cond.EMPTY;
-  const q = param(textType, query as string);
+  const q = param(textType, query);
   return mysqlCond((w) => w.sql("MATCH (").join(columns, ", ").sql(") AGAINST (").render(q).sql(" IN " + mode + ")"));
 }
 
 /**
  * 全文检索 `MATCH (a, b) AGAINST (? IN NATURAL LANGUAGE MODE)`；列必须正好是某个 FULLTEXT 索引的列。
- * InnoDB 的全文索引在提交时才更新，同一个事务里刚插入的行搜不到。skipEmpty 下搜索词为空时没有条件。
+ * InnoDB 的全文索引在提交时才更新，同一个事务里刚插入的行搜不到。写进当前的条件块，skipEmpty 下搜索词为空时没有条件。
  */
-export function match(query: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
-  return fulltext("NATURAL LANGUAGE MODE", query, columns);
+export function match(query: string | null | undefined, ...columns: Expr<string | null>[]): void {
+  if (!skips(query)) addCondition(fulltext("NATURAL LANGUAGE MODE", query as string, columns));
 }
 
 /** 布尔模式的全文检索 `AGAINST (? IN BOOLEAN MODE)`：`+必须 -排除 "短语" 前缀*`。 */
-export function matchBoolean(query: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
-  return fulltext("BOOLEAN MODE", query, columns);
+export function matchBoolean(query: string | null | undefined, ...columns: Expr<string | null>[]): void {
+  if (!skips(query)) addCondition(fulltext("BOOLEAN MODE", query as string, columns));
 }
 
 /** 自然语言模式的相关度，用来排序；不能跨库比较。 */
-export function matchScore(query: string, ...columns: Expr<string | null>[]): Expr<number> {
+export function matchScore(query: string, ...columns: Expr<string | null>[]): ExprNumber<number> {
   const c = fulltext("NATURAL LANGUAGE MODE", query, columns);
-  return expression(double, (w) => void w.render(c));
+  return expression<number>(double, (w) => void w.render(c));
 }

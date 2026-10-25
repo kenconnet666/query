@@ -1,47 +1,142 @@
-import { call, cast, CastType, Cond, condition, customSource, Derived, from, integer as integerType, param as bindParam, tableSource, typeOf, type From, type Query, type Ref, type Source, type SourceColumn, type Table, date, double, Expr, expression, FunctionDef, integer, lit, param, skips, text, untyped, WindowFunction, type Clause, type KeepNull, type SqlType, type SqlWriter } from "@zerodep-dev/query-core";
+import type { CalendarDate } from "@internationalized/date";
+import {
+  addCondition,
+  call,
+  CastType,
+  condition,
+  customSource,
+  Derived,
+  ExprNode,
+  expression,
+  from,
+  FunctionDef,
+  integer,
+  lit,
+  param,
+  skips,
+  tableSource,
+  text,
+  typeOf,
+  untyped,
+  WindowFunction,
+  date,
+  double,
+  type Clause,
+  type Cond,
+  type Expr,
+  type ExprBigint,
+  type ExprDecimal,
+  type ExprNumber,
+  type ExprOf,
+  type ExprText,
+  type From,
+  type KeepNull,
+  type NumericValue,
+  type Query,
+  type Ref,
+  type Source,
+  type SourceColumn,
+  type SqlType,
+  type SqlWriter,
+  type Table,
+} from "@zerodep-dev/query-core";
 import { HanaDialect } from "./dialect.js";
 
-/** HANA 专有的函数和子句；在其他方言上拒绝渲染。 */
+/**
+ * HANA 专有的函数和子句；在其他方言上拒绝渲染。有主操作数的函数经由视图 {@link hana} 点出来，
+ * 结果回到核心的类型接口：`hana(l.createdOn).toVarchar("YYYYMMDD").upper()`。
+ */
 
 const TO_VARCHAR = FunctionDef.only(HanaDialect, "TO_VARCHAR");
 const TO_DATE = FunctionDef.only(HanaDialect, "TO_DATE");
 const TO_NVARCHAR = FunctionDef.only(HanaDialect, "TO_NVARCHAR");
 const LENGTH = FunctionDef.only(HanaDialect, "LENGTH");
 const TO_INTEGER = FunctionDef.only(HanaDialect, "TO_INTEGER");
+const MEDIAN = FunctionDef.only(HanaDialect, "MEDIAN");
 
-/** TO_VARCHAR(value, format)，例如 `toVarchar(day, "YYYYMMDD")`。 */
-export function toVarchar<T>(value: Expr<T>, format: string): Expr<KeepNull<T, string>> {
-  return call(TO_VARCHAR, text, value as Expr<unknown>, lit(format));
+// ---------- 视图 ----------
+
+/** 文本表达式上 HANA 专有的方法。 */
+export function hana<T>(e: ExprText<T>): ViewText<T>;
+/** 数值表达式上 HANA 专有的方法。 */
+export function hana<T>(e: ExprNumber<T> | ExprBigint<T> | ExprDecimal<T>): ViewNumber<T>;
+/** 任意表达式上 HANA 专有的方法。 */
+export function hana<T>(e: Expr<T>): ViewAny<T>;
+export function hana<T>(e: Expr<T>): ViewAny<T> {
+  const kind = e.type.kind;
+  if (kind === "text") return new ViewText(e);
+  if (kind === "integer" || kind === "bigint" || kind === "double" || kind === "decimal") return new ViewNumber(e);
+  return new ViewAny(e);
 }
 
-/** TO_DATE(value, format)：按格式把文本解析成日期。 */
-export function toDate<T extends string | null>(value: Expr<T>, format: string): Expr<KeepNull<T, string>> {
-  return call(TO_DATE, date, value, lit(format));
+/** 任意表达式上 HANA 专有的方法，由 {@link hana} 得到。 */
+export class ViewAny<T> {
+  constructor(protected readonly e: Expr<T>) {}
+
+  /** TO_VARCHAR(e, format)，例如日期写成 'yyyyMMdd'：`hana(day).toVarchar("YYYYMMDD")`。 */
+  toVarchar(format: string): ExprText<KeepNull<T, string>> {
+    return call(TO_VARCHAR, text, this.e as Expr<unknown>, lit(format)) as never;
+  }
+
+  /** TO_NVARCHAR(e[, format])，{@link toVarchar} 的 Unicode 形式。 */
+  toNvarchar(format?: string): ExprText<KeepNull<T, string>> {
+    const args = format === undefined ? [this.e as Expr<unknown>] : [this.e as Expr<unknown>, lit(format)];
+    return call(TO_NVARCHAR, text, ...args) as never;
+  }
 }
 
-/** TO_NVARCHAR(value[, format])，{@link toVarchar} 的 Unicode 形式。 */
-export function toNvarchar<T>(value: Expr<T>, format?: string): Expr<KeepNull<T, string>> {
-  return format === undefined ? call(TO_NVARCHAR, text, value as Expr<unknown>) : call(TO_NVARCHAR, text, value as Expr<unknown>, lit(format));
+/** 文本表达式上 HANA 专有的方法。 */
+export class ViewText<T> extends ViewAny<T> {
+  /** TO_DATE(e, format)：按格式把文本解析成日期，例如 SAP 的 'yyyyMMdd' 文本 `hana(l.createdOn).toDate("YYYYMMDD").addDays(1)`。 */
+  toDate(format: string): ExprOf<KeepNull<T, CalendarDate>> {
+    return call<KeepNull<T, CalendarDate>>(TO_DATE, date as SqlType<NonNullable<KeepNull<T, CalendarDate>>>, this.e as Expr<unknown>, lit(format));
+  }
+
+  /** TO_INTEGER(e)，也写作 TO_INT：把文本转成整数；不是数字的文本会使查询失败。 */
+  toInteger(): ExprNumber<KeepNull<T, number>> {
+    return call(TO_INTEGER, integer, this.e as Expr<unknown>) as never;
+  }
+
+  /** LENGTH(e)：HANA 按 UTF-16 码元计数，所以 BMP 之外的字符算 2。 */
+  length(): ExprNumber<KeepNull<T, number>> {
+    return call(LENGTH, integer, this.e as Expr<unknown>) as never;
+  }
+
+  /** `e LIKE_REGEXPR pattern`，HANA 的正则表达式谓词，写进当前的条件块。skipEmpty 下模式为空时没有条件。 */
+  likeRegexpr(pattern: string | null | undefined): void {
+    if (skips(pattern)) return;
+    const p = param(text, pattern as string);
+    addCondition(
+      condition((w) => {
+        requireHana(w);
+        w.render(this.e).sql(" LIKE_REGEXPR ").render(p);
+      }),
+    );
+  }
+
+  /**
+   * JSON 文档里的一个标量 `JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)`，例如 `hana(t.payload).jsonValue("$.order.id")`。
+   * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
+   */
+  jsonValue(path: string): ExprText<string | null> {
+    return expression<string | null>(text, (w) => {
+      requireHana(w);
+      w.sql("JSON_VALUE(").render(this.e).sql(", ").literal(path, text).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
+    }) as never;
+  }
 }
 
-/** `e LIKE_REGEXPR pattern`，HANA 的正则表达式谓词。skipEmpty 下模式为空时没有条件。 */
-export function likeRegexpr(e: Expr<string | null>, pattern: string | null | undefined): Cond {
-  if (skips(pattern)) return Cond.EMPTY;
-  const p = param(text, pattern as string);
-  return condition((w) => {
-    if (!(w.dialect instanceof HanaDialect)) throw new Error(`LIKE_REGEXPR is a HanaDialect predicate; this database uses ${w.dialect.name}`);
-    w.render(e).sql(" LIKE_REGEXPR ").render(p);
-  });
-}
+/** 数值表达式上 HANA 专有的方法。 */
+export class ViewNumber<T> extends ViewAny<T> {
+  /** TO_INTEGER(e)：转成整数。 */
+  toInteger(): ExprNumber<KeepNull<T, number>> {
+    return call(TO_INTEGER, integer, this.e as Expr<unknown>) as never;
+  }
 
-/** HANA 的 LENGTH 按 UTF-16 码元计数，所以 BMP 之外的字符算 2。 */
-export function length<T extends string | null>(value: Expr<T>): Expr<KeepNull<T, number>> {
-  return call(LENGTH, integer, value);
-}
-
-/** TO_INTEGER(value)，也写作 TO_INT：把文本或数字转成整数；不是数字的文本会使查询失败。 */
-export function toInteger<T>(value: Expr<T>): Expr<KeepNull<T, number>> {
-  return call(TO_INTEGER, integer, value);
+  /** 中位数 `MEDIAN(e)`，偶数行时取中间两个值的平均；参数先转成 DOUBLE。可以作聚合。 */
+  median(): ExprNumber<number | null> {
+    return call(MEDIAN, double, this.e.cast(CastType.double())) as never;
+  }
 }
 
 
@@ -58,62 +153,56 @@ const GROUPING_SETS = FunctionDef.only(HanaDialect, "GROUPING SETS", (w, args) =
 
 /** CUBE(keys) 作为 GROUP BY 的键：对键的每种组合输出小计。 */
 export function cube(...keys: Expr<unknown>[]): Expr<unknown> {
-  return call(CUBE, untyped as SqlType<{}>, ...keys);
+  return call<unknown>(CUBE, untyped as SqlType<{}>, ...keys);
 }
 
 /** GROUPING SETS ((a, b), (a), ()) 作为 GROUP BY 的键：只输出列出的分组；空列表表示总计。 */
 export function groupingSets(...sets: (readonly Expr<unknown>[])[]): Expr<unknown> {
   const args = sets.map((set) => ({ render: (w: SqlWriter) => void w.sql("(").join(set, ", ").sql(")") }));
-  return expression(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
+  return expression<unknown>(untyped as SqlType<{}>, (w) => GROUPING_SETS.render(w, args));
 }
 
 const GREATEST = FunctionDef.only(HanaDialect, "GREATEST");
 const LEAST = FunctionDef.only(HanaDialect, "LEAST");
 
 /** GREATEST / LEAST 的参数：至少两个，值按第一个参数的类型绑定。 */
-function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<unknown>[] {
+function extremeArgs<T>(name: string, first: Expr<T>, rest: readonly unknown[]): Expr<unknown>[] {
   if (rest.length === 0) throw new TypeError(`${name} needs at least two arguments`);
-  return [first, ...rest.map((v) => (v instanceof Expr ? v : param(first.type, v as NonNullable<T>)))];
+  return [first, ...rest.map((v) => (v instanceof ExprNode ? (v as Expr<unknown>) : param(first.type, v as NonNullable<T>)))];
 }
 
-/** GREATEST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL。 */
-export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
-  return call(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
+/** GREATEST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL；结果与第一个参数同一类。 */
+export function greatest<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): ExprOf<T> {
+  return call<T>(GREATEST, first.type, ...extremeArgs("GREATEST", first, rest));
 }
 
 /** LEAST(a, b, ...)：只要有一个参数为 NULL，结果就是 NULL。 */
-export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): Expr<T> {
-  return call(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
+export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Expr<T | null>)[]): ExprOf<T> {
+  return call<T>(LEAST, first.type, ...extremeArgs("LEAST", first, rest));
 }
 
 // ---------- 统计 ----------
 
-const MEDIAN = FunctionDef.only(HanaDialect, "MEDIAN");
 const CORR = FunctionDef.only(HanaDialect, "CORR");
 const PERCENTILE_CONT = FunctionDef.only(HanaDialect, "PERCENTILE_CONT", (w, args) => void w.sql("PERCENTILE_CONT(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
 const PERCENTILE_DISC = FunctionDef.only(HanaDialect, "PERCENTILE_DISC", (w, args) => void w.sql("PERCENTILE_DISC(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
-
-/** 中位数 `MEDIAN(e)`，偶数行时取中间两个值的平均；参数先转成 DOUBLE。可以作聚合。 */
-export function median(e: Expr<unknown>): Expr<number | null> {
-  return call(MEDIAN, double, cast(e, CastType.double()));
-}
 
 /**
  * 连续百分位数 `PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)`，再加 `.over((w) => w.partitionBy(...))`：
  * HANA 只把它当窗口函数（PostgreSQL 只当聚合），分组的百分位数用 `partitionBy` 加 `distinct()`。p 取 0 到 1。
  */
-export function percentileCont(p: number, e: Expr<unknown>): WindowFunction<number | null> {
-  return new WindowFunction(double, PERCENTILE_CONT, [lit(fraction(p)), cast(e, CastType.double())]);
+export function percentileCont(p: number, e: Expr<NumericValue | null>): WindowFunction<number | null> {
+  return new WindowFunction<number | null>(double, PERCENTILE_CONT, [lit(fraction(p)), e.cast(CastType.double())]);
 }
 
 /** 离散百分位数 `PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY e)`，再加 `.over(...)`；规则同 {@link percentileCont}。 */
 export function percentileDisc<T>(p: number, e: Expr<T>): WindowFunction<T | null> {
-  return new WindowFunction(e.type, PERCENTILE_DISC, [lit(fraction(p)), e]);
+  return new WindowFunction<T | null>(e.type as SqlType<NonNullable<T | null>>, PERCENTILE_DISC, [lit(fraction(p)), e]);
 }
 
 /** 相关系数 `CORR(y, x)`，取值 -1 到 1。 */
-export function corr(y: Expr<unknown>, x: Expr<unknown>): Expr<number | null> {
-  return call(CORR, double, y, x);
+export function corr(y: Expr<NumericValue | null>, x: Expr<NumericValue | null>): ExprNumber<number | null> {
+  return call<number | null>(CORR, double, y, x);
 }
 
 /** 校验百分位数在 0 到 1 之间。 */
@@ -131,7 +220,7 @@ function requireHana(w: SqlWriter): void {
 
 /** 参数值按值推断类型绑定。 */
 function bindValue(w: SqlWriter, value: unknown): void {
-  w.render(bindParam(typeOf(value) as SqlType<unknown>, value));
+  w.render(param(typeOf(value) as SqlType<unknown>, value));
 }
 
 /** 列取自表实体、名字和 schema 来自 `@table` 的带参数来源；值为 null 或 undefined 的参数不写。 */
@@ -209,7 +298,7 @@ function hierarchySource<E>(source: Query<unknown>, navigation: "HIERARCHY_DESCE
   if (!names.includes("nodeId") || !names.includes("parentId")) throw new Error(`A hierarchy source must select nodeId and parentId, it selects ${names.join(", ")}`);
   if (navigation !== undefined && start.length === 0) throw new Error("Hierarchy navigation needs at least one start node");
   const generated = navigation === undefined ? TREE_COLUMNS : { ...TREE_COLUMNS, ...NAVIGATION_COLUMNS };
-  const columns: SourceColumn[] = [...derived.columns, ...Object.keys(generated).map((name) => ({ name, type: integerType as SqlType<unknown> }))];
+  const columns: SourceColumn[] = [...derived.columns, ...Object.keys(generated).map((name) => ({ name, type: integer as SqlType<unknown> }))];
   return customSource<E>({
     columns,
     preferredAlias: "hierarchy",
@@ -254,11 +343,16 @@ export function ancestors<R>(source: Query<R>, start: readonly unknown[]): Sourc
 
 const SCORE = FunctionDef.only(HanaDialect, "SCORE");
 
-/** CONTAINS 条件；option 是 FUZZY(...) 之类的固定文本。 */
-function search(term: string | null | undefined, columns: readonly Expr<string | null>[], option: string | undefined): Cond {
+/** CONTAINS 条件，写进当前的条件块；option 是 FUZZY(...) 之类的固定文本。 */
+function search(term: string | null | undefined, columns: readonly Expr<string | null>[], option: string | undefined): void {
   if (columns.length === 0) throw new TypeError("contains(...) needs at least one column");
-  if (skips(term)) return Cond.EMPTY;
-  const value = bindParam(text, term as string);
+  if (skips(term)) return;
+  const value = param(text, term as string);
+  addCondition(searchCondition(columns, value, option));
+}
+
+/** `CONTAINS(列, ?[, 选项])`。 */
+function searchCondition(columns: readonly Expr<string | null>[], value: Expr<string>, option: string | undefined): Cond {
   return condition((w) => {
     if (!(w.dialect instanceof HanaDialect)) throw new Error(`A HANA-only operation cannot run on ${w.dialect.name}`);
     w.sql("CONTAINS(");
@@ -272,30 +366,19 @@ function search(term: string | null | undefined, columns: readonly Expr<string |
 
 /**
  * 全文检索 `CONTAINS(列, ?)`，多列写成 `CONTAINS((a, b), ?)`；搜索词是 HANA 的 freestyle 语法（空格是与、OR、引号短语）。
- * 只能用于列存表；skipEmpty 下搜索词为空时没有条件。与 {@link score} 配合排序。
+ * 只能用于列存表；写进当前的条件块，skipEmpty 下搜索词为空时没有条件。与 {@link score} 配合排序。
  */
-export function contains(term: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
-  return search(term, columns, undefined);
+export function contains(term: string | null | undefined, ...columns: Expr<string | null>[]): void {
+  search(term, columns, undefined);
 }
 
 /** 模糊检索 `CONTAINS(列, ?, FUZZY(threshold))`，threshold 取 0 到 1，越大越严格，常用 0.8。 */
-export function containsFuzzy(threshold: number, term: string | null | undefined, ...columns: Expr<string | null>[]): Cond {
+export function containsFuzzy(threshold: number, term: string | null | undefined, ...columns: Expr<string | null>[]): void {
   if (!(threshold >= 0 && threshold <= 1)) throw new RangeError(`A fuzzy threshold must be between 0 and 1, got ${threshold}`);
-  return search(term, columns, `FUZZY(${threshold})`);
+  search(term, columns, `FUZZY(${threshold})`);
 }
 
 /** 查询里全部 CONTAINS 的综合相关度 `SCORE()`，0 到 1。 */
-export function score(): Expr<number> {
-  return call(SCORE, double);
-}
-
-/**
- * JSON 文档里的一个标量 `JSON_VALUE(doc, 'path' RETURNING NVARCHAR(5000) ERROR ON ERROR)`，例如 `jsonValue(t.payload, "$.order.id")`。
- * HANA 要求路径是字面量，所以路径写在代码里，不能来自用户输入；值超过 5000 个字符时报错而不是截断。
- */
-export function jsonValue(document: Expr<string | null>, path: string): Expr<string | null> {
-  return expression(text, (w) => {
-    requireHana(w);
-    w.sql("JSON_VALUE(").render(document).sql(", ").literal(path, text).sql(" RETURNING NVARCHAR(5000) ERROR ON ERROR)");
-  });
+export function score(): ExprNumber<number> {
+  return call<number>(SCORE, double);
 }

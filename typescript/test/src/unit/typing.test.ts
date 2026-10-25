@@ -1,8 +1,32 @@
+import { parseDate, type CalendarDate, type CalendarDateTime } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { column, decimal, from, integer, lit, max, rowNumber, sum, val, type Expr, type Query } from "@zerodep-dev/query-core";
-import { DeliveryVO, Event, Lips, Makt, Mara } from "../fixtures/erp.js";
+import {
+  column,
+  currentDate,
+  decimal,
+  from,
+  integer,
+  lag,
+  lit,
+  onInsert,
+  rowNumber,
+  update,
+  val,
+  type Expr,
+  type ExprBigint,
+  type ExprDate,
+  type ExprDecimal,
+  type ExprNode,
+  type ExprNumber,
+  type ExprText,
+  type ExprTimestamp,
+  type Query,
+} from "@zerodep-dev/query-core";
+import { Decimal } from "decimal.js";
+import { DeliveryVO, Event, Lips, Makt, Mara, sapDate } from "../fixtures/erp.js";
 import { stockArm } from "../fixtures/scenarios.js";
+import { Audited } from "../fixtures/writes.js";
 
 /**
  * Compile-time checks: every `@ts-expect-error` below must be an error, or `tsc -b` fails with an
@@ -39,12 +63,61 @@ export function typeChecks(): unknown[] {
   // @ts-expect-error an IN subquery of another type
   from(Event).where((e) => e.id.in(from(Lips).select((l) => l.delivery)));
 
+  // ---------- typed columns: what a column offers follows how the database stores it ----------
+
+  // @ts-expect-error a text column has no numeric functions
+  from(Lips).select((l) => l.material.sum());
+
+  // @ts-expect-error a date stored as text (Stored<CalendarDate, string>) has no date functions
+  from(Lips).select((l) => l.createdOn.addDays(1));
+
+  // The stored text has text functions, and compares with the field type.
+  from(Lips).where((l) => {
+    l.createdOn.startsWith("2026");
+    l.createdOn.ge(parseDate("2026-01-01"));
+  });
+
+  // @ts-expect-error a date has no time-of-day functions
+  from(Event).select((e) => e.onDay.hour());
+
+  // @ts-expect-error a bigint has no division: integer division differs between databases
+  from(Event).select((e) => (e.id as unknown as ExprBigint<bigint>).divide(2n));
+
+  // Arithmetic promotes to the wider operand: integer plus decimal is a decimal.
+  const promoted = from(Event).select((e) => e.id.plus(new Decimal("0.5")));
+  expectType<Equal<typeof promoted, Query<Decimal>>>();
+
+  // Functions over an expression keep its kind: lag of a decimal is a decimal that can still divide.
+  const lagged = from(Lips).select((l) => lag(l.quantity).over((w) => w.orderBy(l.delivery)).divide(2));
+  expectType<Equal<typeof lagged, Query<Decimal | null>>>();
+
+  const dated = from(Event).select((e) => ({ next: e.onDay.addDays(1), at: e.atTime.addHours(1), year: e.onDay.year() }));
+  expectType<Equal<typeof dated, Query<{ next: CalendarDate; at: CalendarDateTime; year: number }>>>();
+
+  // Every method of the typed interfaces is implemented by the runtime node class.
+  type Declared = keyof ExprText<string> | keyof ExprNumber<number> | keyof ExprBigint<bigint> | keyof ExprDecimal<Decimal> | keyof ExprDate<CalendarDate> | keyof ExprTimestamp<CalendarDateTime>;
+  expectType<Equal<Exclude<Declared, keyof ExprNode<unknown>>, never>>();
+
+  // ---------- statement-style conditions ----------
+
+  // @ts-expect-error a condition is a statement, not a value to chain
+  from(Lips).where((l) => l.unit.eq("A").and(l.unit.eq("B")));
+
+  // @ts-expect-error conditions do not combine with &&
+  from(Lips).where((l) => l.unit.eq("A") && l.unit.eq("B"));
+
+  // @ts-expect-error a date stored as text cannot be assigned a date expression
+  update(Lips).set(() => ({ createdOn: currentDate() }));
+
+  // @ts-expect-error fills name a column, not a computed expression
+  onInsert(Audited, (a) => a.updatedBy.upper(), () => "x");
+
   // ---------- results ----------
 
   const joined = from(Lips)
     .leftJoin(Makt, (l, mk) => mk.material.eq(l.material))
-    .select((l, mk) => ({ delivery: l.delivery, text: mk.text, total: { quantity: sum(l.quantity) } }));
-  expectType<Equal<typeof joined, Query<{ delivery: string; text: string | null; total: { quantity: string | null } }>>>();
+    .select((l, mk) => ({ delivery: l.delivery, text: mk.text, total: { quantity: l.quantity.sum() } }));
+  expectType<Equal<typeof joined, Query<{ delivery: string; text: string | null; total: { quantity: Decimal | null } }>>>();
 
   const rightJoined = from(Makt)
     .rightJoin(Lips, (mk, l) => mk.material.eq(l.material))
@@ -65,7 +138,7 @@ export function typeChecks(): unknown[] {
 
   from(Lips)
     .groupBy((l) => l.material)
-    .select((l) => ({ partNumber: l.material, name: max(l.unit), quantity: sum(l.quantity) }))
+    .select((l) => ({ partNumber: l.material, name: l.unit.max(), quantity: l.quantity.sum() }))
     .into(DeliveryVO);
 
   // @ts-expect-error a generic template applied to a table without the shared fields
@@ -76,7 +149,7 @@ export function typeChecks(): unknown[] {
   const excluded = from(Lips)
     .select((l) => ({ delivery: l.delivery, stock: { quantity: l.quantity, unit: l.unit } }))
     .exclude("stock");
-  expectType<Equal<typeof excluded, Query<{ delivery: string; stock: { quantity: string | null; unit: string | null } }>>>();
+  expectType<Equal<typeof excluded, Query<{ delivery: string; stock: { quantity: Decimal | null; unit: string | null } }>>>();
 
   // @ts-expect-error exclude names a key of the result
   from(Lips).select((l) => ({ delivery: l.delivery })).exclude("plant");
@@ -112,12 +185,14 @@ export function typeChecks(): unknown[] {
     @column("A") a!: number;
     // @ts-expect-error an integer column on a text field
     @column("B", integer) b!: string;
-    @column("C", decimal) c!: string | null;
+    @column("C", decimal) c!: Decimal | null;
+    // @ts-expect-error a column stored as another type needs Stored<FieldType, StorageType>
+    @column("D", sapDate) d!: CalendarDate | null;
   }
 
   // ---------- generic code over a shared shape ----------
 
-  const quantityOf = (q: Expr<string | null>): Expr<string> => q.coalesce("0");
+  const quantityOf = (q: ExprDecimal<Decimal | null>): ExprDecimal<Decimal> => q.coalesce(new Decimal(0));
 
   // Constants widen, so arms that differ only in a constant combine.
   const codes = from(Lips)
@@ -125,7 +200,7 @@ export function typeChecks(): unknown[] {
     .unionAll(from(Lips).select(() => ({ code: lit("B"), rank: val(2) })));
   expectType<Equal<typeof codes, Query<{ code: string; rank: number }>>>();
 
-  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded, tree];
+  return [joined, notNull, BadColumns, quantityOf, expectType, codes, navigated, spread, withoutRelations, excluded, tree, promoted, lagged, dated];
 }
 
 describe("编译期类型检查", () => {

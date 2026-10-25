@@ -1,3 +1,4 @@
+import type { Decimal } from "decimal.js";
 import { bigint, column, decimal, from, id, integer, table, text } from "@zerodep-dev/query-core";
 import { arrayOf } from "@zerodep-dev/query-postgres";
 
@@ -9,14 +10,14 @@ const SCHEMA = "QUERY_IT";
 @table("CV_SALES", { schema: SCHEMA })
 export class SalesView {
   @column("MATNR") material!: string;
-  @column("AMOUNT", decimal) amount!: string;
+  @column("AMOUNT", decimal) amount!: Decimal;
 }
 
 /** HANA 表函数：某个单位的交货行。 */
 @table("FN_LIPS", { schema: SCHEMA })
 export class LipsByUnit {
   @column("VBELN") delivery!: string;
-  @column("LFIMG", decimal) quantity!: string;
+  @column("LFIMG", decimal) quantity!: Decimal;
 }
 
 /** HANA 层级测试的组织：用上级编号连成树。 */

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { Decimal } from "decimal.js";
 import { Children, from } from "@zerodep-dev/query-core";
 import { Lips, Mara } from "../fixtures/erp.js";
 import { FakeDriver, rows, TestDatabase, TestDialect } from "../fixtures/support.js";
@@ -31,8 +32,8 @@ ORDER BY MARA.MATNR ASC`,
     );
     const result = await new TestDatabase({}, driver).list(q);
     assert.deepEqual(result, [
-      { material: "M1", lines: [{ delivery: "D1", quantity: "3.000" }, { delivery: "D2", quantity: "2.000" }] },
-      { material: "M2", lines: [{ delivery: "D3", quantity: "5.000" }] },
+      { material: "M1", lines: [{ delivery: "D1", quantity: new Decimal("3.000") }, { delivery: "D2", quantity: new Decimal("2.000") }] },
+      { material: "M2", lines: [{ delivery: "D3", quantity: new Decimal("5.000") }] },
       { material: "M3", lines: [] },
     ]);
     assert.equal(driver.statements.length, 2);

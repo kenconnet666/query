@@ -1,3 +1,5 @@
+import type { Decimal } from "decimal.js";
+import type { CalendarDate } from "@internationalized/date";
 import { bigint, column, date, decimal, id, integer, modulo, monthly, shard, table, text, type ShardConfig } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
@@ -11,8 +13,8 @@ import { SCHEMA } from "./erp.js";
 export class ShEvent {
   @id @column("ID", bigint) id!: bigint;
   /** 发生日，分表键。 */
-  @column("DAY", date, { nullable: false }) day!: string;
-  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: string | null;
+  @column("DAY", date, { nullable: false }) day!: CalendarDate;
+  @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: Decimal | null;
   @column("NOTE", text, { length: 20 }) note!: string | null;
 }
 
@@ -22,7 +24,7 @@ export class ShOrder {
   @id @column("ID", bigint) id!: bigint;
   /** 客户编号，分表键。 */
   @column("CUSTOMER", integer, { nullable: false }) customer!: number;
-  @column("TOTAL", decimal, { precision: 10, scale: 2 }) total!: string | null;
+  @column("TOTAL", decimal, { precision: 10, scale: 2 }) total!: Decimal | null;
 }
 
 /** 按月：2026 年 1 到 3 月。 */

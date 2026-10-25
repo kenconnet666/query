@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser } from "playwright-core";
 
@@ -11,12 +11,20 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 /** sqlite-wasm 浏览器构建所在的目录（index.mjs、sqlite3.wasm）。 */
 const WASM = dirname(createRequire(import.meta.url).resolve("@sqlite.org/sqlite-wasm/sqlite3.wasm"));
 
+/** 按 Node 的 ESM 解析找到依赖的入口，换成服务器上相对工作区根目录的路径（pnpm 的包都在 `node_modules/.pnpm` 下）。 */
+function served(name: string): string {
+  return "/" + relative(ROOT, fileURLToPath(import.meta.resolve(name))).split(sep).join("/");
+}
+
 /** 浏览器里没有包解析：把 JS 里的包名换成服务器上的路径。Worker 里不能用 import map，所以在服务端改写。 */
 const PACKAGES: Readonly<Record<string, string>> = {
   "@zerodep-dev/query-core": "/packages/core/dist/index.js",
   "@zerodep-dev/query-sqlite": "/packages/sqlite/dist/index.js",
   "@zerodep-dev/idb": "/packages/idb/dist/index.js",
   "@sqlite.org/sqlite-wasm": "/sqlite-wasm/index.mjs",
+  // 核心包的 peerDependencies：小数和日期的值类型
+  "decimal.js": served("decimal.js"),
+  "@internationalized/date": served("@internationalized/date"),
 };
 
 const TYPES: Readonly<Record<string, string>> = {

@@ -1,6 +1,8 @@
+import type { Decimal } from "decimal.js";
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { all, caseWhen, count, countDistinct, cte, exists, from, max, sum, TooManyRowsError, trim } from "@zerodep-dev/query-core";
+import { caseWhen, count, cte, exists, from, TooManyRowsError } from "@zerodep-dev/query-core";
 import { LineVO, Lips, Makt, Mara, MaraView, Order, Vbkd } from "../../fixtures/erp.js";
 import { liveSuite } from "../support/live.js";
 
@@ -16,21 +18,33 @@ liveSuite("查询与结果映射", (live) => {
       "material_scope",
       from(Mara)
         .skipEmpty()
-        .where((m) => all(m.materialType.eq("ZMAT"), m.manufacturer.eq(maker)))
+        .where((m) => {
+          m.materialType.eq("ZMAT");
+          m.manufacturer.eq(maker);
+        })
         .distinct()
-        .select((m) => ({ client: m.client, material: m.material, partNumber: caseWhen(m.partNumber.ne(trim(m.partNumber)), trim(m.partNumber)).otherwise(m.partNumber) })),
+        .select((m) => ({ client: m.client, material: m.material, partNumber: caseWhen(() => m.partNumber.ne(m.partNumber.trim()), m.partNumber.trim()).otherwise(m.partNumber) })),
     );
     return from(scope)
-      .join(Lips, (s, l) => l.client.eq(s.client).and(l.material.eq(s.material)))
-      .leftJoin(Makt, (s, _l, t) => t.material.eq(s.material).and(t.language.eq("1")))
-      .where((_s, l) => all(l.createdOn.between("2026-01-01", "2026-06-30"), exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)))))
+      .join(Lips, (s, l) => {
+        l.client.eq(s.client);
+        l.material.eq(s.material);
+      })
+      .leftJoin(Makt, (s, _l, t) => {
+        t.material.eq(s.material);
+        t.language.eq("1");
+      })
+      .where((_s, l) => {
+        l.createdOn.between(parseDate("2026-01-01"), parseDate("2026-06-30"));
+        exists(from(Vbkd).where((v) => v.salesOrder.eq(l.salesOrder)));
+      })
       .groupBy((s) => s.partNumber)
       .orderBy((s) => s.partNumber.asc())
-      .select((s, l, t) => ({ partNumber: s.partNumber, name: max(t.text.coalesce(s.partNumber)), quantity: sum(l.quantity) }));
+      .select((s, l, t) => ({ partNumber: s.partNumber, name: t.text.coalesce(s.partNumber).max(), quantity: l.quantity.sum() }));
   };
 
   it("带 CTE 和 EXISTS 的交货汇总按零件号合计", async () => {
-    const text = (rows: readonly { partNumber: string; name: string | null; quantity: string | null }[]) => rows.map((r) => `${r.partNumber}:${r.name}:${Number(r.quantity)}`);
+    const text = (rows: readonly { partNumber: string; name: string | null; quantity: Decimal | null }[]) => rows.map((r) => `${r.partNumber}:${r.name}:${r.quantity?.toNumber()}`);
     assert.deepEqual(text(await live.db.list(deliveries(null))), ["P1:Pump:5", "P2:P2:5"], "M1 的 D5 引用的 S9 没有销售订单数据，所以只算 D1、D2；M2 没有语言 1 的描述，名称取零件号；D4 在 2025 年");
     assert.deepEqual(text(await live.db.list(deliveries("MK2"))), ["P2:P2:5"]);
   });
@@ -44,7 +58,10 @@ liveSuite("查询与结果映射", (live) => {
     // 投影的键对上结果类的字段；LEFT JOIN 的表上也有全局过滤条件，它进 ON 而不是 WHERE，所以没有描述的行照样保留。
     const rows = await live.db.list(
       from(Lips)
-        .leftJoin(Makt, (l, t) => t.material.eq(l.material).and(t.language.eq("1")))
+        .leftJoin(Makt, (l, t) => {
+          t.material.eq(l.material);
+          t.language.eq("1");
+        })
         .orderBy((l) => l.delivery.asc())
         .select((l, t) => ({ delivery: l.delivery, materialNo: l.material, createdOn: l.createdOn, text: t.text }))
         .into(LineVO),
@@ -57,7 +74,7 @@ liveSuite("查询与结果映射", (live) => {
   });
 
   it("SAP 日期参数按转换器绑定", async () => {
-    assert.deepEqual(await live.db.list(from(Lips).where((l) => l.createdOn.eq("2026-01-15")).select((l) => l.delivery)), ["D1"]);
+    assert.deepEqual(await live.db.list(from(Lips).where((l) => l.createdOn.eq(parseDate("2026-01-15"))).select((l) => l.delivery)), ["D1"]);
   });
 
   it("嵌套结果和 JS 端计算", async () => {
@@ -67,7 +84,7 @@ liveSuite("查询与结果映射", (live) => {
         .join(Mara, (l, m) => m.material.eq(l.material))
         .groupBy((_l, m) => m.partNumber)
         .orderBy((_l, m) => m.partNumber.asc())
-        .select((l, m) => ({ partNumber: m.partNumber, quantity: sum(l.quantity) }))
+        .select((l, m) => ({ partNumber: m.partNumber, quantity: l.quantity.sum() }))
         .map((r) => ({ partNumber: r.partNumber, amount: { quantity: r.quantity, wan: r.quantity === null ? 0 : Number(r.quantity) / 10_000 } })),
     );
     assert.deepEqual(rows.map((r) => `${r.partNumber.trim()}:${Number(r.amount.quantity)}`), ["P1:6", "P2:12"], "M4 的零件号也是 P1，但它没有交货，内连接里不出现");
@@ -93,7 +110,7 @@ liveSuite("查询与结果映射", (live) => {
       from(MaraView)
         .groupBy((m) => m.partNumber)
         .orderBy((m) => m.partNumber)
-        .select((m) => ({ part: m.partNumber, makers: countDistinct(m.maker), stored: countDistinct(m.storedMaker) })),
+        .select((m) => ({ part: m.partNumber, makers: m.maker.countDistinct(), stored: m.storedMaker.countDistinct() })),
     );
     assert.deepEqual(rows.map((r) => `${r.part}:${r.makers}:${r.stored}`), ["P1:1:2", "P2:1:1", "P3:1:1"], "P1 组有 M1（MK1）和 M4（空串）：去掉空串后只有一个制造商");
     assert.deepEqual(await live.db.list(from(MaraView).where((m) => m.maker.isNull()).select((m) => m.material)), ["M4"]);
@@ -109,8 +126,7 @@ liveSuite("查询与结果映射", (live) => {
       (r) => r.material,
       (h, r) => {
         h.partNumber = r === null ? null : r.partNumber.trim();
-      },
-    );
+      });
     await live.db.attachMany(
       rows,
       (h) => h.material,
@@ -118,8 +134,7 @@ liveSuite("查询与结果映射", (live) => {
       (r) => r.material,
       (h, list) => {
         h.deliveries = list.map((r) => r.delivery);
-      },
-    );
+      });
     assert.deepEqual(rows.map((h) => `${h.material}:${h.partNumber}:${h.deliveries.join(",")}`), ["M1:P1:D1,D2,D5", "M2:P2:D3,D4", "M3:P3:", "M9:null:", "null:null:"]);
   });
 });

@@ -1,4 +1,6 @@
-import { Column, type ColumnOwner, type Cond, type Expr, type SourceColumn } from "../sql/expr.js";
+import { collect, type Cond } from "../sql/cond.js";
+import { Column, type ColumnOwner, type SourceColumn } from "../sql/expr.js";
+import type { ColOf } from "../sql/typed.js";
 import { COLUMNS, NAMED } from "../internal.js";
 import { columnName, entityMeta, type Ctor, type One, type PropertyMeta, type RelationMeta, type Table } from "../schema/metadata.js";
 import { Many } from "./many.js";
@@ -11,7 +13,7 @@ import { renderShards, type Sharding } from "./sharding.js";
 export declare const rowType: unique symbol;
 
 /**
- * 数据源在查询中的一次出现，传给各个回调：E 的每个字段都是列表达式，
+ * 数据源在查询中的一次出现，传给各个回调：E 的每个字段都是按字段类型选的列接口（`ColText`、`ColDecimal` 等），
  * 所以 `l.material` 读起来就像实体本身，而作用域之外的表的字段无法通过编译。
  * 它对 `keyof E` 是同态映射，因此基于 `E extends Shared` 的泛型代码可以读取共有字段。
  * 展开它（`{ ...l }`）即可选取全部列。
@@ -28,15 +30,15 @@ export const RELATED: unique symbol = Symbol("query.related");
 export type Related<E> = NullableRef<E> & { readonly [RELATED]: true };
 
 /**
- * 引用上一个字段的类型：多对一关系是目标表的引用（列可能为 null），一对多是 {@link Many}，其余是列表达式。
+ * 引用上一个字段的类型：多对一关系是目标表的引用（列可能为 null），一对多是 {@link Many}，其余是列接口。
  * 有意写成对 V 分配的条件类型：泛型代码里的 `E["client"]` 无法求值时，编译器按 V 的约束（如 string）求值，
- * 得到列表达式；列表达式里用未拆开的 Whole，可空列仍是一个 `Expr<string | null>` 而不是两个表达式的联合。
+ * 得到列接口；列接口里用未拆开的 Whole，可空列仍是一个 `ColText<string | null>` 而不是两个列的联合。
  */
 type Member<V, Nullable extends boolean, Whole = V> = V extends One<infer T>
   ? Related<T>
   : V extends Many<infer T>
     ? Many<T>
-    : Expr<Nullable extends true ? Whole | null : Whole>;
+    : ColOf<Nullable extends true ? Whole | null : Whole>;
 
 /** 一个隐式连接：LEFT JOIN 目标的那次出现，连接条件是 on。 */
 export interface Relation {
@@ -122,19 +124,19 @@ export function createRef<E>(source: Source<E>, entity: Ctor<unknown> | undefine
 
 /** 关系属性的值：一对多是 Many；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
 function relationValue(owner: RefOwner, self: object, relation: RelationMeta): unknown {
-  const on = relation.on as (self: object, target: object) => Cond;
+  const on = relation.on as (self: object, target: object) => void;
   if (relation.many) return new Many(owner, relation.target, (t) => on(self, t));
   const target = createRef(tableSource(relation.target()), undefined, true);
-  owner.relations.push({ owner: ownerOf(target), ref: target, on: on(self, target) });
+  owner.relations.push({ owner: ownerOf(target), ref: target, on: collect(() => on(self, target)) });
   return target;
 }
 
-/** 取引用背后的 {@link RefOwner}；不是查询回调给出的引用就报错。 */
 /** 一个数据源引用（查询回调的参数）在当前语句里的别名，供方言包写子句用，例如 `FOR UPDATE OF 别名`。 */
 export function aliasOf(w: SqlWriter, ref: object): string {
   return ownerOf(ref).alias(w);
 }
 
+/** 取引用背后的 {@link RefOwner}；不是查询回调给出的引用就报错。 */
 export function ownerOf(ref: object): RefOwner {
   const owner = (ref as Record<symbol, RefOwner | undefined>)[OWNER];
   if (owner === undefined) throw new TypeError("Not a source reference; use the parameters the query hands to its callbacks");

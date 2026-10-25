@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { from, substring, sum } from "@zerodep-dev/query-core";
+import { from } from "@zerodep-dev/query-core";
 import { Lips } from "../fixtures/erp.js";
 import { answering, TestDialect } from "../fixtures/support.js";
 
@@ -9,9 +9,9 @@ const DIALECT = new TestDialect();
 /** 按物料、单位、交货单前缀汇总数量。 */
 const totals = () =>
   from(Lips)
-    .groupBy((l) => [l.material, l.unit, substring(l.delivery, 1, 1)])
+    .groupBy((l) => [l.material, l.unit, l.delivery.substring(1, 1)])
     .orderBy((l) => [l.material.asc(), l.unit.asc()])
-    .select((l) => ({ material: l.material, unit: l.unit, prefix: substring(l.delivery, 1, 1), total: sum(l.quantity) }));
+    .select((l) => ({ material: l.material, unit: l.unit, prefix: l.delivery.substring(1, 1), total: l.quantity.sum() }));
 
 describe("动态列与排序", () => {
   it("排除的列写成 NULL 且只被它用到的关系不再连接", () => {

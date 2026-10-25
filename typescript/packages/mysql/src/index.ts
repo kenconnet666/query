@@ -8,8 +8,8 @@ export * from "@zerodep-dev/query-core";
 export { deleteJoin, updateJoin } from "./join.js";
 export { Hint, MysqlDialect } from "./dialect.js";
 export { mysqlDriver } from "./driver.js";
-export { index, jsonContains, jsonText, match, matchBoolean, matchScore, noIndex } from "./functions.js";
-export { dateFormat, daysFollowing, daysPreceding, exceptAll, forShare, forUpdateOf, greatest, intersectAll, least, maxExecutionTime, range, recursiveCte } from "./functions.js";
+export { index, match, matchBoolean, matchScore, noIndex } from "./functions.js";
+export { daysFollowing, daysPreceding, exceptAll, forShare, forUpdateOf, greatest, intersectAll, least, maxExecutionTime, mysql, range, recursiveCte, ViewAny, ViewText } from "./functions.js";
 
 /** MySQL 数据库：查询渲染成 MySQL SQL，经由给定的驱动执行。兼容 MySQL 的方言（PolarDB）的数据库继承它，传入自己的方言。 */
 export class MysqlDatabase extends Database {

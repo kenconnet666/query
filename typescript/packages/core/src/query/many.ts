@@ -1,8 +1,11 @@
 import { COLUMNS, NAMED } from "../internal.js";
 import { entityMeta, type Table } from "../schema/metadata.js";
 import { integer, type SqlType } from "../schema/types.js";
-import { Aggregate, all, any, Column, Comparison, compare, Cond, conjuncts, exists, expression, Expr, notExists, type OrderItem } from "../sql/expr.js";
-import { avg, count, countDistinct, lit, max, min, rowNumber, scalar, stringAgg, sum } from "../sql/functions.js";
+import type { Decimal } from "decimal.js";
+import { addCondition, all, and, any, collect, Comparison, compare, Cond, conjuncts, existence } from "../sql/cond.js";
+import { Aggregate, Column, expression, ExprNode, type Expr, type OrderItem } from "../sql/expr.js";
+import { count, lit, rowNumber, scalar } from "../sql/functions.js";
+import type { ExprDecimal, ExprNumber, ExprOf, ExprText, NumericValue } from "../sql/typed.js";
 import type { Renderable, SqlWriter } from "../sql/writer.js";
 import { from, type Projection, type Query, type Shape } from "./query.js";
 import { createRef, ownerOf, type Ref, type RefOwner, type Related, type Source } from "./source.js";
@@ -32,7 +35,7 @@ type Ordering<T> = (target: Ref<T>) => OrderItem | readonly OrderItem[];
 
 /**
  * 一对多关系：目标表里满足连接条件的那些行，来自 `@many` 字段。它不连接进主查询（那会让主查询的行重复），
- * 只能通过集合运算使用：`any`、`none` 渲染为 EXISTS；`count`、`sum`、`max`、`min`、`avg` 渲染为相关标量子查询；
+ * 只能通过集合运算使用：`any`、`none` 渲染为 EXISTS，写进当前的条件块；`count`、`sum`、`max`、`min`、`avg` 渲染为相关标量子查询；
  * `first(order)` 每组取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来；`list(...)` 给每个父行一个子行数组。
  * `where` 先筛选目标行，`orderBy` 决定 `list` 与 `stringAgg` 的顺序，`limit` 限定 `list` 每个父行的子行数。
  * 查询上 `groupJoin((m) => m.deliveries)` 时，同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN 一次。
@@ -41,15 +44,15 @@ export class Many<T> {
   declare readonly [MANY]: true;
   readonly #owner: RefOwner;
   readonly #target: () => Table<T>;
-  /** 关系本身的连接条件，也是判断两个 Many 是否同一个关系的依据。 */
-  readonly #on: (target: Ref<T>) => Cond;
-  /** where 追加的筛选条件。 */
-  readonly #filter: ((target: Ref<T>) => Cond) | undefined;
+  /** 关系本身的连接条件块，也是判断两个 Many 是否同一个关系的依据。 */
+  readonly #on: (target: Ref<T>) => void;
+  /** where 追加的筛选条件块。 */
+  readonly #filter: ((target: Ref<T>) => void) | undefined;
   readonly #order: Ordering<T> | undefined;
   /** {@link list} 给每个父行最多取的子行数。 */
   readonly #limit: number | undefined;
 
-  constructor(owner: RefOwner, target: () => Table<T>, on: (target: Ref<T>) => Cond, filter?: (target: Ref<T>) => Cond, order?: Ordering<T>, limit?: number) {
+  constructor(owner: RefOwner, target: () => Table<T>, on: (target: Ref<T>) => void, filter?: (target: Ref<T>) => void, order?: Ordering<T>, limit?: number) {
     this.#owner = owner;
     this.#target = target;
     this.#on = on;
@@ -58,15 +61,22 @@ export class Many<T> {
     this.#limit = limit;
   }
 
-  /** 连接条件加 where 的筛选条件。 */
-  #condition(t: Ref<T>): Cond {
-    return this.#filter === undefined ? this.#on(t) : all(this.#on(t), this.#filter(t));
+  /** 连接条件加 where 的筛选条件，写进当前的条件块。 */
+  #conditions(t: Ref<T>): void {
+    this.#on(t);
+    this.#filter?.(t);
   }
 
-  /** 只看满足 condition 的目标行，返回新的 Many。 */
-  where(condition: (target: Ref<T>) => Cond): Many<T> {
+  /** 只看满足块里条件的目标行，返回新的 Many：`m.deliveries.where((l) => l.unit.eq("KG")).count()`。 */
+  where(condition: (target: Ref<T>) => void): Many<T> {
     const before = this.#filter;
-    const filter = before === undefined ? condition : (t: Ref<T>) => all(before(t), condition(t));
+    const filter =
+      before === undefined
+        ? condition
+        : (t: Ref<T>) => {
+            before(t);
+            condition(t);
+          };
     return new Many(this.#owner, this.#target, this.#on, filter, this.#order, this.#limit);
   }
 
@@ -85,60 +95,60 @@ export class Many<T> {
     return new Many(this.#owner, this.#target, this.#on, this.#filter, this.#order, rows);
   }
 
-  /** 至少有一行（满足 condition）：`EXISTS (...)`。 */
-  any(condition?: (target: Ref<T>) => Cond): Cond {
+  /** 至少有一行（满足块里的条件）：`EXISTS (...)`，写进当前的条件块。 */
+  any(condition?: (target: Ref<T>) => void): void {
     const many = condition === undefined ? this : this.where(condition);
-    return new GroupedTest(many as unknown as Many<any>, exists(many.#scope()), many.#grouped(() => count()), false);
+    addCondition(new GroupedTest(many as unknown as Many<any>, existence(many.#scope(), false), many.#grouped(() => count() as never), false));
   }
 
-  /** 一行也没有（满足 condition 的）：`NOT EXISTS (...)`。 */
-  none(condition?: (target: Ref<T>) => Cond): Cond {
+  /** 一行也没有（满足块里的条件的）：`NOT EXISTS (...)`，写进当前的条件块。 */
+  none(condition?: (target: Ref<T>) => void): void {
     const many = condition === undefined ? this : this.where(condition);
-    return new GroupedTest(many as unknown as Many<any>, notExists(many.#scope()), many.#grouped(() => count()), true);
+    addCondition(new GroupedTest(many as unknown as Many<any>, existence(many.#scope(), true), many.#grouped(() => count() as never), true));
   }
 
   /** 行数，相关子查询 `(SELECT COUNT(*) ...)`。 */
-  count(): Expr<number> {
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(() => count())) as Expr<number>, this.#grouped(() => count()), true);
+  count(): ExprNumber<number> {
+    return this.#value(() => count() as never, true) as never;
   }
 
   /** 某个值去重后的个数，相关子查询 `(SELECT COUNT(DISTINCT x) ...)`。 */
-  countDistinct(value: (target: Ref<T>) => Expr<unknown>): Expr<number> {
-    const agg = (t: Ref<T>) => countDistinct(value(t));
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<number>, this.#grouped(agg), true);
+  countDistinct(value: (target: Ref<T>) => Expr<unknown>): ExprNumber<number> {
+    return this.#value((t) => node(value(t)).countDistinct() as never, true) as never;
   }
 
   /** 某个值的合计；没有行时为 null。 */
-  sum<N extends number | bigint | string>(value: (target: Ref<T>) => Expr<N | null>): Expr<N | null> {
-    const agg = (t: Ref<T>) => sum(value(t) as Expr<N>);
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<N | null>, this.#grouped(agg), false);
+  sum<N extends NumericValue>(value: (target: Ref<T>) => Expr<N | null>): ExprOf<N | null> {
+    return this.#value((t) => node(value(t)).sum() as never, false) as never;
   }
 
   /** 某个值的最大值；没有行时为 null。 */
-  max<V>(value: (target: Ref<T>) => Expr<V>): Expr<V | null> {
-    const agg = (t: Ref<T>) => max(value(t));
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<V | null>, this.#grouped(agg), false);
+  max<V>(value: (target: Ref<T>) => Expr<V>): ExprOf<V | null> {
+    return this.#value((t) => node(value(t)).max() as never, false) as never;
   }
 
   /** 某个值的最小值；没有行时为 null。 */
-  min<V>(value: (target: Ref<T>) => Expr<V>): Expr<V | null> {
-    const agg = (t: Ref<T>) => min(value(t));
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)) as Expr<V | null>, this.#grouped(agg), false);
+  min<V>(value: (target: Ref<T>) => Expr<V>): ExprOf<V | null> {
+    return this.#value((t) => node(value(t)).min() as never, false) as never;
   }
 
-  /** 某个值的平均值（精确小数的字符串）；没有行时为 null。 */
-  avg(value: (target: Ref<T>) => Expr<number | bigint | string | null>): Expr<string | null> {
-    const agg = (t: Ref<T>) => avg(value(t) as Expr<number>);
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(agg)), this.#grouped(agg), false);
+  /** 某个值的平均值（精确的小数）；没有行时为 null。 */
+  avg(value: (target: Ref<T>) => Expr<NumericValue | null>): ExprDecimal<Decimal | null> {
+    return this.#value((t) => node(value(t)).avg() as never, false) as never;
   }
 
   /**
    * 把目标行的文本用 separator 拼成一个值，按 {@link orderBy} 给的顺序：
    * `m.deliveries.orderBy((l) => l.delivery).stringAgg((l) => l.delivery, ",")`；没有行时为 null。
    */
-  stringAgg(value: (target: Ref<T>) => Expr<string | null>, separator: string): Expr<string | null> {
+  stringAgg(value: (target: Ref<T>) => Expr<string | null>, separator: string): ExprText<string | null> {
     const order = this.#order;
-    return scalar(this.#scope().select((t) => stringAgg(value(t), separator, ...(order === undefined ? [] : [order(t)].flat()))));
+    return scalar(this.#scope().select((t) => node(value(t)).stringAgg(separator, ...(order === undefined ? [] : [order(t)].flat())) as never)) as never;
+  }
+
+  /** 一个聚合值：默认是相关子查询，groupJoin 时换成分组派生表的一列；行数类（zeroIfNone）没有行时为 0。 */
+  #value(aggregate: (t: Ref<T>) => Aggregate<unknown>, zeroIfNone: boolean): Expr<unknown> {
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(aggregate)) as Expr<unknown>, this.#grouped(aggregate), zeroIfNone);
   }
 
   /**
@@ -152,7 +162,7 @@ export class Many<T> {
     let split: Split | undefined;
     const scope = from(target).where((t) => {
       split = this.#split(t, "first()");
-      return all(...split.filters);
+      split.filters.forEach(addCondition);
     });
     const { keys, outer } = split!;
     const names = entityMeta(target).properties.map((p) => p.name).sort();
@@ -166,7 +176,7 @@ export class Many<T> {
     const firstOwner = ownerOf(first);
     const rowNo = expression<number>(integer, (w) => w.alias(firstOwner.alias(w)).sql(".").identifier(ROW_NUMBER));
     const join = keys.map((k, i) => compare((first as Record<string, Expr<unknown>>)[k.column.name]!, "=", outer[i]!));
-    this.#owner.relations.push({ owner: firstOwner, ref: first, on: all(...join, compare(rowNo, "=", lit(1))) });
+    this.#owner.relations.push({ owner: firstOwner, ref: first, on: and(...join, compare(rowNo, "=", lit(1))) });
     return first as unknown as Related<T>;
   }
 
@@ -181,14 +191,14 @@ export class Many<T> {
     let outer: readonly Expr<unknown>[] = [];
     from(this.#target()).where((t) => {
       outer = this.#split(t, "list()").outer;
-      return all();
     });
     const order = this.#order;
     const limit = this.#limit;
     return new Children(outer, (batch) => {
       let scope = from(this.#target()).where((t) => {
         const { keys, filters } = this.#split(t, "list()");
-        return all(...filters, match(keys, batch));
+        filters.forEach(addCondition);
+        match(keys, batch);
       });
       if (order !== undefined) scope = scope.orderBy((t) => orderItems(order(t)));
       if (order !== undefined && limit !== undefined) {
@@ -202,7 +212,6 @@ export class Many<T> {
     });
   }
 
-  /** 在目标表的一次出现 t 上展开连接条件并拆分；没有"目标列 = 所属表的列"时报错，use 是方法名。 */
   // ---------- groupJoin ----------
 
   /** 所属的那次表出现；groupJoin 把派生表连接在它后面。 */
@@ -220,7 +229,7 @@ export class Many<T> {
     const filter = this.#filter;
     return (row) => {
       const agg = aggregate(row as Ref<T>);
-      return filter === undefined ? agg : agg.filter(filter(row as Ref<T>));
+      return filter === undefined ? agg : agg.filtered(collect(() => filter(row as Ref<T>)));
     };
   }
 
@@ -231,8 +240,8 @@ export class Many<T> {
   grouping(operations: readonly Grouped[]): { readonly query: Query<unknown>; readonly outer: readonly Expr<unknown>[] } {
     let split: Split | undefined;
     const scope = from(this.#target()).where((t) => {
-      split = this.#split(t, "groupJoin(...)", this.#on(t));
-      return all(...split.filters);
+      split = this.#split(t, "groupJoin(...)", collect(() => this.#on(t)));
+      split.filters.forEach(addCondition);
     });
     const { keys, outer } = split!;
     const query = scope
@@ -246,7 +255,8 @@ export class Many<T> {
     return { query: query as unknown as Query<unknown>, outer };
   }
 
-  #split(t: Ref<T>, use: string, condition: Cond = this.#condition(t)): Split {
+  /** 在目标表的一次出现 t 上展开连接条件并拆分；没有"目标列 = 所属表的列"时报错，use 是方法名。 */
+  #split(t: Ref<T>, use: string, condition: Cond = collect(() => this.#conditions(t))): Split {
     const inner = ownerOf(t);
     const keys: Column<unknown>[] = [];
     const outer: Expr<unknown>[] = [];
@@ -269,11 +279,10 @@ export class Many<T> {
 
   /** 目标表的一个查询作用域，条件是连接条件加筛选条件。 */
   #scope() {
-    return from(this.#target()).where((t) => this.#condition(t));
+    return from(this.#target()).where((t) => this.#conditions(t));
   }
 }
 
-/** 一个或多个排序项统一成数组。 */
 /** 一对多关系上的一个集合运算；查询 groupJoin 这个关系时，渲染器把它换成分组派生表的一列。 */
 export interface Grouped extends Renderable {
   /** 运算所在的关系。 */
@@ -290,7 +299,7 @@ export function isGrouped(node: Renderable): node is Grouped {
 }
 
 /** 一对多上的聚合值：默认渲染为相关子查询；groupJoin 时换成分组派生表的列，行数类在没有行时为 0。 */
-class GroupedValue<T> extends Expr<T> implements Grouped {
+class GroupedValue<T> extends ExprNode<T> implements Grouped {
   constructor(
     readonly relation: Many<any>,
     readonly correlated: Expr<T>,
@@ -330,14 +339,23 @@ class GroupedTest extends Cond implements Grouped {
   }
 }
 
+/** 一个或多个排序项统一成数组。 */
 function orderItems(items: OrderItem | readonly OrderItem[]): OrderItem[] {
   return Array.isArray(items) ? [...(items as readonly OrderItem[])] : [items as OrderItem];
 }
 
-/** 子查询按父键筛选的条件：单列键用 IN，多列键用 (a = ? AND b = ?) OR ...。 */
-function match(keys: readonly Column<unknown>[], batch: readonly (readonly unknown[])[]): Cond {
-  if (keys.length === 1) return keys[0]!.in(batch.map((t) => t[0]) as never[]);
-  return any(...batch.map((t) => all(...keys.map((k, i) => k.eq(t[i] as never)))));
+/** 子查询按父键筛选的条件，写进当前的条件块：单列键用 IN，多列键用 (a = ? AND b = ?) OR ...。 */
+function match(keys: readonly Column<unknown>[], batch: readonly (readonly unknown[])[]): void {
+  if (keys.length === 1) {
+    keys[0]!.in(batch.map((t) => t[0]) as never[]);
+    return;
+  }
+  any(() => batch.forEach((t) => all(() => keys.forEach((k, i) => k.eq(t[i] as never)))));
+}
+
+/** 回调给出的表达式：运行时都是 ExprNode，用它的聚合方法。 */
+function node(e: Expr<unknown>): ExprNode<unknown> {
+  return e as ExprNode<unknown>;
 }
 
 /** 子查询的一行：子行的值和它的各个键（key0、key1…）。 */
@@ -368,11 +386,10 @@ export class Children<C> {
    * run 执行一条子查询并返回映射好的行。
    */
   async attach(rows: unknown[][], start: number, run: (q: Query<ChildRow>) => Promise<readonly ChildRow[]>): Promise<void> {
-    const types = this.outer.map((e) => e.type as SqlType<unknown>);
     const wanted = new Map<string, unknown[]>();
     const rowKeys = rows.map((row) => {
       const values = row.slice(start, start + this.outer.length);
-      const key = keyOf(values, types);
+      const key = keyOf(values);
       if (key !== undefined && !wanted.has(key)) wanted.set(key, values);
       return key;
     });
@@ -380,7 +397,7 @@ export class Children<C> {
     const pending = [...wanted.values()];
     for (let i = 0; i < pending.length; i += Children.BATCH) {
       for (const child of await run(this.#query(pending.slice(i, i + Children.BATCH)))) {
-        const key = keyOf(this.outer.map((_, k) => child[`key${k}`]), types)!;
+        const key = keyOf(this.outer.map((_, k) => child[`key${k}`]))!;
         let group = found.get(key);
         if (group === undefined) found.set(key, (group = []));
         group.push(child.value as C);
@@ -393,13 +410,12 @@ export class Children<C> {
   }
 }
 
-/** 比较父键与子键用的字符串；有 null 时为 undefined。精确小数去掉尾零，1 与 1.00 相等。 */
-function keyOf(values: readonly unknown[], types: readonly SqlType<unknown>[]): string | undefined {
+/** 比较父键与子键用的字符串；有 null 时为 undefined。`Decimal`、日期的文本形式是规整的，1 与 1.00 相等。 */
+function keyOf(values: readonly unknown[]): string | undefined {
   const parts: string[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
+  for (const v of values) {
     if (v === null || v === undefined) return undefined;
-    parts.push(types[i]?.kind === "decimal" && typeof v === "string" && v.includes(".") ? v.replace(/0+$/, "").replace(/\.$/, "") : String(v));
+    parts.push(String(v));
   }
   return JSON.stringify(parts);
 }

@@ -1,3 +1,4 @@
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -12,20 +13,16 @@ import {
   from,
   FunctionDef,
   grouping,
-  ifPresent,
-  like,
-  onlyIf,
   rowNumber,
   scalar,
   sql,
   text,
   values,
   type Clause,
-  type Cond,
   type From,
   type Ref,
 } from "@zerodep-dev/query-core";
-import { bool, Cond as Condition, keys, lit, nthValue } from "@zerodep-dev/query-core";
+import { bool, keys, lit, nthValue } from "@zerodep-dev/query-core";
 import { ClientEntity, Lips, Makt, Mara, Vbkd } from "../fixtures/erp.js";
 import { deliveries, latestDeliveries, lines, stock } from "../fixtures/scenarios.js";
 import { TestDatabase, TestDialect } from "../fixtures/support.js";
@@ -45,7 +42,7 @@ class OtherDialect extends Dialect {
   }
 }
 
-const where = (cond: (m: Ref<Mara>) => Cond) =>
+const where = (cond: (m: Ref<Mara>) => void) =>
   from(Mara)
     .where(cond)
     .select((m) => m.material)
@@ -53,7 +50,7 @@ const where = (cond: (m: Ref<Mara>) => Cond) =>
 
 describe("渲染", () => {
   it("CTE 被提升到最外层且 EXISTS 子查询不带别名", () => {
-    const r = deliveries("2026-01-01", "2026-06-30", null).toSql(DIALECT);
+    const r = deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), null).toSql(DIALECT);
     assert.equal(
       r.sql,
       `WITH "material_scope" AS (
@@ -88,7 +85,7 @@ ORDER BY LIPS.VBELN ASC`,
   });
 
   it("全局过滤器也作用于 CTE 和 EXISTS 子查询里的表", () => {
-    const sqlText = new TestDatabase({ filters: [clientFilter] }).render(deliveries("2026-01-01", "2026-06-30", "MK1")).sql;
+    const sqlText = new TestDatabase({ filters: [clientFilter] }).render(deliveries(parseDate("2026-01-01"), parseDate("2026-06-30"), "MK1")).sql;
     assert.ok(sqlText.includes("WHERE MARA.MANDT = ? AND MARA.MTART = ? AND MARA.MFRNR = ?"), sqlText);
     assert.ok(sqlText.includes("WHERE VBKD.MANDT = ? AND VBKD.VBELN = LIPS.VGBEL"), sqlText);
   });
@@ -160,7 +157,7 @@ WHERE MCHBH.LFGJA = ?`,
   });
 
   it("条件作为布尔列和窗口第 n 行的参数要有效", () => {
-    assert.throws(() => bool(Condition.EMPTY), /needs a condition/);
+    assert.throws(() => bool(() => {}), /needs a condition/);
     assert.throws(() => nthValue(lit(1), 0), RangeError);
   });
 
@@ -209,25 +206,43 @@ WHERE MARA3.MATNR = MARA2.MATNR)`,
   it("skipEmpty 省略与空值比较的条件", () => {
     const s = from(Mara)
       .skipEmpty()
-      .where((m) =>
-        all(
-          m.material.eq(null),
-          m.material.ne("  "),
-          m.material.in([]),
-          m.material.notIn(undefined),
-          like(m.partNumber, undefined),
-          onlyIf(false, () => m.material.eq("x")),
-          ifPresent(undefined, () => m.material.eq("x")),
-        ),
-      )
+      .where((m) => {
+        m.material.eq(null);
+        m.material.ne("  ");
+        m.material.in([]);
+        m.material.notIn(undefined);
+        m.partNumber.like(undefined);
+      })
       .select((m) => m.material)
       .toSql(DIALECT).sql;
     assert.equal(s, 'SELECT MARA.MATNR AS "material"\nFROM QUERY_IT.MARA MARA');
   });
 
   it("OR 的每个分支都加括号", () => {
-    const s = where((m) => any(m.material.eq("A"), m.partNumber.eq("B").and(m.manufacturer.eq("C"))));
+    const s = where((m) => any(() => {
+      m.material.eq("A");
+      all(() => {
+        m.partNumber.eq("B");
+        m.manufacturer.eq("C");
+      });
+    }));
     assert.ok(s.endsWith("WHERE ((MARA.MATNR = ?) OR (MARA.MFRPN = ? AND MARA.MFRNR = ?))"), s);
+  });
+
+  it("区间在 OR 块里是一个选项", () => {
+    // range 和缺一端的 between 写两个比较，要合成一个条件：在 any 的块里分开写就成了 x >= a OR x < b
+    const s = from(Mara)
+      .skipEmpty()
+      .where((m) =>
+        any(() => {
+          m.material.range("A", "C");
+          m.material.between("X", null);
+          m.material.eq("M");
+        }),
+      )
+      .select((m) => m.material)
+      .toSql(DIALECT).sql;
+    assert.ok(s.endsWith("WHERE ((MARA.MATNR >= ? AND MARA.MATNR < ?) OR (MARA.MATNR >= ?) OR (MARA.MATNR = ?))"), s);
   });
 
   it("分页的 LIMIT 和 OFFSET", () => {
@@ -323,8 +338,8 @@ FROM QUERY_IT.MARA MARA`,
   it("CASE 与类型化原生片段，SELECT 列表里的常量写成字面量", () => {
     const s = from(Mara)
       .select((m) =>
-        caseWhen(m.materialType.eq("ZMAT"), "material")
-          .when(m.materialType.eq("ZOTH"), "other")
+        caseWhen(() => m.materialType.eq("ZMAT"), "material")
+          .when(() => m.materialType.eq("ZOTH"), "other")
           .otherwise(sql(text)`LOWER(${m.materialType})`),
       )
       .toSql(DIALECT).sql;
@@ -357,7 +372,7 @@ FROM QUERY_IT.MARA MARA`,
   it("窗口条件只能比较窗口函数且空条件不包派生表", () => {
     assert.throws(() => from(Lips).qualify((l) => l.unit.eq("EA")).select((l) => l.delivery).toSql(DIALECT), /only compare window functions/);
     assert.equal(
-      from(Lips).qualify(() => onlyIf(false, () => rowNumber().over((w) => w).eq(1))).select((l) => l.delivery).toSql(DIALECT).sql,
+      from(Lips).qualify(() => {}).select((l) => l.delivery).toSql(DIALECT).sql,
       from(Lips).select((l) => l.delivery).toSql(DIALECT).sql,
     );
   });

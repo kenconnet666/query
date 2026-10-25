@@ -1,6 +1,8 @@
+import { Decimal } from "decimal.js";
+import { parseDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { all, any, deleteFrom, exists, from, insertInto, modulo, update, type Rendered } from "@zerodep-dev/query-core";
+import { any, deleteFrom, exists, from, insertInto, modulo, update, type Rendered } from "@zerodep-dev/query-core";
 import { Mara } from "../fixtures/erp.js";
 import { SHARDS, ShEvent, ShOrder } from "../fixtures/shards.js";
 import { TestDatabase } from "../fixtures/support.js";
@@ -13,13 +15,20 @@ const tables = (statements: readonly Rendered[]) => statements.map((r) => /SH_\w
 describe("同库分表", () => {
   it("条件推不出分表时报错", () => {
     assert.throws(() => db.render(from(ShEvent).where((x) => x.note.eq("a")).select((x) => x.id)), /allShards\(\)/);
-    assert.throws(() => db.render(from(ShEvent).where((x) => any(x.day.eq("2026-01-03"), x.note.eq("a"))).select((x) => x.id)));
+    assert.throws(() => db.render(from(ShEvent).where((x) => any(() => {
+      x.day.eq(parseDate("2026-01-03"));
+      x.note.eq("a");
+    })).select((x) => x.id)));
   });
 
   it("AND 取交集 OR 取并集且范围外的月份不读", () => {
-    const sql = db.render(from(ShEvent).where((x) => all(x.day.ge("2025-06-01"), x.day.le("2026-02-01"), x.note.eq("a"))).select((x) => x.id)).sql;
+    const sql = db.render(from(ShEvent).where((x) => {
+      x.day.ge(parseDate("2025-06-01"));
+      x.day.le(parseDate("2026-02-01"));
+      x.note.eq("a");
+    }).select((x) => x.id)).sql;
     assert.ok(sql.includes("SH_EVENT_202601") && sql.includes("SH_EVENT_202602") && !sql.includes("SH_EVENT_202603"), sql);
-    const none = db.render(from(ShEvent).where((x) => x.day.lt("2026-01-01")).select((x) => x.id)).sql;
+    const none = db.render(from(ShEvent).where((x) => x.day.lt(parseDate("2026-01-01"))).select((x) => x.id)).sql;
     assert.ok(none.includes("WHERE 1 = 0"), none);
   });
 
@@ -39,15 +48,15 @@ describe("同库分表", () => {
   });
 
   it("插入按行写到各自的分表", () => {
-    const statements = db.render(insertInto(ShEvent).values({ id: 1n, day: "2026-01-05", amount: "1", note: "a" }, { id: 2n, day: "2026-03-05", amount: "1", note: "b" }));
+    const statements = db.render(insertInto(ShEvent).values({ id: 1n, day: parseDate("2026-01-05"), amount: new Decimal("1"), note: "a" }, { id: 2n, day: parseDate("2026-03-05"), amount: new Decimal("1"), note: "b" }));
     assert.deepEqual(tables(statements), ["SH_EVENT_202601", "SH_EVENT_202603"]);
-    assert.throws(() => db.render(insertInto(ShEvent).values({ id: 3n, day: "2026-05-01", amount: null, note: null })), /outside the shards/);
+    assert.throws(() => db.render(insertInto(ShEvent).values({ id: 3n, day: parseDate("2026-05-01"), amount: null, note: null })), /outside the shards/);
   });
 
   it("按主键更新按行里的分表键选表且不能改分表键", () => {
-    assert.deepEqual(tables(db.render(update(ShEvent).byId({ id: 1n, day: "2026-02-05", amount: "10", note: "a" }))), ["SH_EVENT_202602"]);
-    assert.throws(() => db.render(update(ShEvent).set(() => ({ day: "2026-01-01" })).allShards().all()), /shard key/);
-    assert.throws(() => db.render(update(ShEvent).byId({ id: 1n, day: "2026-02-05", amount: "10", note: "a" }).diffFrom({ id: 1n, day: "2026-01-05", amount: "10", note: "a" })), /shard key/);
+    assert.deepEqual(tables(db.render(update(ShEvent).byId({ id: 1n, day: parseDate("2026-02-05"), amount: new Decimal("10"), note: "a" }))), ["SH_EVENT_202602"]);
+    assert.throws(() => db.render(update(ShEvent).set(() => ({ day: parseDate("2026-01-01") })).allShards().all()), /shard key/);
+    assert.throws(() => db.render(update(ShEvent).byId({ id: 1n, day: parseDate("2026-02-05"), amount: new Decimal("10"), note: "a" }).diffFrom({ id: 1n, day: parseDate("2026-01-05"), amount: new Decimal("10"), note: "a" })), /shard key/);
   });
 
   it("按条件删除每张分表一条", () => {

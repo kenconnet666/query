@@ -70,7 +70,7 @@ public final class SpecCases {
             lit(DAY).as("day"),
             lit(LocalDateTime.of(2026, 1, 31, 8, 15, 30)).as("moment"),
             lit(42).as("integer"),
-            lit(new BigDecimal("12.50")).as("decimal"),
+            lit(new BigDecimal("12.5")).as("decimal"),
             lit(true).as("flag")))));
         cases.put("functions", SpecCase.plain(SpecCases::functions));
         cases.put("aggregates", SpecCase.plain(() -> from(Lips.class)

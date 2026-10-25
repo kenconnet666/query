@@ -1,14 +1,16 @@
-import { all, blankAsNull, column, converted, date, decimal, ignore, integer, many, one, table, text, timestamp, trimmed, type Many, type One } from "@zerodep-dev/query-core";
+import { CalendarDate, type CalendarDateTime } from "@internationalized/date";
+import { blankAsNull, column, converted, date, decimal, ignore, integer, many, one, table, text, timestamp, trimmed, type Many, type One, type Stored } from "@zerodep-dev/query-core";
+import type { Decimal } from "decimal.js";
 
 /** SAP 风格的测试表与结果类，单元测试和实库测试共用，与 Java 的 Erp 对应；实库测试的样例数据见 live/support/sample-data.ts。 */
 export const SCHEMA = "QUERY_IT";
 
-/** SAP keeps dates as NVARCHAR(8) 'yyyyMMdd'; '' and '00000000' mean no date. */
-export const sapDate = converted<string, string>(text, {
-  toDatabase: (day) => day.replaceAll("-", ""),
-  fromDatabase: (stored) => {
+/** SAP keeps dates as NVARCHAR(8) 'yyyyMMdd'; '' and '00000000' mean no date. The fields are `Stored<CalendarDate, string>`. */
+export const sapDate = converted(text, {
+  toDatabase: (day: CalendarDate) => day.toString().replaceAll("-", ""),
+  fromDatabase: (stored: string) => {
     const v = stored.trim();
-    return v === "" || v === "00000000" ? null : `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+    return v === "" || v === "00000000" ? null : new CalendarDate(Number(v.slice(0, 4)), Number(v.slice(4, 6)), Number(v.slice(6, 8)));
   },
 });
 
@@ -26,10 +28,17 @@ export class Mara extends ClientEntity {
   @column("MTART") materialType!: string;
 
   /** 一对多：这个物料的交货行（同一集团）。 */
-  @many(() => Lips, (m, l) => all(l.material.eq(m.material), l.client.eq(m.client))) deliveries!: Many<Lips>;
+  @many(() => Lips, (m, l) => {
+    l.material.eq(m.material);
+    l.client.eq(m.client);
+  }) deliveries!: Many<Lips>;
 
   /** 多对一：语言 1 的物料描述。 */
-  @one(() => Makt, (m, t) => all(t.material.eq(m.material), t.client.eq(m.client), t.language.eq("1"))) text!: One<Makt>;
+  @one(() => Makt, (m, t) => {
+    t.material.eq(m.material);
+    t.client.eq(m.client);
+    t.language.eq("1");
+  }) text!: One<Makt>;
 }
 
 /** MARA read the way SAP data is used: trimmed part numbers, blank makers as NULL, and the stored maker. */
@@ -52,22 +61,32 @@ export class Order {
 export class Lips extends ClientEntity {
   @column("VBELN") delivery!: string;
   @column("MATNR") material!: string;
-  @column("ERDAT", sapDate) createdOn!: string | null;
-  @column("LFIMG", decimal, { precision: 13, scale: 3 }) quantity!: string;
+  @column("ERDAT", sapDate) createdOn!: Stored<CalendarDate, string> | null;
+  @column("LFIMG", decimal, { precision: 13, scale: 3 }) quantity!: Decimal;
   @column("VRKME") unit!: string;
   @column("VGBEL") salesOrder!: string;
 
   /** 多对一：物料主数据（同一集团）。 */
-  @one(() => Mara, (l, m) => all(m.material.eq(l.material), m.client.eq(l.client))) mara!: One<Mara>;
+  @one(() => Mara, (l, m) => {
+    m.material.eq(l.material);
+    m.client.eq(l.client);
+  }) mara!: One<Mara>;
 
   /** 多对一：语言 1 的物料描述。 */
-  @one(() => Makt, (l, t) => all(t.material.eq(l.material), t.client.eq(l.client), t.language.eq("1"))) text!: One<Makt>;
+  @one(() => Makt, (l, t) => {
+    t.material.eq(l.material);
+    t.client.eq(l.client);
+    t.language.eq("1");
+  }) text!: One<Makt>;
 
   /** 一对多：参考的销售订单的业务数据。 */
   @many(() => Vbkd, (l, v) => v.salesOrder.eq(l.salesOrder)) salesData!: Many<Vbkd>;
 
   /** 多对一：任意语言的物料描述，只用于渲染测试。 */
-  @one(() => Makt, (l, t) => all(t.client.eq(l.client), t.material.eq(l.material))) anyText!: One<Makt>;
+  @one(() => Makt, (l, t) => {
+    t.client.eq(l.client);
+    t.material.eq(l.material);
+  }) anyText!: One<Makt>;
 }
 
 @table("MAKT", { schema: SCHEMA })
@@ -95,7 +114,7 @@ export class Mardh extends ClientEntity implements PeriodStock {
   @column("MATNR") material!: string;
   @column("LFGJA") year!: string;
   @column("LFMON") period!: string;
-  @column("LABST", decimal, { precision: 13, scale: 3 }) unrestricted!: string | null;
+  @column("LABST", decimal, { precision: 13, scale: 3 }) unrestricted!: Decimal | null;
 }
 
 @table("MCHBH", { schema: SCHEMA })
@@ -103,15 +122,15 @@ export class Mchbh extends ClientEntity implements PeriodStock {
   @column("MATNR") material!: string;
   @column("LFGJA") year!: string;
   @column("LFMON") period!: string;
-  @column("CLABS", decimal, { precision: 13, scale: 3 }) batchUnrestricted!: string | null;
+  @column("CLABS", decimal, { precision: 13, scale: 3 }) batchUnrestricted!: Decimal | null;
 }
 
 /** Real DATE and TIMESTAMP columns, for time-zone checks. */
 @table("EVENTS", { schema: SCHEMA })
 export class Event {
   @column("ID", integer) id!: number;
-  @column("ON_DAY", date) onDay!: string;
-  @column("AT_TIME", timestamp) atTime!: string;
+  @column("ON_DAY", date) onDay!: CalendarDate;
+  @column("AT_TIME", timestamp) atTime!: CalendarDateTime;
 }
 
 // ---------- shapes and results ----------
@@ -120,7 +139,7 @@ export class Event {
 export class LineVO {
   delivery!: string;
   materialNo!: string;
-  createdOn!: string | null;
+  createdOn!: CalendarDate | null;
   text!: string | null;
   @ignore computedLater?: string;
 }
@@ -128,7 +147,7 @@ export class LineVO {
 export class DeliveryVO {
   partNumber!: string;
   name!: string | null;
-  quantity!: string | null;
+  quantity!: Decimal | null;
 
   get label(): string {
     return `${this.partNumber}:${this.name}`;
