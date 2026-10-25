@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.select;
 
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Aggregation;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Renderable;
@@ -35,12 +36,36 @@ public final class QueryRenderer {
         return w.statement();
     }
 
-    /** 对查询套一层 SELECT COUNT(*)；除非有 LIMIT 需要，否则去掉 ORDER BY。 */
+    /**
+     * 查询的总行数。能直接数行时（{@link #countsRows}）把投影换成 COUNT(*)、去掉 ORDER BY：投影里的标量子查询、只为投影连接的
+     * 导航关系（多对一、{@code first()}，都至多一行）、groupJoin 的派生表随之不写。否则对查询套一层 SELECT COUNT(*)，
+     * 除非有 LIMIT 需要，否则去掉 ORDER BY。
+     */
     public static Rendered count(SqlWriter w, Query<?> q) {
+        if (countsRows(w, q)) {
+            Query.Arm arm = q.arms().get(0);
+            arm(w, new Query.Arm(arm.spec(), List.of(Sql.count())), List.of("count"), false, false);
+            return w.statement();
+        }
         w.sql("SELECT COUNT(*) FROM (");
         query(w, q, false, true);
         w.sql(") ").alias(w.aliasFor(new Object(), "counted"));
         return w.statement();
+    }
+
+    /**
+     * 能不能直接数行：单段 SELECT，没有分组、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET 和方言子句，投影和按结果列的条件里没有聚合
+     * （没有分组的聚合只出一行）。窗口函数不改变行数，可以去掉。
+     */
+    private static boolean countsRows(SqlWriter w, Query<?> q) {
+        if (q.arms().size() != 1) return false;
+        Query.Arm arm = q.arms().get(0);
+        SelectSpec s = arm.spec();
+        if (!s.groupBy.isEmpty() || s.distinct || !Nodes.all(s.having).isEmpty() || !Nodes.all(s.qualify).isEmpty()) return false;
+        if (s.limit != null || s.offset != null || !s.clauses.isEmpty()) return false;
+        for (Expr<?> item : arm.items()) if (Aggregation.kindOf(w, item) == Aggregation.Kind.AGGREGATE) return false;
+        for (SelectSpec.ResultFilter f : s.resultFilters) if (Aggregation.kindOf(w, f.item()) == Aggregation.Kind.AGGREGATE) return false;
+        return true;
     }
 
     /** {@code SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END}：总是返回一行，查询找到行时为 1。 */

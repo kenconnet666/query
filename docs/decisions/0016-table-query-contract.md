@@ -26,7 +26,7 @@ GET /orders?page=2&pageSize=20&sort=-amount,name&total=368
 - 前端：`tableParams(query, columns)` 写出这套参数；`columns` 用来分清哪些表头筛选是关键字。`QueryTable` 把 DataTable 的表头筛选（`manualFilter`）绑到 `query.columnFilters`，`multiSort` 时绑 `query.sorts`。
 - 后端：`db.table(查询, 请求)` 依次 `filterBy`、`searchBy`、`sortBy`、`page`；结果经 `Page.toWire()`（Java）或 `toWire(page)`（TS）发回，`total` 与 `totalPages` 是 JSON 数字。
 - **只认结果列**：`filterBy`、`searchBy`、`sortBy` 的键都是结果列名，相当于白名单，请求里的列名碰不到结果以外的列。未知列名、排除掉的列、嵌套对象、子列表报错；`searchBy` 只能用在文字列上。
-- **WHERE 还是 HAVING**：构建查询时还不知道方言，判断不了一列是不是聚合，所以按结果列的条件存在 SELECT 规格里，渲染时用探查写入器写一遍那一列：逐行计算的进 WHERE，聚合的进 HAVING，窗口函数的报错（要先放进 CTE）。聚合由渲染时报到 `Aggregation`（Java）/ `aggregation.ts`（TS）的方式认出：`Aggregate` 节点自己报到，`MEDIAN`、`STRING_AGG`、`CORR`、`PERCENTILE_*`、`MODE`、`ARRAY_AGG` 这类函数在声明处标 `FunctionDef.aggregating()`；窗口函数里、子查询里的聚合不算外层的。COUNT 的优化（第 3 节）用同一个判断。
+- **WHERE 还是 HAVING**：构建查询时还不知道方言，判断不了一列是不是聚合，所以按结果列的条件存在 SELECT 规格里，渲染时用探查写入器写一遍那一列：逐行计算的进 WHERE，聚合的进 HAVING，窗口函数的报错（要先放进 CTE）。聚合由渲染时报到 `Aggregation`（Java）/ `aggregation.ts`（TS）的方式认出：`Aggregate` 节点自己报到，`MEDIAN`、`STRING_AGG`、`CORR`、`PERCENTILE_*`、`MODE`、`ARRAY_AGG` 这类函数在声明处标 `FunctionDef.aggregating()`；窗口函数里、子查询里的聚合不算外层的。只看节点类型认不全：`stringAgg` 和方言函数都不是 `Aggregate` 节点。COUNT 的优化（第 3 节）用同一个判断。
 - 不做 NULLS FIRST / LAST：等哪个库的默认顺序真成了问题再加。
 
 ### 2. 区间与文字的值
@@ -39,3 +39,14 @@ GET /orders?page=2&pageSize=20&sort=-amount,name&total=368
 
 - Java 的 `page` 仍是先查这一页再数行数，TS 两条并行。没有学 EasyQuery 的"先数，总数为 0 或页码超出时不查这一页"：空跑时总数是 0，那样 `capture` 就看不到这一页的查询了，而测试正靠它断言 SQL；页码超出时前端本来就会退到最后一页。
 - 已知总数由前端带来（上面的 `total`），省掉的是翻页时的 COUNT。
+- **直接数行**：单段 SELECT、没有 GROUP BY、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET 和方言子句、投影与按结果列的条件里没有聚合时，
+  COUNT 语句把投影换成 `COUNT(*)`、去掉 ORDER BY，不再套一层子查询：
+
+  ```sql
+  SELECT COUNT(*)
+  FROM QUERY_IT.LIPS LIPS
+  WHERE LIPS.VRKME = ?
+  ```
+
+  于是投影里的标量子查询（一对多的 `count()`、`sum()`）、窗口函数、只为投影连接的导航关系（多对一、`first()`，都至多一行，`exclude` 早就按这一点去掉它们）、groupJoin 的派生表都不写；WHERE 用到的关系照常连接，用户写的 JOIN 一个不少。其余情况仍是 `SELECT COUNT(*) FROM (查询) COUNTED`，有 LIMIT 时连 ORDER BY 一起留下。
+- 没有学 EasyQuery 把单列 DISTINCT 写成 `COUNT(DISTINCT x)`：它不数 NULL，而 `SELECT DISTINCT x` 把 NULL 当一行，两者在有空值时不相等。分组查询也仍然包一层：要去掉的只有非键的列，省得不多，各库对 `SELECT 1 ... GROUP BY` 的写法与优化又不一样。

@@ -2,7 +2,7 @@ import type { Clause, Dialect } from "../sql/dialect.js";
 import type { CalendarDate, CalendarDateTime } from "@internationalized/date";
 import type { Decimal } from "decimal.js";
 import { and, collect, Cond, outside, withSkipEmpty } from "../sql/cond.js";
-import { ExprNode, isWindow, Literal, toOrder, type Expr, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import { Aggregate, ExprNode, isWindow, Literal, toOrder, type Expr, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import type { Col, ColOf } from "../sql/typed.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
@@ -647,12 +647,34 @@ export function renderStatement(w: SqlWriter, q: Query<unknown>): Rendered {
   return w.statement();
 }
 
-/** 对查询做 SELECT COUNT(*)；除非 LIMIT 需要，否则去掉 ORDER BY。 */
+/**
+ * 查询的总行数。能直接数行时（{@link countsRows}）把投影换成 COUNT(*)、去掉 ORDER BY：投影里的标量子查询、只为投影连接的
+ * 导航关系（多对一、`first()`，都至多一行）、groupJoin 的派生表随之不写。否则对查询套一层 SELECT COUNT(*)，
+ * 除非 LIMIT 需要，否则去掉 ORDER BY。
+ */
 export function renderCount(w: SqlWriter, q: Query<unknown>): Rendered {
+  const s = stateOf(q);
+  if (countsRows(w, s)) {
+    renderArm(w, { spec: s.arms[0]!.spec, items: [new Aggregate<number>(integer, "COUNT", false, [])] }, ["count"], false, false);
+    return w.statement();
+  }
   w.sql("SELECT COUNT(*) FROM (");
-  renderQuery(w, stateOf(q), false, true);
+  renderQuery(w, s, false, true);
   w.sql(") ").alias(w.aliasFor({}, "counted"));
   return w.statement();
+}
+
+/**
+ * 能不能直接数行：单段 SELECT，没有分组、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET 和方言子句，投影和按结果列的条件里没有聚合
+ * （没有分组的聚合只出一行）。窗口函数不改变行数，可以去掉。
+ */
+function countsRows(w: SqlWriter, s: State): boolean {
+  if (s.arms.length !== 1) return false;
+  const arm = s.arms[0]!;
+  const spec = arm.spec;
+  if (spec.groupBy.length > 0 || spec.distinct || !and(...spec.having).isEmpty || !and(...spec.qualify).isEmpty) return false;
+  if (spec.limit !== undefined || spec.offset !== undefined || spec.clauses.length > 0) return false;
+  return [...arm.items, ...spec.resultFilters.map((f) => f.item)].every((e) => rowKindOf(w, e) !== "aggregate");
 }
 
 /** `SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END`：总是返回一行，查询找到行时为 1。 */

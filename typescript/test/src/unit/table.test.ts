@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseDate } from "@internationalized/date";
-import { dryRunDriver, from, MAX_PAGE_SIZE, parseTableRequest, toWire } from "@zerodep-dev/query-core";
+import { dryRunDriver, from, MAX_PAGE_SIZE, parseTableRequest, rowNumber, toWire, type Query } from "@zerodep-dev/query-core";
 import { Decimal } from "decimal.js";
 import { Lips } from "../fixtures/erp.js";
 import { TestDatabase } from "../fixtures/support.js";
@@ -32,6 +32,34 @@ describe("表格查询的请求", () => {
     const rows = events.find((e) => e.statement.sql.includes("ORDER BY"))!.statement.sql;
     assert.ok(rows.includes("WHERE LIPS.VRKME IN (?)") && rows.includes("ORDER BY LIPS.LFIMG DESC"), rows);
     assert.equal((await db.capture(() => db.table(q, parseTableRequest({ total: "12" })))).length, 1);
+  });
+
+  it("计数直接数行：去掉排序、只为投影连接的关系和子查询；WHERE 用到的关系留下", async () => {
+    const db = new TestDatabase({}, dryRunDriver());
+    const countSql = async (q: Query<unknown>) => (await db.capture(() => db.count(q)))[0]!.statement.sql;
+    const q = from(Lips)
+      .where((l) => l.unit.eq("EA"))
+      .orderBy((l) => l.delivery)
+      .select((l) => ({ delivery: l.delivery, partNumber: l.mara.partNumber, lines: l.mara.deliveries.count(), rn: rowNumber().over((w) => w.orderBy(l.delivery.asc())) }));
+    assert.equal(await countSql(q), "SELECT COUNT(*)\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME = ?");
+    const byPart = from(Lips).where((l) => l.mara.partNumber.eq("P1")).select((l) => l.delivery);
+    assert.equal(await countSql(byPart), "SELECT COUNT(*)\nFROM QUERY_IT.LIPS LIPS\nLEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT\nWHERE MARA.MFRPN = ?");
+  });
+
+  it("分组、去重、没有分组的聚合、分页与合并的查询仍然包一层", async () => {
+    const db = new TestDatabase({}, dryRunDriver());
+    const countSql = async (q: Query<unknown>) => (await db.capture(() => db.count(q)))[0]!.statement.sql;
+    const units = () => from(Lips).select((l) => ({ unit: l.unit }));
+    for (const q of [
+      from(Lips).groupBy((l) => [l.unit]).select((l) => l.unit),
+      from(Lips).distinct().select((l) => l.unit),
+      from(Lips).select((l) => l.quantity.sum()),
+      from(Lips).select((l) => l.delivery.stringAgg(",")),
+      from(Lips).limit(5).select((l) => l.delivery),
+      units().unionAll(units()),
+    ] as Query<unknown>[]) {
+      assert.ok((await countSql(q)).startsWith("SELECT COUNT(*) FROM ("), await countSql(q));
+    }
   });
 
   it("一页结果经 toWire 写成线上的 JSON：total 是数字，行里的小数与日期是文字", () => {

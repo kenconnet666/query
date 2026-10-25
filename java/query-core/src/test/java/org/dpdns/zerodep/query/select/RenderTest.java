@@ -290,11 +290,34 @@ class RenderTest {
         assertTrue(from(Mara.class).select(m -> m.material()).limitAtMost(2).toSql(DIALECT).sql().endsWith("LIMIT 2"));
     }
 
+    /** 计数语句。 */
+    private static String countSql(Query<?> q) { return QueryRenderer.count(new SqlWriter(DIALECT), q).sql(); }
+
     @Test
-    void 计数语句去掉不影响结果的排序() {
-        Query<String> q = from(Mara.class).orderBy(m -> m.material()).select(m -> m.material());
-        assertEquals("SELECT COUNT(*) FROM (SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA) COUNTED",
-            QueryRenderer.count(new SqlWriter(DIALECT), q).sql());
+    void 计数语句直接数行_去掉排序_只为投影连接的关系和子查询() {
+        Query<?> q = from(Lips.class)
+            .where(l -> l.unit().eq("EA"))
+            .orderBy(l -> l.delivery())
+            .select(l -> cols(l.delivery(), l.mara().partNumber(), l.mara().deliveries().count().as("lines"),
+                rowNumber().over(w -> w.orderBy(l.delivery().asc())).as("rn")));
+        assertEquals("SELECT COUNT(*)\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME = ?", countSql(q));
+        Query<?> byPart = from(Lips.class).where(l -> l.mara().partNumber().eq("P1")).select(l -> l.delivery());
+        assertEquals("SELECT COUNT(*)\nFROM QUERY_IT.LIPS LIPS\nLEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT\nWHERE MARA.MFRPN = ?",
+            countSql(byPart), "a relation the WHERE uses stays");
+    }
+
+    @Test
+    void 分组_去重_没有分组的聚合_分页与合并的查询仍然包一层() {
+        String wrapped = "SELECT COUNT(*) FROM (";
+        assertTrue(countSql(from(Lips.class).groupBy(l -> keys(l.unit())).select(l -> l.unit())).startsWith(wrapped));
+        assertTrue(countSql(from(Lips.class).distinct().select(l -> l.unit())).startsWith(wrapped));
+        assertTrue(countSql(from(Lips.class).select(l -> l.quantity().sum())).startsWith(wrapped), "an aggregate without GROUP BY is one row");
+        assertTrue(countSql(from(Lips.class).select(l -> l.delivery().stringAgg(","))).startsWith(wrapped));
+        assertTrue(countSql(from(Lips.class).limit(5).select(l -> l.delivery())).startsWith(wrapped));
+        Query<String> units = from(Lips.class).select(l -> l.unit());
+        assertTrue(countSql(units.unionAll(units)).startsWith(wrapped));
+        assertEquals("SELECT COUNT(*) FROM (SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA\nORDER BY MARA.MATNR ASC\nLIMIT 3) COUNTED",
+            countSql(from(Mara.class).orderBy(m -> m.material()).limit(3).select(m -> m.material())), "ORDER BY stays when LIMIT needs it");
     }
 
     @Test

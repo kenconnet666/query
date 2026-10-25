@@ -49,7 +49,7 @@ describe("打印与测试 SQL", () => {
     });
     assert.equal(events.length, 5);
     assert.deepEqual(events[0]!.statement.parameters, ["D1"]);
-    assert.ok(events.some((e) => e.statement.sql.startsWith("SELECT COUNT(*) FROM (")));
+    assert.ok(events.some((e) => e.statement.sql === "SELECT COUNT(*)\nFROM QUERY_IT.MARA MARA"), "the page counts rows without its ORDER BY");
     assert.deepEqual(events.slice(3).map((e) => e.cached), [false, true]);
     assert.equal(await db.count(from(Mara).select((m) => m.material)), 0);
     assert.deepEqual(await db.capture(() => undefined), []);
