@@ -178,6 +178,9 @@ public class SqliteDialect extends Dialect {
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "SQLite"; }
 
+    /** 有递归 CTE（WITH RECURSIVE）。 */
+    @Override public boolean supportsRecursiveCte() { return true; }
+
     /** 字母、数字、下划线组成的名字无需加引号。 */
     @Override protected boolean isBare(String identifier) { return BARE.matcher(identifier).matches(); }
 

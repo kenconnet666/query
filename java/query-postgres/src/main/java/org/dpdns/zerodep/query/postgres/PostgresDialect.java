@@ -102,6 +102,9 @@ public class PostgresDialect extends Dialect {
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "PostgreSQL"; }
 
+    /** 有递归 CTE（WITH RECURSIVE）。 */
+    @Override public boolean supportsRecursiveCte() { return true; }
+
     /** 只含小写字母、数字、下划线和 {@code $} 的名字无需加引号。 */
     @Override protected boolean isBare(String identifier) { return BARE.matcher(identifier).matches(); }
 

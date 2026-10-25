@@ -144,6 +144,15 @@ class FilterObjectTest {
     }
 
     @Test
+    void 别的函数接口的lambda和没有字段的对象不能当条件对象() {
+        java.util.function.Consumer<Lips> condition = l -> l.unit().eq("KG");
+        var e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where((Object) condition));
+        assertTrue(e.getMessage().contains("not a filter object with fields"), e.getMessage());
+        record Empty() { }
+        assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(new Empty()));
+    }
+
+    @Test
     void 字段名找不到列时无论有没有值都报错() {
         record Bad(String plant) { }
         var e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(new Bad(null)));

@@ -62,6 +62,15 @@ export class SqliteDialect extends Dialect {
 
   readonly name = "SQLite";
 
+
+  /** 有递归 CTE（WITH RECURSIVE）。 */
+
+  override get supportsRecursiveCte(): boolean {
+
+    return true;
+
+  }
+
   /**
    * 登记与三库不同的写法：日期部分用 strftime，加日期用 date 的修饰符（月份加 floor，月末对齐），相隔天数用 julianday，
    * 相隔秒数用带 subsec 的 unixepoch；当前时间取本地时区；补齐用 zeroblob 拼出填充串；统计聚合用公式；GROUPING 报错。

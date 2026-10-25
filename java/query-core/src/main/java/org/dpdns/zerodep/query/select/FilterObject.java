@@ -41,6 +41,11 @@ public final class FilterObject {
         if (filter == null) throw new IllegalArgumentException("where(...) needs a filter object, got null");
         if (filter instanceof Cond) throw new IllegalArgumentException("where(...) takes a lambda or a filter object; write where(t -> condition)");
         Class<?> type = filter.getClass();
+        // 别的函数接口的 lambda（例如 java.util.function.Consumer 变量）会落到 where(Object)：它没有字段，不能当作没有条件
+        if (type.isSynthetic() || type.isHidden() || Metadata.entity(type).properties().isEmpty()) {
+            throw new IllegalArgumentException("where(...) got " + type.getName() + ", which is not a filter object with fields;"
+                + " pass the condition as a lambda, e.g. where(t -> condition.accept(t)) for a Consumer");
+        }
         List<Cond> all = new ArrayList<>();
         Map<String, Group> groups = new LinkedHashMap<>();
         for (PropertyMeta p : Metadata.entity(type).properties()) {

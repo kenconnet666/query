@@ -236,6 +236,14 @@ export abstract class Dialect {
     return true;
   }
 
+  /**
+   * 是否支持递归 CTE（`WITH RECURSIVE`）：PostgreSQL、MySQL 8、SQLite 有，HANA 没有（用层级函数）。
+   * `db.withAncestors` 据此写成一条递归查询，或者一层一层按键查。
+   */
+  get supportsRecursiveCte(): boolean {
+    return false;
+  }
+
   /** 没有表的 SELECT 需要的部分：多数数据库什么都不要，HANA 要 `FROM DUMMY`。 */
   fromNothing(_w: SqlWriter): void {}
 
