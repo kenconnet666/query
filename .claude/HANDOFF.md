@@ -2,11 +2,11 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）在 `feat/polardb` 上做了下面"为流程引擎做的准备"一节的内容，尚未合并。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。
 
 ## 当前状态
 
-### 为流程引擎做的准备（`feat/polardb`，2026-10-24）
+### 为流程引擎做的准备（PR #15，2026-10-25 合并）
 
 流程引擎在 `C:UserslionheartIdeaProjectslow`（Java 接 Spring、TS 接 Nest / Nuxt），第一版只用 MySQL 8，生产是阿里云 PolarDB MySQL 8.0；用户要求先完善本库并订立契约。
 
@@ -62,7 +62,6 @@
 
 ## 待用户决定或执行
 
-- **合并 `feat/polardb`**：需要用户同意后开 PR 合并进 `master`。
 - **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
 - **PolarDB MySQL 兼容**：2026-10-24 调研完，结论在 [0011](../docs/decisions/0011-polardb-mysql.md)。用户说先不动代码、以后再说；以后要做时先在 PolarDB 测试集群上跑 MySQL 实库场景。
