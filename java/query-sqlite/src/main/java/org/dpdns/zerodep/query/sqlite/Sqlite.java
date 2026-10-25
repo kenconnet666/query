@@ -62,17 +62,17 @@ public final class Sqlite extends Sql {
     // ---------- 视图：有主操作数的 SQLite 函数 ----------
 
     /** 文本上的 SQLite 函数：{@code sqlite(l.text()).glob("A*")}。 */
-    public static <T> ViewString<T> sqlite(ExprText<T> e) { return new ViewString<>(e); }
+    public static <T> ViewText<T> sqlite(ExprText<T> e) { return new ViewText<>(e); }
 
     /** 数值上的 SQLite 函数：{@code sqlite(l.quantity()).median()}。 */
     public static <T> ViewNumber<T> sqlite(ExprNumber<T> e) { return new ViewNumber<>(e); }
 
     /** 文本上的 SQLite 函数，由 {@code sqlite(文本表达式)} 得到。 */
-    public static final class ViewString<T> {
+    public static final class ViewText<T> {
         /** 视图的主操作数。 */
         private final ExprText<T> e;
 
-        ViewString(ExprText<T> e) { this.e = Objects.requireNonNull(e, "e"); }
+        ViewText(ExprText<T> e) { this.e = Objects.requireNonNull(e, "e"); }
 
         /**
          * 区分大小写的通配匹配 {@code this GLOB pattern}，写进当前的条件块：{@code *} 任意串、{@code ?} 一个字符、{@code [...]} 字符集。

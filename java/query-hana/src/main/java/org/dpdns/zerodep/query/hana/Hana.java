@@ -126,7 +126,7 @@ public final class Hana extends Sql {
     // ---------- 视图：有主操作数的 HANA 函数 ----------
 
     /** 文本上的 HANA 函数：{@code hana(l.delivery()).toDate("YYYYMMDD")}、{@code hana(l.text()).likeRegexpr("^A")}。 */
-    public static <T> ViewString<T> hana(ExprText<T> e) { return new ViewString<>(e); }
+    public static <T> ViewText<T> hana(ExprText<T> e) { return new ViewText<>(e); }
 
     /** 数值上的 HANA 函数：{@code hana(l.quantity()).median()}。 */
     public static <T> ViewNumber<T> hana(ExprNumber<T> e) { return new ViewNumber<>(e); }
@@ -152,8 +152,8 @@ public final class Hana extends Sql {
     }
 
     /** 文本上的 HANA 函数，由 {@code hana(文本表达式)} 得到。 */
-    public static final class ViewString<T> extends ViewAny<T> {
-        ViewString(ExprText<T> e) { super(e); }
+    public static final class ViewText<T> extends ViewAny<T> {
+        ViewText(ExprText<T> e) { super(e); }
 
         /** TO_DATE(this, format)：按 format 把文本解析为日期。 */
         public ExprDate<LocalDate> toDate(String format) { return ExprDate.of(call(TO_DATE, LocalDate.class, e, lit(format))); }

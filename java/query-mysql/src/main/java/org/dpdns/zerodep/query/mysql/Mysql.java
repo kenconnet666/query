@@ -144,7 +144,7 @@ public class Mysql extends Sql {
     // ---------- 视图：有主操作数的 MySQL 函数 ----------
 
     /** 文本上的 MySQL 函数：{@code mysql(t.payload()).jsonText("$.order.id")}。 */
-    public static <T> ViewString<T> mysql(ExprText<T> e) { return new ViewString<>(e); }
+    public static <T> ViewText<T> mysql(ExprText<T> e) { return new ViewText<>(e); }
 
     /** 任意值上的 MySQL 函数：{@code mysql(e.onDay()).dateFormat("%Y%m%d")}。 */
     public static <T> ViewAny<T> mysql(Expr<T> e) { return new ViewAny<>(e); }
@@ -161,8 +161,8 @@ public class Mysql extends Sql {
     }
 
     /** 文本上的 MySQL 函数，由 {@code mysql(文本表达式)} 得到。 */
-    public static final class ViewString<T> extends ViewAny<T> {
-        ViewString(ExprText<T> e) { super(e); }
+    public static final class ViewText<T> extends ViewAny<T> {
+        ViewText(ExprText<T> e) { super(e); }
 
         /**
          * JSON 文档里一个路径上的标量文本：{@code JSON_UNQUOTE(JSON_EXTRACT(doc, ?))}，路径如 {@code "$.order.id"} 绑定成参数；

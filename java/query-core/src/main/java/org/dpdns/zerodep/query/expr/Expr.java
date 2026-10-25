@@ -88,8 +88,11 @@ public non-sealed interface Expr<T> extends Renderable, Keys, OrderItem, Selecti
     /** 介于 low 和 high 之间（含两端）。开启 skipEmpty 时缺少的一端被忽略，只按另一端比较。 */
     default void between(T low, T high) {
         if (SkipEmpty.skips(low) || SkipEmpty.skips(high)) {
-            ge(low);
-            le(high);
+            // 合成一个条件写进块里：在 any(() -> ...) 里两个条件会成为两个 OR 选项
+            Conditions.add(Conditions.collect(() -> {
+                ge(low);
+                le(high);
+            }));
             return;
         }
         Conditions.add(Nodes.between(this, param(low), param(high)));
@@ -103,8 +106,11 @@ public non-sealed interface Expr<T> extends Renderable, Keys, OrderItem, Selecti
      * 例如 {@code e.onDay().range(monthStart, nextMonthStart)}。开启 skipEmpty 时缺少的一端被忽略。
      */
     default void range(T from, T until) {
-        ge(from);
-        lt(until);
+        // 与 between 相同，两端合成一个条件
+        Conditions.add(Conditions.collect(() -> {
+            ge(from);
+            lt(until);
+        }));
     }
 
     /** 在 values 之中。空集合恒为假（开启 skipEmpty 则不产生条件）；过长的列表按方言的 IN 上限拆开。 */

@@ -178,7 +178,7 @@ public final class Postgres extends Sql {
     // ---------- 视图：有主操作数的 PostgreSQL 函数 ----------
 
     /** 文本上的 PostgreSQL 函数：{@code postgres(l.text()).ilike("ea%")}、{@code postgres(t.payload()).jsonText("order", "id")}。 */
-    public static <T> ViewString<T> postgres(ExprText<T> e) { return new ViewString<>(e); }
+    public static <T> ViewText<T> postgres(ExprText<T> e) { return new ViewText<>(e); }
 
     /** 任意值上的 PostgreSQL 函数：{@code postgres(l.unit()).eqAny(units)}。 */
     public static <T> ViewAny<T> postgres(Expr<T> e) { return new ViewAny<>(e); }
@@ -207,8 +207,8 @@ public final class Postgres extends Sql {
     }
 
     /** 文本上的 PostgreSQL 函数，由 {@code postgres(文本表达式)} 得到。 */
-    public static final class ViewString<T> extends ViewAny<T> {
-        ViewString(ExprText<T> e) { super(e); }
+    public static final class ViewText<T> extends ViewAny<T> {
+        ViewText(ExprText<T> e) { super(e); }
 
         /** ILIKE：不区分大小写的 LIKE，写进当前的条件块。skipEmpty 下模式为空时没有条件。 */
         public void ilike(String pattern) {

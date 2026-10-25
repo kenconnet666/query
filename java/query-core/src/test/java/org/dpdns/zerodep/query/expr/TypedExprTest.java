@@ -104,4 +104,14 @@ class TypedExprTest {
         assertThrows(IllegalArgumentException.class, () -> from(Lips.class).select(l -> l.quantity().over(w -> w)));
     }
 
+    @Test
+    void 区间在OR块里是一个选项() {
+        // range 和缺一端的 between 写两个比较，要合成一个条件：在 any 的块里分开写就成了 x >= a OR x < b
+        String sql = from(Event.class).skipEmpty().where(e -> any(() -> {
+            e.id().range(1, 5);
+            e.id().between(10, null);
+            e.id().eq(20);
+        })).select(e -> e.id()).toSql(DIALECT).sql();
+        assertTrue(sql.endsWith("WHERE ((EVENT.ID >= ? AND EVENT.ID < ?) OR (EVENT.ID >= ?) OR (EVENT.ID = ?))"), sql);
+    }
 }
