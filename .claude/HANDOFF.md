@@ -1,12 +1,14 @@
-# 交接（2026-10-25）
+# 交接（2026-10-26）
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）2026-10-25 经 PR #18 合并进 `master`。之后与前端表格配合的一组能力（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)）在分支 `feat/table-query` 上，两端与 vue-tsx-pro 同名分支都已完成，尚未开 PR。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）2026-10-25 经 PR #18 合并进 `master`。之后与前端表格配合的一组能力（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)）经 PR #19、条件树（[0017](../docs/decisions/0017-condition-tree.md)）经 PR #20、一对多取第一行改用 LATERAL（[0018](../docs/decisions/0018-lateral-first.md)）经 PR #21，2026-10-26 都已合并进 `master`。
+
+**一句话现状**：全部工作都在 `master` 上，没有未合并的分支；2.x 尚未发布，等用户定版本号后手动发布（见“待用户决定或执行”）。流程引擎在 flow 仓库（私有，`kenconnet666/flow`），它的交接文档在仓库根目录 `HANDOFF.md`。
 
 ## 当前状态
 
-### 条件树（[0017](../docs/decisions/0017-condition-tree.md)，分支 `feat/condition-tree`）
+### 条件树（[0017](../docs/decisions/0017-condition-tree.md)，PR #20 已合并）
 
 vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26），本库配套把条件树写成 SQL：
 
@@ -15,7 +17,14 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 - **Java**：`select.ConditionTree`（`parse`、`from`，sealed：Rule / All / Any / Not）、`TreeConditions`；wire 模块新增 `Json.read`（不依赖 JSON 库）。TS：`query/condition-tree.ts`。
 - **测试**：单元测试两端一一对应（SQL 相同）；实库 `TableQueryTest` / `table.live.test.ts` 加了条件树的用例，2026-10-26 本机五个库（Java 25、TS 30）全部通过。
 
-### 与前端表格配合（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)，分支 `feat/table-query`）
+### 一对多取第一行用 LATERAL（[0018](../docs/decisions/0018-lateral-first.md)，PR #21 已合并）
+
+- `many.first(...)`：方言声明 `supportsLateral()`，PostgreSQL 与 MySQL 渲染成 `LEFT JOIN LATERAL (... LIMIT 1) ON TRUE`，其他库（HANA、SQLite、PolarDB）仍是按键加 ROW_NUMBER 的派生表；两种写法都建好，渲染时按方言选（Java `table/FirstRow`，TS `FirstRowSource`）。PolarDB 的 LATERAL 支持随小版本，按最旧基线不用。
+- `orderBy(...).limit(n).list(...)` 每个父行限数仍用 ROW_NUMBER，理由见 0018。
+- TS 转换器列：`converted(storage, converter, name, field)` 第四个参数声明字段的种类（`date`、`decimal` 等），文字条件与表格请求按它读值。
+- 金样例：`spec/render/one-to-many.{postgres,mysql}.sql` 更新，新增 `one-to-many.polardb.sql`。
+
+### 与前端表格配合（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)，PR #19 已合并）
 
 用户 2026-10-25 对照 EasyQuery 找出缺口（对象树上的多个条件、多列排序、分页等）后要求全部做完，前端 vue-tsx-pro 可以一起改；特殊类型（大整数、小数、日期）的 JSON 传输要通用、不限于 SQL，能不依赖 Jackson 就不依赖；主要支持 MySQL 和 PostgreSQL，两者支持时按性能更好的写，其他库可以退化或各写各的。
 
@@ -93,7 +102,10 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 - **第 4 步（已完成）**：`@LogicDelete` 并入表的过滤条件（Java `SourceFilters`，TS `conditionsFor`），查询、连接、关系、UPDATE/DELETE 都带"未删除"条件，`unfiltered()` 一并关闭；删除改写成 UPDATE（`byId` 时版本加一），`.physically()` 物理删除；插入时补上未删除的值；时间戳列用 `IS NULL` / `CURRENT_TIMESTAMP`。审计填充：Java `Config.onInsert/onUpdate`（`write/Fills`），TS `DatabaseOptions.fills` 与 `onInsert`/`onUpdate`，作用于插入、更新、`byId`、插入或更新的更新部分和逻辑删除，总是覆盖。金样例 `write-logic-delete`、`logic-delete-query`。
 - **文档**：两份 API 说明的第 15 节、[0007](../docs/decisions/0007-writes.md)、场景对照的写入行、0001 第 4 条、CHANGELOG。
 
-### 测试（2026-10-25 本机全部通过）
+### 测试（2026-10-26 本机全部通过）
+
+- **合计**：Java 全部模块 1597 个测试（没有连接变量时 274 个实库用例跳过），TS 单元 660 个；实库五个库 Java 521、TS 614（跳过 4 个，SQLite 的 LPAD 与超时）全部通过；Maven 发布预检 `-P release -Dgpg.skip -DskipTests verify` 通过。
+- 下面是 2026-10-25 各模块的分项（之后各加了条件树、LATERAL 的用例）：
 
 - **Java 单元、渲染与金样例**：core 186，HANA 93，PostgreSQL 96，MySQL 94，PolarDB 88，SQLite 82，Spring 10，Maven 插件 3。
 - **Java 实库（query-it）**：HANA 93、PostgreSQL 100、MySQL 93、PolarDB 97、SQLite 83；没有连接变量时只跑 SQLite。
@@ -102,7 +114,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 ## 待用户决定或执行
 
-- **发布 2.0.0**：版本号目前仍是 1.x（根 POM、各模块 parent、TS 包、`docs/api.md` 的依赖示例要一起改），CHANGELOG 的 2.0.0 写的是"未发布"；按 [docs/release.md](../docs/release.md) 手动发布。
+- **发布 2.x（先定版本号）**：根 POM 是 `2.0.0-SNAPSHOT`、TS 包是 `2.0.0-dev`，CHANGELOG 里 `[2.1.0]` 与 `[2.0.0]` 都标“未发布”。两种做法：一次发 2.0.0（把 2.1.0 的条目并进 2.0.0），或者先发 2.0.0 再发 2.1.0。定了以后根 POM、各模块 parent、TS 各包、`docs/api.md` 的依赖示例一起改成正式版本，按 [docs/release.md](../docs/release.md) 手动发布（Maven 中央仓库与 npm）。流程引擎（flow）以发布的包为依赖。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
 - **PolarDB MySQL 兼容**：2026-10-24 调研完，结论在 [0011](../docs/decisions/0011-polardb-mysql.md)。用户说先不动代码、以后再说；以后要做时先在 PolarDB 测试集群上跑 MySQL 实库场景。
 - **流程引擎本身**：2026-10-24 开始在 flow 仓库做，本库按它的需要补能力（上面"为流程引擎做的准备"）；方向与表设计在 flow 的 `docs/decisions/`。
@@ -110,7 +122,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 ## 下一步
 
-阶段 A、阶段 B、写入能力、下面的四批、A/B/C 三批和 0008 都已完成并推送到 `feat/v2`；0009 与 0010 的第一、二阶段完成并推送到 `feat/sqlite-idb`。合并与发布 2.0 / 2.1、前身仓库是否冻结、何时开始流程引擎仍等用户决定。
+下面各节的工作都已合并进 `master`。还等用户的：定版本号并发布 2.x、前身仓库是否冻结。流程引擎在 flow 仓库按它的交接文档推进，本库按引擎的需要补能力（先讨论再动手，MySQL / PostgreSQL 优先：两者都支持的写法按性能更好的做，其他库给退路）。
 
 2026-10-24 对照 EasyQuery 讨论后规划并完成了四批（用户确认"暂不做代码生成"后要求四批都做；每批两端、三方言同步，带金样例与实库场景，各批的提交与 CI 见 git log）：
 
@@ -152,10 +164,10 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 | 东西 | 在旧电脑上的位置 | 新电脑上怎么办 |
 | --- | --- | --- |
-| 本仓库 | `C:\Users\lionheart\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，在 `master` 上新开分支 |
+| 本仓库 | `C:\Users\lionheart\IdeaProjects\query` | `git clone https://github.com/kenconnet666/query`，在 `master` 上新开分支；flow、vue-tsx-pro 克隆到同一目录 |
 | 参考仓库（只读） | `IdeaProjects\easy_query_pro`、`IdeaProjects\easy-query`、`IdeaProjects\orm-references\*` | 按 CLAUDE.md 的说明重新克隆；不影响构建，只用于设计参考 |
 | 使用方代码（只读） | 旧电脑的本地目录 | 只在 Claude 项目记忆里有路径和说明，不进公开仓库 |
-| Claude 项目记忆 | `C:\Users\Administrator\.claude\projects\C--Users-Administrator-IdeaProjects-query\memory\` | 含使用方说明和设计证据，按需手动拷贝到新电脑对应目录；没有它也能继续，只是缺少使用方背景 |
+| Claude 项目记忆 | `C:\Users\lionheart\.claude\projects\C--Users-lionheart-IdeaProjects-query\memory\`（流程引擎相关的在 `...-IdeaProjects-flow\memory\`） | 含使用方说明和设计证据，按需手动拷贝到新电脑对应目录（目录名随用户名与路径变）；没有它也能继续，只是缺少使用方背景 |
 | 开发数据库 | WSL Debian 里的 Docker，由前身仓库的 `tools/*.ps1` 启动 | 见下文；没有本机库也能开发，实库测试交给 CI |
 | IDEA 的 MCP 与数据源 | 用户级配置 `idea` 与四个数据源 | 在新电脑的 IDEA 中重新配置，连接 ID 会变 |
 | 对照程序 | 旧电脑的会话临时目录，含使用方的业务常量，不进仓库 | 不需要；结论在 0002 与 0003 里 |
