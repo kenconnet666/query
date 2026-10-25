@@ -1,7 +1,7 @@
-import { all, bigint, column, JoinDelete, JoinUpdate, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
+import { all, bigint, column, JoinDelete, JoinUpdate, deleteFrom, from, generated, id, insertInto, integer, logicDelete, onInsert, onUpdate, plus, readOnly, table, text, timestamp, update, val, version, writeOnce, type Database, type Fill, type InsertRow } from "@zerodep-dev/query-core";
 import { SCHEMA } from "./erp.js";
 
-/** 写入场景的表和语句：单元测试、金样例和三库实库场景共用，与 Java 的 Writes 一一对应。 */
+/** 写入场景的表和语句：单元测试、金样例和实库测试共用（实库测试按这些声明建表），与 Java 的 Writes 一一对应。 */
 
 /** 带租户列的表，全局过滤器按它匹配。 */
 export abstract class Tenanted {
@@ -24,7 +24,7 @@ export class Doc {
   @column("TITLE") title!: string | null;
   @version @column("VERSION", integer) version!: number;
   /** 来源：由数据库默认值维护，本库从不写。 */
-  @readOnly @column("SOURCE") source!: string | null;
+  @readOnly @column("SOURCE", text, { default: "'db'" }) source!: string | null;
 }
 
 /** 编号由数据库生成的表（IDENTITY / AUTO_INCREMENT）。 */
@@ -107,7 +107,7 @@ export class AppNote {
 }
 
 /** 编码表：逻辑删除列记录删除时刻的毫秒数，(CODE, DELETED) 唯一，所以同一个编码删除后可以再建。 */
-@table("W_CODE", { schema: SCHEMA })
+@table("W_CODE", { schema: SCHEMA, indexes: [{ name: "UX_W_CODE", columns: ["code", "deleted"], unique: true }] })
 export class Code {
   @id @column("ID") id!: string;
   @column("CODE") code!: string;
