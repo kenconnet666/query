@@ -41,6 +41,7 @@
     </issueManagement>
 
     <modules>
+        <module>java/wire</module>
         <module>java/query-core</module>
         <module>java/query-hana</module>
         <module>java/query-postgres</module>
@@ -65,6 +66,7 @@
         <!-- The oldest supported line (Spring Boot 2.7); CI also runs query-spring against 6.2 and 7.0. -->
         <spring.version>5.3.39</spring.version>
         <h2.version>2.5.252</h2.version>
+        <jackson.version>2.19.0</jackson.version>
         <surefire.version>3.6.0</surefire.version>
         <maven.api.version>3.9.9</maven.api.version>
         <maven.plugin.tools.version>3.15.1</maven.plugin.tools.version>
@@ -78,6 +80,11 @@
                 <version>${junit.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>wire</artifactId>
+                <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.dpdns.zerodep</groupId>
@@ -155,6 +162,11 @@
                 <groupId>com.h2database</groupId>
                 <artifactId>h2</artifactId>
                 <version>${h2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

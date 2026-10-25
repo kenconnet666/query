@@ -83,6 +83,7 @@ const rows = await db.list(
 
 | 模块 | 内容 |
 | --- | --- |
+| `java/wire` | 线上的 typed JSON（[0015](docs/decisions/0015-typed-json-wire.md)）：Long、BigDecimal、java.time 的值、字节写成文字，`$types` 指明怎样还原；与 SQL 无关，任何接口都能用，无第三方依赖 |
 | `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存，以及按连接选方言的通用门面 `Sql.database(...)`；运行时无第三方依赖 |
 | `java/query-hana`、`java/query-postgres`、`java/query-mysql`、`java/query-sqlite` | 各方言的门面、数据库实例、专属函数与子句 |
 | `java/query-polardb` | PolarDB for MySQL：继承 MySQL 方言，另有闪回查询与库存提示 |
@@ -92,8 +93,10 @@ const rows = await db.list(
 | `typescript/packages/hana`、`postgres`、`mysql`、`sqlite` | `@zerodep-dev/query-hana`、`@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`、`@zerodep-dev/query-sqlite`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`、`node:sqlite` 与 SQLite WASM） |
 | `typescript/packages/polardb` | `@zerodep-dev/query-polardb`：重新导出 MySQL 包，另有闪回查询与库存提示 |
 | `typescript/packages/idb` | `@zerodep-dev/idb`：浏览器里的 IndexedDB 本地存储，不依赖核心包 |
+| `typescript/packages/wire` | `@zerodep-dev/wire`：线上的 typed JSON，与 Java 的 `wire`、vue-tsx-pro 的请求层同一套写法；核心包依赖它 |
 | `typescript/test` | TS 的单元、编译期、金样例、实库与浏览器测试 |
 | `spec/render/` | Java 与 TS 共用的渲染金样例 |
+| `spec/wire/` | Java、TS、vue-tsx-pro 共用的 typed JSON 样例 |
 | `infra/` | 开发和 CI 共用的数据库容器定义，`mysql/`、`postgres/`、`hana/`、`polardb/`（开源的 PolarDB-X 引擎，单节点）各自独立，启动命令见各目录 `compose.yaml` 开头的注释 |
 | `tools/` | 生成 `From1..From16`、`Rows` 和 `Fn` 的脚本，以及 LSP 验证脚本 |
 

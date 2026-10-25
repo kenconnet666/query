@@ -13,6 +13,10 @@ importers:
         version: 7.1.0-dev.20261023.1
 
   packages/core:
+    dependencies:
+      '@zerodep-dev/wire':
+        specifier: workspace:*
+        version: link:../wire
     devDependencies:
       '@internationalized/date':
         specifier: 3.12.4
@@ -103,6 +107,15 @@ importers:
         specifier: 24.19.2
         version: 24.19.2
 
+  packages/wire:
+    devDependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
+      decimal.js:
+        specifier: 10.6.0
+        version: 10.6.0
+
   test:
     dependencies:
       '@internationalized/date':
@@ -126,6 +139,9 @@ importers:
       '@zerodep-dev/query-sqlite':
         specifier: workspace:*
         version: link:../packages/sqlite
+      '@zerodep-dev/wire':
+        specifier: workspace:*
+        version: link:../packages/wire
       decimal.js:
         specifier: 10.6.0
         version: 10.6.0

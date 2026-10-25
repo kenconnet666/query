@@ -1,0 +1,35 @@
+{
+  "id": "9007199254740993",
+  "code": "PO-1",
+  "count": 3,
+  "rate": 0.25,
+  "ratio": "NaN",
+  "active": true,
+  "amount": "12.5",
+  "on": "2024-01-31",
+  "at": "13:45:00",
+  "created": "2024-01-31T13:45:00.5",
+  "sent": "2024-01-31T05:45:00Z",
+  "file": "AQID/w==",
+  "note": null,
+  "lines": [
+    { "sku": "A.1", "qty": "2.75" },
+    { "sku": "B", "qty": "1" }
+  ],
+  "tags": ["1", "2"],
+  "byMonth": { "2024.01": "3.5", "2024.02": "0" },
+  "$types": {
+    "id": "bigint",
+    "ratio": "double",
+    "amount": "decimal",
+    "on": "date",
+    "at": "time",
+    "created": "timestamp",
+    "sent": "timestamptz",
+    "file": "bytes",
+    "lines.qty": "decimal",
+    "tags": "bigint",
+    "byMonth.2024~101": "decimal",
+    "byMonth.2024~102": "decimal"
+  }
+}

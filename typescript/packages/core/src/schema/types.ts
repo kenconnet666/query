@@ -1,4 +1,5 @@
 import { CalendarDate, CalendarDateTime } from "@internationalized/date";
+import { parseDate, parseTimestamp } from "@zerodep-dev/wire";
 import { Decimal } from "decimal.js";
 
 /**
@@ -51,34 +52,8 @@ function fail(type: string, raw: unknown): never {
   throw new TypeError(`Cannot read ${shown} (${typeof raw}) as ${type}`);
 }
 
-/** decimal、日期、时间戳文本的格式。 */
+/** decimal 文本的格式；日期与时间戳的文本由 wire 包的 parseDate、parseTimestamp 严格解析（含日历校验）。 */
 const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
-
-/**
- * 解析 'YYYY-MM-DD'，并校验是真实存在的日历日期（含闰年）：`CalendarDate` 的构造函数会把 2 月 30 日悄悄改成月末，所以先查。
- */
-function parseDate(value: string, type: string): CalendarDate {
-  const m = DATE.exec(value);
-  if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD', got ${JSON.stringify(value)}`);
-  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  if (days === undefined || day < 1 || day > days) throw new RangeError(`${JSON.stringify(value)} is not a calendar date`);
-  return new CalendarDate(year, month, day);
-}
-
-/** 解析 'YYYY-MM-DD HH:MM:SS[.fraction]'（也接受 T 分隔）；`CalendarDateTime` 精确到毫秒，更细的部分舍去。 */
-function parseTimestamp(value: string, type: string): CalendarDateTime {
-  const m = TIMESTAMP.exec(value.trim());
-  if (!m) throw new TypeError(`${type} needs 'YYYY-MM-DD HH:MM:SS[.fraction]', got ${JSON.stringify(value)}`);
-  const day = parseDate(m[1]!, type);
-  const [hour, minute, second] = [Number(m[2]), Number(m[3]), Number(m[4] ?? "0")];
-  if (hour > 23 || minute > 59 || second > 59) throw new RangeError(`${JSON.stringify(value)} has an invalid time of day`);
-  const millisecond = Number((m[5] ?? "").padEnd(3, "0").slice(0, 3));
-  return new CalendarDateTime(day.year, day.month, day.day, hour, minute, second, millisecond);
-}
 
 /** 'YYYY-MM-DD HH:MM:SS' 加去掉末尾零的毫秒；`toString` 已经换算成公历，只把 T 换成空格，各库都认这种写法。 */
 function timestampText(value: CalendarDateTime): string {
@@ -187,10 +162,10 @@ export const boolean: SqlType<boolean, "boolean"> = type(
 export const date: SqlType<CalendarDate, "date"> = type(
   "date",
   "date",
-  (v) => (typeof v === "string" ? parseDate(v, "date") : v).toString(),
+  (v) => (typeof v === "string" ? parseDate(v) : v).toString(),
   (raw) => {
     if (raw instanceof CalendarDate) return raw;
-    return typeof raw === "string" ? parseDate(raw.trim().slice(0, 10), "date") : fail("date", raw);
+    return typeof raw === "string" ? parseDate(raw.trim().slice(0, 10)) : fail("date", raw);
   },
 );
 
@@ -201,10 +176,10 @@ export const date: SqlType<CalendarDate, "date"> = type(
 export const timestamp: SqlType<CalendarDateTime, "timestamp"> = type(
   "timestamp",
   "timestamp",
-  (v) => timestampText(typeof v === "string" ? parseTimestamp(v, "timestamp") : v),
+  (v) => timestampText(typeof v === "string" ? parseTimestamp(String(v).trim()) : v),
   (raw) => {
     if (raw instanceof CalendarDateTime) return raw;
-    return typeof raw === "string" ? parseTimestamp(raw, "timestamp") : fail("timestamp", raw);
+    return typeof raw === "string" ? parseTimestamp(raw.trim()) : fail("timestamp", raw);
   },
 );
 

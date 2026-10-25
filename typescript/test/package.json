@@ -12,6 +12,7 @@
     "@zerodep-dev/query-polardb": "workspace:*",
     "@zerodep-dev/query-postgres": "workspace:*",
     "@zerodep-dev/query-sqlite": "workspace:*",
+    "@zerodep-dev/wire": "workspace:*",
     "decimal.js": "10.6.0"
   },
   "devDependencies": {
