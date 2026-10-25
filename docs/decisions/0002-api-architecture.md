@@ -1,6 +1,6 @@
 # 0002 API 与整体架构
 
-- 状态：已采纳（2026-10-21）；Java 第一期与 TypeScript 第二期均已实现，并通过三库实库验证。第 1、3、5 条已由 [0006](0006-query-model-direction.md) 修订（2.0：接口表、导航关系、对象树、条件对象）
+- 状态：已采纳（2026-10-21）；Java 第一期与 TypeScript 第二期均已实现，并通过三库实库验证。第 1、3、5 条已由 [0006](0006-query-model-direction.md) 修订（2.0：接口表、导航关系、对象树、条件对象）；"用户必须选定方言包"与实库场景的组织已由 [0013](0013-portable-facade-and-live-tests.md) 修订（通用门面、query-it）
 - 修订 0001：
   - TypeScript 改以 7 为唯一基准；
   - 首批方言为 HANA、PostgreSQL、MySQL，三者同步推进；
@@ -19,7 +19,7 @@
 
 - 表和字段可以用注解，可以要求用户使用 Lombok；TypeScript 可以用装饰器。
 - 结果要能方便地映射到不同的 DTO、VO 或临时类。
-- 由共同的核心包加各方言包组成，用户必须选定方言包并创建实例，库不抹平数据库之间的差异。
+- 由共同的核心包加各方言包组成，库不抹平数据库之间的差异。实例可以由方言门面创建，也可以由通用门面按连接选方言创建（0013）；方言专属能力只在方言门面里。
 - EasyQuery 的场景只作为参考清单，实现一律重新设计。
 
 ## 决定
@@ -228,7 +228,7 @@ HANA 不支持 `VALUES` 表构造，所以 `values(...)` 把每行渲染成一�
 
 **两端一致**：`spec/render/` 下的 73 个金样例覆盖了 CTE 提升、全局过滤、UNION、自连接、分页、各类条件、字面量、函数与类型转换、聚合、窗口、子查询、常量行、文本函数、分组表达式中的常量、列转换、ROLLUP、UNION 的分组，以及三个方言的专属函数（含 HANA 与 PostgreSQL 的 CUBE、GROUPING SETS）。Java 与 TS 的测试都读取这些文件，渲染结果（SQL 与参数）必须完全相同。
 
-三个方言共用一组实库场景（Java 的 `LiveScenarios`、TS 的 `live/live.ts`）：
+三个方言共用一组实库场景（当时是 Java 的 `LiveScenarios`、TS 的 `live/live.ts`；0013 起按主题拆进 `java/query-it` 和 TS 的 `test/src/live`）：
 
 - CTE 加 EXISTS 加 LEFT JOIN 的汇总；
 - 全局过滤与关闭过滤；

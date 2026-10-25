@@ -68,6 +68,11 @@ const db = database(new pg.Pool({ /* ... */ }), {
 
 - 传入单个连接时（例如事务中的连接），库直接使用这个连接，不会关闭它。
 - 也可以实现 `Driver` 接口，然后 `new HanaDatabase(driver, options)`。
+- **通用门面**：只用核心包写法的代码（例如建在本库上的流程引擎）可以只依赖核心包，由驱动决定方言（[0013](decisions/0013-portable-facade-and-live-tests.md)）：`import { database } from "@zerodep-dev/query-core"`，再 `database(mysqlDriver(pool), options)`。
+  - 方言包的驱动适配器（`hanaDriver`、`pgDriver`、`mysqlDriver`、`nodeSqliteDriver`、`wasmDriver`）都带着自己的方言（`Driver.dialect`）；手写的驱动没有方言时报错。
+  - 返回的是核心包的 `Database`，没有 `PostgresDatabase.returning` 这类方言实例上的方法。
+  - PolarDB 用 mysql2 的驱动，得到 MySQL 方言；要用闪回查询、库存提示时用 `@zerodep-dev/query-polardb` 的 `database(...)`。
+  - 方言包导出的 `database(pool)`（接收驱动库的连接池）与核心包的 `database(driver)` 同名，从哪个包导入就是哪一个。
 
 ## 2. 声明实体
 

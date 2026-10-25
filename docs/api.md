@@ -64,6 +64,18 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | PolarDB for MySQL | `org.dpdns.zerodep.query.polardb.Polardb`（含 MySQL 的全部写法） | `PolardbDatabase`（也是 `MysqlDatabase`，见第 19 节） |
 | SQLite 3.46+ | `org.dpdns.zerodep.query.sqlite.Sqlite` | `SqliteDatabase`（见第 18 节） |
 
+**通用门面**：只用 `Sql` 里通用写法的代码（例如建在本库上的流程引擎）不必依赖具体的方言包，由连接决定方言（[0013](decisions/0013-portable-facade-and-live-tests.md)）：
+
+```java
+import static org.dpdns.zerodep.query.Sql.*;          // 只有各库语义一致的写法
+
+Database db = Sql.database(SpringConnections.of(dataSource, transactionManager), c -> c.filter(...));
+```
+
+- `Sql.database(...)` 借一个连接读出驱动报告的产品名，交给类路径上登记了的方言包创建实例（`dialect.DialectProvider`，方言包在 `META-INF/services` 里登记）：HANA、PostgreSQL、MySQL、SQLite。返回的就是方言门面会给的实例，只是类型写成 `Database`。
+- 类路径上没有对应的方言包时报错，并列出登记过的方言。
+- PolarDB 报告的产品名是 MySQL，得到 MySQL 方言的实例；通用写法在两者上相同，要用闪回查询、库存提示时改用 `Polardb.database(...)`。
+
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
 
 - `filter("tenant", Client.class, t -> ...)`：具名的全局过滤器，单个查询可以用 `unfiltered("tenant")` 只关掉它；过滤器每次渲染都调用，返回 `Cond.EMPTY` 就不加条件，所以"管理员看全部租户"这类动态开关写在回调里：`t -> currentTenant() == null ? Cond.EMPTY : t.tenant().eq(currentTenant())`。多个过滤器按添加顺序生效；
