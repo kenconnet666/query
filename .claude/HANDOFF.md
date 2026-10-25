@@ -6,14 +6,14 @@
 
 ## 当前状态
 
-### 条件树（[0017](../docs/decisions/0017-condition-tree.md)，分支 ）
+### 条件树（[0017](../docs/decisions/0017-condition-tree.md)，分支 `feat/condition-tree`）
 
 vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26），本库配套把条件树写成 SQL：
 
-- **两端**：，14 种比较方式，字段只认结果列（白名单），值按列的类型读；最外层 all 拆开各自进 WHERE 或 HAVING，一个分支混着逐行与聚合的列时报错。规则与前端  一致：不等于类把空值算作满足（），没填完整的比较与空组不加条件。
-- **请求**： /  读  参数（JSON 文字）， 随之筛选；vue-tsx-pro 的  把筛选条件里的条件树写成这个参数。
-- **Java**：（、，sealed：Rule / All / Any / Not）、；wire 模块新增 （不依赖 JSON 库）。TS：。
-- **测试**：单元测试两端一一对应（SQL 相同）；实库  /  加了条件树的用例，2026-10-26 本机五个库（Java 25、TS 30）全部通过。
+- **两端**：`Query.conditionBy(tree)`，14 种比较方式，字段只认结果列（白名单），值按列的类型读；最外层 all 拆开各自进 WHERE 或 HAVING，一个分支混着逐行与聚合的列时报错。规则与前端 `matchesCondition` 一致：不等于类把空值算作满足（`OR x IS NULL`），没填完整的比较与空组不加条件。
+- **请求**：`TableRequest` / `parseTableRequest` 读 `condition` 参数（JSON 文字），`db.table` 随之筛选；vue-tsx-pro 的 `tableParams` 把筛选条件里的条件树写成这个参数。
+- **Java**：`select.ConditionTree`（`parse`、`from`，sealed：Rule / All / Any / Not）、`TreeConditions`；wire 模块新增 `Json.read`（不依赖 JSON 库）。TS：`query/condition-tree.ts`。
+- **测试**：单元测试两端一一对应（SQL 相同）；实库 `TableQueryTest` / `table.live.test.ts` 加了条件树的用例，2026-10-26 本机五个库（Java 25、TS 30）全部通过。
 
 ### 与前端表格配合（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)，分支 `feat/table-query`）
 
