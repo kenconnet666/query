@@ -7,10 +7,13 @@ import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
 import org.dpdns.zerodep.query.testing.TestDialect;
+import org.dpdns.zerodep.query.testing.Workflow;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.List;
 
@@ -100,6 +103,44 @@ class FilterObjectTest {
             WHERE LIPS2.MATNR = MARA.MATNR AND LIPS2.MANDT = MARA.MANDT AND LIPS2.VRKME = ? AND LIPS2.LFIMG >= ?)""", sql);
         assertEquals("SELECT MARA.MATNR AS \"material\"\nFROM QUERY_IT.MARA MARA",
             from(Mara.class).where(new Search(null, null, " ")).select(m -> m.material()).toSql(DIALECT).sql());
+    }
+
+    @Test
+    void 区间两端都含且空的一端不加条件() {
+        record Search(@Where(value = "createdOn", op = Where.Op.RANGE) List<LocalDate> created,
+                      @Where(value = "quantity", op = Where.Op.RANGE) Range<String> quantity) { }
+        Rendered r = from(Lips.class).where(new Search(List.of(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)), new Range<>("1.5", " ")))
+            .select(l -> l.delivery()).toSql(DIALECT);
+        assertTrue(r.sql().endsWith("WHERE LIPS.ERDAT >= ? AND LIPS.ERDAT <= ? AND LIPS.LFIMG >= ?"), r.sql());
+        assertEquals(List.of("20260101", "20260131", new BigDecimal("1.5")), r.parameters());
+        assertEquals("SELECT LIPS.VBELN AS \"delivery\"\nFROM QUERY_IT.LIPS LIPS",
+            from(Lips.class).where(new Search(List.of(), new Range<>(null, null))).select(l -> l.delivery()).toSql(DIALECT).sql());
+    }
+
+    @Test
+    void 日期的一端落在时间戳列上时止端是后一天的零点() {
+        record Search(@Where(value = "createTime", op = Where.Op.RANGE) Range<LocalDate> created,
+                      @Where(value = "createTime", op = Where.Op.RANGE) List<String> at) { }
+        Rendered r = from(Workflow.Task.class)
+            .where(new Search(new Range<>(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)), List.of("2026-02-01T08:30", "2026-02-03")))
+            .select(t -> t.id()).toSql(DIALECT);
+        assertTrue(r.sql().endsWith("WHERE TASK.CREATE_TIME >= ? AND TASK.CREATE_TIME < ? AND TASK.CREATE_TIME >= ? AND TASK.CREATE_TIME < ?"), r.sql());
+        assertEquals(List.of(LocalDateTime.of(2026, 1, 1, 0, 0), LocalDateTime.of(2026, 2, 1, 0, 0),
+            LocalDateTime.of(2026, 2, 1, 8, 30), LocalDateTime.of(2026, 2, 4, 0, 0)), r.parameters());
+    }
+
+    @Test
+    void 文字按列的类型读_区间要两个值() {
+        record Search(@Where("quantity") String quantity, List<String> material) { }
+        Rendered r = from(Lips.class).where(new Search("2.50", List.of("M1", " "))).select(l -> l.delivery()).toSql(DIALECT);
+        assertTrue(r.sql().endsWith("WHERE LIPS.LFIMG = ? AND LIPS.MATNR IN (?)"), r.sql());
+        assertEquals(List.of(new BigDecimal("2.50"), "M1"), r.parameters().subList(r.parameters().size() - 2, r.parameters().size()));
+        record Three(@Where(value = "quantity", op = Where.Op.RANGE) List<String> quantity) { }
+        var e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(new Three(List.of("1", "2", "3"))));
+        assertTrue(e.getMessage().contains("Three.quantity: a RANGE needs"), e.getMessage());
+        record NotNumber(@Where("quantity") String quantity) { }
+        e = assertThrows(IllegalArgumentException.class, () -> from(Lips.class).where(new NotNumber("abc")));
+        assertTrue(e.getMessage().contains("\"abc\""), e.getMessage());
     }
 
     @Test

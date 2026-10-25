@@ -12,7 +12,11 @@ import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
+import org.dpdns.zerodep.wire.Wire;
 
+import java.lang.reflect.Array;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -20,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * {@code where(filter)} 的实现：条件对象的每个字段变成一个条件，见 {@link Where}。列在构造时就按名字找好，
@@ -123,17 +128,24 @@ public final class FilterObject {
         return built[0].isEmpty() ? Cond.EMPTY : c;
     }
 
-    /** 写下一个字段的条件；值为空时由 skipEmpty 规则省略。 */
+    /** 写下一个字段的条件；值为空时由 skipEmpty 规则省略，文字按列的类型读。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static void compare(Expr column, Where.Op op, Object value, String owner) {
+        if (op == Where.Op.RANGE) {
+            range(column, value, owner);
+            return;
+        }
         if (value instanceof Collection<?> values) {
+            List<Object> read = new ArrayList<>();
+            for (Object v : values) if ((v = textAs(column, v)) != null) read.add(v);
             switch (op) {
-                case EQ -> column.in(values);
-                case NE -> column.notIn(values);
-                default -> throw new IllegalArgumentException(owner + ": a collection can only be compared with EQ (IN) or NE (NOT IN)");
+                case EQ -> column.in(read);
+                case NE -> column.notIn(read);
+                default -> throw new IllegalArgumentException(owner + ": a collection can only be compared with EQ (IN), NE (NOT IN) or RANGE");
             }
             return;
         }
+        if (op != Where.Op.CONTAINS && op != Where.Op.STARTS_WITH && op != Where.Op.ENDS_WITH) value = textAs(column, value);
         switch (op) {
             case EQ -> column.eq(value);
             case NE -> column.ne(value);
@@ -144,7 +156,55 @@ public final class FilterObject {
             case CONTAINS -> ExprText.of(column).contains(text(value));
             case STARTS_WITH -> ExprText.of(column).startsWith(text(value));
             case ENDS_WITH -> ExprText.of(column).endsWith(text(value));
+            case RANGE -> throw new AssertionError("handled above");
         }
+    }
+
+    /**
+     * 区间：起端写 {@code >=}，止端写 {@code <=}。列是 LocalDateTime 而某一端是日期（LocalDate 或 'yyyy-MM-dd'）时，
+     * 起端是那天的零点，止端写成 {@code <} 后一天的零点，这一整天都算在内。两端都空时不加条件。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void range(Expr column, Object value, String owner) {
+        if (value == null) return;
+        Object[] ends = ends(value, owner);
+        boolean timestamp = column.type().javaType() == LocalDateTime.class;
+        LocalDate from = timestamp ? day(ends[0]) : null;
+        column.ge(from != null ? from.atStartOfDay() : textAs(column, ends[0]));
+        LocalDate until = timestamp ? day(ends[1]) : null;
+        if (until != null) column.lt(until.plusDays(1).atStartOfDay());
+        else column.le(textAs(column, ends[1]));
+    }
+
+    /** 区间值的两端：Range、两项（或空）的集合或数组。 */
+    private static Object[] ends(Object value, String owner) {
+        if (value instanceof Range<?> r) return new Object[] {r.start(), r.end()};
+        List<Object> items = new ArrayList<>();
+        if (value instanceof Collection<?> c) items.addAll(c);
+        else if (value.getClass().isArray()) for (int i = 0; i < Array.getLength(value); i++) items.add(Array.get(value, i));
+        if (items.isEmpty()) return new Object[] {null, null};
+        if (items.size() == 2) return items.toArray();
+        throw new IllegalArgumentException(owner + ": a RANGE needs a Range or two values (start, end), got " + value);
+    }
+
+    /** 区间的一端是一天（LocalDate 或 'yyyy-MM-dd'）时返回那天，否则 null。 */
+    private static LocalDate day(Object bound) {
+        if (bound instanceof LocalDate d) return d;
+        if (bound instanceof String s && DAY.matcher(s.trim()).matches()) return Wire.parse(LocalDate.class, s.trim());
+        return null;
+    }
+
+    /** 'yyyy-MM-dd'。 */
+    private static final Pattern DAY = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
+    /**
+     * 文字按列的 Java 类型读（地址栏里的值都是文字）：空白是 null（不加条件），列本身是文字时原样返回；别的值原样返回。
+     */
+    private static Object textAs(Expr<?> column, Object value) {
+        if (!(value instanceof String s)) return value;
+        if (s.isBlank()) return null;
+        Class<?> type = column.type().javaType();
+        return type == String.class || type == Object.class || type == CharSequence.class ? s : Wire.parse(type, s.trim());
     }
 
     /** 文本比较的值；null 保持为 null，以便被省略。 */

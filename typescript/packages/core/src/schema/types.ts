@@ -1,5 +1,5 @@
 import { CalendarDate, CalendarDateTime } from "@internationalized/date";
-import { parseDate, parseTimestamp } from "@zerodep-dev/wire";
+import { parseDate, parseTimestamp, parseWire, type WireKind } from "@zerodep-dev/wire";
 import { Decimal } from "decimal.js";
 
 /**
@@ -209,6 +209,30 @@ export function converted<J, D, K extends TypeKind>(storage: SqlType<D, K>, conv
     (v) => storage.encode(converter.toDatabase(v)),
     (raw) => converter.fromDatabase(storage.decode(raw)) as J,
   );
+}
+
+/** 内置类型的值在线上（0015）怎样读成文字；`converted(...)` 的类型不在里面，它们的字段类型无从得知。 */
+const WIRE_KINDS: ReadonlyMap<SqlType<unknown>, WireKind> = new Map<SqlType<unknown>, WireKind>([
+  [text as SqlType<unknown>, "text"],
+  [integer as SqlType<unknown>, "integer"],
+  [smallint as SqlType<unknown>, "integer"],
+  [bigint as SqlType<unknown>, "bigint"],
+  [double as SqlType<unknown>, "double"],
+  [decimal as SqlType<unknown>, "decimal"],
+  [boolean as SqlType<unknown>, "boolean"],
+  [date as SqlType<unknown>, "date"],
+  [timestamp as SqlType<unknown>, "timestamp"],
+  [bytes as SqlType<unknown>, "bytes"],
+]);
+
+/**
+ * 按列的类型读一段线上的文字（地址栏里的筛选值、条件对象里的文字）：内置类型用 `parseWire`，
+ * 空白是 null（不加条件）；转换器类型与无类型的列原样返回文字，交给绑定时的校验。
+ */
+export function parseColumnText(type: SqlType<unknown>, text: string): unknown {
+  if (text.trim() === "") return null;
+  const kind = WIRE_KINDS.get(type);
+  return kind === undefined || kind === "text" ? text : parseWire(kind, text.trim());
 }
 
 /** JavaScript 值的类型，用于没有声明类型的参数和字面量。 */

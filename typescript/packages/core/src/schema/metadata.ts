@@ -141,8 +141,11 @@ export function deletedValue(logic: LogicDeleteMeta): unknown {
   return logic.epochMillis ? BigInt(Date.now()) : logic.deleted;
 }
 
-/** 条件对象字段的比较方式。 */
-export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | WhereOperator;
+/**
+ * 条件对象字段的比较方式。range 是两端都含的区间：值是 `{ start, end }`（vue-tsx-pro 的 DateRangePicker）或两项的数组
+ * （NumberRangeField、地址栏里重复的参数），空的一端不加条件；日期的一端落在时间戳列上时，止端写成"早于后一天的零点"。
+ */
+export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | "range" | WhereOperator;
 
 /** 自定义的比较：在列上写条件（条件块），不写就是不加条件；字段值为空时不调用，直接省略。 */
 export type WhereOperator = (column: Expr<any>, value: any) => void;
@@ -305,7 +308,8 @@ export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Re
 /**
  * 条件对象（`from(...).where(filter)`）里一个字段怎样变成条件：op 是比较方式，columns 是比较的列，默认是字段名；
  * 列可以经过多对一关系（`"mara.partNumber"`），写多个时任一满足即可（OR）。没有这个装饰器的字段与同名列比较相等
- * （数组用 IN）。例如 `@where("ge", "createdOn") from?: CalendarDate;`；op 也可以是自定义函数 `(column, value) => { 条件 }`。
+ * （数组用 IN）。例如 `@where("ge", "createdOn") from?: CalendarDate;`、`@where("range", "createdOn") created?: Range<CalendarDate>;`；
+ * op 也可以是自定义函数 `(column, value) => { 条件 }`。字段值是文字（地址栏参数）时按列的类型读（`parseColumnText`）。
  */
 export function where(op: WhereOp, ...columns: string[]) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });

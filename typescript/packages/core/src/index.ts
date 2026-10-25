@@ -130,7 +130,7 @@ export type {
   Wider,
 } from "./sql/typed.js";
 export { Bound, Window, WindowFunction } from "./sql/window.js";
-export { type FilterObject } from "./query/filter.js";
+export { type FilterObject, type Range } from "./query/filter.js";
 export { aliasOf, Cte, customSource, Derived, tableSource, type CustomSource, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
 export { Children, Many, type AnyMany } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Excluded, type ExcludedKeys, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
