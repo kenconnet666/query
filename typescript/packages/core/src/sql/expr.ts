@@ -1,5 +1,6 @@
 import type { CalendarDate, CalendarDateTime } from "@internationalized/date";
 import type { Decimal } from "decimal.js";
+import { noteAggregate, windowed } from "./aggregation.js";
 import { ADD_DAYS, ADD_MONTHS, ADD_SECONDS, ADD_YEARS, CONCAT, DAY, DAYS_BETWEEN, HOUR, LOCATE, MINUTE, MONTH, MONTH_START, SECOND, SECONDS_BETWEEN, STRING_AGG, YEAR } from "./builtins.js";
 import { addCondition, and, Between, collect, compare, condition, Cond, inList, inQuery, skips } from "./cond.js";
 import { FunctionDef } from "./dialect.js";
@@ -1044,7 +1045,7 @@ export class Over<T> extends ExprNode<T> {
   /** 写出 `fn OVER (window)`；方言不能把这个聚合当窗口函数时报错。 */
   render(w: SqlWriter): void {
     if (this.fn instanceof Aggregate && !w.dialect.windowable(this.fn.name)) throw new Error(`${this.fn.name}(...) OVER (...) is not supported on ${w.dialect.name}`);
-    w.render(this.fn).sql(" OVER (").render(this.window).sql(")");
+    windowed(w, () => void w.render(this.fn).sql(" OVER (").render(this.window).sql(")"));
   }
 }
 
@@ -1082,6 +1083,7 @@ export class Aggregate<T> extends ExprNode<T> {
    * 方言按名字登记了写法时（不带 DISTINCT）交给它，参数同样先套上过滤条件。
    */
   render(w: SqlWriter): void {
+    noteAggregate(w);
     const custom = this.distinct ? undefined : w.dialect.callRenderer(this.name);
     if (custom !== undefined) {
       const condition = this.condition;

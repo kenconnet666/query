@@ -39,9 +39,9 @@ function extension(key: string, name: string): FunctionDef {
   });
 }
 
-const MEDIAN = extension("MEDIAN", "median");
-const PERCENTILE_CONT = extension("PERCENTILE_CONT", "percentile_cont");
-const PERCENTILE_DISC = extension("PERCENTILE_DISC", "percentile_disc");
+const MEDIAN = extension("MEDIAN", "median").aggregating();
+const PERCENTILE_CONT = extension("PERCENTILE_CONT", "percentile_cont").aggregating();
+const PERCENTILE_DISC = extension("PERCENTILE_DISC", "percentile_disc").aggregating();
 
 /** 百分位数 p 必须在 0 到 1 之间。 */
 function fraction(p: number): number {

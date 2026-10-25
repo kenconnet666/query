@@ -124,7 +124,7 @@ describe("投影与映射", () => {
     const page = await new TestDatabase({}, driver).page(lines(), 2, 2);
     assert.deepEqual({ total: page.total, totalPages: page.totalPages, size: page.rows.length }, { total: 5, totalPages: 3, size: 2 });
     const countSql = driver.statements.find((s) => s.sql.startsWith("SELECT COUNT(*)"))!.sql;
-    assert.ok(!countSql.includes("ORDER BY") && countSql.endsWith(") COUNTED"), countSql);
+    assert.ok(!countSql.includes("ORDER BY") && countSql.startsWith("SELECT COUNT(*)\nFROM "), countSql);
   });
 
   it("解码失败时报出列名", async () => {

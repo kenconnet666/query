@@ -18,6 +18,7 @@ function served(name: string): string {
 
 /** 浏览器里没有包解析：把 JS 里的包名换成服务器上的路径。Worker 里不能用 import map，所以在服务端改写。 */
 const PACKAGES: Readonly<Record<string, string>> = {
+  "@zerodep-dev/wire": "/packages/wire/dist/index.js",
   "@zerodep-dev/query-core": "/packages/core/dist/index.js",
   "@zerodep-dev/query-sqlite": "/packages/sqlite/dist/index.js",
   "@zerodep-dev/idb": "/packages/idb/dist/index.js",

@@ -29,6 +29,8 @@ TypeScript 版本见 [API 使用说明（TypeScript）](api-typescript.md)，两
 | 每组取前 N 行（`QUALIFY`） | `.qualify(l -> rowNumber().over(w -> w.partitionBy(a).orderBy(b.desc())).le(3L))` |
 | 原生 SQL 片段 | `sql(String.class, "LPAD({0}, {1}, '0')", l.material(), 18)` |
 | 执行 | `db.list(q)`、`db.one(q)`、`db.optional(q)`、`db.first(q)`、`db.page(q, 1, 20)`、`db.stream(q)` |
+| 前端的表格请求（排序、表头筛选、分页） | `db.table(q, TableRequest.parse(params)).toWire()`，见第 20 节 |
+| 多对多 | `default Many<Role> roles() { return userRoles().through(UserRole::role); }` |
 | `INSERT`、`UPDATE`、`DELETE` | `db.execute(insertInto(T.class).values(rows))`、`update(T.class).set(t -> { t.x().to(v); t.y().to(w); }).where(...)`、`deleteFrom(T.class).where(...)`；按主键 `.byId(row)`，见第 15 节 |
 | 插入或更新、`FOR UPDATE` | `.onConflict().update(t -> t.x())`、`.with(forUpdate(Lock.SKIP_LOCKED))` |
 | 联表 `UPDATE` / `DELETE` | 方言门面的 `updateJoin(T.class, S.class, (t, s) -> on).set(...).where(...)`、`deleteJoin(...)`，见第 15 节 |
@@ -258,6 +260,8 @@ ORDER BY MARA.MFRPN ASC
 | `count()`、`countDistinct(l -> l.salesOrder())`、`sum(l -> l.quantity())`、`max`、`min`、`avg` | 相关标量子查询，没有行时 `sum` 等为 NULL。`sum` 的结果是 `ExprNumber`、`max`/`min` 是 `Expr`：值来自没写参数类型的 lambda，返回类型若是类型变量，`x.gt(m.items().sum(i -> i.amount()))` 会在 `gt(T)` 和 `gt(Expr<T>)` 之间引用不明确；要接着用某种类型的方法时包一层，如 `ExprDecimal.of(...)` |
 | `stringAgg(l -> l.delivery(), ",")` | 相关标量子查询拼接文本，顺序取 `orderBy(...)`：`m.deliveries().orderBy(l -> l.delivery()).stringAgg(...)` |
 | `where(l -> cond)` | 先筛选目标行，可接上面任一运算：`m.deliveries().where(l -> l.unit().eq("KG")).none()` |
+| `where(filter)` | 用条件对象筛选目标行（规则同第 7 节，路径从目标表开始），前端的条件于是能筛子集合：`m.deliveries().where(lineFilter).list(...)` |
+| `through(ur -> ur.role())` | 多对多：到中间表的一对多再沿中间表的多对一关系走到目标表，见下文 |
 | `first(l -> l.createdOn().desc())` | 每组按顺序取第一行，返回那一行的表接口，可继续取列 |
 | `orderBy(l -> l.delivery())`、`limit(n)`、`list(projection)` | 子行列表，见第 6 节；`limit(n)` 每个父行只取按顺序的前 n 行（批量查询里用 ROW_NUMBER 按父键分区） |
 
@@ -269,6 +273,25 @@ from(Mara.class)
 ```
 
 `first` 渲染为 `ROW_NUMBER` 派生表再 LEFT JOIN 回来（HANA 没有 LATERAL，三个库都用这一种写法），没有匹配行时各列为 NULL。`first` 和 `list` 要求连接条件里至少有一个“目标列 = 本表的列”的等值，这些列作为分组键或批量加载的键，其余条件只筛选目标行；没有时报错。
+
+**多对多**：先声明到中间表的一对多，再 `through` 中间表的多对一关系，得到目标表的 `Many`：
+
+```java
+@Table("USER_ROLE") interface UserRole extends Entity {
+    @Column("USER_ID") ColInteger<Integer> userId();
+    @Column("ROLE_ID") ColInteger<Integer> roleId();
+    default Role role() { return one(Role.class, r -> r.id().eq(roleId())); }
+}
+// User 里：
+default Many<UserRole> userRoles() { return many(UserRole.class, ur -> ur.userId().eq(id())); }
+default Many<Role> roles() { return userRoles().through(UserRole::role); }
+
+from(User.class).where(u -> u.roles().any(r -> r.name().eq("admin")))
+    .select(u -> row(UserRoles::new, u.name(), u.roles().orderBy(r -> r.sortNo()).list(r -> r.name())));
+// EXISTS (SELECT 1 FROM USER_ROLE LEFT JOIN ROLE ON ROLE.ID = USER_ROLE.ROLE_ID WHERE USER_ROLE.USER_ID = USER.ID AND ROLE.NAME = ?)
+```
+
+查询的是中间表，lambda 拿到的是导航过去的目标行，用到的目标列在子查询里 LEFT JOIN 过去；所以 `any`、`count`、`sum`、`list`、`first`、`groupJoin` 和条件对象的路径（`@Where("roles.name")`）都照常可用。`count()` 是中间表的行数，用不到目标列时不连接目标表。`through` 要紧跟在到中间表的关系后面，`where`、`orderBy`、`limit` 写在它之后。
 
 **合成一个分组连接（`groupJoin`）**：默认每个 `count`、`sum`、`any` 等都是一个相关子查询。同一关系上的运算较多、父表较大时（HANA 尤其明显），在作用域上写 `groupJoin(m -> m.deliveries())`，这些运算合成一个按连接键分组的派生表，只 LEFT JOIN 一次：
 
@@ -469,12 +492,15 @@ Query<Map<String, Object>> totals = from(Lips.class)
 totals.exclude("unit", "prefix")             // 这些列写成 NULL，分组键和按它的排序一起去掉
 totals.excludeIf(!withUnit, "unit")           // 条件成立才排除
 totals.only(req.columns())                    // 只取这些列；null 或空集合保持不变
-totals.sortBy("total desc, material")         // 按排序串替换原来的 ORDER BY
+totals.sortBy("-total,material")              // 按排序串替换原来的 ORDER BY；也可以写 "total desc, material"
+totals.filterBy(Map.of("unit", List.of("EA", "KG")))   // 结果列 IN (...)：表头的多选筛选
+totals.searchBy(Map.of("material", "泵"))      // 结果列 LIKE %泵%：表头的关键字筛选（文字列）
 ```
 
 - 被排除的列在 SQL 里是 `NULL`，结果的形态不变（`row` 的对应参数收到 null）；只被它们用到的关系不再连接。有分组时，与它们相同的分组键一并去掉，于是同一个查询可以按用户选的维度汇总。
 - 列名就是 `q.labels()`，不分大小写和下划线；不存在的列名报错并列出可用的列。
-- `sortBy` 只认结果里的列名和 `asc` / `desc`，等于白名单，所以可以直接传入用户的排序参数；未知列名、被排除的列或其他写法都会报错。`null` 或空白保持原来的排序。UNION 之后不能直接 `sortBy`，先包成 CTE。
+- `sortBy` 只认结果里的列名，前面带减号是倒序（同 JSON:API，前端 `useTableQuery` 发的就是这种写法），也认 `asc` / `desc`；等于白名单，所以可以直接传入用户的排序参数；未知列名、被排除的列或其他写法都会报错。`null` 或空白保持原来的排序。UNION 之后不能直接 `sortBy`，先包成 CTE。
+- `filterBy`、`searchBy` 同样只认结果列。值是地址栏里的文字，按列的 Java 类型读（`Wire.parse`，见第 20 节）；空白的值跳过。逐行计算的列写进 WHERE，聚合的列（`sum()`、`stringAgg` 等）写进 HAVING，在渲染时判断；窗口函数的列不能这样筛选。`searchBy` 只能用在文字列上。
 
 ### 条件对象
 
@@ -487,12 +513,15 @@ public record DeliverySearch(
     @Where(value = "createdOn", op = Where.Op.LT) LocalDate to,               // ERDAT < ?
     @Where(value = {"mara.partNumber", "text.text"}, op = Where.Op.CONTAINS) String keyword,   // 任一列包含
     @Where(op = Where.Op.NE) String unit,                                     // VRKME <> ?
+    @Where(value = "createdOn", op = Where.Op.RANGE) Range<LocalDate> created, // ERDAT >= ? AND ERDAT <= ?
     @Ignore String sort) { }                                                  // 不作为条件
 
 from(Lips.class).where(search).select(l -> l.delivery());
 ```
 
-- 没有 `@Where` 的字段与同名列比较相等，集合用 `IN`。`op` 取 `EQ`、`NE`、`GT`、`GE`、`LT`、`LE`、`CONTAINS`、`STARTS_WITH`、`ENDS_WITH`；集合值只能配 `EQ`（`IN`）和 `NE`（`NOT IN`）。
+- 没有 `@Where` 的字段与同名列比较相等，集合用 `IN`。`op` 取 `EQ`、`NE`、`GT`、`GE`、`LT`、`LE`、`CONTAINS`、`STARTS_WITH`、`ENDS_WITH`、`RANGE`；集合值只能配 `EQ`（`IN`）、`NE`（`NOT IN`）和 `RANGE`。
+- `RANGE` 是两端都含的区间：值是 `Range(start, end)`（JSON 的 `{start, end}`，同 vue-tsx-pro 的 DateRangePicker）或两项的集合（地址栏里两个同名参数），空的一端不加条件。日期的一端落在 LocalDateTime 列上时，起端是那天的零点，止端写成"早于后一天的零点"，这一整天都算在内。
+- 字段声明成 `String` 而列不是文字时，按列的 Java 类型读（`Wire.parse`）；空白的文字不加条件，集合里的空白值也去掉。
 - 自定义的比较写成实现 `Where.Operator` 的类（要有无参构造方法），用 `using` 指定：`@Where(value = "createdOn", using = InMonth.class) YearMonth month`，`InMonth.apply(column, value)` 像条件块里一样写下条件，例如 `((Expr<LocalDate>) column).range(start, end)`；字段为空时不调用。
 - `value` 是列路径，默认是字段名；可以经过多对一关系（`"mara.partNumber"`）；写多个时任一满足即可（OR）。
 - 路径经过一对多关系时写成 EXISTS，例如物料查询里的 `@Where("deliveries.unit") String unit` 和 `@Where(value = "deliveries.quantity", op = Where.Op.GE) BigDecimal minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个交货行同时满足；这些字段的值都为空时整个 EXISTS 省略。
@@ -658,9 +687,11 @@ from(totals)
 | `db.optional(q)` | `Optional`：零行或一行，多于一行报错；最多读 2 行 |
 | `db.first(q)` | `Optional`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, …)` | 在一个游标上逐行读取；`stream` 要用 try-with-resources 关闭。PostgreSQL 在自动提交的连接上自动开临时事务；MySQL 要配置 `fetchSize(Integer.MIN_VALUE)` 才逐行读取 |
-| `db.count(q)` | 外包 `COUNT(*)` |
+| `db.count(q)` | 行数。单段、没有分组、DISTINCT、HAVING、QUALIFY、LIMIT 和方言子句、投影里没有聚合时直接 `SELECT COUNT(*) FROM ... WHERE ...`：投影里的标量子查询、窗口函数和只为投影连接的导航关系都不写；其余情况外包 `COUNT(*)` |
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
-| `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
+| `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`、`toWire()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
+| `db.table(q, TableRequest.parse(params))` | 表格查询：依次 `filterBy`、`searchBy`、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 20 节 |
+| `db.withAncestors(Dept.class, d -> d.id(), d -> d.parentId(), d -> hits, d -> select)` | 命中的行加上全部祖先（树的服务端搜索），交给 `Trees.build` 组装；PostgreSQL、MySQL、SQLite 一条递归 CTE，HANA 一层一层按键查，见第 20 节 |
 | `db.sql("... :name IN (:ids)").bind("ids", ids).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射；另有 `first`、`one`、`bindNull`、`timeout`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、`::` 类型转换、MySQL 的反引号）里的 `:name` 不是参数 |
 | `db.attach(rows, key, ids -> query, keyOf, setter)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空列表；适合不便声明成关系的数据，例如别的库或别的模块的表 |
 | `q.cached(Duration.ofMinutes(5))` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的原始行 |
@@ -781,7 +812,7 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 8. **全局过滤器**：多租户的条件配成 `filter(...)`，逻辑删除用 `@LogicDelete`，不要在每个查询里重复写；`unfiltered()` 只用于确实要跨租户或看已删除行的查询。
 9. **写入**：多行写入和 `byId` 已自动放进一个事务；跨多条语句的业务操作放进 `db.transaction(...)` 或 `@Transactional`。
 
-**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`SqlValues`、`Fn`；`table`、`table.column`、`expr`、`expr.typed`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`。
+**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`SqlValues`、`Fn`；`table`、`table.column`、`expr`、`expr.typed`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`、`TableRequest`、`Trees`；`dialect` 包里的 `Aggregation`、`FunctionDef.aggregating()`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`；`wire` 模块的 `Wire`、`WireType`。
 
 `dialect` 包是扩展点，方法签名可能在次版本中增加参数。`exec.JdbcExecutor`、`MappingPlan` 等其余公开类型只供库内部跨包使用，不在承诺范围内。
 
@@ -1175,3 +1206,44 @@ PolardbDatabase db = Polardb.database(SpringConnections.of(dataSource, transacti
 - **热点行的库存提示**：`update(Stock.class).with(s -> inventory(1)).set(...).where(...)` 写成 `UPDATE /*+ COMMIT_ON_SUCCESS ROLLBACK_ON_FAIL TARGET_AFFECT_ROW(1) */ ...`。必须在事务里执行（自动提交时数据库报错）；正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务，所以让它单独占一个事务或放在事务的最后一句：`db.transaction(() -> db.execute(...))`。
 - **没有纳入的**：序列（云产品没有）、`dbms_trans.returning`（云上 8.0 不支持）、并行查询与列存索引的提示（社区版上测不了），需要时用原生 SQL 片段。
 - **与社区 MySQL 的差异**：云上 PolarDB 8.0 的语法基线是社区 8.0.13 / 8.0.18（见 0011），默认隔离级别是读已提交。
+
+## 20. 与前端配合：表格请求、typed JSON、树
+
+与 vue-tsx-pro 的约定见 [0015](decisions/0015-typed-json-wire.md)（值怎样写成 JSON）和 [0016](decisions/0016-table-query-contract.md)（表格请求）。
+
+**表格请求**：前端 `useTableQuery` + `tableParams(query, columns)` 发出 `page`、`pageSize`、`sort=-amount,name`、已知时的 `total`、表头多选 `filter.列=值`、表头关键字 `search.列=关键字`，其余参数是查询栏的条件：
+
+```java
+@GetMapping("/orders")
+Object orders(@RequestParam MultiValueMap<String, String> params, OrderFilter filter) {
+    Query<OrderRow> q = from(Order.class).where(filter).select(o -> cols(o.id(), o.supplier(), o.amount(), o.status())).into(OrderRow.class);
+    return db.table(q, TableRequest.parse(params)).toWire();
+}
+```
+
+- `TableRequest.parse(params[, maxPageSize])`：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字报 `IllegalArgumentException`，Web 层据此回 400。
+- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
+- 查询栏的条件交给条件对象（第 7 节）：Spring 按字段类型绑定，区间写成 `Range<LocalDate>` 或两项的 `List<LocalDate>`。
+
+**typed JSON**：`Page.toWire()` 和 `Wire.encode(任意对象)`（`wire` 模块，`org.dpdns.zerodep.wire`，不依赖 Jackson）把 Long、BigInteger、BigDecimal、java.time 的值、字节写成文字，根上附一张 `$types`，前端的请求层据此还原，JavaScript 不会丢精度：
+
+```json
+{ "rows": [{ "id": "9007199254740993", "amount": "12.50", "createdOn": "2026-01-31" }], "total": 368, "page": 1, "size": 20, "totalPages": 19,
+  "$types": { "rows.id": "bigint", "rows.amount": "decimal", "rows.createdOn": "date" } }
+```
+
+结果只由 Map、List、String、Number、Boolean 组成，Jackson 2、3 都原样写出，也不受 ObjectMapper 的配置影响；对象取 record 的组件或公开的 getter，不认 `@JsonIgnore`。读请求不需要它：Jackson 本来就把 `"12.50"`、`"9007199254740993"`、ISO 日期读成 BigDecimal、Long、LocalDate，Spring Boot 默认忽略 `$types`。地址栏里的单个值用 `Wire.text(value)` / `Wire.parse(Type.class, text)`。
+
+**树**：
+
+```java
+// 懒加载：每行带上有没有子节点
+from(Dept.class).where(d -> d.parentId().isNull()).select(d -> cols(d.id(), d.name(), bool(() -> d.children().any()).as("hasChildren")));
+// 服务端搜索：命中的行加上全部祖先，组装成从根开始的树
+List<DeptRow> rows = db.withAncestors(Dept.class, d -> d.id(), d -> d.parentId(), d -> d.name().contains(keyword),
+    d -> row(DeptRow::new, d.id(), d.parentId(), d.name()));
+List<DeptNode> tree = Trees.build(rows, DeptRow::id, DeptRow::parentId, (d, kids) -> new DeptNode(d.id(), d.name(), kids));
+```
+
+- `db.withAncestors` 在 PostgreSQL、MySQL（PolarDB）、SQLite 上是一条 `WITH RECURSIVE ... UNION ...`（`Dialect.supportsRecursiveCte()`）：命中的行共用的祖先只走一遍，父子成环也会停；HANA 没有递归 CTE，一层一层按键查只有键的两列，最后按键分批取 select 的列。行的顺序不保证。
+- `Trees.build(rows, key, parent, withChildren)`：同级保持 rows 的顺序，父键不在这批行里的当作根，键重复或成环时报错。数据不来自 SQL 时用 `Trees.withAncestors(rows, key, parent, keys -> 按键取行)`。

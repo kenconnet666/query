@@ -122,8 +122,12 @@ export function createRef<E>(source: Source<E>, entity: Ctor<unknown> | undefine
   return Object.freeze(ref) as unknown as Ref<E>;
 }
 
-/** 关系属性的值：一对多是 Many；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
+/** 关系属性的值：一对多是 Many，多对多是中间表的 Many 再 through；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
 function relationValue(owner: RefOwner, self: object, relation: RelationMeta): unknown {
+  if (relation.through !== undefined) {
+    const via = relation.through.via as (self: object) => Many<unknown>;
+    return via(self).through(relation.through.to as never);
+  }
   const on = relation.on as (self: object, target: object) => void;
   if (relation.many) return new Many(owner, relation.target, (t) => on(self, t));
   const target = createRef(tableSource(relation.target()), undefined, true);
@@ -215,9 +219,11 @@ export class Cte<E> implements Source<E>, CteDefinition {
    * 递归 CTE，供方言包使用（PostgreSQL、MySQL 的 `recursiveCte`）：查询体是 `anchor UNION ALL step(自己)`，
    * step 收到这个 CTE 本身，在里面 `from(self)` 引用上一轮的行。只能在 dialect 上渲染。
    */
-  static recursive<E>(name: string, anchor: Query<E>, step: (self: Cte<E>) => Query<E>, dialect: DialectClass): Cte<E> {
+  static recursive<E>(name: string, anchor: Query<E>, step: (self: Cte<E>) => Query<E>, dialect: DialectClass, distinct = false): Cte<E> {
     const self = new Cte(name, anchor, dialect);
-    self.#body = anchor.unionAll(step(self));
+    const next = step(self);
+    // distinct：每一轮去掉已有的行，多条路径汇到同一行时只走一遍，父子成环也会停下（PostgreSQL、MySQL 8、SQLite 都支持）
+    self.#body = distinct ? anchor.union(next) : anchor.unionAll(next);
     return self;
   }
 

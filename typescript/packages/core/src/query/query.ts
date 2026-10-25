@@ -2,14 +2,15 @@ import type { Clause, Dialect } from "../sql/dialect.js";
 import type { CalendarDate, CalendarDateTime } from "@internationalized/date";
 import type { Decimal } from "decimal.js";
 import { and, collect, Cond, outside, withSkipEmpty } from "../sql/cond.js";
-import { ExprNode, isWindow, Literal, toOrder, type Expr, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
+import { Aggregate, ExprNode, isWindow, Literal, toOrder, type Expr, type Order, type OrderItem, type SourceColumn } from "../sql/expr.js";
 import type { Col, ColOf } from "../sql/typed.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
 import { filterCondition, type FilterObject } from "./filter.js";
 import { Children, isGrouped, Many, type AnyMany, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
-import { double, integer, typeOf, type SqlType } from "../schema/types.js";
+import { double, integer, parseColumnText, typeOf, type SqlType } from "../schema/types.js";
+import { nested, rowKindOf } from "../sql/aggregation.js";
 import { SqlWriter, type Renderable, type Rendered } from "../sql/writer.js";
 import { Sharding, type ShardChoice } from "./sharding.js";
 
@@ -148,6 +149,17 @@ interface SelectSpec {
   readonly clauses: readonly Clause[];
   /** groupJoin 的一对多关系：它们上的集合运算合成按连接键分组的派生表。 */
   readonly groupJoins: readonly Many<any>[];
+  /**
+   * 按结果列的条件（{@link Query.filterBy}、{@link Query.searchBy}）：渲染时看列里有没有聚合，没有的写进 WHERE，有的写进 HAVING。
+   * 构建时还不知道方言，判断不了列里有没有聚合，所以放到渲染时。
+   */
+  readonly resultFilters: readonly ResultFilter[];
+}
+
+/** 一个按结果列的条件：item 是那一列的表达式，condition 是比较它的条件。 */
+interface ResultFilter {
+  readonly item: Expr<unknown>;
+  readonly condition: Cond;
 }
 
 /** 校验 limit / offset 是非负整数。 */
@@ -385,7 +397,8 @@ export class Query<R> {
   }
 
   /**
-   * 按排序串排序，例如 `"partNumber desc, material"`：逗号分隔，每项是一个结果列名，可以跟 asc 或 desc。
+   * 按排序串排序：逗号分隔，每项是一个结果列名，前面带减号是倒序（同 JSON:API，前端 useTableQuery 发的
+   * `sort=-total,material` 就是这种写法），也可以写成 `"total desc, material"`。
    * 只能按结果里的列排序，相当于白名单，所以可以直接传入用户的排序参数；未知列名或写法报错。
    * spec 为空时保持原来的 ORDER BY，否则替换它。合并后的查询先放进 CTE 再排序。
    */
@@ -395,12 +408,14 @@ export class Query<R> {
     const items = this.#s.arms[0]!.items;
     const orders: Order[] = [];
     for (const part of spec.split(",")) {
-      const words = part.trim().split(/\s+/);
+      const text = part.trim();
+      if (text === "") continue;
+      const minus = text.startsWith("-");
+      const words = (minus ? text.slice(1) : text).trim().split(/\s+/);
       const name = words[0]!;
-      if (name === "") continue;
-      const direction = (words[1] ?? "asc").toLowerCase();
-      if (words.length > 2 || (direction !== "asc" && direction !== "desc")) {
-        throw new Error(`Cannot read sort item '${part.trim()}'; write 'column', 'column asc' or 'column desc'`);
+      const direction = minus ? "desc" : (words[1] ?? "asc").toLowerCase();
+      if (name === "" || words.length > (minus ? 1 : 2) || (direction !== "asc" && direction !== "desc")) {
+        throw new Error(`Cannot read sort item '${text}'; write 'column', '-column', 'column asc' or 'column desc'`);
       }
       const at = [...this.#positionsOf([name], "sortBy")];
       if (at.length !== 1) throw new Error(`Cannot sort by '${name}'; it names a nested object, sort by one of its columns`);
@@ -409,6 +424,56 @@ export class Query<R> {
       orders.push(direction === "desc" ? item.desc() : item.asc());
     }
     return this.#withSpec({ ...this.#s.arms[0]!.spec, orderBy: orders });
+  }
+
+  /**
+   * 按结果列筛选，给表头的多选筛选用：键是结果列名（同 {@link sortBy}，相当于白名单），值是选中的值，这一列的值在其中（IN）。
+   * 值是线上的文字（0015），按列的类型读（`parseColumnText`）；空白的值跳过，没有值的列不加条件，filter 为空时保持不变。
+   * 逐行计算的列写进 WHERE，聚合的列写进 HAVING（渲染时判断），窗口函数的列不能筛选。
+   */
+  filterBy(filter: Readonly<Record<string, readonly string[] | undefined>> | null | undefined): Query<R> {
+    let q: Query<R> = this;
+    for (const [name, texts] of Object.entries(filter ?? {})) {
+      const item = this.#filterable(name, "filterBy");
+      const values = (texts ?? []).map((t) => parseColumnText(item.type as SqlType<unknown>, t)).filter((v) => v != null);
+      if (values.length === 0) continue;
+      q = q.#withResultFilter(item, collect(() => (item as ExprNode<never>).in(values as never[])));
+    }
+    return q;
+  }
+
+  /**
+   * 按结果列的关键字筛选，给表头的关键字筛选用：键是结果列名，值是关键字，这一列的文字包含它（LIKE，% 和 _ 按普通字符）。
+   * 只能用在文字列上；空白的关键字不加条件。其余同 {@link filterBy}。
+   */
+  searchBy(search: Readonly<Record<string, string | undefined>> | null | undefined): Query<R> {
+    let q: Query<R> = this;
+    for (const [name, keyword] of Object.entries(search ?? {})) {
+      const item = this.#filterable(name, "searchBy");
+      if (keyword === undefined || keyword.trim() === "") continue;
+      if (item.type.kind !== "text") throw new Error(`searchBy(...): '${name}' is not a text column; filter it with filterBy(...)`);
+      q = q.#withResultFilter(item, collect(() => (item as ExprNode<string>).contains(keyword.trim())));
+    }
+    return q;
+  }
+
+  /** 能按它筛选的结果列：单段查询里的一列，不是排除掉的、不是嵌套对象、不是子数组。 */
+  #filterable(name: string, use: string): Expr<unknown> {
+    if (this.#s.arms.length > 1) throw new Error(`${use}(...) works on a single SELECT; wrap the UNION in a CTE first`);
+    const at = [...this.#positionsOf([name], use)];
+    if (at.length !== 1) throw new Error(`${use}(...): '${name}' names a nested object; use one of its columns`);
+    const arm = this.#s.arms[0]!;
+    const i = at[0]!;
+    if ((arm.slots ?? []).some((s) => i >= s.start && i < s.start + s.children.outer.length)) throw new Error(`${use}(...): '${name}' is a child list`);
+    const item = arm.items[i]!;
+    if (item instanceof Omitted) throw new Error(`${use}(...): '${name}' is excluded`);
+    return item;
+  }
+
+  /** 追加一个按结果列的条件。 */
+  #withResultFilter(item: Expr<unknown>, condition: Cond): Query<R> {
+    const spec = this.#s.arms[0]!.spec;
+    return this.#withSpec({ ...spec, resultFilters: [...spec.resultFilters, { item, condition }] });
   }
 
   /** 名字在结果里的列位置：同名的列，或嵌套对象下的全部列；未知的名字报错并列出可用的列。 */
@@ -582,12 +647,34 @@ export function renderStatement(w: SqlWriter, q: Query<unknown>): Rendered {
   return w.statement();
 }
 
-/** 对查询做 SELECT COUNT(*)；除非 LIMIT 需要，否则去掉 ORDER BY。 */
+/**
+ * 查询的总行数。能直接数行时（{@link countsRows}）把投影换成 COUNT(*)、去掉 ORDER BY：投影里的标量子查询、只为投影连接的
+ * 导航关系（多对一、`first()`，都至多一行）、groupJoin 的派生表随之不写。否则对查询套一层 SELECT COUNT(*)，
+ * 除非 LIMIT 需要，否则去掉 ORDER BY。
+ */
 export function renderCount(w: SqlWriter, q: Query<unknown>): Rendered {
+  const s = stateOf(q);
+  if (countsRows(w, s)) {
+    renderArm(w, { spec: s.arms[0]!.spec, items: [new Aggregate<number>(integer, "COUNT", false, [])] }, ["count"], false, false);
+    return w.statement();
+  }
   w.sql("SELECT COUNT(*) FROM (");
-  renderQuery(w, stateOf(q), false, true);
+  renderQuery(w, s, false, true);
   w.sql(") ").alias(w.aliasFor({}, "counted"));
   return w.statement();
+}
+
+/**
+ * 能不能直接数行：单段 SELECT，没有分组、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET 和方言子句，投影和按结果列的条件里没有聚合
+ * （没有分组的聚合只出一行）。窗口函数不改变行数，可以去掉。
+ */
+function countsRows(w: SqlWriter, s: State): boolean {
+  if (s.arms.length !== 1) return false;
+  const arm = s.arms[0]!;
+  const spec = arm.spec;
+  if (spec.groupBy.length > 0 || spec.distinct || !and(...spec.having).isEmpty || !and(...spec.qualify).isEmpty) return false;
+  if (spec.limit !== undefined || spec.offset !== undefined || spec.clauses.length > 0) return false;
+  return [...arm.items, ...spec.resultFilters.map((f) => f.item)].every((e) => rowKindOf(w, e) !== "aggregate");
 }
 
 /** `SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END`：总是返回一行，查询找到行时为 1。 */
@@ -660,13 +747,28 @@ export function limitAtMost<R>(q: Query<R>, n: number): Query<R> {
 
 /** 渲染各分支及其运算符和括号；`labeled` 为真时给首个分支的列加上 AS 标签。 */
 function renderQuery(w: SqlWriter, s: State, ordered: boolean, labeled: boolean): void {
-  s.arms.forEach((arm, i) => {
-    if (i > 0) w.sql(`\n${w.dialect.setOperator(s.operators[i - 1]!)}\n`);
-    w.sql(w.dialect.groupOpen.repeat(s.groups.filter(([first]) => first === i).length));
-    renderArm(w, arm, s.labels, i === 0 && labeled, ordered);
-    w.sql(w.dialect.groupClose.repeat(s.groups.filter(([, last]) => last === i).length));
+  // 子查询里的聚合属于子查询自己（rowKindOf 探查外层的列时）
+  nested(w, () => {
+    s.arms.forEach((arm, i) => {
+      if (i > 0) w.sql(`\n${w.dialect.setOperator(s.operators[i - 1]!)}\n`);
+      w.sql(w.dialect.groupOpen.repeat(s.groups.filter(([first]) => first === i).length));
+      renderArm(w, arm, s.labels, i === 0 && labeled, ordered);
+      w.sql(w.dialect.groupClose.repeat(s.groups.filter(([, last]) => last === i).length));
+    });
+    if (s.arms.length > 1) w.dialect.limit(w, s.limit, s.offset);
   });
-  if (s.arms.length > 1) w.dialect.limit(w, s.limit, s.offset);
+}
+
+/** 按结果列的条件分成写进 WHERE 的（逐行计算的列）和写进 HAVING 的（聚合的列）；窗口函数的列不能这样筛选。 */
+function splitResultFilters(w: SqlWriter, s: SelectSpec): { readonly where: Cond[]; readonly having: Cond[] } {
+  const where: Cond[] = [];
+  const having: Cond[] = [];
+  for (const f of s.resultFilters) {
+    const kind = rowKindOf(w, f.item);
+    if (kind === "window") throw new Error("filterBy(...) and searchBy(...) cannot filter a window function column; put the query in a CTE and filter that");
+    (kind === "aggregate" ? having : where).push(f.condition);
+  }
+  return { where, having };
 }
 
 /**
@@ -710,7 +812,9 @@ function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled
   // 对外层的 SUM 来说不是数值）。GROUP BY、DISTINCT 及其 ORDER BY 按文本匹配表达式，
   // 所以其中的常量也必须是字面量。
   const grouped = groupBy.length > 0 || s.distinct || distinctClauses.length > 0;
-  const groupJoins = collectGroupJoins(w, arm, groupBy, orderBy);
+  const byColumn = splitResultFilters(w, s);
+  const filtered = [...byColumn.where, ...byColumn.having];
+  const groupJoins = collectGroupJoins(w, arm, groupBy, orderBy, filtered);
   const previous = w.substitute(undefined);
   w.substitute(
     groupJoins.length === 0
@@ -737,7 +841,7 @@ function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled
   // FROM、CROSS JOIN 的表的过滤条件先记下：后面有 RIGHT JOIN 时它们变成可空的一侧，
   // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
   let pending: Cond[] = [];
-  const implicit = usedRelations(w, arm, groupBy, orderBy);
+  const implicit = usedRelations(w, arm, groupBy, orderBy, filtered);
   Sharding.of(w).routeSelect(w, [...s.joins.map((j) => ownerOf(j.ref)), ...[...implicit].map((r) => ownerOf(r.ref))], s.where, s.filtering);
   for (const j of s.joins) {
     const extra = conditionsFor(filters, j.ref);
@@ -770,14 +874,14 @@ function renderSelect(w: SqlWriter, arm: Arm, labels: readonly string[], labeled
     emitRelations(w, owner, implicit, filters);
     for (const g of groupJoins) if (g.owner === owner) emitGroupJoin(w, g);
   }
-  const whereAll = and(...pending, ...s.where);
+  const whereAll = and(...pending, ...s.where, ...byColumn.where);
   if (!whereAll.isEmpty) w.sql("\nWHERE ").render(whereAll);
   w.inline(grouped);
   if (groupBy.length > 0) {
     w.sql("\nGROUP BY ");
     w.dialect.groupBy(w, groupBy, s.rollup);
   }
-  const having = and(...s.having);
+  const having = and(...s.having, ...byColumn.having);
   if (!having.isEmpty) w.sql("\nHAVING ").render(having);
   const limited = s.limit !== undefined || s.offset !== undefined;
   if (orderBy.length > 0 && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
@@ -799,7 +903,7 @@ interface GroupJoin {
  * 这一段 groupJoin 的关系：用探查写入器找出各子句里用到的、属于这些关系的集合运算（count、sum、any 等），
  * 每个关系生成一个按连接键分组的派生表，每个运算一列。没有用到运算的关系不连接。
  */
-function collectGroupJoins(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[]): GroupJoin[] {
+function collectGroupJoins(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[], filtered: readonly Cond[]): GroupJoin[] {
   const s = arm.spec;
   if (s.groupJoins.length === 0) return [];
   const found = new Map<Many<any>, Grouped[]>();
@@ -815,7 +919,7 @@ function collectGroupJoins(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknow
   });
   for (const e of arm.items) probe.render(e);
   for (const j of s.joins) if (!j.on.isEmpty) probe.render(j.on);
-  for (const c of [...s.where, ...s.having]) if (!c.isEmpty) probe.render(c);
+  for (const c of [...s.where, ...s.having, ...filtered]) if (!c.isEmpty) probe.render(c);
   for (const g of groupBy) probe.render(g);
   for (const o of orderBy) probe.render(o);
   return [...found].map(([relation, ops]) => {
@@ -924,11 +1028,11 @@ function textOf(probe: SqlWriter, node: Renderable): string {
 /**
  * 这一段真正用到的隐式连接（导航关系）。先用探查写入器把 SELECT、条件、分组、排序试渲染一遍，记下引用到的数据源；
  * 用到了某个关系的目标（或它更深的关系）就连接它，并把它的连接条件也试渲染，直到不再增加。没有关系时不做探查。
- * groupBy 和 orderBy 是去掉被排除的列之后实际要写出的。
+ * groupBy 和 orderBy 是去掉被排除的列之后实际要写出的，filtered 是按结果列的条件。
  */
-function usedRelations(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[]): Set<Relation> {
+function usedRelations(w: SqlWriter, arm: Arm, groupBy: readonly Expr<unknown>[], orderBy: readonly Order[], filtered: readonly Cond[]): Set<Relation> {
   const s = arm.spec;
-  const parts: Renderable[] = [...arm.items, ...s.joins.map((j) => j.on), ...s.where, ...s.having, ...groupBy, ...orderBy, ...s.clauses];
+  const parts: Renderable[] = [...arm.items, ...s.joins.map((j) => j.on), ...s.where, ...s.having, ...filtered, ...groupBy, ...orderBy, ...s.clauses];
   return implicitJoins(
     w,
     s.joins.map((j) => ownerOf(j.ref)),
@@ -1281,6 +1385,7 @@ function emptySpec(): SelectSpec {
     skipEmpty: false,
     clauses: [],
     groupJoins: [],
+    resultFilters: [],
   };
 }
 

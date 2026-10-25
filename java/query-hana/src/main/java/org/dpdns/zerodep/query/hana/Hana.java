@@ -57,13 +57,13 @@ public final class Hana extends Sql {
     private static final FunctionDef GREATEST = FunctionDef.only(HanaDialect.class, "GREATEST");
     private static final FunctionDef LEAST = FunctionDef.only(HanaDialect.class, "LEAST");
     private static final FunctionDef CUBE = FunctionDef.only(HanaDialect.class, "CUBE");
-    private static final FunctionDef MEDIAN = FunctionDef.only(HanaDialect.class, "MEDIAN");
+    private static final FunctionDef MEDIAN = FunctionDef.only(HanaDialect.class, "MEDIAN").aggregating();
     private static final FunctionDef SCORE = FunctionDef.only(HanaDialect.class, "SCORE");
-    private static final FunctionDef CORR = FunctionDef.only(HanaDialect.class, "CORR");
+    private static final FunctionDef CORR = FunctionDef.only(HanaDialect.class, "CORR").aggregating();
     private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(HanaDialect.class, "PERCENTILE_CONT",
-        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")")).aggregating();
     private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(HanaDialect.class, "PERCENTILE_DISC",
-        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")")).aggregating();
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(HanaDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
 

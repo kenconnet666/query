@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { from } from "@zerodep-dev/query-core";
+import { from, rowNumber } from "@zerodep-dev/query-core";
 import { Lips } from "../fixtures/erp.js";
 import { answering, TestDialect } from "../fixtures/support.js";
 
@@ -69,9 +69,44 @@ ORDER BY LIPS.MATNR ASC`,
     assert.equal(q.sortBy(undefined), q);
   });
 
+  it("sortBy 认减号表示倒序", () => {
+    const sql = totals().sortBy("-total,material").toSql(DIALECT).sql;
+    assert.ok(sql.endsWith("ORDER BY SUM(LIPS.LFIMG) DESC, LIPS.MATNR ASC"), sql);
+  });
+
+  it("filterBy 按结果列筛选：逐行计算的列进 WHERE，聚合的列进 HAVING", () => {
+    const sql = totals().filterBy({ total: ["10.5", " "], Material: ["M1", "M2"], unit: [] }).toSql(DIALECT).sql;
+    assert.ok(sql.includes("\nWHERE LIPS.MATNR IN (?, ?)\nGROUP BY "), sql);
+    assert.ok(sql.includes("\nHAVING SUM(LIPS.LFIMG) IN (10.5)\n"), sql);
+    const q = totals();
+    assert.equal(q.filterBy(undefined), q);
+    assert.equal(q.filterBy({ unit: [" "] }).toSql(DIALECT).sql, q.toSql(DIALECT).sql);
+  });
+
+  it("拼接文字的聚合也进 HAVING；窗口函数的列不能筛选", () => {
+    const grouped = from(Lips)
+      .groupBy((l) => [l.material])
+      .select((l) => ({ material: l.material, deliveries: l.delivery.stringAgg(",") }));
+    const sql = grouped.filterBy({ deliveries: ["D1,D2"] }).toSql(DIALECT).sql;
+    assert.ok(sql.endsWith("HAVING STRING_AGG(LIPS.VBELN, ',') IN ('D1,D2')"), sql);
+    const ranked = from(Lips).select((l) => ({ delivery: l.delivery, rn: rowNumber().over((w) => w.orderBy(l.delivery.asc())) }));
+    assert.throws(() => ranked.filterBy({ rn: ["1"] }).toSql(DIALECT), /window function/);
+  });
+
+  it("searchBy 按文字列的关键字筛选且保留它用到的关系", () => {
+    const q = from(Lips).select((l) => ({ delivery: l.delivery, partNumber: l.mara.partNumber, quantity: l.quantity }));
+    const r = q.searchBy({ partNumber: "50%" }).toSql(DIALECT);
+    assert.ok(r.sql.endsWith("LEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT\nWHERE MARA.MFRPN LIKE ? ESCAPE '!'"), r.sql);
+    assert.deepEqual(r.parameters, ["%50!%%"]);
+    assert.throws(() => q.searchBy({ quantity: "1" }), /not a text column/);
+    assert.throws(() => q.filterBy({ plant: ["1000"] }), /unknown column 'plant'/);
+    assert.throws(() => q.exclude("quantity").filterBy({ quantity: ["1"] }), /excluded/);
+    assert.throws(() => q.filterBy({ quantity: ["abc"] }), /"abc" is not a decimal number/);
+  });
+
   it("sortBy 只认结果列和 asc 与 desc", () => {
     const q = totals();
-    for (const bad of ["plant", "total; DROP TABLE x", "total sideways", "total desc nulls"]) assert.throws(() => q.sortBy(bad), Error, bad);
+    for (const bad of ["plant", "total; DROP TABLE x", "total sideways", "total desc nulls", "-total desc", "-", "--total"]) assert.throws(() => q.sortBy(bad), Error, bad);
     assert.throws(() => q.exclude("total").sortBy("total"), /excluded/);
     const units = () => from(Lips).select((l) => ({ unit: l.unit }));
     assert.throws(() => units().unionAll(units()).sortBy("unit"), /single SELECT/);

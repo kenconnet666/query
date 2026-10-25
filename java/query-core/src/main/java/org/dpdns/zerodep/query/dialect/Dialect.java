@@ -110,6 +110,12 @@ public abstract class Dialect {
     /** 是否支持 FULL JOIN；MySQL 没有。 */
     public boolean supportsFullJoin() { return true; }
 
+    /**
+     * 是否支持递归 CTE（{@code WITH RECURSIVE}）：PostgreSQL、MySQL 8、SQLite 有，HANA 没有（用层级函数）。
+     * {@code db.withAncestors} 据此写成一条递归查询，或者一层一层按键查。
+     */
+    public boolean supportsRecursiveCte() { return false; }
+
     /** 没有数据表的 SELECT 需要补的内容：多数数据库什么都不用写，HANA 要写 {@code FROM DUMMY}。 */
     public void fromNothing(SqlWriter w) { }
 

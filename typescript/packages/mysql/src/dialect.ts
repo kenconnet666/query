@@ -150,6 +150,11 @@ export class MysqlDialect extends Dialect {
   }
 
   /** MySQL 没有 FULL JOIN。 */
+  /** MySQL 8 有递归 CTE（WITH RECURSIVE），层数受 cte_max_recursion_depth 限制。 */
+  override get supportsRecursiveCte(): boolean {
+    return true;
+  }
+
   override get supportsFullJoin(): boolean {
     return false;
   }

@@ -78,6 +78,9 @@ public class MysqlDialect extends Dialect {
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "MySQL"; }
 
+    /** 有递归 CTE（WITH RECURSIVE）。 */
+    @Override public boolean supportsRecursiveCte() { return true; }
+
     /** 标识符一律加引号，所以没有任何名字算作无需引用。 */
     @Override protected boolean isBare(String identifier) { return false; }
 

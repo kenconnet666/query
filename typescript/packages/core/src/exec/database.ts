@@ -1,6 +1,6 @@
-import type { Dialect, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
-import { columnName, shapeFields, type NamingStrategy } from "../schema/metadata.js";
-import { assembleRows, decoderOf, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type Query, type SourceFilter } from "../query/query.js";
+import type { Dialect, DialectClass, FunctionDef, FunctionRenderer } from "../sql/dialect.js";
+import { columnName, shapeFields, type NamingStrategy, type Table } from "../schema/metadata.js";
+import { assembleRows, decoderOf, from, hasChildren, limitAtMost, renderCount, rendered, renderExists, renderStatement, timeoutOf, ttlOf, type From, type Projection, type Query, type Shape, type SourceFilter } from "../query/query.js";
 import { integer, typeOf, untyped, type SqlType } from "../schema/types.js";
 import { SchemaTools } from "../ddl/tools.js";
 import { Migrator, type Migration, type MigrationBackend } from "../ddl/migrator.js";
@@ -8,6 +8,10 @@ import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 import { Tracker, type TrackerHost } from "./tracker.js";
 import { Sharding, type ShardConfig } from "../query/sharding.js";
+import type { TableRequest } from "./table.js";
+import { TREE_BATCH, withAncestors as withAncestorRows } from "./trees.js";
+import { Cte, type Ref } from "../query/source.js";
+import type { ExprNode, Expr } from "../sql/expr.js";
 
 // ---------- 驱动 ----------
 
@@ -526,6 +530,59 @@ export abstract class Database {
     if (total !== undefined && (!Number.isSafeInteger(total) || total < 0)) throw new RangeError("total is a non-negative integer");
     const [rows, counted] = await Promise.all([this.list(q.limit(size).offset((page - 1) * size)), total ?? this.count(q)]);
     return Object.freeze({ rows, total: counted, page, size, totalPages: Math.ceil(counted / size) });
+  }
+
+  /**
+   * 表格查询（0016）：按请求依次做表头筛选（`filterBy`、`searchBy`）、排序（`sortBy`）和分页；请求带了已知的总数时不再 COUNT。
+   * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。结果交给 `toWire` 发回前端。
+   */
+  async table<R>(q: Query<R>, request: TableRequest): Promise<Page<R>> {
+    const shaped = q.filterBy(request.filter).searchBy(request.search).sortBy(request.sort);
+    return this.page(shaped, request.page, request.pageSize, request.total);
+  }
+
+  /**
+   * 树形数据的服务端搜索：命中 hits 的行加上它们的全部祖先，每行按 select 取出，交给 `buildTree` 组装成从根开始的树
+   * （前端懒加载的树要在服务端搜索时用）。key、parent 是行的键列和父键列。
+   * PostgreSQL、MySQL（PolarDB）、SQLite 写成一条递归 CTE，用 UNION 去重：命中的行共用的祖先只走一遍，父子成环也会停；
+   * 没有递归 CTE 的库（HANA）一层一层按键查只有键的两列（`withAncestors`），最后按键分批取 select 的列。行的顺序不保证。
+   */
+  async withAncestors<E, P extends Projection>(
+    table: Table<E>,
+    shape: {
+      readonly key: (row: Ref<E>) => Expr<unknown>;
+      readonly parent: (row: Ref<E>) => Expr<unknown>;
+      readonly hits: (row: Ref<E>) => void;
+      readonly select: (row: Ref<E>) => P;
+    },
+  ): Promise<Shape<P>[]> {
+    const { key, parent, hits, select } = shape;
+    const links = (scope: From<[Ref<E>]>) => scope.select((e) => ({ key: key(e), parent: parent(e) }));
+    const keyOf = (e: Ref<E>) => key(e) as ExprNode<unknown>;
+    if (this.dialect.supportsRecursiveCte) {
+      const up = Cte.recursive(
+        "ancestors",
+        links(from(table).where(hits)),
+        (self) =>
+          from(self)
+            .join(table, (t, e) => keyOf(e).eq(t.parent as never))
+            .select((_t, e) => ({ key: key(e), parent: parent(e) })),
+        this.dialect.constructor as DialectClass,
+        true,
+      );
+      return this.list(from(table).where((e) => keyOf(e).in(from(up).select((t) => t.key) as never)).select(select));
+    }
+    const all = await withAncestorRows(await this.list(links(from(table).where(hits))), {
+      key: (l) => l.key,
+      parent: (l) => l.parent,
+      load: (ids) => this.list(links(from(table).where((e) => keyOf(e).in(ids as never[])))),
+    });
+    const rows: Shape<P>[] = [];
+    for (let i = 0; i < all.length; i += TREE_BATCH) {
+      const batch = all.slice(i, i + TREE_BATCH).map((l) => l.key);
+      rows.push(...(await this.list(from(table).where((e) => keyOf(e).in(batch as never[])).select(select))));
+    }
+    return rows;
   }
 
   /** 手写 SQL，使用 :name 命名参数，按列标签映射。数组会为 IN (:list) 展开。 */

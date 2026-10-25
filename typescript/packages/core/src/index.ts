@@ -1,3 +1,5 @@
+// 线上的 typed JSON（0015）：处理函数返回 toWire(结果)；查询库读表头筛选、区间的文字也用它
+export { fromWire, parseWire, toWire, wireText, type Json, type WireKind, type WireOptions, type WireType, type WireTypes } from "@zerodep-dev/wire";
 export {
   bigint,
   boolean,
@@ -32,6 +34,7 @@ export {
   logicDelete,
   where,
   many,
+  manyThrough,
   NamingStrategy,
   one,
   readAs,
@@ -69,6 +72,8 @@ export {
   renderOnAndWhere,
   type Upsert,
 } from "./sql/dialect.js";
+// 方言包里自己写渲染的聚合（例如 PostgreSQL 的 ARRAY_AGG）用 noteAggregate 报到；rowKindOf 判断一列是不是聚合
+export { noteAggregate, rowKindOf, type RowKind } from "./sql/aggregation.js";
 export {
   addCondition,
   all,
@@ -128,7 +133,7 @@ export type {
   Wider,
 } from "./sql/typed.js";
 export { Bound, Window, WindowFunction } from "./sql/window.js";
-export { type FilterObject } from "./query/filter.js";
+export { type FilterObject, type Range } from "./query/filter.js";
 export { aliasOf, Cte, customSource, Derived, tableSource, type CustomSource, type NullableRef, type Ref, type Related, type Source } from "./query/source.js";
 export { Children, Many, type AnyMany } from "./query/many.js";
 export { cte, filter, from, From, Query, values, type ConstantValue, type Excluded, type ExcludedKeys, type Fields, type Projection, type Shape, type SourceFilter } from "./query/query.js";
@@ -206,6 +211,8 @@ export {
   formatQueryEvent,
 } from "./exec/database.js";
 export { Tracker } from "./exec/tracker.js";
+export { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseTableRequest, type QueryParams, type TableRequest } from "./exec/table.js";
+export { buildTree, TREE_BATCH, withAncestors, type AncestorLoad, type TreeNode, type TreeShape } from "./exec/trees.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
 export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./ddl/model.js";
 export { catalogDefault, catalogNumber, catalogText, groupRows, SchemaSyntax, withoutCast, type Catalog } from "./ddl/syntax.js";

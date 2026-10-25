@@ -15,6 +15,15 @@ export class PostgresDialect extends Dialect {
 
   readonly name = "PostgreSQL";
 
+
+  /** 有递归 CTE（WITH RECURSIVE）。 */
+
+  override get supportsRecursiveCte(): boolean {
+
+    return true;
+
+  }
+
   /**
    * 没有 LOCATE，改写为 STRPOS；日期部分写成 EXTRACT 再转成整数（EXTRACT 返回 numeric），
    * 加天数是 `date + n`，加月和年乘以 INTERVAL 后转回 DATE，相隔天数是两个日期相减，

@@ -12,9 +12,11 @@
 | 自连接 | 为每张表分别建代理 | 同一实体作为下一个 lambda 参数，别名自动生成 | 1 |
 | 隐式连接（导航属性 `t.author().name()`） | `@Navigate` 声明关系 | 表接口的 default 方法 `one(...)`、`many(...)`，或 `@ManyToOne`、`@OneToMany`；`l.mara().partNumber()` 用到时才 LEFT JOIN，同一关系只连接一次 | 2.0 |
 | 子查询：`EXISTS`、`IN`、标量 | `subQuery`，以及导航上的 `any()`、`none()` | `exists(...)`、`in(query)`、`scalar(query)`，lambda 直接捕获外层参数；一对多关系上的 `any()`、`none()`、`count()`、`sum(...)`、`first(order)` | 1 / 2.0 |
+| 多对多 | `@Navigate(ManyToMany, mappingClass = ...)` | 到中间表的一对多再沿中间表的多对一走到目标表：Java `many(UserRole.class, ...).through(ur -> ur.role())`，TS `@manyThrough`；查询中间表、LEFT JOIN 用到的目标列，`any`、`count`、`list`、`first`、`groupJoin` 和条件对象的路径照常可用 | 2.0 |
 | 多个关系聚合合成分组连接 | `subQueryToGroupJoin` | 作用域上的 `groupJoin(m -> m.deliveries())`：同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN | 2.0 |
 | CTE | `toCteAs`，相同查询自动去重 | `cte(name, query)`，渲染时统一提升到最外层的 `WITH`，以规避 HANA 嵌套 `WITH` 的问题 | 1 |
 | 递归 CTE / 树 | `asTreeCTE` | PostgreSQL、MySQL 方言包的 `recursiveCte(name, anchor, self -> step)`，写成 `WITH RECURSIVE`；HANA 2.0 不支持递归 CTE，改用层级函数 | 2.0 |
+| 平铺的行组装成树、搜索时带上祖先 | `toTreeList`，`asTreeCTE` 向上查 | `Trees.build(rows, key, parent, ...)` / TS `buildTree`；`db.withAncestors(Dept.class, key, parent, hits, select)` 取命中的行和全部祖先：PostgreSQL、MySQL、SQLite 一条 `WITH RECURSIVE ... UNION`，HANA 一层一层按键查；懒加载的子节点标记写成 `bool(() -> d.children().any())` | 2.0 |
 | UNION / UNION ALL | `union`、`unionAll` | `Query.unionAll`，各段结果类型必须相同（编译期检查） | 1 |
 | INTERSECT / EXCEPT | `intersect`、`except` | `q1.intersect(q2)`、`q1.except(q2)`，按调用顺序求值；HANA 的集合运算从左到右，PostgreSQL、MySQL 的 INTERSECT 优先（实测），所以读法可能不同处自动加括号；`ALL` 变体只在 PostgreSQL、MySQL | 2.0 |
 | 参数化视图、表函数 | HANA 的 `PLACEHOLDER` 需手写 | HANA 方言包的 `fromView`、`fromFunction`：参数都绑定，值为空的参数不写（视图需 HDI 部署，只验证了渲染；表函数实库验证） | 2.0 |
@@ -36,7 +38,8 @@
 | 文本聚合 | `joining(",")` | `stringAgg(e, sep, order...)`，MySQL 写成 `GROUP_CONCAT` | 2.0 |
 | 窗口函数 | `rowNumberOver` 等，增强包补齐 | `rowNumber().over(w -> w.partitionBy(...).orderBy(...))`；`percentRank`、`cumeDist`、`nthValue` 也在核心包；`ROWS` 框架进核心包；`RANGE` 框架只在 PostgreSQL、MySQL 方言包（`w.frame(range(...))`，HANA 不支持） | 1 / 2.0 |
 | `QUALIFY` / 每组取前 N 行 | `Select.PART` 加外层 `where` | `qualify(l -> rowNumber().over(...).le(n))`：HANA 不支持 `QUALIFY`，三个库都自动包成派生表；关系上取第一行用 `many.first(order)` | 2.0 |
-| 分页 | `toPageResult`，可传入已知总数 | `db.page(q, page, size)`；计数查询在原查询外包一层 `COUNT(*)`；已知总数时 `page(q, page, size, total)` 不计数 | 1 / 2.0 |
+| 分页 | `toPageResult`，可传入已知总数 | `db.page(q, page, size)`；没有分组、去重、聚合、HAVING、LIMIT 时直接 `SELECT COUNT(*)`（投影里的子查询、只为投影的连接和 ORDER BY 都不写），否则在原查询外包一层；已知总数时 `page(q, page, size, total)` 不计数 | 1 / 2.0 |
+| 前端表格的一次请求（分页、多列排序、表头筛选） | 由用户把参数转成 `orderByObject`、`whereObject` | `db.table(q, TableRequest.parse(params))`：`page`、`pageSize`、`sort=-a,b`、`total`、`filter.列`、`search.列`，只认结果列，聚合列的条件进 HAVING，带了已知总数时不计数；约定见 [0016](decisions/0016-table-query-contract.md)，前端是 vue-tsx-pro 的 `useTableQuery` | 2.0 |
 | 分块遍历 | `OffsetChunk` | `db.stream(q)`、`db.forEach(q, ...)`，在一个游标上逐行读取 | 1 |
 | `FOR UPDATE` | `forUpdate` | `.with(forUpdate(Lock.SKIP_LOCKED))`，等待、`NOWAIT`、`SKIP LOCKED` 三种；HANA 写作 `IGNORE LOCKED` | 2.0 |
 | 原生 SQL | `sqlNativeSegment`，以及原生查询 | 类型化模板 `sql(Type, "...{0}", args)`，参数混用表达式和值，`.on(方言类, 模板)` 按方言换写法；`sqlTable(...)` 当作数据源；整条原生 SQL 用 `db.sql("... :name").bind(...)` | 1 / 2.0 |
@@ -59,8 +62,9 @@
 | 半开区间 | `rangeClosedOpen(a, b)` | `e.range(from, until)`：`>= from AND < until`，skipEmpty 下缺少的一端被忽略 | 2.0 |
 | 按开关加条件 | `where(boolean, ...)` | 条件块里直接写 `if (test) 条件;` | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件省略；不开启时与 null 比较报错 | 2.0 |
-| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR；经过一对多关系时写成 EXISTS，同一关系的字段合并（见 0006） | 2.0 |
-| 动态排序 | `orderByObject` | `sortBy("total desc, material")` 只认结果列；`orderBy` 也接收运行时生成的 `List<Order>` | 2.0 |
+| 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR；经过一对多关系时写成 EXISTS，同一关系的字段合并（见 0006）；区间字段写成 `Range<T>`（`@Where(RANGE)`），文字字段按列的类型读 | 2.0 |
+| 动态排序 | `orderByObject` | `sortBy("-total,material")`（也认 `total desc`）只认结果列，多列按顺序；`orderBy` 也接收运行时生成的 `List<Order>` | 2.0 |
+| 按结果列筛选、搜索 | 由用户处理 | `filterBy(Map<列, 值>)` 多选值写成 IN，`searchBy(Map<列, 关键字>)` 写成 LIKE；值按列的类型从文字读出，聚合列进 HAVING，窗口列报错 | 2.0 |
 | 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`if (v != null) exists(...);`），或多对一关系（没用到时不连接） | 1 / 2.0 |
 | 按用户选择取列、选维度 | 动态 select | `only(columns)`、`exclude(...)`：没选的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉 | 2.0 |
 | 复用的 SQL 片段 | 字符串拼接 | 返回 CTE、条件或表达式的普通方法 | 1 |
@@ -78,6 +82,7 @@
 | SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
 | 加密列 | `@Encryption` | `Converter` 在写入、读取和比较参数三处都转换，应用侧加解密可直接实现，等值查询可用；不做可以 LIKE 的分段加密 | 1 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
+| 特殊类型的 JSON 传输 | 交给 Jackson 的配置 | `wire` 模块（Java、TS 各一份、零依赖）：大整数、小数、日期时间、字节写成文字，根上附 `$types`，对端按它还原；不限于查询结果，见 [0015](decisions/0015-typed-json-wire.md) | 2.0 |
 | 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`hour`、`minute`、`second`、`addDays`、`addMonths`、`addYears`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`、`daysBetween`、`secondsBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`）；周相关函数三库规则不同，暂不做 | 2.0 |
 | 文本补齐与数值函数 | `leftPad`、`rightPad`、`SQLMathFunc` | `lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`，三库实测一致；`length` 各库计法不同，留在方言包 | 2.0 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |
@@ -138,5 +143,5 @@
 | 同一待办重复提交 | `update(...).where(id = ? AND state = 'open').expect(1)` | 第二次改到 0 行，报 `UnexpectedRowCount` |
 | 两个工作进程领取作业 | 先普通读出到期的候选，再逐个 `UPDATE ... SET locked_by = ? WHERE id = ? AND locked_by IS NULL`，改到 1 行才算领到 | 互不重复，五个库写法相同。不用 `FOR UPDATE SKIP LOCKED`：实测 InnoDB 会锁住扫描到的所有行，第二个进程一个也领不到，而 PostgreSQL 只锁返回的行 |
 | 待办的候选与排除 | 办理人是自己，或没有办理人、自己或自己的组是候选（`any`）且自己没被排除（`none`） | 退回过收件箱的人看不到那一条 |
-| 实例上的长 JSON 变量 | `@Column(lob = true)` 的文本列，整份读写 | 含中文的上万字符原样往返 |
+| 实例上的长 JSON 变量 | LOB 文本列（Java `ColClob<String>`，TS `@column(..., text, { lob: true })`），整份读写 | 含中文的上万字符原样往返 |
 | 流转记录 | 多行插入（一个事务、JDBC 批量），按时间倒序分页 | 总数、页内顺序正确，时间的毫秒不丢 |

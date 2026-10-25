@@ -2,9 +2,22 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）在分支 `feat/typed-expressions` 上，两端都已完成（各模块测试、Java 五库与 TS 六个目标的实库测试通过；金样例只有 `literals` 的小数常量 12.50 改成 12.5），尚未开 PR。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）2026-10-25 经 PR #18 合并进 `master`。之后与前端表格配合的一组能力（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)）在分支 `feat/table-query` 上，两端与 vue-tsx-pro 同名分支都已完成，尚未开 PR。
 
 ## 当前状态
+
+### 与前端表格配合（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)，分支 `feat/table-query`）
+
+用户 2026-10-25 对照 EasyQuery 找出缺口（对象树上的多个条件、多列排序、分页等）后要求全部做完，前端 vue-tsx-pro 可以一起改；特殊类型（大整数、小数、日期）的 JSON 传输要通用、不限于 SQL，能不依赖 Jackson 就不依赖；主要支持 MySQL 和 PostgreSQL，两者支持时按性能更好的写，其他库可以退化或各写各的。
+
+- **typed JSON**：Java `java/wire`、TS `packages/wire`，`$types` 记路径到类型，样例 `spec/wire` 两端共用（vue-tsx-pro 拷了一份 `.test/wire-order.json`）。
+- **表格请求**：`sortBy("-a,b")`、`filterBy`、`searchBy`、`TableRequest` / `parseTableRequest`、`db.table`；聚合列的条件在渲染时判断进 HAVING（`dialect/Aggregation`）。
+- **条件对象**：`Range<T>`、文字字段按列的类型读；`where(Object)` 拒收 lambda。
+- **计数直接数行**（`QueryRenderer.count` 的 `countsRows`）；`page()` 仍是先查列表再计数（先计数会让空跑捕获的语句顺序变化）。
+- **多对多**：`Many` 记查询的表和到目标的视图，`through(hop)`、TS `@manyThrough`；`Many.where(条件对象)`。
+- **树**：`Trees.build` / `buildTree`、`db.withAncestors`（递归 CTE 用 UNION；HANA 一层一层查）。
+- **vue-tsx-pro**（`feat/table-query`）：`formatSorts` / `parseSorts`、`useTableQuery` 的多列排序、表头筛选与已知总数、`tableParams`、`QueryTable` 的 `multiSort` / `manualFilter`，`utils/request/wire.ts` 与 `http` 的 `wire` 选项，`utils/data/tree.ts` 的 `buildTree`。
+- **待办**：PG / MySQL 上 `many.first()` 与 `orderBy(...).limit(n)` 可以改用 LATERAL 代替 ROW_NUMBER（按"PG、MySQL 优先"的约定，HANA、SQLite 保持现状）；TS 转换器列（`Stored<…>`）的表头筛选文字不按存储类型解析。下一步开 PR（需用户同意）。
 
 ### 按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)，分支 `feat/typed-expressions`）
 
@@ -13,7 +26,7 @@
 - **Java（已完成）**：`Expr` 改成接口，类型接口在 `expr/typed`、列接口在 `table/column`，多数由 `tools/generate-java.mjs` 生成；有主操作数的函数是实例方法，静态的类型函数删去；条件与 UPDATE 的赋值是语句块（`expr.Conditions`、`write.Assignments`）；方言函数走视图 `hana(e)`、`postgres(e)`、`mysql(e)`、`sqlite(e)`；`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。文档 api.md、迁移指南、场景对照、CHANGELOG 已更新。
 - **TypeScript（已完成）**：`Decimal`（decimal.js）、`CalendarDate` / `CalendarDateTime`（@internationalized/date）是核心包的 peerDependencies（用到它们类型的 HANA、PolarDB 包也声明了）；`sql/typed.ts` 是按字段类型分的接口与 `ExprOf`/`ColOf`/`Stored`，运行时只有 `ExprNode` 一个节点类；条件块在 `sql/cond.ts`；`sql/expr.ts`（节点）、`window.ts`、`case.ts`、`builtins.ts`（函数定义）、`functions.ts`（没有主操作数的函数）分开；方言视图 `hana(e)` 等。`set` 仍是对象字面量。测试由一次性的语法树改写脚本迁移后逐个复核；`docs/api-typescript.md`、README、迁移指南、0014 第 7 节、CHANGELOG 已更新。
 - **顺手修的**：`range` 与缺一边的 `between` 在 `any` 的块里曾变成两个 OR 选项（两端，已加测试）；Java 的方言视图 `ViewString` 改名 `ViewText`。
-- **下一步**：开 PR（需用户同意）。
+- **合并**：PR #18，2026-10-25。
 
 ### 通用门面与实库测试的组织（[0013](../docs/decisions/0013-portable-facade-and-live-tests.md)，PR #17 已合并）
 
@@ -26,7 +39,7 @@
 
 ### 为流程引擎做的准备（PR #15，2026-10-25 合并）
 
-流程引擎在 `C:UserslionheartIdeaProjectslow`（Java 接 Spring、TS 接 Nest / Nuxt），第一版只用 MySQL 8，生产是阿里云 PolarDB MySQL 8.0；用户要求先完善本库并订立契约。
+流程引擎在 `C:\Users\lionheart\IdeaProjects\flow`（Java 接 Spring、TS 接 Nest / Nuxt），第一版只用 MySQL 8，生产是阿里云 PolarDB MySQL 8.0；用户要求先完善本库并订立契约。
 
 - **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 后 `db.transaction` 由它执行（REQUIRED）。用户的 Spring 应用都是多数据源，事务要指定数据源，跨库用编程式事务，所以每个数据源各传自己的事务管理器。
 - **迁移历史表可以改名**：`historyTable("flow_migration")`，两端。

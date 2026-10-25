@@ -1,6 +1,7 @@
 package org.dpdns.zerodep.query.postgres;
 
 import org.dpdns.zerodep.query.Sql;
+import org.dpdns.zerodep.query.dialect.Aggregation;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
@@ -57,12 +58,12 @@ public final class Postgres extends Sql {
     private static final FunctionDef GROUPING_SETS = FunctionDef.only(PostgresDialect.class, "GROUPING SETS",
         (w, args) -> w.sql("GROUPING SETS (").join(args, ", ").sql(")"));
     private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(PostgresDialect.class, "PERCENTILE_CONT",
-        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+        (w, args) -> w.sql("PERCENTILE_CONT(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")")).aggregating();
     private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(PostgresDialect.class, "PERCENTILE_DISC",
-        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")"));
+        (w, args) -> w.sql("PERCENTILE_DISC(").render(args.get(0)).sql(") WITHIN GROUP (ORDER BY ").render(args.get(1)).sql(")")).aggregating();
     private static final FunctionDef MODE = FunctionDef.only(PostgresDialect.class, "MODE",
-        (w, args) -> w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args.get(0)).sql(")"));
-    private static final FunctionDef CORR = FunctionDef.only(PostgresDialect.class, "CORR");
+        (w, args) -> w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args.get(0)).sql(")")).aggregating();
+    private static final FunctionDef CORR = FunctionDef.only(PostgresDialect.class, "CORR").aggregating();
     private static final FunctionDef CARDINALITY = FunctionDef.only(PostgresDialect.class, "cardinality");
 
     /** 只放静态方法，不能实例化。 */
@@ -272,6 +273,7 @@ public final class Postgres extends Sql {
         return new ExprNode<>(SqlType.of(elements)) {
             @Override public void render(SqlWriter w) {
                 requirePostgres(w);
+                Aggregation.aggregate(w);
                 w.sql("ARRAY_AGG(").render(args.get(0));
                 if (args.size() > 1) w.sql(" ORDER BY ").join(args.subList(1, args.size()), ", ");
                 w.sql(")");

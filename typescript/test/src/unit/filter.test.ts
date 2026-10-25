@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseDate, type CalendarDate } from "@internationalized/date";
-import { from, ignore, where, type Expr } from "@zerodep-dev/query-core";
+import { from, ignore, where, type Expr, type Range } from "@zerodep-dev/query-core";
 import { Decimal } from "decimal.js";
 import { Lips, Mara } from "../fixtures/erp.js";
+import { Task } from "../fixtures/workflow.js";
 import { TestDialect } from "../fixtures/support.js";
 
 const DIALECT = new TestDialect();
@@ -109,5 +110,42 @@ FROM QUERY_IT.MARA MARA`);
     assert.equal(r.sql, `SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.VRKME LIKE ? ESCAPE '!' AND LIPS.VRKME LIKE ? ESCAPE '!'`);
     assert.deepEqual(r.parameters, ["a!_b%", "%c!!"]);
     assert.throws(() => from(Lips).where((l) => l.unit.contains(null)), TypeError);
+  });
+});
+
+describe("条件对象的区间与文字", () => {
+  it("区间两端都含，空的一端不加条件；{ start, end } 与两项的数组都行", () => {
+    class Search {
+      @where("range", "createdOn") created?: Range<CalendarDate>;
+      @where("range", "quantity") quantity?: (string | null)[];
+    }
+    const s = Object.assign(new Search(), { created: { start: parseDate("2026-01-01"), end: parseDate("2026-01-31") }, quantity: ["1.5", " "] });
+    const r = from(Lips).where(s).select((l) => l.delivery).toSql(DIALECT);
+    assert.ok(r.sql.endsWith("WHERE LIPS.ERDAT >= ? AND LIPS.ERDAT <= ? AND LIPS.LFIMG >= ?"), r.sql);
+    assert.deepEqual(r.parameters, ["20260101", "20260131", "1.5"]);
+    const empty = Object.assign(new Search(), { created: { start: null, end: null }, quantity: [] });
+    assert.equal(from(Lips).where(empty).select((l) => l.delivery).toSql(DIALECT).sql, 'SELECT LIPS.VBELN AS "delivery"\nFROM QUERY_IT.LIPS LIPS');
+  });
+
+  it("日期的一端落在时间戳列上时，止端写成早于后一天的零点", () => {
+    class Search {
+      @where("range", "createTime") created?: Range<CalendarDate>;
+      @where("range", "createTime") at?: string[];
+    }
+    const s = Object.assign(new Search(), { created: { start: parseDate("2026-01-01"), end: parseDate("2026-01-31") }, at: ["2026-02-01T08:30", "2026-02-03"] });
+    const r = from(Task).where(s).select((t) => t.id).toSql(DIALECT);
+    assert.ok(r.sql.endsWith("WHERE TASK.CREATE_TIME >= ? AND TASK.CREATE_TIME < ? AND TASK.CREATE_TIME >= ? AND TASK.CREATE_TIME < ?"), r.sql);
+    assert.deepEqual(r.parameters, ["2026-01-01 00:00:00", "2026-02-01 00:00:00", "2026-02-01 08:30:00", "2026-02-04 00:00:00"]);
+  });
+
+  it("文字按列的类型读（地址栏参数）；区间要两个值", () => {
+    const r = from(Lips).where({ quantity: "2.50", material: ["M1", " "] }).select((l) => l.delivery).toSql(DIALECT);
+    assert.ok(r.sql.endsWith("WHERE LIPS.LFIMG = ? AND LIPS.MATNR IN (?)"), r.sql);
+    assert.deepEqual(r.parameters.slice(-2), ["2.5", "M1"]);
+    class Three {
+      @where("range", "quantity") quantity?: string[];
+    }
+    assert.throws(() => from(Lips).where(Object.assign(new Three(), { quantity: ["1", "2", "3"] })), /Three\.quantity: a range needs/);
+    assert.throws(() => from(Lips).where({ quantity: "abc" }), /"abc" is not a decimal number/);
   });
 });

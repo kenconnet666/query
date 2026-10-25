@@ -1,4 +1,7 @@
+import { CalendarDate, CalendarDateTime } from "@internationalized/date";
+import { parseDate } from "@zerodep-dev/wire";
 import { entityMeta, type Ctor, type WhereOp } from "../schema/metadata.js";
+import { parseColumnText, type SqlType } from "../schema/types.js";
 import { addCondition, and, collect, Cond, or, skips, withSkipEmpty } from "../sql/cond.js";
 import { ExprNode } from "../sql/expr.js";
 import { Many } from "./many.js";
@@ -115,20 +118,31 @@ function exists(many: Many<unknown>, inner: (target: unknown) => Cond): Cond {
   return built.isEmpty ? Cond.EMPTY : c;
 }
 
-/** 一个字段的条件，写进当前的条件块；值为空时由 skipEmpty 规则省略。 */
+/**
+ * 区间字段的值：`{ start, end }`（vue-tsx-pro 的 DateRangePicker 给的就是它）或两项的数组 `[start, end]`；
+ * 两端都含，空的一端不加条件。
+ */
+export interface Range<T> {
+  readonly start?: T | null;
+  readonly end?: T | null;
+}
+
+/** 一个字段的条件，写进当前的条件块；值为空时由 skipEmpty 规则省略，文字按列的类型读。 */
 function compare(c: ExprNode<never>, op: WhereOp, value: unknown, field: string): void {
   if (typeof op === "function") {
     if (!skips(value)) op(c, value);
     return;
   }
+  if (op === "range") return range(c, value, field);
   if (Array.isArray(value)) {
-    if (op === "eq") c.in(value as never[]);
-    else if (op === "ne") c.notIn(value as never[]);
-    else throw new TypeError(`${field}: an array can only be compared with eq (IN) or ne (NOT IN)`);
+    const values = value.map((item) => textAs(c, item)).filter((item) => item != null) as never[];
+    if (op === "eq") c.in(values);
+    else if (op === "ne") c.notIn(values);
+    else throw new TypeError(`${field}: an array can only be compared with eq (IN), ne (NOT IN) or range`);
     return;
   }
-  const v = value as never;
   const text = (value == null ? value : String(value)) as string | null | undefined;
+  const v = textAs(c, value) as never;
   switch (op) {
     case "eq":
       return c.eq(v);
@@ -149,4 +163,42 @@ function compare(c: ExprNode<never>, op: WhereOp, value: unknown, field: string)
     case "endsWith":
       return c.endsWith(text);
   }
+}
+
+/** 文字按列的类型读（地址栏里的值都是文字）；别的值原样返回。 */
+function textAs(c: ExprNode<never>, value: unknown): unknown {
+  return typeof value === "string" ? parseColumnText(c.type as SqlType<unknown>, value) : value;
+}
+
+/**
+ * 区间：起端写 `>=`，止端写 `<=`。列是时间戳而某一端是日期（`CalendarDate` 或 'YYYY-MM-DD'）时，起端是那天的零点，
+ * 止端写成 `<` 后一天的零点，这一整天都算在内。两端都空时不加条件。
+ */
+function range(c: ExprNode<never>, value: unknown, field: string): void {
+  if (value == null) return;
+  const [start, end] = ends(value, field).map((bound) => (typeof bound === "string" && bound.trim() === "" ? null : bound));
+  const timestamp = c.type.kind === "timestamp";
+  const day = (bound: unknown) => (timestamp ? asDay(bound) : undefined);
+  const from = day(start);
+  c.ge((from === undefined ? textAs(c, start) : new CalendarDateTime(from.year, from.month, from.day)) as never);
+  const until = day(end);
+  if (until === undefined) c.le(textAs(c, end) as never);
+  else c.lt(new CalendarDateTime(until.year, until.month, until.day).add({ days: 1 }) as never);
+}
+
+/** 区间值的两端。 */
+function ends(value: unknown, field: string): [unknown, unknown] {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [null, null];
+    if (value.length === 2) return [value[0], value[1]];
+  } else if (typeof value === "object" && value !== null && ("start" in value || "end" in value)) {
+    return [(value as Range<unknown>).start, (value as Range<unknown>).end];
+  }
+  throw new TypeError(`${field}: a range needs { start, end } or two values [start, end]`);
+}
+
+/** 区间的一端是一天（日期值或 'YYYY-MM-DD'）时返回那天，否则 undefined。 */
+function asDay(bound: unknown): CalendarDate | undefined {
+  if (bound instanceof CalendarDate && !(bound instanceof CalendarDateTime)) return bound;
+  return typeof bound === "string" && /^\d{4}-\d{2}-\d{2}$/.test(bound.trim()) ? parseDate(bound.trim()) : undefined;
 }

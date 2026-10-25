@@ -32,7 +32,9 @@
 | `SELECT` 列 | `.select((l) => ({ material: l.material, total: l.quantity.sum() }))`；单列 `.select((l) => l.material)` |
 | 函数 | `l.unit.upper()`、`l.quantity.plus(1)`、`l.createdOn.addDays(3)`；方言函数 `hana(l.createdOn).toVarchar("YYYYMMDD")` |
 | `SELECT` 同名列到类 | `.selectAs(Dto)`；改名或计算列用 `.select(...).into(Dto)` |
-| 用户选择的列、排序 | `.exclude("unit")`、`.only(names)`、`.sortBy("total desc")` |
+| 用户选择的列、排序 | `.exclude("unit")`、`.only(names)`、`.sortBy("-total,material")` |
+| 前端的表格请求（排序、表头筛选、分页） | `toWire(await db.table(q, parseTableRequest(getQuery(event))))`，见第 21 节 |
+| 多对多 | `@manyThrough((u) => u.userRoles, (ur) => ur.role) roles!: Many<Role>` |
 | `WITH x AS (...)` | `const x = cte("x", query)`，然后 `from(x)` |
 | `UNION ALL`、`INTERSECT`、`EXCEPT` | `q1.unionAll(q2)`、`q1.intersect(q2)`、`q1.except(q2)` |
 | `ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC)` | `rowNumber().over((w) => w.partitionBy(l.material).orderBy(l.delivery.desc()))` |
@@ -279,6 +281,8 @@ ORDER BY MARA.MFRPN ASC
 | `stringAgg(f, sep)` | `ExprText<string | null>` | 相关标量子查询拼接文本，顺序取 `orderBy(...)` |
 | `sum(f)`、`max(f)`、`min(f)`、`avg(f)` | 可空的值，接口按值类型 | 相关标量子查询；没有行时为 null |
 | `where((t) => { 条件 })` | `Many` | 先筛选目标行，再用上面的操作 |
+| `where(filter)` | `Many` | 用条件对象筛选目标行（规则同第 6 节，路径从目标表开始），前端的条件于是能筛子集合 |
+| `through((ur) => ur.role)` | 目标表的 `Many` | 多对多：到中间表的一对多再沿中间表的 `@one` 走到目标表，见下 |
 | `orderBy(f)` | `Many` | 决定 `list`、`stringAgg` 的顺序 |
 | `limit(n)` | `Many` | `list` 每个父行只取按顺序的前 n 行（批量查询里用 ROW_NUMBER 按父键分区），须先 `orderBy` |
 | `first(order)` | 目标表的引用（列可为 null） | 每组按 `order` 取第一行 |
@@ -305,6 +309,23 @@ WHERE LIPS3.MATNR = MARA.MATNR AND LIPS3.MANDT = MARA.MANDT AND LIPS3.LFIMG > ?)
 ```
 
 **`first(order)`**：例如每个物料最新的交货单，`m.deliveries.first((l) => l.createdOn.desc()).delivery`。连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来（三个库写法相同），没有匹配行时各列为 null。每次调用 `first` 都会产生一个新的派生表，要取多列时先存进变量。连接条件里没有这样的等值时报错。
+
+**多对多**：先声明到中间表的 `@many`，再用 `@manyThrough` 沿中间表的 `@one` 走到目标表：
+
+```ts
+@table("USER_ROLE") class UserRole {
+  @column("USER_ID", integer) userId!: number;
+  @column("ROLE_ID", integer) roleId!: number;
+  @one(() => Role, (ur, r) => r.id.eq(ur.roleId)) role!: One<Role>;
+}
+// User 里：
+@many(() => UserRole, (u, ur) => ur.userId.eq(u.id)) userRoles!: Many<UserRole>;
+@manyThrough((u) => u.userRoles, (ur) => ur.role) roles!: Many<Role>;
+
+from(User).where((u) => u.roles.any((r) => r.name.eq("admin"))).select((u) => ({ name: u.name, roles: u.roles.orderBy((r) => r.sortNo).list((r) => r.name) }));
+```
+
+查询的是中间表，回调拿到的是导航过去的目标行，用到的目标列在子查询里 LEFT JOIN 过去；所以 `any`、`count`、`sum`、`list`、`first`、`groupJoin` 和条件对象的路径（`@where("eq", "roles.name")`）都照常可用。`count()` 是中间表的行数，用不到目标列时不连接目标表。查询时也可以直接写 `u.userRoles.through((ur) => ur.role)`；`through` 要紧跟在到中间表的关系后面，`where`、`orderBy`、`limit` 写在它之后。
 
 **合成一个分组连接（`groupJoin`）**：默认每个 `count`、`sum`、`any` 等都是一个相关子查询。同一关系上的运算较多、父表较大时，在作用域上写 `.groupJoin((m) => m.deliveries)`，这些运算合成一个按连接键分组的派生表，只 LEFT JOIN 一次；关系上的 `where` 筛选写成各自聚合的 `CASE WHEN`，行数和 `any`/`none` 在没有子行时按 0 处理，`sum` 等仍为 null；`stringAgg`、`first`、`list` 不参与合并。写法与 Java 相同，金样例 `group-join` 保证两端 SQL 一致。
 
@@ -378,10 +399,13 @@ ORDER BY LIPS.MATNR ASC
 | `exclude(...names)` | 不取这些列：SQL 写成 `NULL`，结果的形态不变，类型变为可空（`Excluded<T>`）。只被它们用到的关系不再连接；有分组时，同样的分组键和按它们的排序一起去掉 |
 | `excludeIf(flag, ...names)` | `flag` 为真时才排除 |
 | `only(names)` | 只取这些列，其余按 `exclude` 处理；`names` 为 `null`、`undefined` 或空数组时保持不变，所以可以直接传入用户选的列 |
-| `sortBy("total desc, material")` | 按结果列排序并替换原来的 ORDER BY；每项是结果列名，可跟 `asc`/`desc`；空串保持不变 |
+| `sortBy("-total,material")` | 按结果列排序并替换原来的 ORDER BY；每项是结果列名，前面带减号是倒序（同 JSON:API，前端 `useTableQuery` 发的就是这种写法），也认 `total desc`；空串保持不变 |
+| `filterBy({ unit: ["EA", "KG"] })` | 结果列 IN (...)：表头的多选筛选；值是地址栏里的文字，按列的类型读，空白的值跳过 |
+| `searchBy({ material: "泵" })` | 结果列 LIKE %泵%：表头的关键字筛选，只能用在文字列上 |
 
 - 名字是结果的键，不分大小写和下划线（`only(["PREFIX"])` 能匹配 `prefix`）；嵌套对象的键代表它下面的全部列；不存在的名字报错并列出可用的列。
-- `only` 与 `sortBy` 只认结果里的列，相当于白名单，用户输入可以直接传入；排序串写法不对、按被排除的列排序、对 UNION 使用 `sortBy`（先包成 CTE）都会报错。
+- `only`、`sortBy`、`filterBy`、`searchBy` 只认结果里的列，相当于白名单，用户输入可以直接传入；排序串写法不对、按被排除的列排序、对 UNION 使用 `sortBy`（先包成 CTE）都会报错。
+- `filterBy`、`searchBy` 的条件在渲染时决定位置：逐行计算的列写进 WHERE，聚合的列（`sum()`、`stringAgg` 等）写进 HAVING；窗口函数的列不能这样筛选。
 
 ## 6. 条件对象
 
@@ -394,6 +418,7 @@ class DeliverySearch {
   @where("lt", "createdOn") to?: CalendarDate;
   @where("contains", "mara.partNumber", "text.text") keyword?: string;   // 经关系取列；多列任一满足（OR）
   @where("ne") unit?: string;                                    // 只指定比较方式，列取字段名
+  @where("range", "createdOn") created?: Range<CalendarDate>;    // 两端都含的区间，{ start, end } 或 [start, end]
   @ignore sort?: string;                                         // 不作为条件
   @where((c, v: string) => c.range(parseDate(`${v}-01`), parseDate(`${v}-01`).add({ months: 1 })), "createdOn") month?: string;  // 自定义比较（条件块），值为空时不调用
 }
@@ -411,7 +436,9 @@ LEFT JOIN QUERY_IT.MAKT MAKT ON MAKT.MATNR = LIPS.MATNR AND MAKT.MANDT = LIPS.MA
 WHERE LIPS.MATNR IN (?, ?) AND LIPS.ERDAT >= ? AND LIPS.ERDAT < ? AND ((MARA.MFRPN LIKE ? ESCAPE '!') OR (MAKT.MAKTX LIKE ? ESCAPE '!')) AND LIPS.VRKME <> ?
 ```
 
-- 比较方式 `eq`（默认）、`ne`、`gt`、`ge`、`lt`、`le`、`contains`、`startsWith`、`endsWith`；后三个转义 `%` 和 `_`。数组只能用 `eq`（IN）和 `ne`（NOT IN）。
+- 比较方式 `eq`（默认）、`ne`、`gt`、`ge`、`lt`、`le`、`contains`、`startsWith`、`endsWith`、`range`；`contains` 等三个转义 `%` 和 `_`。数组只能用 `eq`（IN）、`ne`（NOT IN）和 `range`。
+- `range` 是两端都含的区间：值是 `{ start, end }`（vue-tsx-pro 的 DateRangePicker 给的就是它）或两项的数组（地址栏里两个同名参数），空的一端不加条件。日期的一端（`CalendarDate` 或 `YYYY-MM-DD`）落在时间戳列上时，起端是那天的零点，止端写成"早于后一天的零点"，这一整天都算在内。
+- 字段的值是文字（地址栏参数）时按列的类型读（`parseColumnText`：整数、bigint、小数、日期、时间戳、布尔）；空白的文字不加条件，数组里的空白值也去掉。转换器列的字段类型无从得知，文字原样交给绑定。
 - 列写成字段名（作用域里恰好一张表有这一列）或沿 `@one` 关系的路径（`"mara.partNumber"`、`"mara.text.text"`）；同名列出现在多张表里时报错，要求写出关系路径。
 - 路径经过 `@many` 关系时写成 EXISTS，例如 `@where("eq", "deliveries.unit") unit` 和 `@where("ge", "deliveries.quantity") minQuantity`：只写一条路径的字段按同一个一对多关系合并进一个 EXISTS，即要求同一个子行同时满足；这些字段的值都为空时整个 EXISTS 省略。
 - 普通对象也可以：`from(Lips).where({ unit: ["EA", "KG"], salesOrder: "S1" })` 按同名列比较，并可与回调条件、其他 `where` 一起使用（AND）。
@@ -598,9 +625,11 @@ console.log(events[0]!.statement.debugSql());
 | `db.optional(q)` | 零行或一行：没有时为 `undefined`，多于一行报错；最多读 2 行 |
 | `db.first(q)` | 第一行或 `undefined`，最多读 1 行 |
 | `db.stream(q)` / `db.forEach(q, fn)` | 在一个游标上逐行读取：HANA 用 ResultSet，PostgreSQL 用服务端游标（需要连接池），MySQL 用流式查询（需要连接池）；提前 `break` 会释放游标。带 `list(...)` 的查询先读完全部行再交付 |
-| `db.count(q)` | 外包 `COUNT(*)` |
+| `db.count(q)` | 行数。单段、没有分组、DISTINCT、HAVING、QUALIFY、LIMIT 和方言子句、投影里没有聚合时直接 `SELECT COUNT(*) FROM ... WHERE ...`：投影里的标量子查询、窗口函数和只为投影连接的导航关系都不写；其余情况外包 `COUNT(*)` |
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size, total?)` | 页号从 1 开始，同时返回总数和总页数；传入已知的 `total` 时不再执行 COUNT |
+| `db.table(q, parseTableRequest(params))` | 表格查询：依次 `filterBy`、`searchBy`、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 21 节 |
+| `db.withAncestors(Dept, { key, parent, hits, select })` | 命中的行加上全部祖先（树的服务端搜索），交给 `buildTree` 组装；PostgreSQL、MySQL、SQLite 一条递归 CTE，HANA 一层一层按键查，见第 21 节 |
 | `db.attach(rows, key, (ids) => query, keyOf, set)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空数组 |
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列，另有 `first()`、`one()`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |
 | `q.cached(60_000)` | 结果按 SQL 和参数缓存（需要先配置 `cache`）；缓存的是解码后的值；并发读取同一个键只查询一次 |
@@ -925,3 +954,41 @@ await db.transaction(async (tx) => {
 - `fromAsOf(表, 时刻)`：时刻是 `CalendarDateTime`，按数据库所在时区的本地时间理解，写成 `FROM 表 AS OF TIMESTAMP CAST(? AS DATETIME(6)) 别名`；条件同 Java。
 - `inventory(n)`：只能写在 `update` / `deleteFrom` 的 `with(...)` 上，必须在事务里执行；正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务。
 - 写法与 MySQL 完全相同，MySQL 包的专属函数照常可用；没有纳入的能力与云产品的差异见 Java 的第 19 节。
+
+## 21. 与前端配合：表格请求、typed JSON、树
+
+与 vue-tsx-pro 的约定见 [0015](decisions/0015-typed-json-wire.md)（值怎样写成 JSON）和 [0016](decisions/0016-table-query-contract.md)（表格请求），Java 版见 api.md 第 20 节。
+
+**表格请求**：前端 `useTableQuery` + `tableParams(query, columns)` 发出 `page`、`pageSize`、`sort=-amount,name`、已知时的 `total`、表头多选 `filter.列=值`、表头关键字 `search.列=关键字`，其余参数是查询栏的条件：
+
+```ts
+export default defineEventHandler(async (event) => {
+  const params = getQuery(event);
+  const q = from(Order).where(Object.assign(new OrderFilter(), params)).select((o) => ({ id: o.id, supplier: o.supplier, amount: o.amount }));
+  return toWire(await db.table(q, parseTableRequest(params)));
+});
+```
+
+- `parseTableRequest(params, { maxPageSize })` 接受 `URLSearchParams` 或 `getQuery` / `req.query` 那样的对象：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字报 `RangeError`，Web 层据此回 400。
+- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`sortBy`、`page`；只认结果列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
+- 查询栏的条件交给条件对象（第 6 节）：地址栏里的文字按列的类型读，区间写成 `Range<CalendarDate>` 或两个同名参数。
+
+**typed JSON**：`toWire(value)`（`@zerodep-dev/wire`，核心包重新导出）把 bigint、Decimal、`CalendarDate`、`CalendarDateTime`、`Time`、`ZonedDateTime`、字节写成文字，根上附一张 `$types`；`fromWire(json)` 按它还原。h3、Express 直接返回 `toWire(...)` 的结果即可（`JSON.stringify` 写不了 bigint，decimal.js 的 `toJSON` 会用科学计数法，`CalendarDate` 会写成对象）。地址栏里的单个值用 `wireText(value)` / `parseWire(kind, text)`。
+
+**树**：
+
+```ts
+// 懒加载：每行带上有没有子节点
+from(Dept).where((d) => d.parentId.isNull()).select((d) => ({ id: d.id, name: d.name, hasChildren: bool(() => d.children.any()) }));
+// 服务端搜索：命中的行加上全部祖先，组装成从根开始的树
+const rows = await db.withAncestors(Dept, {
+  key: (d) => d.id,
+  parent: (d) => d.parentId,
+  hits: (d) => d.name.contains(keyword),
+  select: (d) => ({ id: d.id, parentId: d.parentId, name: d.name }),
+});
+const tree = buildTree(rows, { key: (d) => d.id, parent: (d) => d.parentId });   // 每个节点是 { ...行, children }
+```
+
+- `db.withAncestors` 在 PostgreSQL、MySQL（PolarDB）、SQLite 上是一条 `WITH RECURSIVE ... UNION ...`（`dialect.supportsRecursiveCte`）：命中的行共用的祖先只走一遍，父子成环也会停；HANA 没有递归 CTE，一层一层按键查只有键的两列，最后按键分批取 select 的列。行的顺序不保证。
+- `buildTree(rows, { key, parent, withChildren? })`：同级保持 rows 的顺序，父键不在这批行里的当作根，键重复或成环时报错。数据不来自 SQL 时用 `withAncestors(rows, { key, parent, load })`。

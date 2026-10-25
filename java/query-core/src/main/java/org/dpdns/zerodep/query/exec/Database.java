@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.exec;
 
+import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.ddl.Migration;
 import org.dpdns.zerodep.query.ddl.Migrator;
 import org.dpdns.zerodep.query.ddl.SchemaSyntax;
@@ -18,7 +19,10 @@ import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.select.Query;
+import org.dpdns.zerodep.query.scope.From1;
 import org.dpdns.zerodep.query.select.QueryRenderer;
+import org.dpdns.zerodep.query.select.Selection;
+import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.ShardRule;
 import org.dpdns.zerodep.query.table.Sharding;
@@ -187,7 +191,10 @@ public abstract class Database {
         if (sink != null) sink.add(event);
     }
 
-    /** 取第 page 页，每页 size 行，页码从 1 开始；总数来自对同一条查询的 COUNT(*)。 */
+    /**
+     * 取第 page 页，每页 size 行，页码从 1 开始；总数来自对同一条查询的 COUNT(*)。页码超出时 rows 为空，前端据此退到最后一页。
+     * 不先数行数再决定查不查这一页：空跑（{@link ConnectionProvider#dryRun()}）时总数是 0，那样 {@link #capture} 就看不到这一页的查询了。
+     */
     public <R> Page<R> page(Query<R> q, int page, int size) {
         if (page < 1 || size < 1) throw new IllegalArgumentException("page and size start at 1");
         List<R> rows = list(q.limit(size).offset((page - 1) * size));
@@ -199,6 +206,45 @@ public abstract class Database {
         if (page < 1 || size < 1) throw new IllegalArgumentException("page and size start at 1");
         if (total < 0) throw new IllegalArgumentException("total must not be negative");
         return new Page<>(list(q.limit(size).offset((page - 1) * size)), total, page, size);
+    }
+
+    /**
+     * 表格查询（0016）：按请求依次做表头筛选（{@code filterBy}、{@code searchBy}）、排序（{@code sortBy}）和分页；请求带了已知的总数时不再 COUNT。
+     * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。返回的 {@link Page#toWire()} 交给前端。
+     */
+    public <R> Page<R> table(Query<R> q, TableRequest request) {
+        Query<R> shaped = q.filterBy(request.filter()).searchBy(request.search()).sortBy(request.sort());
+        return request.total() == null
+            ? page(shaped, request.page(), request.pageSize())
+            : page(shaped, request.page(), request.pageSize(), request.total());
+    }
+
+    /**
+     * 树形数据的服务端搜索：命中 hits 的行加上它们的全部祖先，每行按 select 取出，交给 {@link Trees#build} 组装成从根开始的树
+     * （前端懒加载的树要在服务端搜索时用）。key、parent 是行的键列和父键列。
+     * PostgreSQL、MySQL（PolarDB）、SQLite 写成一条递归 CTE，用 UNION 去重：命中的行共用的祖先只走一遍，父子成环也会停；
+     * 没有递归 CTE 的库（HANA）一层一层按键查只有键的两列（{@link Trees#withAncestors}），最后按键分批取 select 的列。行的顺序不保证。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public <E extends Entity, R> List<R> withAncestors(Class<E> table, Function<E, ? extends Expr<?>> key, Function<E, ? extends Expr<?>> parent,
+                                                        Consumer<E> hits, Function<E, ? extends Selection<R>> select) {
+        Function<From1<E>, Query<Trees.Link>> links = scope -> scope.select(e -> Sql.cols(key.apply(e).as("key"), parent.apply(e).as("parent"))).into(Trees.Link.class);
+        if (dialect().supportsRecursiveCte()) {
+            Cte<Trees.Link> up = Cte.recursive("ancestors", links.apply(Sql.from(table).where(e -> hits.accept(e))),
+                self -> Sql.from(self).join(table, (t, e) -> ((Expr) key.apply(e)).eq(t.col(Trees.Link::parent)))
+                    .select((t, e) -> Sql.cols(key.apply(e).as("key"), parent.apply(e).as("parent"))).into(Trees.Link.class),
+                dialect().getClass(), true);
+            return list(Sql.from(table).where(e -> ((Expr) key.apply(e)).in(Sql.from(up).select(t -> t.col(Trees.Link::key)))).select(select::apply));
+        }
+        List<Trees.Link> all = Trees.withAncestors(list(links.apply(Sql.from(table).where(e -> hits.accept(e)))), Trees.Link::key, Trees.Link::parent,
+            ids -> list(links.apply(Sql.from(table).where(e -> ((Expr) key.apply(e)).in(ids)))));
+        List<Object> keys = all.stream().map(Trees.Link::key).toList();
+        List<R> rows = new ArrayList<>();
+        for (int i = 0; i < keys.size(); i += Trees.BATCH) {
+            List<Object> batch = keys.subList(i, Math.min(i + Trees.BATCH, keys.size()));
+            rows.addAll(list(Sql.from(table).where(e -> ((Expr) key.apply(e)).in(batch)).select(select::apply)));
+        }
+        return rows;
     }
 
     /** 手写 SQL，用 :name 形式的命名参数，结果按列标签映射。集合参数会展开成 IN (:list)。 */

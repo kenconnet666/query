@@ -16,9 +16,10 @@ import java.lang.annotation.Target;
  *     @Where(value = "createdOn", op = Where.Op.GE) LocalDate from,  // ERDAT >= ?
  *     @Where(value = "createdOn", op = Where.Op.LE) LocalDate to,    // ERDAT <= ?
  *     @Where(value = {"mara.partNumber", "text.text"}, op = Where.Op.CONTAINS) String keyword,  // 任一列包含
+ *     @Where(value = "createdOn", op = Where.Op.RANGE) List<LocalDate> created,    // ERDAT >= ? AND ERDAT <= ?
  *     @Ignore String sort) { }
  * }</pre>
- * 值为 null、空白字符串或空集合的字段不产生条件。
+ * 值为 null、空白字符串或空集合的字段不产生条件。字段是文字而列不是时（声明成 String 的地址栏参数），按列的 Java 类型读（{@code Wire.parse}）。
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
@@ -63,6 +64,12 @@ public @interface Where {
         /** 文本以值开头。 */
         STARTS_WITH,
         /** 文本以值结尾。 */
-        ENDS_WITH
+        ENDS_WITH,
+        /**
+         * 两端都含的区间：值是 {@link org.dpdns.zerodep.query.select.Range}（JSON 的 {@code {"start", "end"}}）或两项的集合、数组
+         * （地址栏里重复的参数 {@code created=2024-01-01&created=2024-01-31}），空的一端不加条件。
+         * 日期的一端落在 LocalDateTime 列上时，起端是那天的零点，止端写成"早于后一天的零点"，这一整天都算在内。
+         */
+        RANGE
     }
 }

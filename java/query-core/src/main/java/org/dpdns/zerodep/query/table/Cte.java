@@ -47,8 +47,17 @@ public final class Cte<E> implements Source<E>, CteDefinition {
      * step 收到这个 CTE 本身，在里面 {@code from(self)} 引用上一轮的行。只能在 dialect 上渲染。
      */
     public static <E> Cte<E> recursive(String name, Query<E> anchor, Function<Cte<E>, Query<E>> step, Class<? extends Dialect> dialect) {
+        return recursive(name, anchor, step, dialect, false);
+    }
+
+    /**
+     * 同上；distinct 时写成 {@code anchor UNION step(自己)}：每一轮去掉已有的行，多条路径汇到同一行时只走一遍，
+     * 父子成环也会停下（PostgreSQL、MySQL 8、SQLite 都支持）。
+     */
+    public static <E> Cte<E> recursive(String name, Query<E> anchor, Function<Cte<E>, Query<E>> step, Class<? extends Dialect> dialect, boolean distinct) {
         Cte<E> self = new Cte<>(name, anchor.shape(), dialect);
-        self.body = anchor.unionAll(step.apply(self));
+        Query<E> next = step.apply(self);
+        self.body = distinct ? anchor.union(next) : anchor.unionAll(next);
         return self;
     }
 

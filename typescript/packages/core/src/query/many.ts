@@ -7,6 +7,7 @@ import { Aggregate, Column, expression, ExprNode, type Expr, type OrderItem } fr
 import { count, lit, rowNumber, scalar } from "../sql/functions.js";
 import type { ExprDecimal, ExprNumber, ExprOf, ExprText, NumericValue } from "../sql/typed.js";
 import type { Renderable, SqlWriter } from "../sql/writer.js";
+import { filterCondition, type FilterObject } from "./filter.js";
 import { from, type Projection, type Query, type Shape } from "./query.js";
 import { createRef, ownerOf, type Ref, type RefOwner, type Related, type Source } from "./source.js";
 
@@ -39,50 +40,89 @@ type Ordering<T> = (target: Ref<T>) => OrderItem | readonly OrderItem[];
  * `first(order)` 每组取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来；`list(...)` 给每个父行一个子行数组。
  * `where` 先筛选目标行，`orderBy` 决定 `list` 与 `stringAgg` 的顺序，`limit` 限定 `list` 每个父行的子行数。
  * 查询上 `groupJoin((m) => m.deliveries)` 时，同一关系上的 count、sum、any 等合成一个按连接键分组的派生表 LEFT JOIN 一次。
+ *
+ * 多对多经过中间表：中间表的一对多关系 {@link through} 中间表的多对一关系，得到目标表的 Many（`@manyThrough` 声明）。
+ * 这时查询的是中间表，交给回调的是经过导航的目标行，导航在子查询里写成 LEFT JOIN。
  */
 export class Many<T> {
   declare readonly [MANY]: true;
   readonly #owner: RefOwner;
-  readonly #target: () => Table<T>;
-  /** 关系本身的连接条件块，也是判断两个 Many 是否同一个关系的依据。 */
-  readonly #on: (target: Ref<T>) => void;
+  /** 查询的表：一对多是目标表，多对多是中间表。 */
+  readonly #table: () => Table<unknown>;
+  /** 关系本身的连接条件块（写在 #table 的行上），也是判断两个 Many 是否同一个关系的依据。 */
+  readonly #on: (row: Ref<any>) => void;
+  /** #table 的行到交给回调的行：一对多原样，多对多经过中间表的导航。 */
+  readonly #view: (row: Ref<any>) => Ref<T>;
   /** where 追加的筛选条件块。 */
   readonly #filter: ((target: Ref<T>) => void) | undefined;
   readonly #order: Ordering<T> | undefined;
   /** {@link list} 给每个父行最多取的子行数。 */
   readonly #limit: number | undefined;
 
-  constructor(owner: RefOwner, target: () => Table<T>, on: (target: Ref<T>) => void, filter?: (target: Ref<T>) => void, order?: Ordering<T>, limit?: number) {
+  constructor(
+    owner: RefOwner,
+    table: () => Table<unknown>,
+    on: (row: Ref<any>) => void,
+    filter?: (target: Ref<T>) => void,
+    order?: Ordering<T>,
+    limit?: number,
+    view: (row: Ref<any>) => Ref<T> = (row) => row as Ref<T>,
+  ) {
     this.#owner = owner;
-    this.#target = target;
+    this.#table = table;
     this.#on = on;
     this.#filter = filter;
     this.#order = order;
     this.#limit = limit;
+    this.#view = view;
   }
 
-  /** 连接条件加 where 的筛选条件，写进当前的条件块。 */
-  #conditions(t: Ref<T>): void {
-    this.#on(t);
-    this.#filter?.(t);
+  /** 连接条件加 where 的筛选条件，写进当前的条件块；row 是 #table 的行。 */
+  #conditions(row: Ref<any>): void {
+    this.#on(row);
+    this.#filter?.(this.#view(row));
   }
 
-  /** 只看满足块里条件的目标行，返回新的 Many：`m.deliveries.where((l) => l.unit.eq("KG")).count()`。 */
-  where(condition: (target: Ref<T>) => void): Many<T> {
+  /** 换掉筛选、排序、条数的副本，表、连接条件和导航不变。 */
+  #with(filter: ((target: Ref<T>) => void) | undefined, order: Ordering<T> | undefined, limit: number | undefined): Many<T> {
+    return new Many(this.#owner, this.#table, this.#on, filter, order, limit, this.#view);
+  }
+
+  /**
+   * 只看满足条件的目标行，返回新的 Many：`m.deliveries.where((l) => l.unit.eq("KG")).count()`。
+   * 也可以给条件对象（同 `from(...).where(filter)`），前端的筛选条件于是能筛子集合：`m.deliveries.where(lineFilter).list(...)`。
+   */
+  where(condition: (target: Ref<T>) => void): Many<T>;
+  where<F extends FilterObject>(filter: F): Many<T>;
+  where(condition: ((target: Ref<T>) => void) | FilterObject): Many<T> {
+    const block = typeof condition === "function" ? condition : (t: Ref<T>) => addCondition(filterCondition([t], condition));
     const before = this.#filter;
     const filter =
       before === undefined
-        ? condition
+        ? block
         : (t: Ref<T>) => {
             before(t);
-            condition(t);
+            block(t);
           };
-    return new Many(this.#owner, this.#target, this.#on, filter, this.#order, this.#limit);
+    return this.#with(filter, this.#order, this.#limit);
+  }
+
+  /**
+   * 多对多：本关系（到中间表的一对多）再沿中间表的多对一关系 hop 走到目标表，得到目标表的 Many：
+   * `u.userRoles.through((ur) => ur.role)`，或在实体上声明 `@manyThrough((u) => u.userRoles, (ur) => ur.role) roles!: Many<Role>`。
+   * 行数是中间表的行数；where、orderBy、limit 写在 through 之后，回调拿到的是目标行。
+   */
+  through<U>(hop: (row: Ref<T>) => Related<U>): Many<U> {
+    if (this.#filter !== undefined || this.#order !== undefined || this.#limit !== undefined) {
+      throw new Error("through(...) goes right after the relation to the junction table; call where, orderBy and limit after it");
+    }
+    const view = this.#view;
+    return new Many<U>(this.#owner, this.#table, this.#on, undefined, undefined, undefined, (row) => hop(view(row)) as unknown as Ref<U>);
   }
 
   /** 子行按 order 排序，用于 {@link list}：`h.items.orderBy((i) => i.position).list(...)`。对 any、count 等没有影响。 */
   orderBy(order: Ordering<T>): Many<T> {
-    return new Many(this.#owner, this.#target, this.#on, this.#filter, order, this.#limit);
+    return this.#with(this.#filter, order, this.#limit);
   }
 
   /**
@@ -92,7 +132,7 @@ export class Many<T> {
   limit(rows: number): Many<T> {
     if (!Number.isInteger(rows) || rows < 1) throw new RangeError("limit needs a whole number of rows, at least 1");
     if (this.#order === undefined) throw new Error("limit(...) keeps the first rows by orderBy(...); call orderBy first");
-    return new Many(this.#owner, this.#target, this.#on, this.#filter, this.#order, rows);
+    return this.#with(this.#filter, this.#order, rows);
   }
 
   /** 至少有一行（满足块里的条件）：`EXISTS (...)`，写进当前的条件块。 */
@@ -143,12 +183,18 @@ export class Many<T> {
    */
   stringAgg(value: (target: Ref<T>) => Expr<string | null>, separator: string): ExprText<string | null> {
     const order = this.#order;
-    return scalar(this.#scope().select((t) => node(value(t)).stringAgg(separator, ...(order === undefined ? [] : [order(t)].flat())) as never)) as never;
+    return scalar(
+      this.#scope().select((row) => {
+        const t = this.#view(row);
+        return node(value(t)).stringAgg(separator, ...(order === undefined ? [] : [order(t)].flat())) as never;
+      }),
+    ) as never;
   }
 
-  /** 一个聚合值：默认是相关子查询，groupJoin 时换成分组派生表的一列；行数类（zeroIfNone）没有行时为 0。 */
+  /** 一个聚合值：默认是相关子查询，groupJoin 时换成分组派生表的一列；行数类（zeroIfNone）没有行时为 0。aggregate 拿到的是目标行。 */
   #value(aggregate: (t: Ref<T>) => Aggregate<unknown>, zeroIfNone: boolean): Expr<unknown> {
-    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(aggregate)) as Expr<unknown>, this.#grouped(aggregate), zeroIfNone);
+    const onRow = (row: Ref<any>) => aggregate(this.#view(row));
+    return new GroupedValue(this as unknown as Many<any>, scalar(this.#scope().select(onRow)) as Expr<unknown>, this.#grouped(onRow), zeroIfNone);
   }
 
   /**
@@ -158,26 +204,26 @@ export class Many<T> {
    * 所以没有匹配行时各列为 null。HANA 没有 LATERAL，三个库都用这一种写法。
    */
   first(order: Ordering<T>): Related<T> {
-    const target = this.#target();
+    const table = this.#table();
     let split: Split | undefined;
-    const scope = from(target).where((t) => {
-      split = this.#split(t, "first()");
+    const scope = from(table).where((t) => {
+      split = this.#split(t as Ref<any>, "first()");
       split.filters.forEach(addCondition);
     });
     const { keys, outer } = split!;
-    const names = entityMeta(target).properties.map((p) => p.name).sort();
+    const names = entityMeta(table).properties.map((p) => p.name).sort();
     const ranked = scope.select((t) => {
       const projection: Record<string, Expr<unknown>> = {};
       for (const name of names) projection[name] = (t as Record<string, Expr<unknown>>)[name]!;
-      projection[ROW_NUMBER] = rowNumber().over((w) => w.partitionBy(...keys).orderBy(...orderItems(order(t))));
+      projection[ROW_NUMBER] = rowNumber().over((w) => w.partitionBy(...keys).orderBy(...orderItems(order(this.#view(t as Ref<any>)))));
       return projection;
     });
-    const first = createRef(new RankedSource(ranked, `${target.name.toLowerCase()}_first`), target, true);
+    const first = createRef(new RankedSource(ranked, `${table.name.toLowerCase()}_first`), table, true);
     const firstOwner = ownerOf(first);
     const rowNo = expression<number>(integer, (w) => w.alias(firstOwner.alias(w)).sql(".").identifier(ROW_NUMBER));
     const join = keys.map((k, i) => compare((first as Record<string, Expr<unknown>>)[k.column.name]!, "=", outer[i]!));
     this.#owner.relations.push({ owner: firstOwner, ref: first, on: and(...join, compare(rowNo, "=", lit(1))) });
-    return first as unknown as Related<T>;
+    return this.#view(first as Ref<any>) as unknown as Related<T>;
   }
 
   /**
@@ -189,24 +235,25 @@ export class Many<T> {
   list<P extends Projection>(projection: (target: Ref<T>) => P): Children<Shape<P>>;
   list(projection: (target: Ref<T>) => Expr<unknown> | Projection): Children<unknown> {
     let outer: readonly Expr<unknown>[] = [];
-    from(this.#target()).where((t) => {
-      outer = this.#split(t, "list()").outer;
+    from(this.#table()).where((t) => {
+      outer = this.#split(t as Ref<any>, "list()").outer;
     });
     const order = this.#order;
     const limit = this.#limit;
+    const view = (t: unknown) => this.#view(t as Ref<any>);
     return new Children(outer, (batch) => {
-      let scope = from(this.#target()).where((t) => {
-        const { keys, filters } = this.#split(t, "list()");
+      let scope = from(this.#table()).where((t) => {
+        const { keys, filters } = this.#split(t as Ref<any>, "list()");
         filters.forEach(addCondition);
         match(keys, batch);
       });
-      if (order !== undefined) scope = scope.orderBy((t) => orderItems(order(t)));
+      if (order !== undefined) scope = scope.orderBy((t) => orderItems(order(view(t))));
       if (order !== undefined && limit !== undefined) {
-        scope = scope.qualify((t) => rowNumber().over((w) => w.partitionBy(...this.#split(t, "list()").keys).orderBy(...orderItems(order(t)))).le(limit));
+        scope = scope.qualify((t) => rowNumber().over((w) => w.partitionBy(...this.#split(t as Ref<any>, "list()").keys).orderBy(...orderItems(order(view(t))))).le(limit));
       }
       return scope.select((t) => {
-        const row: Record<string, Expr<unknown> | Projection> = { value: projection(t) };
-        this.#split(t, "list()").keys.forEach((k, i) => (row[`key${i}`] = k));
+        const row: Record<string, Expr<unknown> | Projection> = { value: projection(view(t)) };
+        this.#split(t as Ref<any>, "list()").keys.forEach((k, i) => (row[`key${i}`] = k));
         return row as Projection;
       }) as unknown as Query<ChildRow>;
     });
@@ -224,12 +271,12 @@ export class Many<T> {
     return this.#owner === other.#owner && (this.#on as unknown) === other.#on;
   }
 
-  /** 派生表里计算一个运算的聚合：带上 where 的筛选条件，写成 CASE WHEN。 */
-  #grouped(aggregate: (t: Ref<T>) => Aggregate<unknown>): (row: object) => Aggregate<unknown> {
+  /** 派生表里计算一个运算的聚合：带上 where 的筛选条件，写成 CASE WHEN。aggregate 与返回的函数都拿 #table 的行。 */
+  #grouped(aggregate: (row: Ref<any>) => Aggregate<unknown>): (row: object) => Aggregate<unknown> {
     const filter = this.#filter;
     return (row) => {
-      const agg = aggregate(row as Ref<T>);
-      return filter === undefined ? agg : agg.filtered(collect(() => filter(row as Ref<T>)));
+      const agg = aggregate(row as Ref<any>);
+      return filter === undefined ? agg : agg.filtered(collect(() => filter(this.#view(row as Ref<any>))));
     };
   }
 
@@ -239,8 +286,8 @@ export class Many<T> {
    */
   grouping(operations: readonly Grouped[]): { readonly query: Query<unknown>; readonly outer: readonly Expr<unknown>[] } {
     let split: Split | undefined;
-    const scope = from(this.#target()).where((t) => {
-      split = this.#split(t, "groupJoin(...)", collect(() => this.#on(t)));
+    const scope = from(this.#table()).where((t) => {
+      split = this.#split(t as Ref<any>, "groupJoin(...)", collect(() => this.#on(t as Ref<any>)));
       split.filters.forEach(addCondition);
     });
     const { keys, outer } = split!;
@@ -256,7 +303,7 @@ export class Many<T> {
   }
 
   /** 在目标表的一次出现 t 上展开连接条件并拆分；没有"目标列 = 所属表的列"时报错，use 是方法名。 */
-  #split(t: Ref<T>, use: string, condition: Cond = collect(() => this.#conditions(t))): Split {
+  #split(t: Ref<any>, use: string, condition: Cond = collect(() => this.#conditions(t))): Split {
     const inner = ownerOf(t);
     const keys: Column<unknown>[] = [];
     const outer: Expr<unknown>[] = [];
@@ -272,14 +319,14 @@ export class Many<T> {
       filters.push(c);
     }
     if (keys.length === 0) {
-      throw new Error(`${use} needs an equality between a column of ${this.#target().name} and a column of the table the relation belongs to`);
+      throw new Error(`${use} needs an equality between a column of ${this.#table().name} and a column of the table the relation belongs to`);
     }
     return { keys, outer, filters };
   }
 
   /** 目标表的一个查询作用域，条件是连接条件加筛选条件。 */
   #scope() {
-    return from(this.#target()).where((t) => this.#conditions(t));
+    return from(this.#table()).where((t) => this.#conditions(t as Ref<any>));
   }
 }
 

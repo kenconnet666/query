@@ -7,6 +7,7 @@
 | 构件 | 文件 |
 | --- | --- |
 | `query-parent` | POM（各模块的父 POM，必须一起发布） |
+| `wire` | jar、sources、javadoc（`query-core` 依赖它，要一起发布） |
 | `query-core` | jar、sources、javadoc，以及方言模块测试用的 `tests` jar |
 | `query-hana`、`query-postgres`、`query-mysql`、`query-sqlite`、`query-spring`、`query-maven-plugin` | jar、sources、javadoc |
 
@@ -81,7 +82,7 @@
 
 ## TypeScript（npm）
 
-六个包 `@zerodep-dev/query-core|postgres|mysql|hana|sqlite` 和 `@zerodep-dev/idb` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
+八个包 `@zerodep-dev/query-core|postgres|mysql|hana|sqlite|polardb`、`@zerodep-dev/idb` 和 `@zerodep-dev/wire` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
 
 ```powershell
 cd typescript
@@ -91,4 +92,4 @@ corepack pnpm test
 corepack pnpm -r --filter "@zerodep-dev/*" publish --access public --no-git-checks
 ```
 
-`pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。
+`pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。`wire` 要先于核心包、核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。

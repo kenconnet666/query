@@ -12,6 +12,7 @@ import {
   FunctionDef,
   integer,
   lit,
+  noteAggregate,
   param,
   skips,
   text as textType,
@@ -234,10 +235,10 @@ function lockClause(mode: string, lock: Lock, tables: readonly object[]): Clause
 
 // ---------- 统计 ----------
 
-const PERCENTILE_CONT = FunctionDef.only(PostgresDialect, "PERCENTILE_CONT", (w, args) => void w.sql("PERCENTILE_CONT(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
-const PERCENTILE_DISC = FunctionDef.only(PostgresDialect, "PERCENTILE_DISC", (w, args) => void w.sql("PERCENTILE_DISC(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
-const MODE = FunctionDef.only(PostgresDialect, "MODE", (w, args) => void w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args[0]!).sql(")"));
-const CORR = FunctionDef.only(PostgresDialect, "CORR");
+const PERCENTILE_CONT = FunctionDef.only(PostgresDialect, "PERCENTILE_CONT", (w, args) => void w.sql("PERCENTILE_CONT(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")")).aggregating();
+const PERCENTILE_DISC = FunctionDef.only(PostgresDialect, "PERCENTILE_DISC", (w, args) => void w.sql("PERCENTILE_DISC(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")")).aggregating();
+const MODE = FunctionDef.only(PostgresDialect, "MODE", (w, args) => void w.sql("MODE() WITHIN GROUP (ORDER BY ").render(args[0]!).sql(")")).aggregating();
+const CORR = FunctionDef.only(PostgresDialect, "CORR").aggregating();
 
 /** 连续百分位数 `PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)`，在相邻两行之间插值；p 取 0 到 1，中位数是 0.5。只能作聚合。 */
 export function percentileCont(p: number, e: Expr<NumericValue | null>): ExprNumber<number | null> {
@@ -321,6 +322,7 @@ export function arrayAgg<T>(e: Expr<T>, ...order: OrderItem[]): Expr<(T | null)[
   const orders = order.map(toOrder);
   return expression<(T | null)[] | null>(arrayOf(e.type) as SqlType<(T | null)[]>, (w) => {
     requirePostgres(w);
+    noteAggregate(w);
     w.sql("ARRAY_AGG(").render(e);
     if (orders.length > 0) w.sql(" ORDER BY ").join(orders, ", ");
     w.sql(")");

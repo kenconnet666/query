@@ -63,7 +63,7 @@ class SqlDebugTest {
         });
         assertEquals(5, events.size(), "list, page (rows and count), and a cached query twice");
         assertEquals(List.of("D1"), events.get(0).statement().parameters());
-        assertTrue(events.get(2).statement().sql().startsWith("SELECT COUNT(*) FROM ("), events.get(2).statement().sql());
+        assertEquals("SELECT COUNT(*)\nFROM QUERY_IT.MARA MARA", events.get(2).statement().sql(), "the page counts rows without its ORDER BY");
         assertEquals(List.of(false, true), events.subList(3, 5).stream().map(QueryListener.Event::cached).toList());
         assertEquals(0, db.count(from(Mara.class).select(m -> m.material())), "a dry run counts no rows");
         assertTrue(db.capture(() -> { }).isEmpty());

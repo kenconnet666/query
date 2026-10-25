@@ -1,5 +1,6 @@
 import type { CastType, SqlType } from "../schema/types.js";
 import type { SchemaSyntax } from "../ddl/syntax.js";
+import { noteAggregate } from "./aggregation.js";
 import type { Renderable, SqlWriter } from "./writer.js";
 
 /** 写出一次函数调用。 */
@@ -15,14 +16,18 @@ export type DialectClass = Function & { readonly prototype: Dialect };
 export class FunctionDef {
   readonly #standard: FunctionRenderer;
   readonly #owner: DialectClass | undefined;
+  /** 是否是聚合函数（多行合成一个值），见 {@link aggregating}。 */
+  readonly #aggregate: boolean;
 
   private constructor(
     readonly name: string,
     standard: FunctionRenderer | undefined,
     owner: DialectClass | undefined,
+    aggregate = false,
   ) {
     this.#standard = standard ?? ((w, args) => FunctionDef.call(w, name, args));
     this.#owner = owner;
+    this.#aggregate = aggregate;
   }
 
   /** 在所有数据库上都写成 NAME(arg, ...) 的函数，除非另给标准渲染。 */
@@ -35,8 +40,17 @@ export class FunctionDef {
     return new FunctionDef(name, standard, owner);
   }
 
+  /**
+   * 同一个函数，标成聚合函数（MEDIAN、STRING_AGG、CORR 等）：渲染时报到探查（aggregation.ts），于是按结果列筛选时它进 HAVING，
+   * 数总行数时不把投影换成 COUNT(*)。要在声明处调用：方言按定义的实例登记写法。COUNT、SUM 由 `Aggregate` 节点自己报到。
+   */
+  aggregating(): FunctionDef {
+    return new FunctionDef(this.name, this.#standard, this.#owner, true);
+  }
+
   /** 按实例改写、方言注册、标准渲染的顺序选出渲染器并写出调用。 */
   render(w: SqlWriter, args: readonly Renderable[]): void {
+    if (this.#aggregate) noteAggregate(w);
     const dialect: Dialect = w.dialect;
     let renderer = w.functionOverride(this) ?? dialect.renderer(this);
     if (renderer === undefined) {
@@ -220,6 +234,14 @@ export abstract class Dialect {
   /** 是否支持 FULL JOIN；MySQL 没有。 */
   get supportsFullJoin(): boolean {
     return true;
+  }
+
+  /**
+   * 是否支持递归 CTE（`WITH RECURSIVE`）：PostgreSQL、MySQL 8、SQLite 有，HANA 没有（用层级函数）。
+   * `db.withAncestors` 据此写成一条递归查询，或者一层一层按键查。
+   */
+  get supportsRecursiveCte(): boolean {
+    return false;
   }
 
   /** 没有表的 SELECT 需要的部分：多数数据库什么都不要，HANA 要 `FROM DUMMY`。 */

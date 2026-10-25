@@ -88,9 +88,55 @@ class DynamicTest {
     }
 
     @Test
+    void sortBy认减号表示倒序() {
+        String sql = totals().sortBy("-total,material").toSql(DIALECT).sql();
+        assertTrue(sql.endsWith("ORDER BY SUM(LIPS.LFIMG) DESC, LIPS.MATNR ASC"), sql);
+    }
+
+    @Test
+    void filterBy按结果列筛选_逐行计算的列进WHERE_聚合的列进HAVING() {
+        Map<String, List<String>> filter = new java.util.LinkedHashMap<>();
+        filter.put("total", List.of("10.5", " "));
+        filter.put("Material", List.of("M1", "M2"));
+        filter.put("unit", List.of());
+        String sql = totals().filterBy(filter).toSql(DIALECT).sql();
+        assertTrue(sql.contains("\nWHERE LIPS.MATNR IN (?, ?)\nGROUP BY "), sql);
+        assertTrue(sql.contains("\nHAVING SUM(LIPS.LFIMG) IN (10.5)\n"), sql);
+        Query<Map<String, Object>> q = totals();
+        assertSame(q, q.filterBy(null));
+        assertEquals(q.toSql(DIALECT).sql(), q.filterBy(Map.of("unit", List.of(" "))).toSql(DIALECT).sql());
+    }
+
+    @Test
+    void 拼接文字的聚合也进HAVING_窗口函数的列不能筛选() {
+        Query<Map<String, Object>> grouped = from(Lips.class)
+            .groupBy(l -> keys(l.material()))
+            .select(l -> cols(l.material(), l.delivery().stringAgg(",").as("deliveries")));
+        String sql = grouped.filterBy(Map.of("deliveries", List.of("D1,D2"))).toSql(DIALECT).sql();
+        assertTrue(sql.endsWith("HAVING STRING_AGG(LIPS.VBELN, ',') IN ('D1,D2')"), sql);
+        Query<Map<String, Object>> ranked = from(Lips.class).select(l -> cols(l.delivery(), rowNumber().over(w -> w.orderBy(l.delivery().asc())).as("rn")));
+        var e = assertThrows(IllegalArgumentException.class, () -> ranked.filterBy(Map.of("rn", List.of("1"))).toSql(DIALECT));
+        assertTrue(e.getMessage().contains("window function"), e.getMessage());
+    }
+
+    @Test
+    void searchBy按文字列的关键字筛选且保留它用到的关系() {
+        Query<Map<String, Object>> q = from(Lips.class).select(l -> cols(l.delivery(), l.mara().partNumber(), l.quantity()));
+        var r = q.searchBy(Map.of("partNumber", "50%")).toSql(DIALECT);
+        assertTrue(r.sql().endsWith("LEFT JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR AND MARA.MANDT = LIPS.MANDT\nWHERE MARA.MFRPN LIKE ? ESCAPE '!'"), r.sql());
+        assertEquals(List.of("%50!%%"), r.parameters());
+        var e = assertThrows(IllegalArgumentException.class, () -> q.searchBy(Map.of("quantity", "1")));
+        assertTrue(e.getMessage().contains("not a text column"), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> q.filterBy(Map.of("plant", List.of("1000"))));
+        assertThrows(IllegalArgumentException.class, () -> q.exclude("quantity").filterBy(Map.of("quantity", List.of("1"))));
+        var bad = assertThrows(IllegalArgumentException.class, () -> q.filterBy(Map.of("quantity", List.of("abc"))));
+        assertTrue(bad.getMessage().contains("\"abc\""), bad.getMessage());
+    }
+
+    @Test
     void sortBy只认结果列和asc与desc() {
         Query<Map<String, Object>> q = totals();
-        for (String bad : Arrays.asList("plant", "total; DROP TABLE x", "total sideways", "total desc nulls")) {
+        for (String bad : Arrays.asList("plant", "total; DROP TABLE x", "total sideways", "total desc nulls", "-total desc", "-", "--total")) {
             assertThrows(IllegalArgumentException.class, () -> q.sortBy(bad), bad);
         }
         assertThrows(IllegalArgumentException.class, () -> q.exclude("total").sortBy("total"));

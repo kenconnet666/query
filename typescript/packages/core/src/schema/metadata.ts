@@ -1,5 +1,5 @@
 import type { Many } from "../query/many.js";
-import type { Ref } from "../query/source.js";
+import type { Ref, Related } from "../query/source.js";
 import type { Expr } from "../sql/expr.js";
 import type { Family, FamilyOf } from "../sql/typed.js";
 import { text, type SqlType, type TypeKind } from "./types.js";
@@ -39,7 +39,7 @@ interface FieldMeta {
   readonly type?: SqlType<unknown>;
   readonly ignore?: true;
   readonly read?: string;
-  readonly relation?: Omit<RelationMeta, "name">;
+  readonly relation?: Omit<DirectRelationMeta, "name"> | Omit<ThroughRelationMeta, "name">;
   readonly where?: WhereMeta;
   readonly id?: true;
   readonly version?: true;
@@ -141,8 +141,11 @@ export function deletedValue(logic: LogicDeleteMeta): unknown {
   return logic.epochMillis ? BigInt(Date.now()) : logic.deleted;
 }
 
-/** 条件对象字段的比较方式。 */
-export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | WhereOperator;
+/**
+ * 条件对象字段的比较方式。range 是两端都含的区间：值是 `{ start, end }`（vue-tsx-pro 的 DateRangePicker）或两项的数组
+ * （NumberRangeField、地址栏里重复的参数），空的一端不加条件；日期的一端落在时间戳列上时，止端写成"早于后一天的零点"。
+ */
+export type WhereOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "startsWith" | "endsWith" | "range" | WhereOperator;
 
 /** 自定义的比较：在列上写条件（条件块），不写就是不加条件；字段值为空时不调用，直接省略。 */
 export type WhereOperator = (column: Expr<any>, value: any) => void;
@@ -154,7 +157,10 @@ export interface WhereMeta {
 }
 
 /** 关系字段的声明：目标表（延迟取得，表之间可以互相引用）和连接条件。 */
-export interface RelationMeta {
+export type RelationMeta = DirectRelationMeta | ThroughRelationMeta;
+
+/** `@one`、`@many`：直接连接目标表的关系。 */
+export interface DirectRelationMeta {
   readonly name: string;
   /** 是否一对多。 */
   readonly many: boolean;
@@ -162,6 +168,15 @@ export interface RelationMeta {
   readonly target: () => Table<unknown>;
   /** 连接条件块：本表的引用和目标表的引用。 */
   readonly on: (self: never, target: never) => void;
+  readonly through?: undefined;
+}
+
+/** `@manyThrough`：经过中间表的多对多。 */
+export interface ThroughRelationMeta {
+  readonly name: string;
+  readonly many: true;
+  /** 本表到中间表的一对多关系，和中间表到目标表的多对一关系。 */
+  readonly through: { readonly via: (self: never) => unknown; readonly to: (junction: never) => unknown };
 }
 
 declare const ONE: unique symbol;
@@ -290,7 +305,7 @@ export const trimmed = readAs("TRIM({0})");
  */
 export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => void) {
   return (_value: undefined, context: ClassFieldDecoratorContext<S, One<T>>): void =>
-    record(context, { relation: { many: false, target, on: on as RelationMeta["on"] } });
+    record(context, { relation: { many: false, target, on: on as DirectRelationMeta["on"] } });
 }
 
 /**
@@ -299,13 +314,24 @@ export function one<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref
  */
 export function many<S, T>(target: () => Table<T>, on: (self: Ref<S>, target: Ref<T>) => void) {
   return (_value: undefined, context: ClassFieldDecoratorContext<S, Many<T>>): void =>
-    record(context, { relation: { many: true, target, on: on as RelationMeta["on"] } });
+    record(context, { relation: { many: true, target, on: on as DirectRelationMeta["on"] } });
+}
+
+/**
+ * 多对多关系：先走本表到中间表的一对多关系 via，再走中间表到目标表的多对一关系 to，得到目标表的 {@link Many}：
+ * `@manyThrough((u) => u.userRoles, (ur) => ur.role) roles!: Many<Role>;`。用法同一对多（any、count、list、first……），
+ * 查询的是中间表，交给回调的是目标行；行数是中间表的行数。
+ */
+export function manyThrough<S, J, T>(via: (self: Ref<S>) => Many<J>, to: (junction: Ref<J>) => Related<T>) {
+  return (_value: undefined, context: ClassFieldDecoratorContext<S, Many<T>>): void =>
+    record(context, { relation: { many: true, through: { via: via as never, to: to as never } } });
 }
 
 /**
  * 条件对象（`from(...).where(filter)`）里一个字段怎样变成条件：op 是比较方式，columns 是比较的列，默认是字段名；
  * 列可以经过多对一关系（`"mara.partNumber"`），写多个时任一满足即可（OR）。没有这个装饰器的字段与同名列比较相等
- * （数组用 IN）。例如 `@where("ge", "createdOn") from?: CalendarDate;`；op 也可以是自定义函数 `(column, value) => { 条件 }`。
+ * （数组用 IN）。例如 `@where("ge", "createdOn") from?: CalendarDate;`、`@where("range", "createdOn") created?: Range<CalendarDate>;`；
+ * op 也可以是自定义函数 `(column, value) => { 条件 }`。字段值是文字（地址栏参数）时按列的类型读（`parseColumnText`）。
  */
 export function where(op: WhereOp, ...columns: string[]) {
   return (_value: undefined, context: ClassFieldDecoratorContext): void => record(context, { where: Object.freeze({ op, columns }) });
@@ -405,7 +431,7 @@ function describe(type: Ctor<unknown>): EntityMeta {
     fields: fields.filter((f) => !f.ignore && f.relation === undefined).map((f) => f.name),
     property: (name: string) => byName.get(name),
     ignored: (name: string) => fieldsByName.get(name)?.ignore === true || fieldsByName.get(name)?.relation !== undefined,
-    relations: fields.filter((f) => f.relation !== undefined).map((f) => Object.freeze({ ...f.relation!, name: f.name })),
+    relations: fields.filter((f) => f.relation !== undefined).map((f) => Object.freeze({ ...f.relation!, name: f.name }) as RelationMeta),
     where: (name: string) => fieldsByName.get(name)?.where,
     writes: writes(type, fields, byName),
   });
