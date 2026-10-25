@@ -81,6 +81,9 @@ public class MysqlDialect extends Dialect {
     /** 有递归 CTE（WITH RECURSIVE）。 */
     @Override public boolean supportsRecursiveCte() { return true; }
 
+    /** MySQL 8.0.14 起有 LATERAL 派生表。 */
+    @Override public boolean supportsLateral() { return true; }
+
     /** 标识符一律加引号，所以没有任何名字算作无需引用。 */
     @Override protected boolean isBare(String identifier) { return false; }
 

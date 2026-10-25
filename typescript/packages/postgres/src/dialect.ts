@@ -18,6 +18,11 @@ export class PostgresDialect extends Dialect {
 
   /** 有递归 CTE（WITH RECURSIVE）。 */
 
+  /** 有 LATERAL 派生表。 */
+  override get supportsLateral(): boolean {
+    return true;
+  }
+
   override get supportsRecursiveCte(): boolean {
 
     return true;

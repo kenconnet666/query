@@ -9,7 +9,7 @@
 | `query-parent` | POM（各模块的父 POM，必须一起发布） |
 | `wire` | jar、sources、javadoc（`query-core` 依赖它，要一起发布） |
 | `query-core` | jar、sources、javadoc，以及方言模块测试用的 `tests` jar |
-| `query-hana`、`query-postgres`、`query-mysql`、`query-sqlite`、`query-spring`、`query-maven-plugin` | jar、sources、javadoc |
+| `query-hana`、`query-postgres`、`query-mysql`、`query-polardb`、`query-sqlite`、`query-spring`、`query-maven-plugin` | jar、sources、javadoc |
 
 每个文件都附带 `.asc` 签名和校验和。jar 的清单里写了 `Automatic-Module-Name`（例如 `org.dpdns.zerodep.query.hana`），在模块路径上也能使用。
 

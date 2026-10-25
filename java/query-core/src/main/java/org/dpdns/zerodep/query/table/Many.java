@@ -39,7 +39,7 @@ import java.util.function.Function;
  *   <li>{@link #count()}、{@link #countDistinct}、{@link #sum}、{@link #max}、{@link #min}、{@link #avg}、{@link #stringAgg}：渲染为相关标量子查询；
  *       {@code sum}、{@code max}、{@code min} 的值由 lambda 给出，Java 推不出它的具体类型（见各方法），要用某种类型的方法时包一层，
  *       例如 {@code ExprDecimal.of(m.deliveries().sum(l -> l.quantity())).times(price)}；</li>
- *   <li>{@link #first}：每组按顺序取第一行，渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来，返回那一行的表接口；</li>
+ *   <li>{@link #first}：每组按顺序取第一行，支持 LATERAL 的库写成按父行取一行的 LATERAL 子查询，其余写成 ROW_NUMBER 派生表再 LEFT JOIN 回来，返回那一行的表接口；</li>
  *   <li>{@link #list}：每个父行一个子行列表，用一条按键批量的查询加载。</li>
  * </ul>
  * {@link #where} 先筛选目标行，例如 {@code h.items().where(i -> i.blocked().eq(true)).count()}，也可以给条件对象；
@@ -175,9 +175,11 @@ public final class Many<R extends Entity> {
 
     /**
      * 每组按 order 排序后的第一行，例如最新的一条记录：{@code m.purchases().first(p -> p.createdOn().desc()).vendor()}。
-     * 连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行。渲染为
-     * {@code LEFT JOIN (SELECT 目标表各列, ROW_NUMBER() OVER (PARTITION BY 键 ORDER BY ...) ...) ON 键相等 AND 行号 = 1}，
-     * 所以没有匹配行时各列为 NULL。HANA 没有 LATERAL，三个库都用这一种写法。多对多时在中间表上排名，再沿导航取目标行。
+     * 连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；没有匹配行时各列为 NULL。渲染时按方言选写法（0018）：
+     * 支持 LATERAL 的库（PostgreSQL、MySQL）写成 {@code LEFT JOIN LATERAL (SELECT 目标表各列 … WHERE 键 = 父行的列 ORDER BY … LIMIT 1) ON TRUE}，
+     * 每个父行按索引取一行，给 (键, 排序列) 建索引；其余（HANA、SQLite、PolarDB）写成
+     * {@code LEFT JOIN (SELECT 目标表各列, ROW_NUMBER() OVER (PARTITION BY 键 ORDER BY ...) ...) ON 键相等 AND 行号 = 1}。
+     * 多对多时在中间表上取，再沿导航取目标行。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     public R first(Function<R, ? extends OrderItem> order) {
@@ -187,11 +189,22 @@ public final class Many<R extends Entity> {
         OrderItem sort = Conditions.outside(() -> order.apply(view.apply(row)));
         Query<?> ranked = Query.select(SelectSpec.from(split.inner()).where(Nodes.all(split.filters())),
             Sql.cols(((Entity) row).columns(), Sql.rowNumber().over(w -> w.partitionBy(partition).orderBy(sort)).as(ROW_NUMBER)));
-        Ref<?> first = Ref.of(new Derived(ranked, table, table.getSimpleName().toLowerCase(java.util.Locale.ROOT) + "_first"));
+        // LATERAL 的写法在查询的表的另一次出现上：键等于父行的列，排好序取一行
+        Split each = split("first()");
+        OrderItem eachSort = Conditions.outside(() -> order.apply(view.apply(each.row())));
+        List<Cond> correlated = new ArrayList<>(each.filters());
+        for (int i = 0; i < each.keys().size(); i++) correlated.add(Nodes.compare(each.keys().get(i), "=", each.outer().get(i)));
+        Query<?> lateral = Query.select(SelectSpec.from(each.inner()).where(Nodes.all(correlated)).orderBy(OrderList.of(eachSort)).limit(1),
+            Sql.cols(((Entity) each.row()).columns()));
+        Ref<?> first = Ref.of(new FirstRow(ranked, lateral, table, table.getSimpleName().toLowerCase(java.util.Locale.ROOT) + "_first"));
         List<Cond> join = new ArrayList<>();
         for (int i = 0; i < partition.length; i++) join.add(Nodes.compare(first.column(split.keys().get(i).property().name()), "=", split.outer().get(i)));
         join.add(Nodes.compare(new RowNumber(first), "=", Nodes.literal(Long.class, 1L)));
-        owner.relate(first, Nodes.all(join));
+        Cond rankedJoin = Nodes.all(join);
+        owner.relate(first, Nodes.of(w -> {
+            if (w.dialect().supportsLateral()) w.sql("TRUE");
+            else w.render(rankedJoin);
+        }));
         return view.apply(first.param());
     }
 

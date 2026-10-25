@@ -11,20 +11,17 @@ public final class Derived<E> implements Source<E> {
     /** 作为派生表的子查询。 */
     private final Query<?> query;
 
-    /** 行的结构类（来自子查询的 {@code into}），或一对多 {@code first(...)} 的表接口。 */
+    /** 行的结构类（来自子查询的 {@code into}）。 */
     private final Class<E> shape;
 
     /** 别名的首选名。 */
     private final String alias;
 
     /** 由 {@link Query} 作为派生表使用时创建。 */
-    public Derived(Query<E> query) { this(query, query.shape(), "t"); }
-
-    /** 行由 rows 描述的派生表，例如一对多 {@code first(...)} 里按表接口读取的排名子查询。 */
-    Derived(Query<?> query, Class<E> rows, String alias) {
+    public Derived(Query<E> query) {
         this.query = query;
-        this.shape = rows;
-        this.alias = alias;
+        this.shape = query.shape();
+        this.alias = "t";
     }
 
     /** 行的结构类。 */

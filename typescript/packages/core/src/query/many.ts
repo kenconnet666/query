@@ -2,7 +2,7 @@ import { COLUMNS, NAMED } from "../internal.js";
 import { entityMeta, type Table } from "../schema/metadata.js";
 import { integer, type SqlType } from "../schema/types.js";
 import type { Decimal } from "decimal.js";
-import { addCondition, all, and, any, collect, Comparison, compare, Cond, conjuncts, existence } from "../sql/cond.js";
+import { addCondition, all, and, any, collect, Comparison, compare, Cond, condition, conjuncts, existence } from "../sql/cond.js";
 import { Aggregate, Column, expression, ExprNode, type Expr, type OrderItem } from "../sql/expr.js";
 import { count, lit, rowNumber, scalar } from "../sql/functions.js";
 import type { ExprDecimal, ExprNumber, ExprOf, ExprText, NumericValue } from "../sql/typed.js";
@@ -199,9 +199,10 @@ export class Many<T> {
 
   /**
    * 每组按 order 排序后的第一行，例如最新的一条记录：`m.deliveries.first((l) => l.createdOn.desc()).delivery`。
-   * 连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行。渲染为
-   * `LEFT JOIN (SELECT 目标表各列, ROW_NUMBER() OVER (PARTITION BY 键 ORDER BY ...) ...) ON 键相等 AND 行号 = 1`，
-   * 所以没有匹配行时各列为 null。HANA 没有 LATERAL，三个库都用这一种写法。
+   * 连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；没有匹配行时各列为 null。渲染时按方言选写法（0018）：
+   * 支持 LATERAL 的库（PostgreSQL、MySQL）写成 `LEFT JOIN LATERAL (SELECT 目标表各列 … WHERE 键 = 父行的列 ORDER BY … LIMIT 1) ON TRUE`，
+   * 每个父行按索引取一行，给 (键, 排序列) 建索引；其余（HANA、SQLite、PolarDB）写成
+   * `LEFT JOIN (SELECT 目标表各列, ROW_NUMBER() OVER (PARTITION BY 键 ORDER BY ...) ...) ON 键相等 AND 行号 = 1`。
    */
   first(order: Ordering<T>): Related<T> {
     const table = this.#table();
@@ -218,11 +219,27 @@ export class Many<T> {
       projection[ROW_NUMBER] = rowNumber().over((w) => w.partitionBy(...keys).orderBy(...orderItems(order(this.#view(t as Ref<any>)))));
       return projection;
     });
-    const first = createRef(new RankedSource(ranked, `${table.name.toLowerCase()}_first`), table, true);
+    // LATERAL 的写法在查询的表的另一次出现上：键等于父行的列，排好序取一行
+    const lateral = from(table)
+      .where((t) => {
+        const each = this.#split(t as Ref<any>, "first()");
+        each.filters.forEach(addCondition);
+        each.keys.forEach((k, i) => addCondition(compare(k, "=", each.outer[i]!)));
+      })
+      .orderBy((t) => orderItems(order(this.#view(t as Ref<any>))))
+      .limit(1)
+      .select((t) => {
+        const projection: Record<string, Expr<unknown>> = {};
+        for (const name of names) projection[name] = (t as Record<string, Expr<unknown>>)[name]!;
+        return projection;
+      });
+    const first = createRef(new FirstRowSource(ranked, lateral, `${table.name.toLowerCase()}_first`), table, true);
     const firstOwner = ownerOf(first);
     const rowNo = expression<number>(integer, (w) => w.alias(firstOwner.alias(w)).sql(".").identifier(ROW_NUMBER));
     const join = keys.map((k, i) => compare((first as Record<string, Expr<unknown>>)[k.column.name]!, "=", outer[i]!));
-    this.#owner.relations.push({ owner: firstOwner, ref: first, on: and(...join, compare(rowNo, "=", lit(1))) });
+    const ranking = and(...join, compare(rowNo, "=", lit(1)));
+    const on = condition((w) => (w.dialect.supportsLateral ? w.sql("TRUE") : w.render(ranking)));
+    this.#owner.relations.push({ owner: firstOwner, ref: first, on });
     return this.#view(first as Ref<any>) as unknown as Related<T>;
   }
 
@@ -468,22 +485,24 @@ function keyOf(values: readonly unknown[]): string | undefined {
 }
 
 /** 一对多 `first(...)` 的排名子查询：按表接口的属性名取列，不含行号列。 */
-class RankedSource<T> implements Source<T> {
+class FirstRowSource<T> implements Source<T> {
   readonly entity = undefined;
   readonly filtered = false;
   readonly columns: readonly { readonly name: string; readonly type: SqlType<unknown> }[];
 
   constructor(
-    readonly query: Query<unknown>,
+    readonly ranked: Query<unknown>,
+    readonly lateral: Query<unknown>,
     readonly preferredAlias: string,
   ) {
-    this.columns = query[COLUMNS]("first()").filter((c) => c.name !== ROW_NUMBER);
+    this.columns = ranked[COLUMNS]("first()").filter((c) => c.name !== ROW_NUMBER);
   }
 
-  /** 写出带括号的排名子查询。 */
+  /** 写出子查询：支持 LATERAL 的库写 `LATERAL (…)`，其余写排名的派生表（两种写法的列相同）。 */
   renderSource(w: SqlWriter): void {
-    w.sql("(");
-    this.query[NAMED](w);
+    const each = w.dialect.supportsLateral;
+    w.sql(each ? "LATERAL (" : "(");
+    (each ? this.lateral : this.ranked)[NAMED](w);
     w.sql(")");
   }
 

@@ -201,17 +201,31 @@ export const untyped: SqlType<unknown, "unknown"> = type("untyped", "unknown", (
 /**
  * 以另一种类型存储的字段类型，例如 SAP 把日期存成 'yyyyMMdd' 文本：存储的种类 K 不变，所以这样的列只有存储类型的函数。
  * 字段类型与存储类型不是同一类时（日期存成文本），字段要声明成 `Stored<字段类型, 存储类型>`，`@column` 会检查。
+ * field 是字段值在线上（0015）的种类：给了时地址栏里的文字（表头筛选、条件对象、条件树）先按它读成字段值，再经转换器存；
+ * 不给时文字原样交给绑定（字段类型无从得知）。
+ *
+ *   export const sapDate = converted(text, { toDatabase: …, fromDatabase: … }, "sap date", "date");
  */
-export function converted<J, D, K extends TypeKind>(storage: SqlType<D, K>, converter: Converter<J, D>, name = `converted ${storage.name}`): SqlType<J, K> {
-  return type(
+export function converted<J, D, K extends TypeKind>(
+  storage: SqlType<D, K>,
+  converter: Converter<J, D>,
+  name = `converted ${storage.name}`,
+  field?: WireKind,
+): SqlType<J, K> {
+  const result = type(
     name,
     storage.kind,
-    (v) => storage.encode(converter.toDatabase(v)),
+    (v: J) => storage.encode(converter.toDatabase(v)),
     (raw) => converter.fromDatabase(storage.decode(raw)) as J,
   );
+  if (field !== undefined) FIELD_KINDS.set(result as SqlType<unknown>, field);
+  return result;
 }
 
-/** 内置类型的值在线上（0015）怎样读成文字；`converted(...)` 的类型不在里面，它们的字段类型无从得知。 */
+/** `converted(...)` 声明了字段种类的类型 → 那个种类 */
+const FIELD_KINDS = new WeakMap<SqlType<unknown>, WireKind>();
+
+/** 内置类型的值在线上（0015）怎样读成文字；`converted(...)` 的类型看它声明的字段种类（FIELD_KINDS）。 */
 const WIRE_KINDS: ReadonlyMap<SqlType<unknown>, WireKind> = new Map<SqlType<unknown>, WireKind>([
   [text as SqlType<unknown>, "text"],
   [integer as SqlType<unknown>, "integer"],
@@ -227,11 +241,11 @@ const WIRE_KINDS: ReadonlyMap<SqlType<unknown>, WireKind> = new Map<SqlType<unkn
 
 /**
  * 按列的类型读一段线上的文字（地址栏里的筛选值、条件对象里的文字）：内置类型用 `parseWire`，
- * 空白是 null（不加条件）；转换器类型与无类型的列原样返回文字，交给绑定时的校验。
+ * 声明了字段种类的转换器类型按那个种类读；空白是 null（不加条件）。没声明的转换器类型与无类型的列原样返回文字，交给绑定时的校验。
  */
 export function parseColumnText(type: SqlType<unknown>, text: string): unknown {
   if (text.trim() === "") return null;
-  const kind = WIRE_KINDS.get(type);
+  const kind = WIRE_KINDS.get(type) ?? FIELD_KINDS.get(type);
   return kind === undefined || kind === "text" ? text : parseWire(kind, text.trim());
 }
 

@@ -12,6 +12,11 @@ export * from "@zerodep-dev/query-mysql";
  * MySQL 方言的专属函数在本方言上照常可用。与 Java 的 PolardbDialect 一致。
  */
 export class PolardbDialect extends MysqlDialect {
+  /** PolarDB MySQL 8.0 的小版本可能早于 8.0.14（没有 LATERAL），一对多的 first(...) 仍写成 ROW_NUMBER 排名。 */
+  override get supportsLateral(): boolean {
+    return false;
+  }
+
   /** 方言无状态，全局共用这一个实例。 */
   static override readonly instance: PolardbDialect = new PolardbDialect();
 

@@ -16,4 +16,7 @@ public class PolardbDialect extends MysqlDialect {
 
     /** 方言名，用于异常信息和监听事件。 */
     @Override public String name() { return "PolarDB"; }
+
+    /** PolarDB MySQL 8.0 的小版本可能早于 8.0.14（没有 LATERAL），一对多的 first(...) 仍写成 ROW_NUMBER 排名。 */
+    @Override public boolean supportsLateral() { return false; }
 }

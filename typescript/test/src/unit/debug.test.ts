@@ -16,8 +16,8 @@ describe("打印与测试 SQL", () => {
       .select(() => ({ mark: lit("a?b") }))
       .toSql(new TestDialect());
     assert.equal(r.debugSql(), "SELECT 'a?b' AS \"mark\"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.MATNR = 'O''Neil' AND LIPS.ERDAT = '20260115'");
-    assert.equal(r.parameterText(), "O'Neil(text), 20260115(converted text)");
-    assert.ok(r.toString().endsWith("\n-- parameters: O'Neil(text), 20260115(converted text)"));
+    assert.equal(r.parameterText(), "O'Neil(text), 20260115(sap date)");
+    assert.ok(r.toString().endsWith("\n-- parameters: O'Neil(text), 20260115(sap date)"));
   });
 
   it("PostgreSQL 的编号占位符也能写回字面量", () => {
