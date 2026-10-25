@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.select;
 
+import org.dpdns.zerodep.query.dialect.Aggregation;
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.Rendered;
@@ -65,15 +66,37 @@ public final class QueryRenderer {
      * @param labeled true 时第一段的每一列带上结果列名
      */
     private static void query(SqlWriter w, Query<?> q, boolean ordered, boolean labeled) {
-        List<Query.Arm> arms = q.arms();
-        Query.Combination c = q.combination();
-        for (int i = 0; i < arms.size(); i++) {
-            if (i > 0) w.sql("\n").sql(w.dialect().setOperator(c.operators().get(i - 1))).sql("\n");
-            w.sql(w.dialect().groupOpen().repeat(c.opens(i)));
-            arm(w, arms.get(i), q.labels(), i == 0 && labeled, ordered);
-            w.sql(w.dialect().groupClose().repeat(c.closes(i)));
+        // 子查询里的聚合属于子查询自己（Aggregation.kindOf 探查外层的列时）
+        Aggregation.nested(w, () -> {
+            List<Query.Arm> arms = q.arms();
+            Query.Combination c = q.combination();
+            for (int i = 0; i < arms.size(); i++) {
+                if (i > 0) w.sql("\n").sql(w.dialect().setOperator(c.operators().get(i - 1))).sql("\n");
+                w.sql(w.dialect().groupOpen().repeat(c.opens(i)));
+                arm(w, arms.get(i), q.labels(), i == 0 && labeled, ordered);
+                w.sql(w.dialect().groupClose().repeat(c.closes(i)));
+            }
+            if (arms.size() > 1) w.dialect().limit(w, q.limitValue(), q.offsetValue());
+        });
+    }
+
+    /**
+     * 按结果列的条件分成写进 WHERE 的（逐行计算的列）和写进 HAVING 的（聚合的列）；窗口函数的列不能这样筛选。
+     *
+     * @return 两项：WHERE 的条件、HAVING 的条件
+     */
+    private static List<List<Cond>> resultFilters(SqlWriter w, SelectSpec s) {
+        List<Cond> where = new ArrayList<>();
+        List<Cond> having = new ArrayList<>();
+        for (SelectSpec.ResultFilter f : s.resultFilters) {
+            switch (Aggregation.kindOf(w, f.item())) {
+                case PLAIN -> where.add(f.condition());
+                case AGGREGATE -> having.add(f.condition());
+                case WINDOW -> throw new IllegalArgumentException("filterBy(...) and searchBy(...) cannot filter a window function column; "
+                    + "put the query in a CTE and filter that");
+            }
         }
-        if (arms.size() > 1) w.dialect().limit(w, q.limitValue(), q.offsetValue());
+        return List.of(where, having);
     }
 
     /**
@@ -125,7 +148,10 @@ public final class QueryRenderer {
         // 对外层的 SUM 来说不是数值）。GROUP BY、DISTINCT 及其 ORDER BY 按文本匹配表达式，
         // 所以它们里面的常量也必须是字面量。
         boolean grouped = !groupBy.isEmpty() || s.distinct || replacedDistinct;
-        List<GroupJoin> groupJoins = groupJoins(w, arm, groupBy, orderBy);
+        List<List<Cond>> byColumn = resultFilters(w, s);
+        List<Cond> filtered = new ArrayList<>(byColumn.get(0));
+        filtered.addAll(byColumn.get(1));
+        List<GroupJoin> groupJoins = groupJoins(w, arm, groupBy, orderBy, filtered);
         UnaryOperator<Renderable> previous = w.substitution(null);
         if (!groupJoins.isEmpty()) w.substitution(node -> {
             for (GroupJoin g : groupJoins) {
@@ -149,7 +175,7 @@ public final class QueryRenderer {
         // FROM、CROSS JOIN 的表的过滤条件先记下：后面有 RIGHT JOIN 时它们变成可空的一侧，
         // 条件要放进那个 RIGHT JOIN 的 ON，否则 WHERE 会把补出来的行过滤掉。
         List<Cond> pending = new ArrayList<>();
-        Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy);
+        Set<Ref.Relation> implicit = usedRelations(w, arm, groupBy, orderBy, filtered);
         List<Ref<?>> sources = new ArrayList<>();
         for (SelectSpec.Join j : s.joins) sources.add(j.ref());
         for (Ref.Relation r : implicit) sources.add(r.target());
@@ -204,6 +230,7 @@ public final class QueryRenderer {
         }
         List<Cond> where = new ArrayList<>(pending);
         where.addAll(s.where);
+        where.addAll(byColumn.get(0));
         Cond whereAll = Nodes.all(where);
         if (!whereAll.isEmpty()) w.sql("\nWHERE ").render(whereAll);
         w.inlining(grouped);
@@ -211,7 +238,9 @@ public final class QueryRenderer {
             w.sql("\nGROUP BY ");
             w.dialect().groupBy(w, groupBy, s.rollup);
         }
-        Cond having = Nodes.all(s.having);
+        List<Cond> havingAll = new ArrayList<>(s.having);
+        havingAll.addAll(byColumn.get(1));
+        Cond having = Nodes.all(havingAll);
         if (!having.isEmpty()) w.sql("\nHAVING ").render(having);
         boolean limited = s.limit != null || s.offset != null;
         if (!orderBy.isEmpty() && (ordered || limited)) w.sql("\nORDER BY ").join(orderBy, ", ");
@@ -230,7 +259,7 @@ public final class QueryRenderer {
      * 这一段 groupJoin 的关系：用探查写入器找出各子句里用到的、属于这些关系的集合运算（count、sum、any 等），
      * 每个关系生成一个按连接键分组的派生表，每个运算一列。没有用到运算的关系不连接。
      */
-    private static List<GroupJoin> groupJoins(SqlWriter w, Query.Arm arm, List<Expr<?>> groupBy, List<Order> orderBy) {
+    private static List<GroupJoin> groupJoins(SqlWriter w, Query.Arm arm, List<Expr<?>> groupBy, List<Order> orderBy, List<Cond> extra) {
         SelectSpec s = arm.spec();
         if (s.groupJoins.isEmpty()) return List.of();
         Map<Many<?>, List<Many.Grouped>> found = new LinkedHashMap<>();
@@ -250,6 +279,7 @@ public final class QueryRenderer {
         for (Cond c : s.where) if (!c.isEmpty()) probe.render(c);
         for (Expr<?> g : groupBy) probe.render(g);
         for (Cond c : s.having) if (!c.isEmpty()) probe.render(c);
+        for (Cond c : extra) if (!c.isEmpty()) probe.render(c);
         for (Order o : orderBy) probe.render(o);
         List<GroupJoin> result = new ArrayList<>();
         for (Map.Entry<Many<?>, List<Many.Grouped>> e : found.entrySet()) {
@@ -370,12 +400,13 @@ public final class QueryRenderer {
         return f.text();
     }
 
-    /** 这一段真正用到的隐式连接（导航关系）：SELECT、条件、分组、排序和子句里引用到的，见 {@link ImplicitJoins#used}。 */
-    private static Set<Ref.Relation> usedRelations(SqlWriter w, Query.Arm arm, List<Expr<?>> groupBy, List<Order> orderBy) {
+    /** 这一段真正用到的隐式连接（导航关系）：SELECT、条件（含按结果列的）、分组、排序和子句里引用到的，见 {@link ImplicitJoins#used}。 */
+    private static Set<Ref.Relation> usedRelations(SqlWriter w, Query.Arm arm, List<Expr<?>> groupBy, List<Order> orderBy, List<Cond> extra) {
         SelectSpec s = arm.spec();
         List<Renderable> parts = new ArrayList<>(arm.items());
         for (SelectSpec.Join j : s.joins) parts.add(j.on());
         parts.addAll(s.where);
+        parts.addAll(extra);
         parts.addAll(groupBy);
         parts.addAll(s.having);
         parts.addAll(orderBy);

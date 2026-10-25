@@ -8,6 +8,7 @@ import { Write, type Fill, type Insert } from "../write/write.js";
 import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 import { Tracker, type TrackerHost } from "./tracker.js";
 import { Sharding, type ShardConfig } from "../query/sharding.js";
+import type { TableRequest } from "./table.js";
 
 // ---------- 驱动 ----------
 
@@ -526,6 +527,15 @@ export abstract class Database {
     if (total !== undefined && (!Number.isSafeInteger(total) || total < 0)) throw new RangeError("total is a non-negative integer");
     const [rows, counted] = await Promise.all([this.list(q.limit(size).offset((page - 1) * size)), total ?? this.count(q)]);
     return Object.freeze({ rows, total: counted, page, size, totalPages: Math.ceil(counted / size) });
+  }
+
+  /**
+   * 表格查询（0016）：按请求依次做表头筛选（`filterBy`、`searchBy`）、排序（`sortBy`）和分页；请求带了已知的总数时不再 COUNT。
+   * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。结果交给 `toWire` 发回前端。
+   */
+  async table<R>(q: Query<R>, request: TableRequest): Promise<Page<R>> {
+    const shaped = q.filterBy(request.filter).searchBy(request.search).sortBy(request.sort);
+    return this.page(shaped, request.page, request.pageSize, request.total);
   }
 
   /** 手写 SQL，使用 :name 命名参数，按列标签映射。数组会为 IN (:list) 展开。 */

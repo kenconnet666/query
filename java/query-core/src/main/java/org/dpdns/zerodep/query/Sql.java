@@ -112,7 +112,7 @@ public class Sql extends SqlValues {
         w.sql("STRING_AGG(").render(args.get(0)).sql(", ").render(args.get(1));
         if (args.size() > 2) w.sql(" ORDER BY ").join(args.subList(2, args.size()), ", ");
         w.sql(")");
-    });
+    }).aggregating();
 
     /** 当前日期；SQLite 写成本地时区的 {@code date('now', 'localtime')}。 */
     public static final FunctionDef CURRENT_DATE = FunctionDef.of("CURRENT_DATE", (w, args) -> w.sql("CURRENT_DATE"));

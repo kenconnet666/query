@@ -61,4 +61,4 @@ export const STRING_AGG = FunctionDef.of("STRING_AGG", (w, args) => {
   w.sql("STRING_AGG(").render(args[0]!).sql(", ").render(args[1]!);
   if (args.length > 2) w.sql(" ORDER BY ").join(args.slice(2), ", ");
   w.sql(")");
-});
+}).aggregating();

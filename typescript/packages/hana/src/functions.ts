@@ -52,7 +52,7 @@ const TO_DATE = FunctionDef.only(HanaDialect, "TO_DATE");
 const TO_NVARCHAR = FunctionDef.only(HanaDialect, "TO_NVARCHAR");
 const LENGTH = FunctionDef.only(HanaDialect, "LENGTH");
 const TO_INTEGER = FunctionDef.only(HanaDialect, "TO_INTEGER");
-const MEDIAN = FunctionDef.only(HanaDialect, "MEDIAN");
+const MEDIAN = FunctionDef.only(HanaDialect, "MEDIAN").aggregating();
 
 // ---------- 视图 ----------
 
@@ -183,9 +183,9 @@ export function least<T>(first: Expr<T>, ...rest: (NonNullable<T> | Expr<T> | Ex
 
 // ---------- 统计 ----------
 
-const CORR = FunctionDef.only(HanaDialect, "CORR");
-const PERCENTILE_CONT = FunctionDef.only(HanaDialect, "PERCENTILE_CONT", (w, args) => void w.sql("PERCENTILE_CONT(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
-const PERCENTILE_DISC = FunctionDef.only(HanaDialect, "PERCENTILE_DISC", (w, args) => void w.sql("PERCENTILE_DISC(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")"));
+const CORR = FunctionDef.only(HanaDialect, "CORR").aggregating();
+const PERCENTILE_CONT = FunctionDef.only(HanaDialect, "PERCENTILE_CONT", (w, args) => void w.sql("PERCENTILE_CONT(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")")).aggregating();
+const PERCENTILE_DISC = FunctionDef.only(HanaDialect, "PERCENTILE_DISC", (w, args) => void w.sql("PERCENTILE_DISC(").render(args[0]!).sql(") WITHIN GROUP (ORDER BY ").render(args[1]!).sql(")")).aggregating();
 
 /**
  * 连续百分位数 `PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY e)`，再加 `.over((w) => w.partitionBy(...))`：

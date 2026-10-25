@@ -71,6 +71,8 @@ export {
   renderOnAndWhere,
   type Upsert,
 } from "./sql/dialect.js";
+// 方言包里自己写渲染的聚合（例如 PostgreSQL 的 ARRAY_AGG）用 noteAggregate 报到；rowKindOf 判断一列是不是聚合
+export { noteAggregate, rowKindOf, type RowKind } from "./sql/aggregation.js";
 export {
   addCondition,
   all,
@@ -208,6 +210,7 @@ export {
   formatQueryEvent,
 } from "./exec/database.js";
 export { Tracker } from "./exec/tracker.js";
+export { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseTableRequest, type QueryParams, type TableRequest } from "./exec/table.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
 export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./ddl/model.js";
 export { catalogDefault, catalogNumber, catalogText, groupRows, SchemaSyntax, withoutCast, type Catalog } from "./ddl/syntax.js";

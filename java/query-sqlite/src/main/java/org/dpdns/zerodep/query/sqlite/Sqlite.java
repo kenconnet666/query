@@ -34,9 +34,9 @@ import javax.sql.DataSource;
  */
 public final class Sqlite extends Sql {
     // 只能在 SQLite 方言上渲染的函数；在其他方言上渲染会报错。
-    private static final FunctionDef MEDIAN = FunctionDef.only(SqliteDialect.class, "median", (w, args) -> extension(w, "MEDIAN", "median", args));
-    private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(SqliteDialect.class, "percentile_cont", (w, args) -> extension(w, "PERCENTILE_CONT", "percentile_cont", args));
-    private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(SqliteDialect.class, "percentile_disc", (w, args) -> extension(w, "PERCENTILE_DISC", "percentile_disc", args));
+    private static final FunctionDef MEDIAN = FunctionDef.only(SqliteDialect.class, "median", (w, args) -> extension(w, "MEDIAN", "median", args)).aggregating();
+    private static final FunctionDef PERCENTILE_CONT = FunctionDef.only(SqliteDialect.class, "percentile_cont", (w, args) -> extension(w, "PERCENTILE_CONT", "percentile_cont", args)).aggregating();
+    private static final FunctionDef PERCENTILE_DISC = FunctionDef.only(SqliteDialect.class, "percentile_disc", (w, args) -> extension(w, "PERCENTILE_DISC", "percentile_disc", args)).aggregating();
 
     /** 只供静态使用。 */
     private Sqlite() { }

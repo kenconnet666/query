@@ -187,7 +187,10 @@ public abstract class Database {
         if (sink != null) sink.add(event);
     }
 
-    /** 取第 page 页，每页 size 行，页码从 1 开始；总数来自对同一条查询的 COUNT(*)。 */
+    /**
+     * 取第 page 页，每页 size 行，页码从 1 开始；总数来自对同一条查询的 COUNT(*)。页码超出时 rows 为空，前端据此退到最后一页。
+     * 不先数行数再决定查不查这一页：空跑（{@link ConnectionProvider#dryRun()}）时总数是 0，那样 {@link #capture} 就看不到这一页的查询了。
+     */
     public <R> Page<R> page(Query<R> q, int page, int size) {
         if (page < 1 || size < 1) throw new IllegalArgumentException("page and size start at 1");
         List<R> rows = list(q.limit(size).offset((page - 1) * size));
@@ -199,6 +202,17 @@ public abstract class Database {
         if (page < 1 || size < 1) throw new IllegalArgumentException("page and size start at 1");
         if (total < 0) throw new IllegalArgumentException("total must not be negative");
         return new Page<>(list(q.limit(size).offset((page - 1) * size)), total, page, size);
+    }
+
+    /**
+     * 表格查询（0016）：按请求依次做表头筛选（{@code filterBy}、{@code searchBy}）、排序（{@code sortBy}）和分页；请求带了已知的总数时不再 COUNT。
+     * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。返回的 {@link Page#toWire()} 交给前端。
+     */
+    public <R> Page<R> table(Query<R> q, TableRequest request) {
+        Query<R> shaped = q.filterBy(request.filter()).searchBy(request.search()).sortBy(request.sort());
+        return request.total() == null
+            ? page(shaped, request.page(), request.pageSize())
+            : page(shaped, request.page(), request.pageSize(), request.total());
     }
 
     /** 手写 SQL，用 :name 形式的命名参数，结果按列标签映射。集合参数会展开成 IN (:list)。 */

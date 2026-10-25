@@ -4,9 +4,11 @@ import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.MappingPlan;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.expr.Order;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
@@ -16,6 +18,7 @@ import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Source;
 import org.dpdns.zerodep.query.table.column.Col;
 import org.dpdns.zerodep.query.type.SqlType;
+import org.dpdns.zerodep.wire.Wire;
 
 import java.lang.reflect.ParameterizedType;
 import java.time.Duration;
@@ -413,6 +416,64 @@ public final class Query<R> {
         }
         return withSpec(arms.get(0).spec().reorder(orders));
     }
+
+    /**
+     * 按结果列筛选，给表头的多选筛选用：键是结果列名（同 {@link #sortBy}，相当于白名单），值是选中的值，这一列的值在其中（IN）。
+     * 值是线上的文字（0015），按列的 Java 类型读（{@code Wire.parse}）；空白的值跳过，没有值的列不加条件，filter 为 null 或空时保持不变。
+     * 逐行计算的列写进 WHERE，聚合的列写进 HAVING（渲染时判断），窗口函数的列不能筛选。
+     */
+    public Query<R> filterBy(Map<String, ? extends Collection<String>> filter) {
+        if (filter == null || filter.isEmpty()) return this;
+        Query<R> q = this;
+        for (Map.Entry<String, ? extends Collection<String>> e : filter.entrySet()) {
+            Expr<?> item = filterable(e.getKey(), "filterBy");
+            List<Object> values = new ArrayList<>();
+            if (e.getValue() != null) for (String text : e.getValue()) if (text != null && !text.isBlank()) values.add(read(item, text));
+            if (values.isEmpty()) continue;
+            q = q.withSpec(q.arms.get(0).spec().resultFilter(item, Conditions.collect(() -> inValues(item, values))));
+        }
+        return q;
+    }
+
+    /**
+     * 按结果列的关键字筛选，给表头的关键字筛选用：键是结果列名，值是关键字，这一列的文字包含它（LIKE，% 和 _ 按普通字符）。
+     * 只能用在文字列上；空白的关键字不加条件。其余同 {@link #filterBy}。
+     */
+    public Query<R> searchBy(Map<String, String> search) {
+        if (search == null || search.isEmpty()) return this;
+        Query<R> q = this;
+        for (Map.Entry<String, String> e : search.entrySet()) {
+            Expr<?> item = filterable(e.getKey(), "searchBy");
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            if (item.type().javaType() != String.class) {
+                throw new IllegalArgumentException("searchBy(...): '" + e.getKey() + "' is not a text column; filter it with filterBy(...)");
+            }
+            String keyword = e.getValue().trim();
+            q = q.withSpec(q.arms.get(0).spec().resultFilter(item, Conditions.collect(() -> ExprText.of(item).contains(keyword))));
+        }
+        return q;
+    }
+
+    /** 能按它筛选的结果列：单段查询里的一列，不是排除掉的、不是嵌套对象、不是子列表。 */
+    private Expr<?> filterable(String name, String use) {
+        if (arms.size() > 1) throw new IllegalStateException(use + "(...) works on a single SELECT; wrap the UNION in a CTE first");
+        Set<Integer> at = positionsOf(List.of(name), use);
+        Arm arm = arms.get(0);
+        int i = at.iterator().next();
+        if (arm.slots().stream().anyMatch(s -> s.covers(i))) throw new IllegalArgumentException(use + "(...): '" + name + "' is a child list");
+        if (arm.items().get(i) instanceof Omitted<?>) throw new IllegalArgumentException(use + "(...): '" + name + "' is excluded");
+        return arm.items().get(i);
+    }
+
+    /** 线上的文字按列的 Java 类型读。 */
+    private static Object read(Expr<?> item, String text) {
+        Class<?> type = item.type().javaType();
+        return type == String.class || type == Object.class ? text : Wire.parse(type, text.trim());
+    }
+
+    /** {@code item IN (values)}。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void inValues(Expr item, List<Object> values) { item.in(values); }
 
     /** 列名在结果里的位置；未知的列名报错并列出可用的列。 */
     private Set<Integer> positionsOf(Collection<String> names, String use) {
