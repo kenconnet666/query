@@ -228,6 +228,7 @@ export {
   type QueryCache,
   type QueryEvent,
   type QueryListener,
+  database,
   dryRunDriver,
   formatQueryEvent,
 } from "./exec/database.js";

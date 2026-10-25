@@ -2,10 +2,13 @@ package org.dpdns.zerodep.query;
 
 import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Dialect;
+import org.dpdns.zerodep.query.dialect.DialectProvider;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Lock;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.exec.ConnectionProvider;
+import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Aggregate;
 import org.dpdns.zerodep.query.expr.Case;
 import org.dpdns.zerodep.query.expr.Cond;
@@ -43,8 +46,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
 
 /**
  * 核心入口，以及在各支持的数据库上语义一致的函数。方言门面（{@code Hana}、{@code Postgres}、{@code Mysql}）
@@ -114,6 +119,25 @@ public class Sql extends Rows {
 
     /** 只供方言门面继承，不能直接实例化。 */
     protected Sql() { }
+
+    // ---------- 数据库实例 ----------
+
+    /**
+     * 通用的数据库实例：取一个连接读出数据库的产品名，交给类路径上认识它的方言包创建（见 {@link DialectProvider}）。
+     * 只用本类里的通用写法的代码（例如建在本库上的流程引擎）因此不依赖具体的方言包；要用方言专属的写法时改用方言门面的
+     * {@code database}。PolarDB 报告的产品名是 MySQL，得到的是 MySQL 方言的实例。
+     */
+    public static Database database(DataSource dataSource) { return database(ConnectionProvider.of(dataSource), null); }
+
+    /** 通用的数据库实例，每条语句从 {@code dataSource} 取一个连接，并用 {@code configure} 调整配置；方言的选法同上。 */
+    public static Database database(DataSource dataSource, Consumer<Database.Config> configure) {
+        return database(ConnectionProvider.of(dataSource), configure);
+    }
+
+    /** 通用的数据库实例，连接由 {@code connections} 提供（例如 Spring 适配器）；{@code configure} 可为 null，方言的选法同上。 */
+    public static Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
+        return DialectProvider.detect(connections, configure);
+    }
 
     // ---------- 来源 ----------
 

@@ -1,6 +1,7 @@
 import type { Connection, ConnectionPool, HanaParameterType, ResultSet, Statement } from "@sap/hana-client";
 import { Buffer } from "node:buffer";
 import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
+import { HanaDialect } from "./dialect.js";
 
 /**
  * 适配 `@sap/hana-client` 的连接池或连接。连接池每条语句借出一个连接，用 `disconnect()` 归还；
@@ -23,6 +24,7 @@ function driverFor(source: ConnectionPool | Connection, inTransaction: boolean):
     if (pooled) c.disconnect();
   };
   const driver: Driver = {
+    dialect: HanaDialect.instance,
     /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const connection = await acquire();
