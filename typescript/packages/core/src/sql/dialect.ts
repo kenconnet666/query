@@ -244,6 +244,14 @@ export abstract class Dialect {
     return false;
   }
 
+  /**
+   * 是否支持 LATERAL 派生表（PostgreSQL、MySQL 8.0.14 起）：一对多的 `first(...)` 据此写成按父行取一行的 LATERAL 子查询，
+   * 否则写成 ROW_NUMBER 排名的派生表（0018）。HANA、SQLite 没有；PolarDB 的小版本可能早于 8.0.14，按没有处理。
+   */
+  get supportsLateral(): boolean {
+    return false;
+  }
+
   /** 没有表的 SELECT 需要的部分：多数数据库什么都不要，HANA 要 `FROM DUMMY`。 */
   fromNothing(_w: SqlWriter): void {}
 

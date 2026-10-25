@@ -272,7 +272,7 @@ from(Mara.class)
         m.deliveries().first(l -> l.createdOn().desc()).delivery().as("latest")));
 ```
 
-`first` 渲染为 `ROW_NUMBER` 派生表再 LEFT JOIN 回来（HANA 没有 LATERAL，三个库都用这一种写法），没有匹配行时各列为 NULL。`first` 和 `list` 要求连接条件里至少有一个“目标列 = 本表的列”的等值，这些列作为分组键或批量加载的键，其余条件只筛选目标行；没有时报错。
+`first` 在 PostgreSQL、MySQL 上渲染为 `LEFT JOIN LATERAL (… ORDER BY … LIMIT 1) ON TRUE`（每个父行按索引取一行，给子表建（键, 排序列）的索引），HANA、SQLite、PolarDB 上渲染为 `ROW_NUMBER` 派生表再 LEFT JOIN 回来（[0018](decisions/0018-lateral-first.md)），没有匹配行时各列为 NULL。`first` 和 `list` 要求连接条件里至少有一个“目标列 = 本表的列”的等值，这些列作为分组键或批量加载的键，其余条件只筛选目标行；没有时报错。
 
 **多对多**：先声明到中间表的一对多，再 `through` 中间表的多对一关系，得到目标表的 `Many`：
 

@@ -116,6 +116,12 @@ public abstract class Dialect {
      */
     public boolean supportsRecursiveCte() { return false; }
 
+    /**
+     * 是否支持 LATERAL 派生表（PostgreSQL、MySQL 8.0.14 起）：一对多的 {@code first(...)} 据此写成按父行取一行的 LATERAL 子查询，
+     * 否则写成 ROW_NUMBER 排名的派生表（0018）。HANA、SQLite 没有；PolarDB 的小版本可能早于 8.0.14，按没有处理。
+     */
+    public boolean supportsLateral() { return false; }
+
     /** 没有数据表的 SELECT 需要补的内容：多数数据库什么都不用写，HANA 要写 {@code FROM DUMMY}。 */
     public void fromNothing(SqlWriter w) { }
 

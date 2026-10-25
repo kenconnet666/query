@@ -93,7 +93,7 @@ import type { Decimal } from "decimal.js";
 export const sapDate = converted(text, {                     // 'yyyyMMdd' 文本 <-> CalendarDate
   toDatabase: (day: CalendarDate) => day.toString().replaceAll("-", ""),
   fromDatabase: (s: string) => (s.trim() === "" || s === "00000000" ? null : new CalendarDate(+s.slice(0, 4), +s.slice(4, 6), +s.slice(6, 8))),
-});
+}, "sap date", "date");                                         // 第 4 个参数：字段值在线上的种类，地址栏里的 '2026-01-15' 先读成日期再存
 
 export abstract class ClientEntity {                            // 公共列放在基类
   @column("MANDT") client!: string;
@@ -155,7 +155,7 @@ export class DeliveryVO {                                       // DTO：不需�
 | `date` | `CalendarDate` | 以 `'YYYY-MM-DD'` 交接，并校验日期是否存在 |
 | `timestamp` | `CalendarDateTime` | 以 `'YYYY-MM-DD HH:MM:SS[.fraction]'` 交接；精确到毫秒，HANA 等更细的部分读出来时舍去 |
 | `bytes` | `Uint8Array` | |
-| `converted(storage, converter)` | 自定义 | 相当于 Java 的组合注解；字段类型与存储类型不是同一类时写成 `Stored<字段类型, 存储类型>`，见下 |
+| `converted(storage, converter, name?, field?)` | 自定义 | 相当于 Java 的组合注解；字段类型与存储类型不是同一类时写成 `Stored<字段类型, 存储类型>`，见下。`field` 是字段值在线上的种类（`"date"`、`"decimal"`…）：给了时表头筛选、条件对象、条件树里的文字先按它读成字段值再经转换器存，不给时文字原样交给绑定 |
 
 绑定参数时，小数、日期、时间戳也接受它们的文本形式（按格式校验），所以条件对象和原生 SQL 的参数可以直接用请求里的文本。
 
@@ -308,7 +308,7 @@ FROM QUERY_IT.LIPS LIPS3
 WHERE LIPS3.MATNR = MARA.MATNR AND LIPS3.MANDT = MARA.MANDT AND LIPS3.LFIMG > ?) AND NOT EXISTS (...)
 ```
 
-**`first(order)`**：例如每个物料最新的交货单，`m.deliveries.first((l) => l.createdOn.desc()).delivery`。连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来（三个库写法相同），没有匹配行时各列为 null。每次调用 `first` 都会产生一个新的派生表，要取多列时先存进变量。连接条件里没有这样的等值时报错。
+**`first(order)`**：例如每个物料最新的交货单，`m.deliveries.first((l) => l.createdOn.desc()).delivery`。连接条件里"目标列 = 所属表的列"的部分作为分组键，其余条件只筛选目标行；在 PostgreSQL、MySQL 上渲染为 `LEFT JOIN LATERAL (… ORDER BY … LIMIT 1) ON TRUE`（每个父行按索引取一行，给子表建（键, 排序列）的索引），HANA、SQLite、PolarDB 上渲染为 ROW_NUMBER 派生表再 LEFT JOIN 回来（[0018](decisions/0018-lateral-first.md)），没有匹配行时各列为 null。每次调用 `first` 都会产生一个新的派生表，要取多列时先存进变量。连接条件里没有这样的等值时报错。
 
 **多对多**：先声明到中间表的 `@many`，再用 `@manyThrough` 沿中间表的 `@one` 走到目标表：
 

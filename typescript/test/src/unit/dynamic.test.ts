@@ -83,6 +83,15 @@ ORDER BY LIPS.MATNR ASC`,
     assert.equal(q.filterBy({ unit: [" "] }).toSql(DIALECT).sql, q.toSql(DIALECT).sql);
   });
 
+  it("转换器列声明了字段种类时，表头筛选与条件树的文字先读成字段值再按存储写（SAP 日期 'yyyyMMdd'）", () => {
+    const q = from(Lips).select((l) => ({ delivery: l.delivery, createdOn: l.createdOn }));
+    const filtered = q.filterBy({ createdOn: ["2026-01-15"] }).toSql(DIALECT);
+    assert.ok(filtered.sql.endsWith("WHERE LIPS.ERDAT IN (?)"), filtered.sql);
+    assert.deepEqual(filtered.parameters, ["20260115"]);
+    const ranged = q.conditionBy({ field: "createdOn", op: "between", value: ["2026-01-01", "2026-01-31"] }).toSql(DIALECT);
+    assert.deepEqual(ranged.parameters, ["20260101", "20260131"]);
+  });
+
   it("拼接文字的聚合也进 HAVING；窗口函数的列不能筛选", () => {
     const grouped = from(Lips)
       .groupBy((l) => [l.material])

@@ -155,6 +155,11 @@ export class MysqlDialect extends Dialect {
     return true;
   }
 
+  /** MySQL 8.0.14 起有 LATERAL 派生表。 */
+  override get supportsLateral(): boolean {
+    return true;
+  }
+
   override get supportsFullJoin(): boolean {
     return false;
   }

@@ -26,7 +26,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 - **多对多**：`Many` 记查询的表和到目标的视图，`through(hop)`、TS `@manyThrough`；`Many.where(条件对象)`。
 - **树**：`Trees.build` / `buildTree`、`db.withAncestors`（递归 CTE 用 UNION；HANA 一层一层查）。
 - **vue-tsx-pro**（`feat/table-query`）：`formatSorts` / `parseSorts`、`useTableQuery` 的多列排序、表头筛选与已知总数、`tableParams`、`QueryTable` 的 `multiSort` / `manualFilter`，`utils/request/wire.ts` 与 `http` 的 `wire` 选项，`utils/data/tree.ts` 的 `buildTree`。
-- **待办**：PG / MySQL 上 `many.first()` 与 `orderBy(...).limit(n)` 可以改用 LATERAL 代替 ROW_NUMBER（按"PG、MySQL 优先"的约定，HANA、SQLite 保持现状）；TS 转换器列（`Stored<…>`）的表头筛选文字不按存储类型解析。下一步开 PR（需用户同意）。
+- **待办**：`many.first()` 在 PG / MySQL 上已改用 LATERAL（0018，2026-10-26）；`orderBy(...).limit(n).list(...)` 仍是按键批量加 ROW_NUMBER（理由见 0018）。TS 转换器列的文字：`converted(..., field)` 声明字段种类后按它读（2026-10-26 完成）。
 
 ### 按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)，分支 `feat/typed-expressions`）
 

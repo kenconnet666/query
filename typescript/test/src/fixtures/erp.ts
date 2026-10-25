@@ -6,13 +6,18 @@ import type { Decimal } from "decimal.js";
 export const SCHEMA = "QUERY_IT";
 
 /** SAP keeps dates as NVARCHAR(8) 'yyyyMMdd'; '' and '00000000' mean no date. The fields are `Stored<CalendarDate, string>`. */
-export const sapDate = converted(text, {
-  toDatabase: (day: CalendarDate) => day.toString().replaceAll("-", ""),
-  fromDatabase: (stored: string) => {
-    const v = stored.trim();
-    return v === "" || v === "00000000" ? null : new CalendarDate(Number(v.slice(0, 4)), Number(v.slice(4, 6)), Number(v.slice(6, 8)));
+export const sapDate = converted(
+  text,
+  {
+    toDatabase: (day: CalendarDate) => day.toString().replaceAll("-", ""),
+    fromDatabase: (stored: string) => {
+      const v = stored.trim();
+      return v === "" || v === "00000000" ? null : new CalendarDate(Number(v.slice(0, 4)), Number(v.slice(4, 6)), Number(v.slice(6, 8)));
+    },
   },
-});
+  "sap date",
+  "date",
+);
 
 // ---------- tables ----------
 

@@ -105,6 +105,8 @@ public class PostgresDialect extends Dialect {
     /** 有递归 CTE（WITH RECURSIVE）。 */
     @Override public boolean supportsRecursiveCte() { return true; }
 
+    @Override public boolean supportsLateral() { return true; }
+
     /** 只含小写字母、数字、下划线和 {@code $} 的名字无需加引号。 */
     @Override protected boolean isBare(String identifier) { return BARE.matcher(identifier).matches(); }
 
