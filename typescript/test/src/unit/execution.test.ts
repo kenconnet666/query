@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { count, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@zerodep-dev/query-core";
+import { DatabaseSync } from "node:sqlite";
+import { count, database, from, inMemoryCache, lit, QueryExecutionError, val, type QueryEvent } from "@zerodep-dev/query-core";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
+import { nodeSqliteDriver, SqliteDialect } from "@zerodep-dev/query-sqlite";
 import { DeliveryVO, Lips } from "../fixtures/erp.js";
 import { FakeDriver, rows, TestDatabase } from "../fixtures/support.js";
 
@@ -141,5 +143,13 @@ describe("执行", () => {
       new FakeDriver(() => rows([], ["D1"])),
     );
     assert.deepEqual(await db.list(from(Lips).select((l) => l.delivery)), ["D1"]);
+  });
+
+  it("通用门面按驱动带的方言建实例，驱动不带方言时报错", async () => {
+    // 方言包的驱动适配器都带着自己的方言；手写的驱动没有，只能用方言包的数据库类。
+    const db = database(nodeSqliteDriver(new DatabaseSync(":memory:")));
+    assert.equal(db.dialect, SqliteDialect.instance);
+    assert.deepEqual(await db.sql("SELECT 'ok' AS v").values(), ["ok"]);
+    assert.throws(() => database({ query: () => Promise.reject(new Error("never")) }), /names no dialect/);
   });
 });

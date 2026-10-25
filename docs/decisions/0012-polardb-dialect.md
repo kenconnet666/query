@@ -2,7 +2,7 @@
 
 - 状态：已采纳（2026-10-24），两端实现并在本机实测；CI 增加 PolarDB 实库的两个 job
 - 起因：流程引擎（flow 仓库）第一版只用 MySQL 8，生产环境是阿里云 PolarDB MySQL 8.0。用户要求按 PolarDB 社区版的实测完成一个 PolarDB 方言
-- 修订：[0011](0011-polardb-mysql.md) 的"以后要做时的选项"由本文落实
+- 修订：[0011](0011-polardb-mysql.md) 的"以后要做时的选项"由本文落实；第 5 条（实库场景继承 MySQL）已由 [0013](0013-portable-facade-and-live-tests.md) 改为显式标注适用的库
 
 ## 实测环境
 
@@ -35,7 +35,7 @@
 
 3. **写语句可以带提示**（核心，两端）：`update(...)` / `deleteFrom(...)` 加 `with(t -> 提示)`，提示写在 UPDATE、DELETE 关键字后面，由方言合并（MySQL 合进一个 `/*+ */`）；只收写在关键字后面的提示，别的方言的提示渲染时报错。MySQL 自己的 `index` / `noIndex` 在写语句上也能用。插入暂不支持：插入或更新由方言整句写出，需要时再加。
 4. **金样例沿用 MySQL**：`RenderSpec.fallbackDialect()`（TS 的 `fallbacks`）让 PolarDB 没有自己文件的用例直接和 `*.mysql.sql` 比对，重写金样例时与 MySQL 相同就不写自己的文件。现在只有 `polardb-flashback`、`polardb-inventory` 两个文件。
-5. **实库场景继承 MySQL**：`PolardbLiveTest extends MysqlLiveTest`（query-mysql 产出 test-jar），TS 把 MySQL 的目标与专属场景拆进 `live/mysql-scenarios.ts` 复用。PolarDB 上跑 MySQL 的全部场景，再加闪回查询与库存提示的场景。
+5. **PolarDB 也跑 MySQL 的实库场景**：PolarDB 上跑通用场景和 MySQL 的全部专属场景，再加闪回查询与库存提示的场景。起初用 `PolardbLiveTest extends MysqlLiveTest` 实现；0013 起 MySQL 的专属场景标 `@LiveTest(only = {MYSQL, POLARDB})`（TS 的 `{ only: ["mysql", "polardb"] }`），不再继承。query-mysql 的 test-jar 仍给 `PolardbSpecTest extends MysqlSpecTest` 用。
 
 ## 与云产品的差异（用的时候要注意）
 

@@ -1,6 +1,7 @@
 import type { Client, CustomTypesConfig, Pool, PoolClient, QueryArrayResult } from "pg";
 import { Buffer } from "node:buffer";
 import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
+import { PostgresDialect } from "./dialect.js";
 
 // 布尔值和较小的数字照常解析；NUMERIC、BIGINT、日期和时间戳保持为文本，
 // 所以不会经过 Date 或进程时区。其余类型也保持为文本。
@@ -29,6 +30,7 @@ function driverFor(source: Pool | PoolClient | Client, inTransaction: boolean): 
     return { columns: result.fields.map((f) => f.name), rows: result.rows, affected: result.rowCount ?? 0 };
   };
   const driver: Driver = {
+    dialect: PostgresDialect.instance,
     /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const ms = milliseconds(options);

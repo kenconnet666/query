@@ -81,11 +81,12 @@ const rows = await db.list(
 
 | 模块 | 内容 |
 | --- | --- |
-| `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存；运行时无第三方依赖 |
+| `java/query-core` | 注解、元数据、类型与转换器、表达式、lambda 作用域查询、渲染、执行、映射、缓存，以及按连接选方言的通用门面 `Sql.database(...)`；运行时无第三方依赖 |
 | `java/query-hana`、`java/query-postgres`、`java/query-mysql`、`java/query-sqlite` | 各方言的门面、数据库实例、专属函数与子句 |
 | `java/query-polardb` | PolarDB for MySQL：继承 MySQL 方言，另有闪回查询与库存提示 |
+| `java/query-it` | 全部实库测试，按主题分类，用 `@LiveTest` 选库；只有测试、不发布 |
 | `java/query-spring` | Spring 适配：通过 `DataSourceUtils` 取连接，查询加入外层的 `@Transactional` 事务；传入事务管理器时 `db.transaction(...)` 由它执行（多数据源各传各的）；Spring 5.3 到 7.0 都可用 |
-| `typescript/packages/core` | `@zerodep-dev/query-core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存；运行时无第三方依赖 |
+| `typescript/packages/core` | `@zerodep-dev/query-core`：装饰器实体、表达式、回调作用域查询、渲染、执行、缓存，以及按驱动选方言的通用门面 `database(driver)`；运行时无第三方依赖 |
 | `typescript/packages/hana`、`postgres`、`mysql`、`sqlite` | `@zerodep-dev/query-hana`、`@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`、`@zerodep-dev/query-sqlite`：方言、专属函数与子句、驱动适配（`@sap/hana-client`、`pg`、`mysql2`、`node:sqlite` 与 SQLite WASM） |
 | `typescript/packages/polardb` | `@zerodep-dev/query-polardb`：重新导出 MySQL 包，另有闪回查询与库存提示 |
 | `typescript/packages/idb` | `@zerodep-dev/idb`：浏览器里的 IndexedDB 本地存储，不依赖核心包 |
@@ -103,14 +104,14 @@ $env:JAVA_HOME = 'C:\Users\lionheart\.jdks\jbr-17.0.14'
 .\mvnw.cmd --batch-mode verify
 ```
 
-实库场景需要以下环境变量，缺少时会跳过：
+实库测试在 Java 的 `java/query-it` 模块和 TS 的 `test/src/live` 里，按主题分文件，每个测试类（套件）在每个选中的库上各跑一遍（[0013](docs/decisions/0013-portable-facade-and-live-tests.md)）。`QUERY_DATABASES=mysql,polardb` 这样的环境变量只跑列出的库，不设时全部都跑；SQLite 不需要变量，其余的库需要以下环境变量，缺少时会跳过：
 
 - `QUERY_HANA_URL`、`QUERY_HANA_USER`、`QUERY_HANA_PASSWORD`
 - `QUERY_PG_URL`、`QUERY_PG_USER`、`QUERY_PG_PASSWORD`
 - `QUERY_MYSQL_URL`、`QUERY_MYSQL_USER`、`QUERY_MYSQL_PASSWORD`
 - `QUERY_POLARDB_URL`、`QUERY_POLARDB_USER`、`QUERY_POLARDB_PASSWORD`
 
-GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及各数据库的实库场景。PostgreSQL、MySQL、PolarDB 按语言各拆成两个 job（PolarDB 的 job 跑 MySQL 的全部场景加 PolarDB 专属的）；HANA 在一个 job 里先跑 Java、再跑 TypeScript。SQLite 不需要容器：Java 的实库场景随单元测试运行，TS 的 `node:sqlite` 与 WASM 场景和 Chrome 里的浏览器测试在 TS 的 job 里运行。
+GitHub Actions 会并行运行 Java 与 TypeScript 的单元测试、Spring 6.2 和 7.0 下的适配测试，以及各数据库的实库测试。PostgreSQL、MySQL、PolarDB 按语言各拆成两个 job，每个 job 用 `QUERY_DATABASES` 只选自己的库（PolarDB 也跑 MySQL 的专属场景）；HANA 在一个 job 里先跑 Java、再跑 TypeScript。SQLite 不需要容器：Java 的 SQLite 实库测试随单元测试运行，TS 的 `node:sqlite` 与 WASM 实库测试和 Chrome 里的浏览器测试在 TS 的 job 里运行。
 
 TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编译器固定为 TypeScript 7.1.0-dev.20261023.1：
 
@@ -118,7 +119,7 @@ TypeScript 部分在 `typescript/` 目录，是一个 pnpm 工作区，开发编
 cd typescript
 corepack pnpm install
 corepack pnpm test          # tsc -b 编译，再运行单元、编译期与金样例测试
-corepack pnpm test:live     # 实库场景，需要上面的环境变量
+corepack pnpm test:live     # 实库测试，需要上面的环境变量
 ```
 
 ## Claude Code 语言服务

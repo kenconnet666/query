@@ -23,6 +23,8 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - **写语句的提示**：`update(...)` / `deleteFrom(...)` 的 `with(t -> 提示)`（两端），提示写在关键字后面并按方言合并；金样例 `mysql-update-hints`、`mysql-delete-hints`。
 - **金样例可以沿用别的方言**：Java `RenderSpec.fallbackDialect()`、TS 的 `fallbacks`；PolarDB 只有专属写法有自己的文件。
 - **流程引擎写法的实库场景**（两端、五个库）：并发汇聚只推进一次、重复提交、作业领取、候选与排除、长 JSON 文本、流转记录分页。
+- **通用门面**（[0013](docs/decisions/0013-portable-facade-and-live-tests.md)）：Java `Sql.database(DataSource | ConnectionProvider, configure)` 按连接报告的产品名选方言（方言包经 `dialect.DialectProvider` 登记），TS 核心包的 `database(driver, options)` 用驱动适配器带的方言（`Driver.dialect`）。只用核心写法的代码不必依赖具体的方言包；PolarDB 得到 MySQL 方言。
+- **测试：实库测试按主题拆分**（0013）：Java 全部搬进不发布的 `java/query-it`，测试类标 `@LiveTest(only / except)` 在每个选中的库上各跑一遍；TS 的 `test/src/live` 按同样的主题拆成 `liveSuite`；环境变量 `QUERY_DATABASES` 选库，CI 的实库 job 只设它。建表一律按声明生成，查询写回各个测试里。
 
 ## [2.0.0] - 未发布
 

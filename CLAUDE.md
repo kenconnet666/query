@@ -1,6 +1,6 @@
 # query 项目约定
 
-开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md)、[0012 PolarDB 方言](docs/decisions/0012-polardb-dialect.md) 和[场景对照](docs/scenarios.md)。
+开工前先读 [.claude/HANDOFF.md](.claude/HANDOFF.md)（当前进度、待定事项和下一步），再读 [0001 方向决定](docs/decisions/0001-standalone-analytic-query-library.md)、[0002 API 与架构](docs/decisions/0002-api-architecture.md)、[0003 通往 1.0 的蓝图](docs/decisions/0003-road-to-1.0.md)、[0004 生产就绪](docs/decisions/0004-production-readiness.md)、[0005 API 简化审查](docs/decisions/0005-api-simplification.md)、[0006 2.0 查询写法](docs/decisions/0006-query-model-direction.md)、[0007 写入](docs/decisions/0007-writes.md)、[0008 数据库变更、代码生成、追踪与分表](docs/decisions/0008-schema-tracking-sharding.md)、[0009 SQLite 方言](docs/decisions/0009-sqlite-dialect.md)、[0010 IndexedDB 本地存储](docs/decisions/0010-indexeddb-local-store.md)、[0012 PolarDB 方言](docs/decisions/0012-polardb-dialect.md)、[0013 通用门面与实库测试的组织](docs/decisions/0013-portable-facade-and-live-tests.md) 和[场景对照](docs/scenarios.md)。
 
 ## 定位与基线
 
@@ -11,8 +11,8 @@
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
 - **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`。
-- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。PolarDB 方言继承 MySQL 方言（写法相同，金样例沿用 MySQL 的文件，实库测试继承 MySQL 的全部场景），只多 PolarDB 专属的能力；专属能力只纳入在开源 PolarDB-X 引擎上实测过、并且与阿里云 PolarDB 写法一致的（0012）。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
-- **方言不抹平**：用户必须选定方言包并创建对应的实例。核心包只包含三库语义一致的能力，方言专属能力只出现在对应的方言包里。
+- **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。PolarDB 方言继承 MySQL 方言（写法相同，金样例沿用 MySQL 的文件，实库测试也跑 MySQL 的全部专属场景），只多 PolarDB 专属的能力；专属能力只纳入在开源 PolarDB-X 引擎上实测过、并且与阿里云 PolarDB 写法一致的（0012）。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
+- **方言不抹平**：核心包只包含各库语义一致的能力，方言专属能力只出现在对应的方言包里。实例由方言门面创建，或由通用门面按连接选方言创建（Java 的 `Sql.database(...)`、TS 核心包的 `database(driver)`，0013）。
 - **文档**：
   - API 方向以 0002 为准，0006 修订了其中的实体声明、投影和条件；
   - 用法写在 [docs/api.md](docs/api.md)（Java）、[docs/api-typescript.md](docs/api-typescript.md)（TS）和 [docs/api-idb.md](docs/api-idb.md)（IndexedDB），API 变化时同步更新；
@@ -69,21 +69,21 @@ cd typescript
 $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
 corepack pnpm install                    # pnpm 11.22.0 由 packageManager 固定
 corepack pnpm test                       # tsc -b，再跑单元、编译期与金样例测试
-corepack pnpm test:live                  # 实库场景：三库要变量（见下文），SQLite 不需要
+corepack pnpm test:live                  # 实库测试：服务端的库要变量（见下文），SQLite 不需要
 corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览器测试（playwright-core，不下载浏览器）
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|polardb|sqlite|spring|maven-plugin`（`query:pull` 代码生成）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|polardb|sqlite|spring|maven-plugin`（`query:pull` 代码生成）`|it`（全部实库测试，只有测试、不发布）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
 - **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`ddl`、`exec`；测试在 `test/src` 的 `unit`、`live`、`browser`，夹具在 `fixtures`。
 - **生成代码**：`scope/From1..From16`、`select/Rows` 和 `Fn` 由 `node tools/generate-java-scopes.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
 - **完整测试交给 CI**：`.github/workflows/ci.yml` 并行运行以下 job，job 名和步骤名用中文：
   - Java 单元、渲染与金样例测试（Maven `--threads 1C` 并行构建模块；带 `release` profile、跳过签名，顺带检查 javadoc）；
   - JDK 21 与 25 上的 Java 单元测试（字节码仍按 release 17 生成）；
-  - PostgreSQL、MySQL、PolarDB 实库：按"库 × 语言"拆成 6 个 job（PolarDB 的 job 跑 MySQL 的全部场景加 PolarDB 专属的）；
+  - PostgreSQL、MySQL、PolarDB 实库：按"库 × 语言"拆成 6 个 job，每个 job 只设 `QUERY_DATABASES=<库>`，Java 跑 `query-it`，TS 跑全部实库套件；
   - HANA 实库：一个 job 先跑 Java 再跑 TS，以免启动两个 8 GiB 的实例；
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
-  - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库场景用临时文件库，随 Java 单元测试运行。
+  - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库测试（`query-it`）用临时文件库，随 Java 单元测试运行。
 
   容器定义在 `infra/`。
 - **CI 的提速规则**：
@@ -105,10 +105,14 @@ corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览�
   - 新模块是否已加进 workflow；
   - 实库变量名是否与 workflow 一致；
   - `typescript/pnpm-lock.yaml` 是否与各 `package.json` 一致（CI 用 `--frozen-lockfile` 安装）。
-- **实库测试的变量**：
-  - 共享场景：Java 在 `query-core` 的 test-jar 里（`testing/LiveScenarios`），各方言的 `*LiveTest` 继承它；TS 在 `test/src/live/live.ts`，各方言一个 `*.live.test.ts`；
+- **实库测试**（0013）：
+  - 组织：Java 在 `java/query-it`，测试类标 `@LiveTest`（可加 `only` / `except`），在每个选中的库上各跑一遍；TS 在 `test/src/live`，每个文件一个 `liveSuite(...)`。两端按主题分文件、一一对应；各库的连接与手写 SQL 的差别只写在 `support/Db`、`support/targets.ts`；共用的样例数据在 `support/SampleData`、`support/sample-data.ts`，表一律按声明建。
+  - 写新测试：查询写在测试里，不调共享的查询函数；库之间的差异写成 `live.is(...)`；测试自己的表在类里建；中文注释写明用到的数据。
+  - 选库：`QUERY_DATABASES`（逗号分隔：hana、postgres、mysql、polardb、sqlite，TS 另有 sqlite-wasm；Java 也认 `-Dquery.databases`）只跑列出的库，不设时全部；
   - 两端读取同一组 `QUERY_{HANA|PG|MYSQL|POLARDB}_{URL|USER|PASSWORD}`（TS 从 JDBC URL 里解析主机、端口和库名），缺少时跳过；
   - CI 额外设置 `QUERY_REQUIRE_LIVE=1`，缺少变量时直接失败。
+  - 只跑 Java 的实库测试：`.mvnw.cmd --batch-mode verify -pl java/query-it -am '-Dtest=org/dpdns/zerodep/query/it/**' '-Dsurefire.failIfNoSpecifiedTests=false'`（不加 `-Dtest` 时上游模块的单元测试也会跑）。
+  - 删掉或改名 TS 的测试文件后，`test/dist` 里还留着旧的编译结果，`test:live` 会连它们一起跑；只删 `test/dist` 不够，`tsc -b` 看 `test/tsconfig.tsbuildinfo` 认为已是最新，两个都删掉再编译。
   - 本机的密码在各数据库目录自己的 `.env`（`infra/mysql/.env`、`infra/postgres/.env`、`infra/hana/.env`、`infra/polardb/.env`，不入库），按需读进环境变量，不打印也不落盘：
 
     ```powershell

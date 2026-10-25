@@ -2,6 +2,7 @@ import type { Connection, Pool, PoolConnection } from "mysql2/promise";
 import type { Connection as CoreConnection, FieldPacket, TypeCast } from "mysql2";
 import { Buffer } from "node:buffer";
 import type { Driver, DriverResult, ExecuteOptions } from "@zerodep-dev/query-core";
+import { MysqlDialect } from "./dialect.js";
 
 // DECIMAL 读成精确文本，BIGINT 读成文本，日期和时间读成文本：不经过 Date 或会话时区。
 // decimalNumbers 是连接池的选项，所以这里显式读取 DECIMAL。
@@ -31,6 +32,7 @@ function driverFor(source: Pool | PoolConnection | Connection, inTransaction: bo
     return { columns: (fields ?? []).map((f) => f.name), rows: rows as unknown[][] };
   };
   const driver: Driver = {
+    dialect: MysqlDialect.instance,
     /** 执行一条语句，返回列名和各行的值。 */
     async query(sql, parameters, options): Promise<DriverResult> {
       const ms = milliseconds(options);

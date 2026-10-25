@@ -49,6 +49,7 @@
         <module>java/query-sqlite</module>
         <module>java/query-spring</module>
         <module>java/query-maven-plugin</module>
+        <module>java/query-it</module>
     </modules>
 
     <properties>
@@ -265,6 +266,10 @@
                             <publishingServerId>central</publishingServerId>
                             <autoPublish>false</autoPublish>
                             <waitUntil>validated</waitUntil>
+                            <!-- 实库测试模块只有测试，不发布。 -->
+                            <excludeArtifacts>
+                                <artifact>query-it</artifact>
+                            </excludeArtifacts>
                         </configuration>
                     </plugin>
                 </plugins>

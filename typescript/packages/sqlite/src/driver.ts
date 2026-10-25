@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Database as WasmDatabase } from "@sqlite.org/sqlite-wasm";
 import type { Driver, DriverResult } from "@zerodep-dev/query-core";
+import { SqliteDialect } from "./dialect.js";
 
 /** 在一个连接上同步执行一条语句：返回列名、各行（数组）和改到的行数。 */
 type Run = (sql: string, parameters: readonly unknown[]) => DriverResult;
@@ -24,6 +25,7 @@ function serialDriver(run: Run): Driver {
     transaction: (work) => work(inTransaction),
   };
   return {
+    dialect: SqliteDialect.instance,
     query: (sql, parameters) => queued(async () => run(sql, parameters)),
     transaction: (work) =>
       queued(async () => {

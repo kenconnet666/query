@@ -29,7 +29,7 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: 编译、运行全部单元测试并生成发布用的源码与 javadoc 包（实库场景在此跳过，不签名）
+      - name: 编译、运行全部单元测试并生成发布用的源码与 javadoc 包（实库测试只跑 SQLite，其余库跳过；不签名）
         run: ./mvnw --batch-mode --threads 1C -P release -Dgpg.skip verify
       - name: 保存测试报告
         if: always()
@@ -70,6 +70,8 @@ jobs:
       COMPOSE_PROJECT_NAME: query-ci-${{ matrix.database }}-${{ matrix.language }}-${{ github.run_id }}-${{ github.run_attempt }}
       COMPOSE_FILE: infra/${{ matrix.database }}/compose.yaml
       TEST_DATABASE: ${{ matrix.database }}
+      # query-it 与 TS 的实库套件只跑这个库；QUERY_REQUIRE_LIVE 让它缺连接变量时失败而不是跳过
+      QUERY_DATABASES: ${{ matrix.database }}
       QUERY_REQUIRE_LIVE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -84,25 +86,19 @@ jobs:
                 echo "QUERY_PG_URL=jdbc:postgresql://127.0.0.1:55432/query"
                 echo "QUERY_PG_USER=query"
                 echo "QUERY_PG_PASSWORD=$password"
-                echo "JAVA_MODULE=java/query-postgres"
-                echo "JAVA_TEST=PostgresLiveTest"
               } >> "$GITHUB_ENV" ;;
             mysql)
               {
                 echo "QUERY_MYSQL_URL=jdbc:mysql://127.0.0.1:53306/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"
                 echo "QUERY_MYSQL_USER=root"
                 echo "QUERY_MYSQL_PASSWORD=$password"
-                echo "JAVA_MODULE=java/query-mysql"
-                echo "JAVA_TEST=MysqlLiveTest"
               } >> "$GITHUB_ENV" ;;
             polardb)
-              # 开源的 PolarDB-X 引擎；PolardbLiveTest 继承 MySQL 的全部实库场景，再加 PolarDB 专属的
+              # 开源的 PolarDB-X 引擎；它跑通用场景、MySQL 的专属场景和 PolarDB 专属的
               {
                 echo "QUERY_POLARDB_URL=jdbc:mysql://127.0.0.1:53307/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"
                 echo "QUERY_POLARDB_USER=root"
                 echo "QUERY_POLARDB_PASSWORD=$password"
-                echo "JAVA_MODULE=java/query-polardb"
-                echo "JAVA_TEST=PolardbLiveTest"
               } >> "$GITHUB_ENV" ;;
           esac
           QUERY_DB_PASSWORD="$password" docker compose up --detach
@@ -114,7 +110,7 @@ jobs:
           cache: maven
       - name: 数据库启动期间编译 Java
         if: matrix.language == 'java'
-        run: ./mvnw --batch-mode -pl "$JAVA_MODULE" -am test-compile
+        run: ./mvnw --batch-mode -pl java/query-it -am test-compile
       - if: matrix.language == 'typescript'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -138,13 +134,13 @@ jobs:
           container=$(docker compose ps -q "$TEST_DATABASE")
           docker inspect "$container" | jq -e --argjson expected "$expected" \
             '.[0].HostConfig | .Memory == $expected and .MemorySwap == $expected'
-      - name: 运行 Java 实库场景
+      - name: 运行 Java 实库测试（query-it）
         if: matrix.language == 'java'
-        run: ./mvnw --batch-mode verify -pl "$JAVA_MODULE" -am "-Dtest=$JAVA_TEST" -Dsurefire.failIfNoSpecifiedTests=false
-      - name: 运行 TypeScript 实库场景
+        run: ./mvnw --batch-mode verify -pl java/query-it -am "-Dtest=org/dpdns/zerodep/query/it/**" -Dsurefire.failIfNoSpecifiedTests=false
+      - name: 运行 TypeScript 实库测试
         if: matrix.language == 'typescript'
         working-directory: typescript
-        run: node --test "test/dist/live/$TEST_DATABASE.live.test.js"
+        run: node --test --test-concurrency=1 "test/dist/live/**/*.test.js"
       - name: 失败时收集数据库日志
         if: failure()
         run: |
@@ -170,6 +166,7 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: query-ci-hana-${{ github.run_id }}-${{ github.run_attempt }}
       COMPOSE_FILE: infra/hana/compose.yaml
+      QUERY_DATABASES: hana
       QUERY_REQUIRE_LIVE: '1'
       QUERY_HANA_URL: jdbc:sap://127.0.0.1:39041
       QUERY_HANA_USER: SYSTEM
@@ -199,7 +196,7 @@ jobs:
           cache_dependency_path: typescript/pnpm-lock.yaml
       - name: HANA 启动期间编译 Java 并构建 TypeScript
         run: |
-          ./mvnw --batch-mode -pl java/query-hana -am test-compile
+          ./mvnw --batch-mode -pl java/query-it -am test-compile
           cd typescript
           pnpm install --frozen-lockfile
           pnpm build
@@ -211,12 +208,12 @@ jobs:
           docker inspect "$container" | jq -e --argjson expected "$expected" \
             '.[0].HostConfig | .Memory == $expected and .MemorySwap == $expected'
           docker exec "$container" /bin/bash /query/configure.sh
-      - name: 运行 Java 实库场景
-        run: ./mvnw --batch-mode verify -pl java/query-hana -am -Dtest=HanaLiveTest -Dsurefire.failIfNoSpecifiedTests=false
-      - name: 运行 TypeScript 实库场景
+      - name: 运行 Java 实库测试（query-it）
+        run: ./mvnw --batch-mode verify -pl java/query-it -am "-Dtest=org/dpdns/zerodep/query/it/**" -Dsurefire.failIfNoSpecifiedTests=false
+      - name: 运行 TypeScript 实库测试
         if: success() || failure()
         working-directory: typescript
-        run: node --test test/dist/live/hana.live.test.js
+        run: node --test --test-concurrency=1 "test/dist/live/**/*.test.js"
       - name: 失败时收集 HANA 日志
         if: failure()
         run: |
@@ -270,9 +267,11 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm test
-      - name: 运行 SQLite 实库场景（node:sqlite 与 WASM，不需要数据库容器）
+      - name: 运行 SQLite 实库测试（node:sqlite 与 WASM，不需要数据库容器）
         working-directory: typescript
-        run: node --test --test-concurrency=1 test/dist/live/sqlite.live.test.js test/dist/live/sqlite-wasm.live.test.js
+        env:
+          QUERY_DATABASES: sqlite,sqlite-wasm
+        run: node --test --test-concurrency=1 "test/dist/live/**/*.test.js"
       - name: 在 Chrome 里运行浏览器测试（runner 预装的 Chrome，Worker 里的 SQLite WASM 与 OPFS）
         working-directory: typescript
         env:

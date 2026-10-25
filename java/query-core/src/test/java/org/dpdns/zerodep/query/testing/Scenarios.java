@@ -22,7 +22,7 @@ import java.time.LocalDate;
 
 import static org.dpdns.zerodep.query.Sql.*;
 
-/** 按使用方的写法写成的查询：单元测试渲染它们，实库测试执行它们。 */
+/** 按使用方的写法写成的查询，渲染测试和金样例用它们；实库测试把查询直接写在 query-it 的各个测试里。 */
 public final class Scenarios {
     private Scenarios() { }
 

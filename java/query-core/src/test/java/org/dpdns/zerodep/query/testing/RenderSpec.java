@@ -152,7 +152,7 @@ public abstract class RenderSpec {
     }
 
     /** The repository root (the directory holding spec/), found from the module directory Maven runs tests in. */
-    static Path repositoryRoot() {
+    public static Path repositoryRoot() {
         for (Path p = Path.of("").toAbsolutePath(); p != null; p = p.getParent()) {
             if (Files.isDirectory(p.resolve("spec"))) return p;
         }

@@ -123,4 +123,4 @@
 ## 验证
 
 - 共享的金样例都要有 `.sqlite.sql`；SQLite 不支持的场景在 Java 的 `SqliteSpecTest` 和 TS 的清单里显式排除，并有单独的测试断言它报错。
-- `LiveScenarios` 与 TS 的 `live.ts` 在 SQLite 上全部运行；需要跳过的场景写明原因。
+- 实库测试（Java 的 `query-it`、TS 的 `test/src/live`，见 [0013](0013-portable-facade-and-live-tests.md)）在 SQLite 上全部运行；需要跳过的场景写明原因。

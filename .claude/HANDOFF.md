@@ -1,10 +1,19 @@
-# 交接（2026-10-24，晚）
+# 交接（2026-10-25）
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。
+1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"在分支 `test/live-by-topic` 上，还没有合并。
 
 ## 当前状态
+
+### 通用门面与实库测试的组织（[0013](../docs/decisions/0013-portable-facade-and-live-tests.md)，分支 `test/live-by-topic`）
+
+用户 2026-10-25 要求：把几个库通用的可执行门面暴露出来（以前只给方言门面），测试类上加注解或用启动变量选库，测试要好读、不跳来跳去、带中文注释；方案按推荐执行（按连接识别方言、实库测试集中到 query-it、建表改用声明生成）。
+
+- **通用门面**：Java `Sql.database(DataSource | ConnectionProvider, configure)` 借连接读产品名，经 `dialect.DialectProvider`（各方言包的 `META-INF/services`）选方言；TS 方言包的驱动适配器带 `dialect`，核心包 `database(driver, options)`。PolarDB 得到 MySQL 方言。
+- **实库测试**：Java 全部搬进 `java/query-it`（`@LiveTest` 是 JUnit 6 `@ParameterizedClass` 的组合注解，`only` / `except`），TS 在 `test/src/live` 按同样的主题拆成 23 个 `liveSuite`；`QUERY_DATABASES` 选库；各库的差别只在 `support/Db`、`support/targets.ts`；样例数据在 `SampleData`、`sample-data.ts`，表一律按声明建。旧的 `LiveScenarios`、各方言 `*LiveTest`、TS 的 `live.ts` 与 `*.live.test.ts` 已删除。
+- **CI**：实库 job 只设 `QUERY_DATABASES`，Java 跑 query-it，TS 跑全部实库套件。
+- **本机实测**：Java 五个库 466 个测试、TS 六个目标 548 个测试全部通过，每个库的数量与拆分前相同或多出通用门面的一个；全量 `verify`（含 `-P release`）通过。
 
 ### 为流程引擎做的准备（PR #15，2026-10-25 合并）
 
@@ -13,7 +22,7 @@
 - **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 后 `db.transaction` 由它执行（REQUIRED）。用户的 Spring 应用都是多数据源，事务要指定数据源，跨库用编程式事务，所以每个数据源各传自己的事务管理器。
 - **迁移历史表可以改名**：`historyTable("flow_migration")`，两端。
 - **PolarDB 方言**（[0012](../docs/decisions/0012-polardb-dialect.md)）：继承 MySQL 方言，闪回查询 `fromAsOf`、库存提示 `inventory`；`infra/polardb` 是开源 PolarDB-X 引擎的单节点实例（端口 53307）。核心加了写语句的提示 `update/deleteFrom(...).with(...)`。
-- **流程引擎写法的实库场景**：`Engine` / `fixtures/engine.ts` 六个用例，五个库两端都通过；发现 InnoDB 的 `SKIP LOCKED` 会锁住扫描到的所有行，引擎领取作业改用带条件的 UPDATE 抢占。
+- **流程引擎写法的实库场景**：六个用例（0013 起在 query-it 的 `workflow/EngineTest` 和 TS 的 `workflow/engine.live.test.ts`），五个库两端都通过；发现 InnoDB 的 `SKIP LOCKED` 会锁住扫描到的所有行，引擎领取作业改用带条件的 UPDATE 抢占。
 - **本机环境**：WSL 空闲会关机（见 CLAUDE.md），跑实库测试前挂一个 `wsl -d Debian -- sleep 14400`。
 
 
@@ -53,11 +62,11 @@
 - **第 4 步（已完成）**：`@LogicDelete` 并入表的过滤条件（Java `SourceFilters`，TS `conditionsFor`），查询、连接、关系、UPDATE/DELETE 都带"未删除"条件，`unfiltered()` 一并关闭；删除改写成 UPDATE（`byId` 时版本加一），`.physically()` 物理删除；插入时补上未删除的值；时间戳列用 `IS NULL` / `CURRENT_TIMESTAMP`。审计填充：Java `Config.onInsert/onUpdate`（`write/Fills`），TS `DatabaseOptions.fills` 与 `onInsert`/`onUpdate`，作用于插入、更新、`byId`、插入或更新的更新部分和逻辑删除，总是覆盖。金样例 `write-logic-delete`、`logic-delete-query`。
 - **文档**：两份 API 说明的第 15 节、[0007](../docs/decisions/0007-writes.md)、场景对照的写入行、0001 第 4 条、CHANGELOG。
 
-### 测试（本机三库全部通过）
+### 测试（2026-10-25 本机全部通过）
 
-- **Java**：core 233，HANA 179，PostgreSQL 189，MySQL 177（含实库场景与金样例），Spring 5，Maven 插件 3。
-- **TS**：单元、编译期与金样例 526（含 IDB 20、没有异步上下文的运行环境 1）；实库 PostgreSQL 90、MySQL 84、HANA 86，SQLite 的 node:sqlite 75、WASM 72（各跳过 2 项，原因写在测试里）；Chrome 里的浏览器测试 3。
-- **Java SQLite**：158（实库场景 76，跳过手写 LPAD 1 项；金样例 75；渲染 7）。
+- **Java 单元、渲染与金样例**：core 186，HANA 93，PostgreSQL 96，MySQL 94，PolarDB 88，SQLite 82，Spring 10，Maven 插件 3。
+- **Java 实库（query-it）**：HANA 93、PostgreSQL 100、MySQL 93、PolarDB 97、SQLite 83；没有连接变量时只跑 SQLite。
+- **TS 实库**：HANA 94、PostgreSQL 98、MySQL 93、PolarDB 97，node:sqlite 与 WASM 各 83（各跳过 LPAD 片段与超时两项）。
 - 本机实库：WSL Debian 的 Docker 里按 `infra/` 启动三库，连接信息在已忽略的 `.local/connections.md`。
 
 ## 待用户决定或执行
@@ -157,7 +166,8 @@
 - **WSL 地址**：WSL 的 `eth0` 地址在 WSL 重启后会变。连不上数据库时，先用 `wsl -d Debian hostname -I` 查，或者直接用 `localhost`。
 - **corepack**：非交互运行 corepack 时要设置 `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`。
 - **pnpm 11**：依赖的安装脚本要在 `pnpm-workspace.yaml` 的 `allowBuilds` 里放行，`@sap/hana-client` 已放行。
-- **PowerShell 传 Maven 参数**：带点的 `-D` 参数要加引号，例如 `'-Dtest=HanaLiveTest'`。
+- **PowerShell 传 Maven 参数**：带点的 `-D` 参数要加引号，例如 `'-Dsurefire.failIfNoSpecifiedTests=false'`。
+- **TS 测试的编译残留**：删掉或改名测试文件后，`test/dist` 里的旧结果还会被 `test:live` 跑到；只删 `test/dist` 时 `tsc -b` 看 `test/tsconfig.tsbuildinfo` 认为已是最新、不再输出，两个都删掉再编译。
 - **金样例**：改了渲染以后，用 `$env:QUERY_SPEC_WRITE = '1'` 运行 `*SpecTest` 重写 `spec/render/`，审查 diff，再跑 TS 的 `spec.test.js` 确认两端一致。
 - **Java 泛型**：行类来源的 `col(Getter)` 公共 API 要写成泛型 `<E> Getter<? super E, ?>`，通配符参数接收不了方法引用；同类型的多参数运算要做成实例方法（理由见 0002 第 4 条）。
 - **TS 类型**：

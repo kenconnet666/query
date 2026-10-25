@@ -27,7 +27,7 @@ import java.time.format.DateTimeFormatter;
 
 import static org.dpdns.zerodep.query.Sql.all;
 
-/** SAP 风格的测试表与结果类，单元测试和各方言的实库场景共用。 */
+/** SAP 风格的测试表与结果类，单元测试和实库测试共用；实库测试的样例数据见 query-it 的 SampleData。 */
 public final class Erp {
     public static final String SCHEMA = "QUERY_IT";
 
@@ -112,7 +112,7 @@ public final class Erp {
         @Column("ERDAT") @SapDate Col<LocalDate> createdOn();
 
         /** 交货数量。 */
-        @Column("LFIMG") Col<BigDecimal> quantity();
+        @Column(value = "LFIMG", precision = 13, scale = 3) Col<BigDecimal> quantity();
 
         /** 单位。 */
         @Column("VRKME") Col<String> unit();
@@ -172,14 +172,14 @@ public final class Erp {
     @Table(schema = SCHEMA, value = "MARDH")
     public interface Mardh extends PeriodStock {
         /** 非限制库存。 */
-        @Override @Column("LABST") Col<BigDecimal> quantity();
+        @Override @Column(value = "LABST", precision = 13, scale = 3) Col<BigDecimal> quantity();
     }
 
     /** 批次的月度库存历史。 */
     @Table(schema = SCHEMA, value = "MCHBH")
     public interface Mchbh extends PeriodStock {
         /** 批次的非限制库存。 */
-        @Override @Column("CLABS") Col<BigDecimal> quantity();
+        @Override @Column(value = "CLABS", precision = 13, scale = 3) Col<BigDecimal> quantity();
     }
 
     /** 真正的 DATE 与 TIMESTAMP 列，用于检查时区。 */

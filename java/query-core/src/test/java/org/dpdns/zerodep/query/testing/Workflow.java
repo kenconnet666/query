@@ -19,7 +19,7 @@ import static org.dpdns.zerodep.query.Sql.*;
 
 /**
  * 流程引擎读查询的对照场景：按 Flowable、Camunda 7、Activiti 等引擎的表结构简化出的几张表，
- * 以及它们最常见的读查询（待办、变量过滤、最新版本、已办、统计）用本库的写法。三库实库场景和金样例都用它。
+ * 以及它们最常见的读查询（待办、变量过滤、最新版本、已办、统计）用本库的写法。金样例渲染这些查询；query-it 的 WorkflowQueryTest 按这些表建表，在各库上执行同样的查询。
  */
 public final class Workflow {
     /** 测试表所在的 schema。 */

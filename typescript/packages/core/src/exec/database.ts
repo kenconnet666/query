@@ -35,6 +35,8 @@ export interface Driver {
    * 已经在事务里的驱动直接执行 work。不支持时 `db.transaction(...)` 报错。
    */
   transaction?<R>(work: (driver: Driver) => Promise<R>): Promise<R>;
+  /** 驱动所在方言包的方言；方言包的驱动适配器都会填上，通用门面 {@link database} 据此选方言。 */
+  readonly dialect?: Dialect;
 }
 
 /** 驱动对单条语句应用的设置；驱动不支持的项直接忽略。 */
@@ -826,6 +828,23 @@ export abstract class Database {
   static {
     executeNative = (db, statement, timeoutMs) => db.#execute(statement, timeoutMs);
   }
+}
+
+/** 通用门面创建的数据库：方言来自驱动，不属于哪个方言包。 */
+class PortableDatabase extends Database {
+  constructor(dialect: Dialect, driver: Driver, options?: DatabaseOptions) {
+    super(dialect, driver, options);
+  }
+}
+
+/**
+ * 通用的数据库：方言来自驱动适配器（`mysqlDriver(pool)`、`pgDriver(pool)` 等都带着自己的方言），只用核心包写法的代码
+ * （例如建在本库上的流程引擎）因此不必引入方言包的数据库类；要用方言专属的写法时改用方言包的 `database(...)`。
+ * PolarDB 用 mysql2 的驱动，得到的是 MySQL 方言的数据库。
+ */
+export function database(driver: Driver, options?: DatabaseOptions): Database {
+  if (driver.dialect === undefined) throw new Error("The driver names no dialect; create the database with its dialect package");
+  return new PortableDatabase(driver.dialect, driver, options);
 }
 
 /** 按列类型解码一行原始值；`null` 原样保留，解码失败时指出列标签。 */

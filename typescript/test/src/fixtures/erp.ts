@@ -1,6 +1,6 @@
 import { all, blankAsNull, column, converted, date, decimal, ignore, integer, many, one, table, text, timestamp, trimmed, type Many, type One } from "@zerodep-dev/query-core";
 
-/** SAP-style entities shared by the unit tests and the live scenarios of every dialect, as in the Java tests. */
+/** SAP 风格的测试表与结果类，单元测试和实库测试共用，与 Java 的 Erp 对应；实库测试的样例数据见 live/support/sample-data.ts。 */
 export const SCHEMA = "QUERY_IT";
 
 /** SAP keeps dates as NVARCHAR(8) 'yyyyMMdd'; '' and '00000000' mean no date. */
@@ -53,7 +53,7 @@ export class Lips extends ClientEntity {
   @column("VBELN") delivery!: string;
   @column("MATNR") material!: string;
   @column("ERDAT", sapDate) createdOn!: string | null;
-  @column("LFIMG", decimal) quantity!: string;
+  @column("LFIMG", decimal, { precision: 13, scale: 3 }) quantity!: string;
   @column("VRKME") unit!: string;
   @column("VGBEL") salesOrder!: string;
 
@@ -95,7 +95,7 @@ export class Mardh extends ClientEntity implements PeriodStock {
   @column("MATNR") material!: string;
   @column("LFGJA") year!: string;
   @column("LFMON") period!: string;
-  @column("LABST", decimal) unrestricted!: string | null;
+  @column("LABST", decimal, { precision: 13, scale: 3 }) unrestricted!: string | null;
 }
 
 @table("MCHBH", { schema: SCHEMA })
@@ -103,7 +103,7 @@ export class Mchbh extends ClientEntity implements PeriodStock {
   @column("MATNR") material!: string;
   @column("LFGJA") year!: string;
   @column("LFMON") period!: string;
-  @column("CLABS", decimal) batchUnrestricted!: string | null;
+  @column("CLABS", decimal, { precision: 13, scale: 3 }) batchUnrestricted!: string | null;
 }
 
 /** Real DATE and TIMESTAMP columns, for time-zone checks. */

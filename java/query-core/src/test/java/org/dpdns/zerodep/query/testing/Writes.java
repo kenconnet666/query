@@ -3,6 +3,7 @@ package org.dpdns.zerodep.query.testing;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Generated;
 import org.dpdns.zerodep.query.annotation.Id;
+import org.dpdns.zerodep.query.annotation.Index;
 import org.dpdns.zerodep.query.annotation.LogicDelete;
 import org.dpdns.zerodep.query.annotation.ReadOnly;
 import org.dpdns.zerodep.query.annotation.Table;
@@ -22,7 +23,7 @@ import java.util.List;
 
 import static org.dpdns.zerodep.query.Sql.*;
 
-/** 写入场景的表和语句：单元测试、金样例和三库实库场景共用。读查询的表不参与，免得写入测试影响它们。 */
+/** 写入场景的表和语句：单元测试、金样例和实库测试共用（实库测试按这些声明建表）。读查询的表不参与，免得写入测试影响它们。 */
 public final class Writes {
     /** 测试表所在的 schema。 */
     public static final String SCHEMA = "QUERY_IT";
@@ -65,7 +66,7 @@ public final class Writes {
         @Version @Column("VERSION") Col<Integer> version();
 
         /** 来源：由数据库默认值维护，本库从不写。 */
-        @ReadOnly @Column("SOURCE") Col<String> source();
+        @ReadOnly @Column(value = "SOURCE", defaultValue = "'db'") Col<String> source();
     }
 
     /** 文档的一行。 */
@@ -220,6 +221,7 @@ public final class Writes {
 
     /** 编码表：逻辑删除列记录删除时刻的毫秒数，{@code (CODE, DELETED)} 唯一，所以同一个编码删除后可以再建。 */
     @Table(schema = SCHEMA, value = "W_CODE")
+    @Index(name = "UX_W_CODE", columns = {"code", "deleted"}, unique = true)
     public interface Code extends Entity {
         /** 编号。 */
         @Id @Column("ID") Col<String> id();
