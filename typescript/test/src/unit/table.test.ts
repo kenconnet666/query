@@ -8,12 +8,12 @@ import { TestDatabase } from "../fixtures/support.js";
 
 describe("表格查询的请求", () => {
   it("读地址栏参数（对象或 URLSearchParams），其余参数不管", () => {
-    const expected = { page: 2, pageSize: 20, sort: "-total,material", total: 368, filter: { unit: ["EA", "KG"] }, search: { material: "泵" } };
+    const expected = { page: 2, pageSize: 20, sort: "-total,material", total: 368, filter: { unit: ["EA", "KG"] }, search: { material: "泵" }, condition: undefined };
     const object = { page: "2", pageSize: "20", sort: "-total,material", total: "368", "filter.unit": ["EA", "KG"], "filter.material": " ", "search.material": " 泵 ", keyword: "x" };
     assert.deepEqual(parseTableRequest(object), expected);
     const search = new URLSearchParams("page=2&pageSize=20&sort=-total,material&total=368&filter.unit=EA&filter.unit=KG&search.material=%E6%B3%B5&keyword=x");
     assert.deepEqual(parseTableRequest(search), expected);
-    assert.deepEqual(parseTableRequest({}), { page: 1, pageSize: 10, sort: undefined, total: undefined, filter: {}, search: {} });
+    assert.deepEqual(parseTableRequest({}), { page: 1, pageSize: 10, sort: undefined, total: undefined, filter: {}, search: {}, condition: undefined });
   });
 
   it("写错的数字和过大的条数报错", () => {

@@ -537,7 +537,7 @@ export abstract class Database {
    * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。结果交给 `toWire` 发回前端。
    */
   async table<R>(q: Query<R>, request: TableRequest): Promise<Page<R>> {
-    const shaped = q.filterBy(request.filter).searchBy(request.search).sortBy(request.sort);
+    const shaped = q.filterBy(request.filter).searchBy(request.search).conditionBy(request.condition).sortBy(request.sort);
     return this.page(shaped, request.page, request.pageSize, request.total);
   }
 

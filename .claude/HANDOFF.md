@@ -6,6 +6,15 @@
 
 ## 当前状态
 
+### 条件树（[0017](../docs/decisions/0017-condition-tree.md)，分支 ）
+
+vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26），本库配套把条件树写成 SQL：
+
+- **两端**：，14 种比较方式，字段只认结果列（白名单），值按列的类型读；最外层 all 拆开各自进 WHERE 或 HAVING，一个分支混着逐行与聚合的列时报错。规则与前端  一致：不等于类把空值算作满足（），没填完整的比较与空组不加条件。
+- **请求**： /  读  参数（JSON 文字）， 随之筛选；vue-tsx-pro 的  把筛选条件里的条件树写成这个参数。
+- **Java**：（、，sealed：Rule / All / Any / Not）、；wire 模块新增 （不依赖 JSON 库）。TS：。
+- **测试**：单元测试两端一一对应（SQL 相同）；实库  /  加了条件树的用例，2026-10-26 本机五个库（Java 25、TS 30）全部通过。
+
 ### 与前端表格配合（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)，分支 `feat/table-query`）
 
 用户 2026-10-25 对照 EasyQuery 找出缺口（对象树上的多个条件、多列排序、分页等）后要求全部做完，前端 vue-tsx-pro 可以一起改；特殊类型（大整数、小数、日期）的 JSON 传输要通用、不限于 SQL，能不依赖 Jackson 就不依赖；主要支持 MySQL 和 PostgreSQL，两者支持时按性能更好的写，其他库可以退化或各写各的。

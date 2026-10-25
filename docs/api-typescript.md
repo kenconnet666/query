@@ -402,10 +402,12 @@ ORDER BY LIPS.MATNR ASC
 | `sortBy("-total,material")` | 按结果列排序并替换原来的 ORDER BY；每项是结果列名，前面带减号是倒序（同 JSON:API，前端 `useTableQuery` 发的就是这种写法），也认 `total desc`；空串保持不变 |
 | `filterBy({ unit: ["EA", "KG"] })` | 结果列 IN (...)：表头的多选筛选；值是地址栏里的文字，按列的类型读，空白的值跳过 |
 | `searchBy({ material: "泵" })` | 结果列 LIKE %泵%：表头的关键字筛选，只能用在文字列上 |
+| `conditionBy(tree)` | 条件树：前端条件构造器（vue-tsx-pro 的 `ConditionBuilder`、FilterBar 的高级筛选）的 all / any / not 加比较；也收 JSON 文字，规则见 [0017](decisions/0017-condition-tree.md) |
 
 - 名字是结果的键，不分大小写和下划线（`only(["PREFIX"])` 能匹配 `prefix`）；嵌套对象的键代表它下面的全部列；不存在的名字报错并列出可用的列。
 - `only`、`sortBy`、`filterBy`、`searchBy` 只认结果里的列，相当于白名单，用户输入可以直接传入；排序串写法不对、按被排除的列排序、对 UNION 使用 `sortBy`（先包成 CTE）都会报错。
 - `filterBy`、`searchBy` 的条件在渲染时决定位置：逐行计算的列写进 WHERE，聚合的列（`sum()`、`stringAgg` 等）写进 HAVING；窗口函数的列不能这样筛选。
+- `conditionBy` 的字段同样只认结果列，值按列的类型读（数字、布尔先写成文字）；不等于、不在其中、不包含把空值算作满足，没填完整的比较与空的组不加条件，与前端的 `matchesCondition` 一致。最外层的 `all` 拆开各自判断 WHERE / HAVING，一个分支里混着逐行与聚合的列时报错。形状或比较方式不对时 `parseConditionTree` 报 `TypeError`，消息带位置（`condition.all[1].op`）。
 
 ## 6. 条件对象
 
@@ -628,7 +630,7 @@ console.log(events[0]!.statement.debugSql());
 | `db.count(q)` | 行数。单段、没有分组、DISTINCT、HAVING、QUALIFY、LIMIT 和方言子句、投影里没有聚合时直接 `SELECT COUNT(*) FROM ... WHERE ...`：投影里的标量子查询、窗口函数和只为投影连接的导航关系都不写；其余情况外包 `COUNT(*)` |
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size, total?)` | 页号从 1 开始，同时返回总数和总页数；传入已知的 `total` 时不再执行 COUNT |
-| `db.table(q, parseTableRequest(params))` | 表格查询：依次 `filterBy`、`searchBy`、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 21 节 |
+| `db.table(q, parseTableRequest(params))` | 表格查询：依次 `filterBy`、`searchBy`、`conditionBy`（`condition` 参数）、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 21 节 |
 | `db.withAncestors(Dept, { key, parent, hits, select })` | 命中的行加上全部祖先（树的服务端搜索），交给 `buildTree` 组装；PostgreSQL、MySQL、SQLite 一条递归 CTE，HANA 一层一层按键查，见第 21 节 |
 | `db.attach(rows, key, (ids) => query, keyOf, set)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空数组 |
 | `db.sql("... :name IN (:ids)").bind(...).list()` | 原生 SQL：数组参数自动展开，按标签返回对象；`list(VO)` 按标签映射（忽略大小写和下划线），`values()` 取第一列，另有 `first()`、`one()`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、MySQL 的反引号）里的 `:name` 不是参数 |

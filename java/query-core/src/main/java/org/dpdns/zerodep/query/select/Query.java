@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.MappingPlan;
+import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
@@ -430,7 +431,7 @@ public final class Query<R> {
             List<Object> values = new ArrayList<>();
             if (e.getValue() != null) for (String text : e.getValue()) if (text != null && !text.isBlank()) values.add(read(item, text));
             if (values.isEmpty()) continue;
-            q = q.withSpec(q.arms.get(0).spec().resultFilter(item, Conditions.collect(() -> inValues(item, values))));
+            q = q.withSpec(q.arms.get(0).spec().resultFilter(List.of(item), Conditions.collect(() -> inValues(item, values))));
         }
         return q;
     }
@@ -449,7 +450,24 @@ public final class Query<R> {
                 throw new IllegalArgumentException("searchBy(...): '" + e.getKey() + "' is not a text column; filter it with filterBy(...)");
             }
             String keyword = e.getValue().trim();
-            q = q.withSpec(q.arms.get(0).spec().resultFilter(item, Conditions.collect(() -> ExprText.of(item).contains(keyword))));
+            q = q.withSpec(q.arms.get(0).spec().resultFilter(List.of(item), Conditions.collect(() -> ExprText.of(item).contains(keyword))));
+        }
+        return q;
+    }
+
+    /**
+     * 按条件树筛选，给前端的条件构造器（vue-tsx-pro 的 FilterBar 高级筛选）用：字段是结果列名（白名单，同 {@link #filterBy}），
+     * 值按列的 Java 类型读；没填完整的比较与空的组不加条件，tree 为 null 时保持不变。规则见 {@link ConditionTree}。
+     * 最外层的 all 拆成几个条件，各自判断进 WHERE 还是 HAVING；一棵子树里既有逐行计算的列又有聚合的列时渲染时报错。
+     */
+    public Query<R> conditionBy(ConditionTree tree) {
+        if (tree == null) return this;
+        Query<R> q = this;
+        for (ConditionTree part : tree instanceof ConditionTree.All all ? all.items() : List.of(tree)) {
+            Map<String, Expr<?>> items = new LinkedHashMap<>();
+            for (String name : part.fields()) items.put(name, filterable(name, "conditionBy"));
+            Cond condition = TreeConditions.of(part, items::get);
+            if (!condition.isEmpty()) q = q.withSpec(q.arms.get(0).spec().resultFilter(List.copyOf(items.values()), condition));
         }
         return q;
     }

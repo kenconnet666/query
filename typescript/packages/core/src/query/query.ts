@@ -6,6 +6,7 @@ import { Aggregate, ExprNode, isWindow, Literal, toOrder, type Expr, type Order,
 import type { Col, ColOf } from "../sql/typed.js";
 import { COLUMN_TYPES, COLUMNS, NAMED, SUBQUERY } from "../internal.js";
 import { entityMeta, shapeFields, type Ctor, type Table } from "../schema/metadata.js";
+import { conditionFields, conditionTreeCond, parseConditionTree, type ConditionTree } from "./condition-tree.js";
 import { filterCondition, type FilterObject } from "./filter.js";
 import { Children, isGrouped, Many, type AnyMany, type Grouped } from "./many.js";
 import { createRef, Cte, Derived, ownerOf, RELATED, tableSource, type NullableRef, type Ref, type RefOwner, type Relation, type Source } from "./source.js";
@@ -156,9 +157,9 @@ interface SelectSpec {
   readonly resultFilters: readonly ResultFilter[];
 }
 
-/** 一个按结果列的条件：item 是那一列的表达式，condition 是比较它的条件。 */
+/** 一个按结果列的条件：items 是条件用到的列（filterBy、searchBy 是一列，conditionBy 的一棵子树可能几列），condition 是条件。 */
 interface ResultFilter {
-  readonly item: Expr<unknown>;
+  readonly items: readonly Expr<unknown>[];
   readonly condition: Cond;
 }
 
@@ -437,7 +438,7 @@ export class Query<R> {
       const item = this.#filterable(name, "filterBy");
       const values = (texts ?? []).map((t) => parseColumnText(item.type as SqlType<unknown>, t)).filter((v) => v != null);
       if (values.length === 0) continue;
-      q = q.#withResultFilter(item, collect(() => (item as ExprNode<never>).in(values as never[])));
+      q = q.#withResultFilter([item], collect(() => (item as ExprNode<never>).in(values as never[])));
     }
     return q;
   }
@@ -452,7 +453,25 @@ export class Query<R> {
       const item = this.#filterable(name, "searchBy");
       if (keyword === undefined || keyword.trim() === "") continue;
       if (item.type.kind !== "text") throw new Error(`searchBy(...): '${name}' is not a text column; filter it with filterBy(...)`);
-      q = q.#withResultFilter(item, collect(() => (item as ExprNode<string>).contains(keyword.trim())));
+      q = q.#withResultFilter([item], collect(() => (item as ExprNode<string>).contains(keyword.trim())));
+    }
+    return q;
+  }
+
+  /**
+   * 按条件树筛选，给前端的条件构造器（vue-tsx-pro 的 FilterBar 高级筛选）用：tree 是 `ConditionTree`，或它的 JSON 文字
+   * （地址栏的 `condition` 参数）。字段是结果列名（白名单，同 {@link filterBy}），值按列的类型读；
+   * 没填完整的比较与空的组不加条件，tree 为空时保持不变。最外层的 all 拆成几个条件，各自判断进 WHERE 还是 HAVING；
+   * 一棵子树里既有逐行计算的列又有聚合的列时报错。形状不对、比较方式不认识时报 TypeError（Web 层回 400）。
+   */
+  conditionBy(tree: ConditionTree | string | null | undefined): Query<R> {
+    if (tree == null || (typeof tree === "string" && tree.trim() === "")) return this;
+    const parsed = parseConditionTree(tree);
+    let q: Query<R> = this;
+    for (const part of "all" in parsed ? parsed.all : [parsed]) {
+      const items = new Map(conditionFields(part).map((name) => [name, this.#filterable(name, "conditionBy")] as const));
+      const condition = conditionTreeCond(part, (name) => items.get(name) as ExprNode<never>);
+      if (!condition.isEmpty) q = q.#withResultFilter([...items.values()], condition);
     }
     return q;
   }
@@ -471,9 +490,9 @@ export class Query<R> {
   }
 
   /** 追加一个按结果列的条件。 */
-  #withResultFilter(item: Expr<unknown>, condition: Cond): Query<R> {
+  #withResultFilter(items: readonly Expr<unknown>[], condition: Cond): Query<R> {
     const spec = this.#s.arms[0]!.spec;
-    return this.#withSpec({ ...spec, resultFilters: [...spec.resultFilters, { item, condition }] });
+    return this.#withSpec({ ...spec, resultFilters: [...spec.resultFilters, { items, condition }] });
   }
 
   /** 名字在结果里的列位置：同名的列，或嵌套对象下的全部列；未知的名字报错并列出可用的列。 */
@@ -674,7 +693,7 @@ function countsRows(w: SqlWriter, s: State): boolean {
   const spec = arm.spec;
   if (spec.groupBy.length > 0 || spec.distinct || !and(...spec.having).isEmpty || !and(...spec.qualify).isEmpty) return false;
   if (spec.limit !== undefined || spec.offset !== undefined || spec.clauses.length > 0) return false;
-  return [...arm.items, ...spec.resultFilters.map((f) => f.item)].every((e) => rowKindOf(w, e) !== "aggregate");
+  return [...arm.items, ...spec.resultFilters.flatMap((f) => f.items)].every((e) => rowKindOf(w, e) !== "aggregate");
 }
 
 /** `SELECT CASE WHEN EXISTS (查询) THEN 1 ELSE 0 END`：总是返回一行，查询找到行时为 1。 */
@@ -764,9 +783,11 @@ function splitResultFilters(w: SqlWriter, s: SelectSpec): { readonly where: Cond
   const where: Cond[] = [];
   const having: Cond[] = [];
   for (const f of s.resultFilters) {
-    const kind = rowKindOf(w, f.item);
-    if (kind === "window") throw new Error("filterBy(...) and searchBy(...) cannot filter a window function column; put the query in a CTE and filter that");
-    (kind === "aggregate" ? having : where).push(f.condition);
+    const kinds = new Set(f.items.map((item) => rowKindOf(w, item)));
+    if (kinds.has("window")) throw new Error("filterBy(...), searchBy(...) and conditionBy(...) cannot filter a window function column; put the query in a CTE and filter that");
+    // 一个条件里逐行的列与聚合的列混在一起（同一个 any、not 里）：WHERE、HAVING 都放不下
+    if (kinds.size > 1) throw new Error("conditionBy(...): one branch mixes plain and aggregated columns; split it at the top-level all, or put the query in a CTE and filter that");
+    (kinds.has("aggregate") ? having : where).push(f.condition);
   }
   return { where, having };
 }

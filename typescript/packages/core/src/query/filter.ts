@@ -166,7 +166,7 @@ function compare(c: ExprNode<never>, op: WhereOp, value: unknown, field: string)
 }
 
 /** 文字按列的类型读（地址栏里的值都是文字）；别的值原样返回。 */
-function textAs(c: ExprNode<never>, value: unknown): unknown {
+export function textAs(c: ExprNode<never>, value: unknown): unknown {
   return typeof value === "string" ? parseColumnText(c.type as SqlType<unknown>, value) : value;
 }
 
@@ -174,7 +174,7 @@ function textAs(c: ExprNode<never>, value: unknown): unknown {
  * 区间：起端写 `>=`，止端写 `<=`。列是时间戳而某一端是日期（`CalendarDate` 或 'YYYY-MM-DD'）时，起端是那天的零点，
  * 止端写成 `<` 后一天的零点，这一整天都算在内。两端都空时不加条件。
  */
-function range(c: ExprNode<never>, value: unknown, field: string): void {
+export function range(c: ExprNode<never>, value: unknown, field: string): void {
   if (value == null) return;
   const [start, end] = ends(value, field).map((bound) => (typeof bound === "string" && bound.trim() === "" ? null : bound));
   const timestamp = c.type.kind === "timestamp";

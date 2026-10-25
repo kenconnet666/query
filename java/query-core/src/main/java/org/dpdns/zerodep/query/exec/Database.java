@@ -213,7 +213,7 @@ public abstract class Database {
      * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。返回的 {@link Page#toWire()} 交给前端。
      */
     public <R> Page<R> table(Query<R> q, TableRequest request) {
-        Query<R> shaped = q.filterBy(request.filter()).searchBy(request.search()).sortBy(request.sort());
+        Query<R> shaped = q.filterBy(request.filter()).searchBy(request.search()).conditionBy(request.condition()).sortBy(request.sort());
         return request.total() == null
             ? page(shaped, request.page(), request.pageSize())
             : page(shaped, request.page(), request.pageSize(), request.total());
