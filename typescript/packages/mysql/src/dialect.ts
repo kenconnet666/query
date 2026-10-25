@@ -16,7 +16,7 @@ export class MysqlDialect extends Dialect {
     return (this.#schemaSyntax ??= new MysqlSchemaSyntax(this));
   }
 
-  readonly name = "MySQL";
+  readonly name: string = "MySQL";
 
   /**
    * `||` 不是拼接，CONCAT 改写为函数；LOCATE 的参数顺序与核心定义相反，需要对调；
@@ -181,14 +181,16 @@ function dateAdd(w: SqlWriter, args: readonly Renderable[], unit: string): void 
 
 /**
  * 一个优化器提示：MySQL 只认 SELECT 后面第一个 `/*+ ... *\/` 注释，所以同一段查询的提示由方言合并进一个注释。
- * 由 {@link maxExecutionTime}、{@link index} 等创建。
+ * 由 {@link maxExecutionTime}、{@link index} 等创建；兼容 MySQL 的方言（PolarDB）用第二个参数造只属于自己的提示，照样合并。
  */
 export class Hint implements Clause {
   readonly position = "hint";
-  readonly dialect = MysqlDialect;
 
-
-  constructor(readonly body: (w: SqlWriter) => void) {}
+  constructor(
+    readonly body: (w: SqlWriter) => void,
+    /** 只能在这个方言及其子类上渲染。 */
+    readonly dialect: typeof MysqlDialect = MysqlDialect,
+  ) {}
 
   /** 单独写出时带上注释符号；同一段里有多个提示时由方言合并。 */
   render(w: SqlWriter): void {

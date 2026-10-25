@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { filter, Write, type Database, type DatabaseOptions, type Driver } from "@zerodep-dev/query-core";
 import { HanaDatabase } from "@zerodep-dev/query-hana";
 import { MysqlDatabase } from "@zerodep-dev/query-mysql";
+import { PolardbDatabase } from "@zerodep-dev/query-polardb";
 import { PostgresDatabase } from "@zerodep-dev/query-postgres";
 import { SqliteDatabase } from "@zerodep-dev/query-sqlite";
 import { ClientEntity } from "../fixtures/erp.js";
-import { dialectCases, sharedCases, unsupportedCases } from "../fixtures/spec-cases.js";
+import { dialectCases, polardbCases, sharedCases, unsupportedCases } from "../fixtures/spec-cases.js";
 import { SHARDS } from "../fixtures/shards.js";
 
 /**
@@ -22,12 +23,21 @@ const never: Driver = {
   query: () => Promise.reject(new Error("spec rendering never connects")),
 };
 
-const databases: Record<keyof typeof dialectCases, (options: DatabaseOptions) => Database> = {
+/** 金样例的方言：各自的数据库与方言专属用例。 */
+type SpecDialect = keyof typeof dialectCases | "polardb";
+
+const databases: Record<SpecDialect, (options: DatabaseOptions) => Database> = {
   hana: (options) => new HanaDatabase(never, options),
   postgres: (options) => new PostgresDatabase(never, options),
   mysql: (options) => new MysqlDatabase(never, options),
+  polardb: (options) => new PolardbDatabase(never, options),
   sqlite: (options) => new SqliteDatabase(never, options),
 };
+
+const specificCases: Record<SpecDialect, Readonly<Record<string, { readonly filtered: boolean; readonly query: () => unknown }>>> = { ...dialectCases, polardb: polardbCases };
+
+/** 写法沿用别的方言：没有本方言金样例文件的用例和那个方言的文件比对；与 Java RenderSpec 的 fallbackDialect 一致。 */
+const fallbacks: Partial<Record<SpecDialect, SpecDialect>> = { polardb: "mysql" };
 
 function golden(file: string): { parameters: unknown; sql: string } {
   const content = readFileSync(SPEC + file, "utf8").replace(/\r\n/g, "\n");
@@ -38,9 +48,10 @@ function golden(file: string): { parameters: unknown; sql: string } {
 }
 
 describe("渲染金样例", () => {
-  for (const dialect of Object.keys(databases) as (keyof typeof databases)[]) {
-    const unsupported = unsupportedCases[dialect] ?? [];
-    const cases = { ...Object.fromEntries(Object.entries(sharedCases).filter(([name]) => !unsupported.includes(name))), ...dialectCases[dialect] };
+  for (const dialect of Object.keys(databases) as SpecDialect[]) {
+    const unsupported = dialect === "polardb" ? [] : (unsupportedCases[dialect] ?? []);
+    const cases = { ...Object.fromEntries(Object.entries(sharedCases).filter(([name]) => !unsupported.includes(name))), ...specificCases[dialect] } as typeof sharedCases;
+    const fallback = fallbacks[dialect];
     for (const name of unsupported) {
       it(`${dialect} 不支持 ${name}`, () => {
         const statement = sharedCases[name]!.query();
@@ -54,8 +65,9 @@ describe("渲染金样例", () => {
 
     for (const [name, spec] of Object.entries(cases)) {
       it(`${dialect} 渲染 ${name} 与金样例一致`, () => {
-        const file = `${name}.${dialect}.sql`;
-        assert.ok(existsSync(SPEC + file), `spec/render/${file} is missing; the Java spec tests write it with QUERY_SPEC_WRITE=1`);
+        const own = `${name}.${dialect}.sql`;
+        const file = existsSync(SPEC + own) || fallback === undefined ? own : `${name}.${fallback}.sql`;
+        assert.ok(existsSync(SPEC + file), `spec/render/${own} is missing; the Java spec tests write it with QUERY_SPEC_WRITE=1`);
         const expected = golden(file);
         const db = spec.filtered ? filtered : unfiltered;
         const statement = spec.query();

@@ -253,6 +253,8 @@ export class Migrator {
     readonly backend: MigrationBackend,
     readonly schema = "",
     readonly lockTimeoutMs = 60_000,
+    readonly historyName = MIGRATION_HISTORY,
+    readonly lockName = MIGRATION_LOCK,
   ) {
     const seen = new Set<string>();
     for (const m of migrations) {
@@ -263,18 +265,28 @@ export class Migrator {
 
   /** 历史表和锁表放在 schema 里；默认是连接当前的 schema。 */
   historySchema(schema: string): Migrator {
-    return new Migrator(this.migrations, this.dialect, this.syntax, this.backend, schema, this.lockTimeoutMs);
+    return new Migrator(this.migrations, this.dialect, this.syntax, this.backend, schema, this.lockTimeoutMs, this.historyName, this.lockName);
+  }
+
+  /**
+   * 换历史表的名字，锁表跟着叫"历史表名加 _LOCK"（名字全是小写时加 _lock）。同一个库里有几套各自迁移的表时用它分开，
+   * 例如建在本库上的库自带迁移：`db.migrator(flowMigrations).historyTable("flow_migration")`，锁表是 flow_migration_lock。与 Java 一致。
+   */
+  historyTable(name: string): Migrator {
+    if (name.trim() === "") throw new Error("The history table needs a name");
+    const lock = name + (name === name.toLowerCase() ? "_lock" : "_LOCK");
+    return new Migrator(this.migrations, this.dialect, this.syntax, this.backend, this.schema, this.lockTimeoutMs, name, lock);
   }
 
   /** 等待别的实例释放迁移锁的最长毫秒数，默认一分钟。 */
   lockTimeout(ms: number): Migrator {
-    return new Migrator(this.migrations, this.dialect, this.syntax, this.backend, this.schema, ms);
+    return new Migrator(this.migrations, this.dialect, this.syntax, this.backend, this.schema, ms, this.historyName, this.lockName);
   }
 
   /** 历史表里的各行，按开始时间；历史表还不存在时为空。 */
   async history(): Promise<Applied[]> {
-    if ((await this.syntax.read(this.backend.query, this.schema, MIGRATION_HISTORY)) === undefined) return [];
-    const rows = await this.backend.query(this.#cols("SELECT {VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT} FROM ") + this.#table(MIGRATION_HISTORY) + this.#cols(" ORDER BY {STARTED_AT}"));
+    if ((await this.syntax.read(this.backend.query, this.schema, this.historyName)) === undefined) return [];
+    const rows = await this.backend.query(this.#cols("SELECT {VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT} FROM ") + this.#table(this.historyName) + this.#cols(" ORDER BY {STARTED_AT}"));
     return rows.map((r) => ({
       version: String(r.version),
       description: r.description == null ? "" : String(r.description),
@@ -341,7 +353,7 @@ export class Migrator {
         if (!applied.has(m.version)) {
           const t = now();
           await this.backend.update(
-            "INSERT INTO " + this.#table(MIGRATION_HISTORY) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
+            "INSERT INTO " + this.#table(this.historyName) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}, {FINISHED_AT}) VALUES (?, ?, ?, ?, ?, ?)"),
             m.version,
             m.description,
             await checksum(this.#record(m)),
@@ -359,7 +371,7 @@ export class Migrator {
 
   /** 删掉 version 失败的那一行，修好数据库后再执行 {@link migrateToLatest} 会重新执行它。 */
   async repair(version: string): Promise<void> {
-    const rows = await this.backend.update("DELETE FROM " + this.#table(MIGRATION_HISTORY) + this.#cols(" WHERE {VERSION} = ? AND {STATUS} = ?"), version, "failed");
+    const rows = await this.backend.update("DELETE FROM " + this.#table(this.historyName) + this.#cols(" WHERE {VERSION} = ? AND {STATUS} = ?"), version, "failed");
     if (rows === 0) throw new Error(`Migration ${version} has not failed`);
   }
 
@@ -367,7 +379,7 @@ export class Migrator {
   async #run(m: Migration): Promise<void> {
     const steps = this.#record(m);
     await this.backend.update(
-      "INSERT INTO " + this.#table(MIGRATION_HISTORY) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
+      "INSERT INTO " + this.#table(this.historyName) + this.#cols(" ({VERSION}, {DESCRIPTION}, {CHECKSUM}, {STATUS}, {STARTED_AT}) VALUES (?, ?, ?, ?, ?)"),
       m.version,
       m.description,
       await checksum(steps),
@@ -392,7 +404,7 @@ export class Migrator {
 
   /** 经由 backend 改历史表里一个版本的状态和结束时间。 */
   async #mark(backend: MigrationBackend, version: string, status: string): Promise<void> {
-    await backend.update("UPDATE " + this.#table(MIGRATION_HISTORY) + this.#cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
+    await backend.update("UPDATE " + this.#table(this.historyName) + this.#cols(" SET {STATUS} = ?, {FINISHED_AT} = ? WHERE {VERSION} = ?"), status, now(), version);
   }
 
   /** 让迁移登记它的步骤。 */
@@ -425,10 +437,10 @@ export class Migrator {
   /** 历史表和锁表不存在时建上，锁表放入唯一的一行。 */
   async #ensureTables(): Promise<void> {
     const q = this.backend.query;
-    if ((await this.syntax.read(q, this.schema, MIGRATION_HISTORY)) === undefined) {
+    if ((await this.syntax.read(q, this.schema, this.historyName)) === undefined) {
       await this.backend.run(
         this.syntax.createTable(
-          tableBuilder(this.schema, MIGRATION_HISTORY)
+          tableBuilder(this.schema, this.historyName)
             .column("VERSION", columnType("TEXT", 100))
             .column("DESCRIPTION", columnType("TEXT", 200))
             .column("CHECKSUM", columnType("TEXT", 64))
@@ -441,29 +453,29 @@ export class Migrator {
         ),
       );
     }
-    if ((await this.syntax.read(q, this.schema, MIGRATION_LOCK)) === undefined) {
+    if ((await this.syntax.read(q, this.schema, this.lockName)) === undefined) {
       await this.backend.run(
-        this.syntax.createTable(tableBuilder(this.schema, MIGRATION_LOCK).column("ID", columnType("INTEGER")).column("OWNER", columnType("TEXT", 64)).column("LOCKED_AT", columnType("TIMESTAMP")).primaryKey("ID").build()),
+        this.syntax.createTable(tableBuilder(this.schema, this.lockName).column("ID", columnType("INTEGER")).column("OWNER", columnType("TEXT", 64)).column("LOCKED_AT", columnType("TIMESTAMP")).primaryKey("ID").build()),
       );
     }
-    if ((await q(this.#cols("SELECT {ID} FROM ") + this.#table(MIGRATION_LOCK) + this.#cols(" WHERE {ID} = ?"), 1)).length === 0) {
+    if ((await q(this.#cols("SELECT {ID} FROM ") + this.#table(this.lockName) + this.#cols(" WHERE {ID} = ?"), 1)).length === 0) {
       // 另一个实例同时插入了这一行时插入失败，忽略即可。
-      await this.backend.update("INSERT INTO " + this.#table(MIGRATION_LOCK) + this.#cols(" ({ID}) VALUES (?)"), 1).catch(() => undefined);
+      await this.backend.update("INSERT INTO " + this.#table(this.lockName) + this.#cols(" ({ID}) VALUES (?)"), 1).catch(() => undefined);
     }
   }
 
   /** 占用锁行；别的实例占着时每半秒重试一次，超过 lockTimeoutMs 报错。 */
   async #lock(): Promise<void> {
     const deadline = Date.now() + this.lockTimeoutMs;
-    while ((await this.backend.update("UPDATE " + this.#table(MIGRATION_LOCK) + this.#cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), this.#owner, now(), 1)) === 0) {
-      if (Date.now() > deadline) throw new Error(`Another process holds the migration lock in ${this.#table(MIGRATION_LOCK)}; if it crashed, clear OWNER by hand`);
+    while ((await this.backend.update("UPDATE " + this.#table(this.lockName) + this.#cols(" SET {OWNER} = ?, {LOCKED_AT} = ? WHERE {ID} = ? AND {OWNER} IS NULL"), this.#owner, now(), 1)) === 0) {
+      if (Date.now() > deadline) throw new Error(`Another process holds the migration lock in ${this.#table(this.lockName)}; if it crashed, clear OWNER by hand`);
       await sleep(500);
     }
   }
 
   /** 释放锁行。 */
   async #unlock(): Promise<void> {
-    await this.backend.update("UPDATE " + this.#table(MIGRATION_LOCK) + this.#cols(" SET {OWNER} = NULL, {LOCKED_AT} = NULL WHERE {ID} = ? AND {OWNER} = ?"), 1, this.#owner);
+    await this.backend.update("UPDATE " + this.#table(this.lockName) + this.#cols(" SET {OWNER} = NULL, {LOCKED_AT} = NULL WHERE {ID} = ? AND {OWNER} = ?"), 1, this.#owner);
   }
 
   /** 把 SQL 片段里的 {列名} 换成按方言加引号的列名，问号换成方言的占位符由调用方的 backend 负责。 */

@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        database: [postgres, mysql]
+        database: [postgres, mysql, polardb]
         language: [java, typescript]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -94,6 +94,15 @@ jobs:
                 echo "QUERY_MYSQL_PASSWORD=$password"
                 echo "JAVA_MODULE=java/query-mysql"
                 echo "JAVA_TEST=MysqlLiveTest"
+              } >> "$GITHUB_ENV" ;;
+            polardb)
+              # 开源的 PolarDB-X 引擎；PolardbLiveTest 继承 MySQL 的全部实库场景，再加 PolarDB 专属的
+              {
+                echo "QUERY_POLARDB_URL=jdbc:mysql://127.0.0.1:53307/query?sslMode=DISABLED&allowPublicKeyRetrieval=true"
+                echo "QUERY_POLARDB_USER=root"
+                echo "QUERY_POLARDB_PASSWORD=$password"
+                echo "JAVA_MODULE=java/query-polardb"
+                echo "JAVA_TEST=PolardbLiveTest"
               } >> "$GITHUB_ENV" ;;
           esac
           QUERY_DB_PASSWORD="$password" docker compose up --detach

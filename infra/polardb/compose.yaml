@@ -1,0 +1,56 @@
+# PolarDB-X Engine for local development and CI live tests of the PolarDB dialect, self-contained: this folder is
+# all you need. It is the open-source PolarDB engine (MySQL 8.0.42 core) as one node; Alibaba Cloud's PolarDB
+# for MySQL is a separate, closed product, so this is the closest thing we can run. See docs/decisions/0012.
+# The memory limit lives only here; CI reads it back and checks that Docker enforced it.
+#
+# HOW TO DEPLOY AND USE (WSL Debian; a plain Debian/Ubuntu server works the same way)
+#
+# 1. Open WSL from Windows (skip on a server):
+#      wsl -d Debian
+# 2. Install Docker Engine with the compose plugin (skip when `docker compose version` already works).
+# 3. Go to this folder (the WSL path of infra/polardb in the repository, or wherever you copied it):
+#      cd /mnt/c/Users/<you>/IdeaProjects/query/infra/polardb
+# 4. Create the password file once (.env is git-ignored; compose reads it automatically); see .env.example for
+#    the table-name case setting:
+#      printf 'QUERY_DB_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
+# 5. Build and start. The first start initializes the data directory and waits for the node to become the
+#    Paxos leader, about half a minute. The state must become "healthy":
+#      docker compose up -d --build
+#      docker compose ps
+# 6. Connect from Windows with the WSL address (wsl -d Debian hostname -I, first address):
+#      jdbc:mysql://<WSL_IP>:53307/query, user query or root, password QUERY_DB_PASSWORD.
+#    The port is published on 0.0.0.0; change it with QUERY_POLARDB_PORT in .env.
+# 7. Everyday commands, from this folder:
+#      docker compose logs -f polardb       # follow the log (mysqld and XPaxos), Ctrl+C to leave
+#      docker compose stop                  # stop, data is kept
+#      docker compose up -d                 # start again, no rebuild
+#      docker compose down -v               # delete the container AND its data
+name: query-polardb
+
+services:
+  polardb:
+    build: .
+    image: query-dev/polardbx-engine:8.4.21
+    platform: linux/amd64
+    restart: unless-stopped
+    mem_limit: 2g
+    memswap_limit: 2g
+    mem_reservation: 512m
+    cpus: 1.0
+    pids_limit: 512
+    environment:
+      QUERY_DB_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in .env or the environment}
+      QUERY_POLARDB_LOWER_CASE_TABLE_NAMES: ${QUERY_POLARDB_LOWER_CASE_TABLE_NAMES:-1}
+    ports:
+      - "${QUERY_POLARDB_PORT:-53307}:3306"
+    volumes:
+      - polardb-data:/data
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD=$$QUERY_DB_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u query -D query -e "SELECT 1" >/dev/null']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 60s
+
+volumes:
+  polardb-data:

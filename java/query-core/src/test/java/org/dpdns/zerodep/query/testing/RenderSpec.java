@@ -63,6 +63,12 @@ public abstract class RenderSpec {
     /** 本方言不支持的共享用例：渲染时必须抛出 UnsupportedOperationException，也不能有金样例文件。 */
     protected Set<String> unsupportedCases() { return Set.of(); }
 
+    /**
+     * 写法沿用的方言（PolarDB 沿用 mysql）：没有本方言金样例文件的用例和那个方言的文件比对；
+     * {@code QUERY_SPEC_WRITE=1} 时与那个方言的文件相同就不写本方言的文件。为 null 时每个用例都要有自己的文件。
+     */
+    protected String fallbackDialect() { return null; }
+
     private Map<String, SpecCase> cases() {
         Map<String, SpecCase> all = new LinkedHashMap<>(SpecCases.shared());
         all.keySet().removeAll(unsupportedCases());
@@ -102,12 +108,18 @@ public abstract class RenderSpec {
             // 数组参数写成逗号连接的元素，与 TypeScript 的 String(array) 相同。
             List<String> parameters = r.parameters().stream().map(v -> v instanceof Object[] a
                 ? java.util.Arrays.stream(a).map(String::valueOf).collect(java.util.stream.Collectors.joining(",")) : String.valueOf(v)).toList();
-            Path file = directory().resolve(e.getKey() + "." + dialect() + ".sql");
+            Path own = directory().resolve(e.getKey() + "." + dialect() + ".sql");
+            Path inherited = fallbackDialect() == null ? null : directory().resolve(e.getKey() + "." + fallbackDialect() + ".sql");
             if (write) {
-                Files.writeString(file, HEADER + json(parameters) + "\n" + r.sql() + "\n", StandardCharsets.UTF_8);
+                String golden = HEADER + json(parameters) + "\n" + r.sql() + "\n";
+                boolean same = inherited != null && Files.exists(inherited)
+                    && Files.readString(inherited, StandardCharsets.UTF_8).replace("\r\n", "\n").equals(golden);
+                if (same) Files.deleteIfExists(own);
+                else Files.writeString(own, golden, StandardCharsets.UTF_8);
                 return;
             }
-            assertTrue(Files.exists(file), file + " is missing; run with QUERY_SPEC_WRITE=1 to write it");
+            Path file = Files.exists(own) || inherited == null ? own : inherited;
+            assertTrue(Files.exists(file), own + " is missing; run with QUERY_SPEC_WRITE=1 to write it");
             String content = Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n");
             int newline = content.indexOf('\n');
             assertTrue(content.startsWith(HEADER), file + " starts with its parameters");

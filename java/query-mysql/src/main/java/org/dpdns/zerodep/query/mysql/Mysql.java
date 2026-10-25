@@ -34,7 +34,7 @@ import javax.sql.DataSource;
  * <pre>{@code import static org.dpdns.zerodep.query.mysql.Mysql.*;}</pre>
  * MySQL 专属函数在其他方言上渲染时会报错。
  */
-public final class Mysql extends Sql {
+public class Mysql extends Sql {
     // 只能在 MySQL 方言上渲染的函数；在其他方言上渲染会报错。
     private static final FunctionDef GREATEST = FunctionDef.only(MysqlDialect.class, "GREATEST");
     private static final FunctionDef LEAST = FunctionDef.only(MysqlDialect.class, "LEAST");
@@ -118,8 +118,8 @@ public final class Mysql extends Sql {
         };
     }
 
-    /** 只放静态方法，不能实例化。 */
-    private Mysql() { }
+    /** 只放静态方法，不能实例化；兼容 MySQL 的方言门面（PolarDB）继承它，一次静态导入拿到 MySQL 的全部词汇。 */
+    protected Mysql() { }
 
     // ---------- 数据库 ----------
 
@@ -150,6 +150,12 @@ public final class Mysql extends Sql {
         return new Hint(w -> w.sql(hint));
     }
 
+    /**
+     * 兼容 MySQL 的方言门面（PolarDB）造自己的优化器提示：body 只写提示本身，与 MySQL 的提示合并进同一个注释，
+     * 只能在 dialect 及其子类上渲染。
+     */
+    protected static Clause hint(Class<? extends MysqlDialect> dialect, Consumer<SqlWriter> body) { return new Hint(dialect, body); }
+
     /** 优化器提示 {@code INDEX(别名 索引, ...)}：只考虑这些索引；table 是查询的表参数。与其他提示合并进同一个注释。 */
     public static Clause index(Entity table, String... indexes) { return indexHint("INDEX", table, indexes); }
 
@@ -172,16 +178,22 @@ public final class Mysql extends Sql {
      * 由 {@link #maxExecutionTime}、{@link #index} 等创建。
      */
     public static final class Hint implements Clause {
+        private final Class<? extends MysqlDialect> dialect;
         private final Consumer<SqlWriter> body;
 
-        private Hint(Consumer<SqlWriter> body) { this.body = body; }
+        private Hint(Consumer<SqlWriter> body) { this(MysqlDialect.class, body); }
+
+        private Hint(Class<? extends MysqlDialect> dialect, Consumer<SqlWriter> body) {
+            this.dialect = dialect;
+            this.body = body;
+        }
 
         /** 只写提示本身，不带注释符号。 */
         void renderBody(SqlWriter w) { body.accept(w); }
 
         @Override public Position position() { return Position.HINT; }
 
-        @Override public Class<? extends Dialect> dialect() { return MysqlDialect.class; }
+        @Override public Class<? extends Dialect> dialect() { return dialect; }
 
         /** 单独写出时带上注释符号；同一段里有多个提示时由方言合并。 */
         @Override public void render(SqlWriter w) {

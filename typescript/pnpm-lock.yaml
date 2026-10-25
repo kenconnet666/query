@@ -42,6 +42,22 @@ importers:
         specifier: 3.24.6
         version: 3.24.6(@types/node@24.19.2)
 
+  packages/polardb:
+    dependencies:
+      '@zerodep-dev/query-core':
+        specifier: workspace:*
+        version: link:../core
+      '@zerodep-dev/query-mysql':
+        specifier: workspace:*
+        version: link:../mysql
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      mysql2:
+        specifier: 3.24.6
+        version: 3.24.6(@types/node@24.19.2)
+
   packages/postgres:
     dependencies:
       '@zerodep-dev/query-core':
@@ -82,6 +98,9 @@ importers:
       '@zerodep-dev/query-mysql':
         specifier: workspace:*
         version: link:../packages/mysql
+      '@zerodep-dev/query-polardb':
+        specifier: workspace:*
+        version: link:../packages/polardb
       '@zerodep-dev/query-postgres':
         specifier: workspace:*
         version: link:../packages/postgres

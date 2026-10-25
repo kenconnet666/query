@@ -1,5 +1,6 @@
 package org.dpdns.zerodep.query.write;
 
+import org.dpdns.zerodep.query.dialect.Clause;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
@@ -126,6 +127,12 @@ public final class Update<T extends Entity> implements Write {
     /** 允许没有 where 条件，即更新全表。 */
     public Update<T> all() { return new Update<>(target.all(), sets, byId); }
 
+    /**
+     * 加一个写在 UPDATE 后面的提示，例如 MySQL 的 {@code with(l -> noIndex(l, "IX_LIPS"))}、PolarDB 的
+     * {@code with(s -> inventory(1))}；lambda 收到被更新的表。提示属于别的方言时渲染报错。
+     */
+    public Update<T> with(Function<T, Clause> hint) { return new Update<>(target.hint(hint), sets, byId); }
+
     /** 期望影响 rows 行，不符时 {@code db.execute} 抛出 {@code UnexpectedRowCountException}；用于"比较后更新"的状态流转。 */
     public Update<T> expect(long rows) { return new Update<>(target.expect(rows), sets, byId); }
 
@@ -185,6 +192,7 @@ public final class Update<T extends Entity> implements Write {
                 + " or the dialect's join update");
         }
         w.sql("UPDATE ");
+        target.renderHints(w);
         target.ref().renderSource(w);
         w.sql("\nSET ");
         for (int i = 0; i < all.size(); i++) {

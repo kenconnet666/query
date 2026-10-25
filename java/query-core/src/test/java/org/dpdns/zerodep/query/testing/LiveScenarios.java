@@ -71,6 +71,7 @@ import static org.dpdns.zerodep.query.Sql.keys;
 import static org.dpdns.zerodep.query.Sql.left;
 import static org.dpdns.zerodep.query.Sql.negate;
 import static org.dpdns.zerodep.query.Sql.nullOf;
+import static org.dpdns.zerodep.query.Sql.orders;
 import static org.dpdns.zerodep.query.Sql.plus;
 import static org.dpdns.zerodep.query.Sql.replace;
 import static org.dpdns.zerodep.query.Sql.right;
@@ -704,6 +705,17 @@ public abstract class LiveScenarios {
     }
 
     @Test
+    void 迁移历史表改名后两套迁移各记各的() throws SQLException {
+        live.execute(List.of("-DROP TABLE " + t("M_TASK"), "-DROP TABLE " + t(Migrator.HISTORY), "-DROP TABLE " + t(Migrator.LOCK),
+            "-DROP TABLE " + t("M_HISTORY"), "-DROP TABLE " + t("M_HISTORY_LOCK")));
+        Migrator own = db.migrator(List.of(Schemas.CREATE_TASK)).historySchema("QUERY_IT").historyTable("M_HISTORY");
+        assertEquals(List.of("1"), own.migrateToLatest());
+        assertEquals(List.of("1"), own.history().stream().map(Migrator.Applied::version).toList());
+        assertTrue(db.schema().read("QUERY_IT", "M_HISTORY_LOCK") != null, "the lock table follows the history table's name");
+        assertEquals(List.of(), db.migrator(List.of(Schemas.CREATE_TASK)).historySchema("QUERY_IT").history(), "the default history table stays untouched");
+    }
+
+    @Test
     void 外部表只核对已声明的列() {
         assertTrue(db.schema().check(Schemas.LipsExternal.class).isEmpty());
         SchemaPlan broken = db.schema().check(Schemas.LipsBroken.class);
@@ -1074,6 +1086,155 @@ public abstract class LiveScenarios {
         assertEquals(List.of("T1"), db.transaction(() -> db.list(Workflow.claimable())));
         assertEquals(List.of("T1", "T3"), db.transaction(() -> db.list(from(Workflow.Task.class).where(t -> t.assignee().isNull())
             .orderBy(t -> t.id()).with(forUpdate(Lock.NOWAIT)).select(t -> t.id()))));
+    }
+
+    // ---------- 流程引擎的写法（Engine） ----------
+
+    /** 引擎场景的表名。 */
+    private static final List<String> ENGINE_TABLES = List.of("E_INSTANCE", "E_WORK_ITEM", "E_CANDIDATE", "E_EVENT", "E_JOB");
+
+    /** 引擎场景的时间基准（UTC）。 */
+    private static final LocalDateTime ENGINE_AT = LocalDateTime.of(2026, 10, 24, 8, 0);
+
+    /** 删掉并按声明重建引擎场景的表：建表本身也是在验证结构变更对这些列类型（长整数主键、长文本、时间、版本）的写法。 */
+    private void engineTables() throws SQLException {
+        live.execute(ENGINE_TABLES.stream().map(name -> "-DROP TABLE " + t(name)).toList());
+        db.schema().plan(Engine.TABLES.toArray(Class<?>[]::new)).apply();
+    }
+
+    /** 一个会签实例：两个待处理的待办，分别给 alice 和 bob。 */
+    private void signInstance() {
+        db.execute(insertInto(Engine.Instance.class).values(new Engine.InstanceRow(1L, "active", "{}", 0, ENGINE_AT)));
+        db.execute(insertInto(Engine.WorkItem.class).values(
+            new Engine.WorkItemRow(11L, 1L, "sign", null, "alice", "open", ENGINE_AT),
+            new Engine.WorkItemRow(12L, 1L, "sign", null, "bob", "open", ENGINE_AT)));
+    }
+
+    /**
+     * 引擎处理一个会签待办：先把实例的版本加一（各库都会锁住这一行，后来的推进在这里排队），再把待办从 open 改成 done
+     * （改到 0 行就是重复提交），同一节点没有待处理的了就生成下一个节点的待办。中间停一下，让并发的另一次提交确实撞上。
+     */
+    private void completeSign(long item, long next) {
+        db.transaction(() -> {
+            db.execute(update(Engine.Instance.class).set(i -> i.rev().to(plus(i.rev(), val(1)))).where(i -> i.id().eq(1L)).expect(1));
+            db.execute(update(Engine.WorkItem.class).set(w -> w.state().to("done")).where(w -> all(w.id().eq(item), w.state().eq("open"))).expect(1));
+            pause(300);
+            long open = db.count(from(Engine.WorkItem.class).where(w -> all(w.instanceId().eq(1L), w.node().eq("sign"), w.state().eq("open"))).select(w -> w.id()));
+            if (open == 0) db.execute(insertInto(Engine.WorkItem.class).values(new Engine.WorkItemRow(next, 1L, "after", "review", null, "open", ENGINE_AT)));
+        });
+    }
+
+    /** 停 ms 毫秒；被中断时恢复中断标记并报错。 */
+    private static void pause(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** 两个任务在两个线程里同时开始，等两者都结束，返回各自的结果。 */
+    private static <R> List<R> concurrently(java.util.concurrent.Callable<R> a, java.util.concurrent.Callable<R> b) throws Exception {
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> { start.await(); return a.call(); });
+            var second = pool.submit(() -> { start.await(); return b.call(); });
+            start.countDown();
+            return java.util.Arrays.asList(first.get(60, java.util.concurrent.TimeUnit.SECONDS), second.get(60, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void 引擎_会签的两个待办同时提交时先锁实例行所以只推进一次() throws Exception {
+        engineTables();
+        signInstance();
+        concurrently(() -> { completeSign(11L, 21L); return null; }, () -> { completeSign(12L, 22L); return null; });
+        assertEquals(List.of("done", "done"), db.list(from(Engine.WorkItem.class).where(w -> w.node().eq("sign")).orderBy(w -> w.id()).select(w -> w.state())));
+        assertEquals(1L, db.count(from(Engine.WorkItem.class).where(w -> w.node().eq("after")).select(w -> w.id())), "exactly one of the two completions moves the instance on");
+        Integer rev = db.one(from(Engine.Instance.class).select(i -> i.rev()));
+        assertEquals(2, rev);
+    }
+
+    @Test
+    void 引擎_同一个待办提交两次时第二次改到0行就报错() throws SQLException {
+        engineTables();
+        signInstance();
+        var complete = update(Engine.WorkItem.class).set(w -> w.state().to("done")).where(w -> all(w.id().eq(11L), w.state().eq("open"))).expect(1);
+        db.execute(complete);
+        assertThrows(UnexpectedRowCountException.class, () -> db.execute(complete));
+    }
+
+    /**
+     * 两个工作进程同时领取作业，各领两个，互不重复。领取不用 {@code FOR UPDATE SKIP LOCKED}：实测 MySQL（InnoDB）的加锁读
+     * 会锁住扫描到的每一行，没有合适的索引时第一个进程就把到期和没到期的行全锁了，第二个进程什么也领不到，而 PostgreSQL 只锁返回的行；
+     * 所以先不加锁地读出候选，再逐个用带条件的 UPDATE 抢占（改到 1 行才算领到），五个库（含只有一个写者的 SQLite）写法相同。
+     */
+    @Test
+    void 引擎_两个工作进程同时领取作业时互不重复() throws Exception {
+        engineTables();
+        db.execute(insertInto(Engine.Job.class).values(new Engine.JobRow(1L, ENGINE_AT, null), new Engine.JobRow(2L, ENGINE_AT.plusMinutes(1), null),
+            new Engine.JobRow(3L, ENGINE_AT.plusMinutes(2), null), new Engine.JobRow(4L, ENGINE_AT.plusMinutes(3), null),
+            new Engine.JobRow(5L, ENGINE_AT.plusDays(1), null)));
+        java.util.function.Function<String, java.util.concurrent.Callable<List<Long>>> worker = name -> () -> {
+            List<Long> due = db.list(from(Engine.Job.class).where(j -> all(j.lockedBy().isNull(), j.dueAt().le(ENGINE_AT.plusHours(1))))
+                .orderBy(j -> orders(j.dueAt(), j.id())).limit(10).select(j -> j.id()));
+            List<Long> mine = new ArrayList<>();
+            for (Long id : due) {
+                if (mine.size() == 2) break;
+                if (db.execute(update(Engine.Job.class).set(j -> j.lockedBy().to(name)).where(j -> all(j.id().eq(id), j.lockedBy().isNull()))) == 1) mine.add(id);
+                pause(50);
+            }
+            return mine;
+        };
+        List<List<Long>> claimed = concurrently(worker.apply("w1"), worker.apply("w2"));
+        List<Long> ids = new ArrayList<>(claimed.get(0));
+        ids.addAll(claimed.get(1));
+        assertEquals(List.of(1L, 2L, 3L, 4L), ids.stream().sorted().toList(), "each due job is claimed once: " + claimed);
+        assertEquals(1L, db.count(from(Engine.Job.class).where(j -> j.lockedBy().isNull()).select(j -> j.id())), "the job due tomorrow stays");
+    }
+
+    @Test
+    void 引擎_待办包括自己的和候选的但不包括退回过收件箱的() throws SQLException {
+        engineTables();
+        db.execute(insertInto(Engine.WorkItem.class).values(
+            new Engine.WorkItemRow(31L, 1L, "check", "cost", null, "open", ENGINE_AT),
+            new Engine.WorkItemRow(32L, 1L, "fix", null, "alice", "open", ENGINE_AT),
+            new Engine.WorkItemRow(33L, 2L, "check", null, null, "open", ENGINE_AT),
+            new Engine.WorkItemRow(34L, 2L, "fix", null, "alice", "done", ENGINE_AT)));
+        db.execute(insertInto(Engine.Candidate.class).values(
+            new Engine.CandidateRow(1L, 31L, "group", "cost"), new Engine.CandidateRow(2L, 31L, "excluded", "alice"),
+            new Engine.CandidateRow(3L, 33L, "user", "alice")));
+        assertEquals(List.of(32L, 33L), db.list(from(Engine.WorkItem.class).where(w -> Engine.todo(w, "alice", List.of("cost"))).orderBy(w -> w.id()).select(w -> w.id())));
+        assertEquals(List.of(31L), db.list(from(Engine.WorkItem.class).where(w -> Engine.todo(w, "bob", List.of("cost"))).orderBy(w -> w.id()).select(w -> w.id())));
+    }
+
+    @Test
+    void 引擎_实例上的长JSON变量原样往返() throws SQLException {
+        engineTables();
+        String big = "{\"amount\":\"1234.50\",\"note\":\"" + "中文".repeat(3000) + "x".repeat(6000) + "\"}";
+        db.execute(insertInto(Engine.Instance.class).values(new Engine.InstanceRow(2L, "active", big, 0, ENGINE_AT)));
+        assertEquals(big, db.one(from(Engine.Instance.class).where(i -> i.id().eq(2L)).select(i -> i.variables())));
+        String changed = big.replace("1234.50", "99.00");
+        db.execute(update(Engine.Instance.class).byId(new Engine.InstanceRow(2L, "active", changed, 0, ENGINE_AT)));
+        assertEquals(changed, db.one(from(Engine.Instance.class).where(i -> i.id().eq(2L)).select(i -> i.variables())));
+        Integer changedRev = db.one(from(Engine.Instance.class).where(i -> i.id().eq(2L)).select(i -> i.rev()));
+        assertEquals(1, changedRev);
+    }
+
+    @Test
+    void 引擎_流转记录批量写入后按时间倒序分页且毫秒不丢() throws SQLException {
+        engineTables();
+        List<Engine.EventRow> rows = new ArrayList<>();
+        for (int i = 1; i <= 30; i++) rows.add(new Engine.EventRow((long) i, 1L, i % 2 == 0 ? "completed" : "arrived", ENGINE_AT.plusMinutes(i).plusNanos(123_000_000)));
+        db.execute(insertInto(Engine.Event.class).values(rows));
+        Page<Long> second = db.page(from(Engine.Event.class).where(e -> e.instanceId().eq(1L)).orderBy(e -> orders(e.at().desc(), e.id())).select(e -> e.id()), 2, 10);
+        assertEquals(30, second.total());
+        assertEquals(List.of(20L, 19L, 18L, 17L, 16L, 15L, 14L, 13L, 12L, 11L), second.rows());
+        assertEquals(ENGINE_AT.plusMinutes(7).plusNanos(123_000_000), db.one(from(Engine.Event.class).where(e -> e.id().eq(7L)).select(e -> e.at())));
     }
 
     @Test

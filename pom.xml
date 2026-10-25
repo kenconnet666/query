@@ -45,6 +45,7 @@
         <module>java/query-hana</module>
         <module>java/query-postgres</module>
         <module>java/query-mysql</module>
+        <module>java/query-polardb</module>
         <module>java/query-sqlite</module>
         <module>java/query-spring</module>
         <module>java/query-maven-plugin</module>
@@ -101,6 +102,17 @@
             <dependency>
                 <groupId>org.dpdns.zerodep</groupId>
                 <artifactId>query-mysql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-mysql</artifactId>
+                <version>${project.version}</version>
+                <type>test-jar</type>
+            </dependency>
+            <dependency>
+                <groupId>org.dpdns.zerodep</groupId>
+                <artifactId>query-polardb</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

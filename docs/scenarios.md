@@ -126,4 +126,17 @@
 | 办理人工作量 | `GROUP BY ASSIGNEE_` 加 `SUM(CASE WHEN ...)` | `groupBy` 加 `count().filter(...)` | `workflow-workload` |
 | 读取时计算耗时 | Warm-Flow、SnakerFlow 不存耗时，按方言写日期差 | `secondsBetween(start, end)` | `workflow-elapsed` |
 
-写入一侧（乐观锁的 `UPDATE ... WHERE REV_ = ?`、认领任务的 `FOR UPDATE SKIP LOCKED`、批量插入和逻辑删除）由 2.0 的写入能力覆盖，见上表和 [0007](decisions/0007-writes.md)；认领任务的金样例是 `workflow-claim`。流程引擎本身暂不做。
+写入一侧（乐观锁的 `UPDATE ... WHERE REV_ = ?`、认领任务的 `FOR UPDATE SKIP LOCKED`、批量插入和逻辑删除）由 2.0 的写入能力覆盖，见上表和 [0007](decisions/0007-writes.md)；认领任务的金样例是 `workflow-claim`。引擎的写入与并发写法见下一节。
+
+## 流程引擎的写法
+
+自研流程引擎（flow 仓库）打算用的写法，按它的表形状简化后放在测试夹具 `Engine`（Java）和 `fixtures/engine.ts`（TS），表由结构变更按声明建出；两端在 HANA、PostgreSQL、MySQL、PolarDB、SQLite 上都跑（2026-10-24 本机全部通过）。
+
+| 场景 | 写法 | 结论 |
+| --- | --- | --- |
+| 会签的两个待办同时提交 | 事务里先 `UPDATE 实例 SET REV = REV + 1`（各库都锁住这一行），再带状态条件改待办，同一节点没有待处理的了才生成下一个待办 | 只推进一次；不先锁实例行时两边都以为对方没完成，流程会卡住 |
+| 同一待办重复提交 | `update(...).where(id = ? AND state = 'open').expect(1)` | 第二次改到 0 行，报 `UnexpectedRowCount` |
+| 两个工作进程领取作业 | 先普通读出到期的候选，再逐个 `UPDATE ... SET locked_by = ? WHERE id = ? AND locked_by IS NULL`，改到 1 行才算领到 | 互不重复，五个库写法相同。不用 `FOR UPDATE SKIP LOCKED`：实测 InnoDB 会锁住扫描到的所有行，第二个进程一个也领不到，而 PostgreSQL 只锁返回的行 |
+| 待办的候选与排除 | 办理人是自己，或没有办理人、自己或自己的组是候选（`any`）且自己没被排除（`none`） | 退回过收件箱的人看不到那一条 |
+| 实例上的长 JSON 变量 | `@Column(lob = true)` 的文本列，整份读写 | 含中文的上万字符原样往返 |
+| 流转记录 | 多行插入（一个事务、JDBC 批量），按时间倒序分页 | 总数、页内顺序正确，时间的毫秒不丢 |

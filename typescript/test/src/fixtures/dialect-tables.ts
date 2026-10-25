@@ -68,6 +68,13 @@ export class PartLogMysql {
   @column("AMOUNT", decimal, { precision: 10, scale: 2 }) amount!: string | null;
 }
 
+/** PolarDB 的闪回查询与库存提示用的表，与 Java 的 PolardbLiveTest.Stock 对应。 */
+@table("P_STOCK", { schema: SCHEMA })
+export class PolardbStock {
+  @id @column("ID", bigint) id!: bigint;
+  @column("QTY", integer) qty!: number;
+}
+
 /** HANA 分区表：按日期范围分区的日志，分区键 DAY 必须在主键里，与 Java 的 PartLog 对应。 */
 @table("PART_LOG", { schema: SCHEMA, options: [{ dialect: HanaDialect, sql: "PARTITION BY RANGE (DAY) (PARTITION '2025-01-01' <= VALUES < '2026-01-01', PARTITION '2026-01-01' <= VALUES < '2027-01-01', PARTITION OTHERS)" }] })
 export class PartLogHana {

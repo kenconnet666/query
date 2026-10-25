@@ -11,10 +11,10 @@ export { mysqlDriver } from "./driver.js";
 export { index, jsonContains, jsonText, match, matchBoolean, matchScore, noIndex } from "./functions.js";
 export { dateFormat, daysFollowing, daysPreceding, exceptAll, forShare, forUpdateOf, greatest, intersectAll, least, maxExecutionTime, range, recursiveCte } from "./functions.js";
 
-/** MySQL 数据库：查询渲染成 MySQL SQL，经由给定的驱动执行。 */
+/** MySQL 数据库：查询渲染成 MySQL SQL，经由给定的驱动执行。兼容 MySQL 的方言（PolarDB）的数据库继承它，传入自己的方言。 */
 export class MysqlDatabase extends Database {
-  constructor(driver: Driver, options?: DatabaseOptions) {
-    super(MysqlDialect.instance, driver, options);
+  constructor(driver: Driver, options?: DatabaseOptions, dialect: MysqlDialect = MysqlDialect.instance) {
+    super(dialect, driver, options);
   }
 }
 

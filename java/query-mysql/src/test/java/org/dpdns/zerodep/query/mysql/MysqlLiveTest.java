@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Needs QUERY_MYSQL_URL, QUERY_MYSQL_USER and QUERY_MYSQL_PASSWORD; skipped otherwise. */
 @DisplayName("MySQL 实库场景")
-class MysqlLiveTest extends LiveScenarios {
+public class MysqlLiveTest extends LiveScenarios {
 
     @Override protected LiveDatabase connect() { return LiveDatabase.fromEnvironment("MYSQL"); }
 
@@ -145,6 +145,17 @@ class MysqlLiveTest extends LiveScenarios {
         List<String> rows = db.list(from(Lips.class).join(Mara.class, (l, m) -> m.material().eq(l.material()))
             .with((l, m) -> maxExecutionTime(5000)).with((l, m) -> noIndex(m)).orderBy((l, m) -> l.delivery()).select((l, m) -> l.delivery()));
         assertEquals(List.of("D1", "D2", "D3", "D4", "D5"), rows);
+    }
+
+    @Test
+    void UPDATE与DELETE带优化器提示() {
+        assertThrows(IllegalStateException.class, () -> db.transaction(() -> {
+            assertEquals(1L, db.execute(update(Lips.class).with(l -> noIndex(l)).set(l -> l.unit().to("KG")).where(l -> l.delivery().eq("D1"))));
+            assertEquals("KG", db.one(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.unit())));
+            assertEquals(0L, db.execute(deleteFrom(Lips.class).with(l -> noIndex(l)).where(l -> l.delivery().eq("D9"))));
+            throw new IllegalStateException("roll back the change");
+        }));
+        assertEquals("EA", db.one(from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> l.unit())));
     }
 
     @Test

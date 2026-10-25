@@ -14,6 +14,9 @@
       "path": "packages/mysql"
     },
     {
+      "path": "packages/polardb"
+    },
+    {
       "path": "packages/sqlite"
     },
     {

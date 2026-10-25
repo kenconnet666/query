@@ -1,6 +1,6 @@
 # 0011 阿里云 PolarDB MySQL 8.0 的兼容性调研
 
-- 状态：调研结论（2026-10-24），**暂不改代码**；用户决定以后再看
+- 状态：调研结论（2026-10-24）；同日由 [0012](0012-polardb-dialect.md) 落实为 PolarDB 方言（以开源 PolarDB-X 引擎实测为准），兼容旧小版本的选项仍未做
 - 范围：MySQL 方言（Java `query-mysql`、TS `@zerodep-dev/query-mysql`）在 PolarDB MySQL 版上能否使用
 - 证据：本文的结论都来自阿里云文档和本仓库代码的对照，**还没有在真实的 PolarDB 集群上执行过**
 

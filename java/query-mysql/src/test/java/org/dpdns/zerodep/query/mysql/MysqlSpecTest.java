@@ -24,7 +24,7 @@ import java.util.function.Consumer;
 import static org.dpdns.zerodep.query.mysql.Mysql.*;
 
 @DisplayName("MySQL 渲染金样例")
-class MysqlSpecTest extends RenderSpec {
+public class MysqlSpecTest extends RenderSpec {
     @Override protected String dialect() { return "mysql"; }
 
     @Override protected Database database(ConnectionProvider connections, Consumer<Database.Config> configure) {
@@ -96,6 +96,14 @@ class MysqlSpecTest extends RenderSpec {
             "mysql-fulltext", SpecCase.plain(() -> from(Article.class)
                 .where(a -> any(match("pump", a.title(), a.body()), matchBoolean("+valve -leak", a.title(), a.body())))
                 .orderBy(a -> matchScore("pump", a.title(), a.body()).desc())
-                .select(a -> a.id())));
+                .select(a -> a.id())),
+            "mysql-update-hints", SpecCase.filtered(() -> update(Lips.class)
+                .with(l -> noIndex(l, "IX_LIPS"))
+                .with(l -> maxExecutionTime(2000))
+                .set(l -> l.unit().to("KG"))
+                .where(l -> l.delivery().eq("D1"))),
+            "mysql-delete-hints", SpecCase.filtered(() -> deleteFrom(Lips.class)
+                .with(l -> index(l, "PRIMARY"))
+                .where(l -> l.delivery().eq("D9"))));
     }
 }

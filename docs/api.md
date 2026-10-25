@@ -61,6 +61,7 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 | SAP HANA | `org.dpdns.zerodep.query.hana.Hana` | `HanaDatabase` |
 | PostgreSQL | `org.dpdns.zerodep.query.postgres.Postgres` | `PostgresDatabase` |
 | MySQL 8 | `org.dpdns.zerodep.query.mysql.Mysql` | `MysqlDatabase` |
+| PolarDB for MySQL | `org.dpdns.zerodep.query.polardb.Polardb`（含 MySQL 的全部写法） | `PolardbDatabase`（也是 `MysqlDatabase`，见第 19 节） |
 | SQLite 3.46+ | `org.dpdns.zerodep.query.sqlite.Sqlite` | `SqliteDatabase`（见第 18 节） |
 
 `database(...)` 接收 `DataSource` 或自定义的 `ConnectionProvider`。`Config` 还有：
@@ -71,16 +72,20 @@ HanaDatabase db = Hana.database(dataSource, c -> c
 - `intercept(statement -> ...)`：语句执行前的钩子，可以改写 SQL 或抛出异常拦下语句，见第 12 节；
 - `function`、`type`（覆盖函数渲染与类型读写，见第 12 节）、`fetchSize`、`name`。
 
-**在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource)` 取连接：
+**在 Spring 中使用**：引入 `query-spring`（版本同上），用 `SpringConnections.of(dataSource, transactionManager)` 取连接。多数据源的项目每个数据源一个数据库实例，各自传入管理这个数据源的事务管理器：
 
 ```java
 @Bean
-HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource) {
-    return Hana.database(SpringConnections.of(dataSource), c -> c.filter(...));
+HanaDatabase hana(@Qualifier("sapHana") DataSource dataSource,
+                  @Qualifier("sapHanaTransactionManager") PlatformTransactionManager transactionManager) {
+    return Hana.database(SpringConnections.of(dataSource, transactionManager), c -> c.filter(...));
 }
 ```
 
 - 它通过 `DataSourceUtils` 取连接，所以在 `@Transactional` 方法里，查询使用事务的连接：能看到同一事务里 MyBatis、JdbcTemplate 尚未提交的写入，也随事务一起回滚（`QueryExecutionException` 是运行时异常）。不在事务里时，每条语句借一个连接，用完归还。
+- 给了事务管理器时，`db.transaction(...)` 和多行写入的自动事务由它执行（传播行为 REQUIRED）：这个事务管理器已有事务（`@Transactional("sapHanaTransactionManager")` 或编程式的 `TransactionTemplate`）时加入，没有时开启。建在本库上的库（例如流程引擎）因此能自己划定事务边界，不依赖调用方有没有写 `@Transactional`。
+- 跨数据源的事务用编程式事务把几个事务管理器的 `TransactionTemplate` 嵌套起来，各个数据库实例的 `db.transaction(...)` 分别加入自己那一层；这不是分布式事务，提交顺序由嵌套的先后决定。
+- 只用 `SpringConnections.of(dataSource)` 时 `db.transaction(...)` 报错，事务只能用 `@Transactional`。
 - `@Transactional(timeout = 30)` 的事务里，每条语句的时限是事务剩余的时间，优先于 `queryTimeout`；时间已经用完时直接抛出 `TransactionTimedOutException`。
 - 路由型数据源可以直接传入。模块只依赖 spring-jdbc（`provided`）：5.3、6.2、7.0 都在 CI 中验证。
 
@@ -805,6 +810,15 @@ insertInto(Doc.class).values(row).onConflict(d -> d.id()).doNothing();   // 冲�
 
 `onConflict()` 不写键时用 `@Id` 的列，键必须是插入的列。HANA 写成 `MERGE INTO ... USING (SELECT ? AS ... FROM DUMMY)`，PostgreSQL 写成 `ON CONFLICT (...) DO UPDATE SET c = EXCLUDED.c`（键上要有主键或唯一约束），MySQL 写成 `... AS new ON DUPLICATE KEY UPDATE c = new.c`。
 
+### 写语句的提示
+
+```java
+db.execute(update(Lips.class).with(l -> noIndex(l, "IX_LIPS")).set(l -> l.unit().to("KG")).where(l -> l.delivery().eq("D1")));
+// UPDATE /*+ NO_INDEX(`lips` `IX_LIPS`) */ `ERP`.`LIPS` `lips` SET ...
+```
+
+`update(...)` 和 `deleteFrom(...)` 的 `with(t -> 提示)` 把提示写在 UPDATE、DELETE 关键字后面（逻辑删除改写成的 UPDATE 也带上），lambda 收到被改的表；只收写在关键字后面的提示（MySQL 的优化器提示、PolarDB 的 `inventory(n)`），同一方言的提示合并进一个注释，别的方言的提示渲染时报错。插入暂不支持提示。
+
 ### 加锁读
 
 ```java
@@ -823,7 +837,7 @@ db.transaction(() -> {
 });                            // 正常返回时提交，抛出异常时回滚
 ```
 
-不用 Spring 时 `db.transaction(work)` 把一个连接绑定到当前线程，嵌套调用加入外层事务。用 `SpringConnections` 时 `transaction(...)` 报错，事务交给 `@Transactional`。
+不用 Spring 时 `db.transaction(work)` 把一个连接绑定到当前线程，嵌套调用加入外层事务。用 `SpringConnections.of(dataSource, transactionManager)` 时由那个事务管理器执行（已有事务时加入）；只给了 DataSource 时 `transaction(...)` 报错，事务交给 `@Transactional`。见第 1 节。
 
 ### 逻辑删除
 
@@ -940,6 +954,7 @@ migrator.verify();           // 已执行的迁移被改过、历史里有未知
 
 - 迁移用代码写，一份迁移在三个方言上各自渲染；表结构用 `TableBuilder` 手写，不引用表接口（表接口以后会改，旧迁移的含义不能跟着变）。也可以 `Migration.of(version, description, steps -> ...)`。
 - 按列表顺序执行，每个版本一次，记进历史表 `QUERY_MIGRATION`（版本、说明、语句的 SHA-256、状态、时间）；锁表 `QUERY_MIGRATION_LOCK` 的一行让同时启动的实例互斥（`lockTimeout(...)`，默认一分钟）。
+- 同一个库里有几套各自迁移的表时（例如建在本库上的库自带迁移），用 `historyTable("flow_migration")` 换历史表的名字，锁表跟着叫 `flow_migration_lock`（名字有大写时加 `_LOCK`），各记各的版本。
 - PostgreSQL 每个迁移在一个事务里执行，失败时整体回滚。MySQL、HANA 的 DDL 逐条提交，失败的迁移记为 failed，修好数据库后 `repair(version)` 再重新执行；所以一个迁移最好只做一件事。
 - `baseline(version)` 把这个版本之前的迁移记为已执行而不执行，用于接管手工建好的库；`migrateTo(version)` 只执行到这个版本。
 - 只向前，没有回滚迁移；要撤销就再写一个新的迁移。迁移适合作为部署前的一次性任务运行，而不是在每个应用副本启动时运行。
@@ -1066,3 +1081,19 @@ db.list(from(Item.class).where(i -> glob(i.code(), "A*")).select(i -> median(i.p
 - **不支持的**：ROLLUP / GROUPING SETS、`grouping()`、`forUpdate()` 渲染时抛出 `UnsupportedOperationException`。SQLite 只有一个写者，在写事务里读写即可。
 - **结构变更**：自增主键写成 `INTEGER PRIMARY KEY AUTOINCREMENT`；外键只能写在建表语句里；改列的类型、可空、默认值和给已有的表加外键都只报告（REBUILD：新建表、搬数据、改名）；没有注释，建表时略过并警告一次。`query:pull` 的 `dialect` 写 `sqlite`。
 - 联表写入：`updateJoin` 写成 `UPDATE ... FROM`，`deleteJoin` 写成 `WHERE EXISTS`。
+
+## 19. PolarDB
+
+`query-polardb` 是 PolarDB for MySQL 的方言包，依赖 `query-mysql`，驱动同 MySQL 用 Connector/J。设计、实测与云产品的差异见 [0012](decisions/0012-polardb-dialect.md)。
+
+```java
+import static org.dpdns.zerodep.query.polardb.Polardb.*;   // 核心 + MySQL + PolarDB 的全部写法
+
+PolardbDatabase db = Polardb.database(SpringConnections.of(dataSource, transactionManager), c -> c.printSql());
+```
+
+- **写法与 MySQL 完全相同**：MySQL 方言的全部能力（函数、提示、加锁读、联表写入、JSON、全文检索）照常可用，渲染出的 SQL 与 MySQL 逐字一致；`PolardbDatabase` 也是 `MysqlDatabase`。
+- **闪回查询**：`fromAsOf(Stock.class, at)` 读表在 `at`（数据库所在时区的本地时间）那一刻的样子，写成 `FROM 表 AS OF TIMESTAMP CAST(? AS DATETIME(6)) 别名`，其余写法同 `from(...)`，全局过滤器照常生效。时刻要在 undo 的保留时间之内，阿里云 PolarDB 要先打开闪回查询（`loose_innodb_backquery_enable`），社区版引擎由 `innodb_undo_retention` 决定；表结构在这一刻之后变过时数据库报错。
+- **热点行的库存提示**：`update(Stock.class).with(s -> inventory(1)).set(...).where(...)` 写成 `UPDATE /*+ COMMIT_ON_SUCCESS ROLLBACK_ON_FAIL TARGET_AFFECT_ROW(1) */ ...`。必须在事务里执行（自动提交时数据库报错）；正好改到 n 行时立即提交整个事务，否则报错并回滚整个事务，所以让它单独占一个事务或放在事务的最后一句：`db.transaction(() -> db.execute(...))`。
+- **没有纳入的**：序列（云产品没有）、`dbms_trans.returning`（云上 8.0 不支持）、并行查询与列存索引的提示（社区版上测不了），需要时用原生 SQL 片段。
+- **与社区 MySQL 的差异**：云上 PolarDB 8.0 的语法基线是社区 8.0.13 / 8.0.18（见 0011），默认隔离级别是读已提交。

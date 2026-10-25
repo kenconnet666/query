@@ -339,6 +339,7 @@ function renderSet(w: SqlWriter, target: Target<unknown>, sets: readonly (readon
     throw new Error(`${statement} SET reads a related table through navigation; use a scalar subquery or the dialect's join update`);
   }
   w.sql("UPDATE ");
+  target.renderHints(w);
   ownerOf(target.ref as object).renderSource(w);
   w.sql("\nSET ");
   all.forEach(([column, value], i) => {
@@ -388,6 +389,8 @@ export class Target<T> {
     readonly fills: boolean,
     readonly everyRow: boolean,
     readonly expected: number | undefined,
+    /** 写在 UPDATE、DELETE 关键字后面的提示（方言的优化器提示）。 */
+    readonly hints: readonly Clause[] = [],
   ) {}
 
   /** 以 table 的一次新出现开始。 */
@@ -396,9 +399,24 @@ export class Target<T> {
   }
 
   /** 改动部分字段后的副本。 */
-  with(change: Partial<Pick<Target<T>, "conditions" | "skipping" | "filtering" | "fills" | "everyRow" | "expected">>): Target<T> {
+  with(change: Partial<Pick<Target<T>, "conditions" | "skipping" | "filtering" | "fills" | "everyRow" | "expected" | "hints">>): Target<T> {
     const c = { ...this, ...change };
-    return new Target(this.table, this.ref, c.conditions, c.skipping, c.filtering, c.fills, c.everyRow, c.expected);
+    return new Target(this.table, this.ref, c.conditions, c.skipping, c.filtering, c.fills, c.everyRow, c.expected, c.hints);
+  }
+
+  /** 追加一个提示；只接受写在关键字后面的那种（position 为 hint），例如 MySQL 的优化器提示。 */
+  addHint(clause: (t: Ref<T>) => Clause): Target<T> {
+    const c = clause(this.ref);
+    if (c?.position !== "hint") throw new Error("UPDATE and DELETE take only optimizer hints right after the keyword");
+    return this.with({ hints: [...this.hints, c] });
+  }
+
+  /** 写出提示（每个后面跟一个空格，同一方言的合并由方言决定）；提示属于别的方言时报错。 */
+  renderHints(w: SqlWriter): void {
+    for (const c of this.hints) {
+      if (c.dialect !== undefined && !(w.dialect instanceof c.dialect)) throw new Error(`A ${c.dialect.name} clause cannot run on ${w.dialect.name}`);
+    }
+    if (this.hints.length > 0) w.dialect.hints(w, this.hints);
   }
 
   /** 追加 WHERE 条件：回调或条件对象。 */
@@ -570,6 +588,14 @@ export class Update<T> extends Write {
     return new Update(this.#target.with({ everyRow: true }), this.#sets, this.#byId);
   }
 
+  /**
+   * 加一个写在 UPDATE 后面的提示，例如 MySQL 的 `with((l) => noIndex(l, "IX_LIPS"))`、PolarDB 的 `with(() => inventory(1))`；
+   * 回调收到被更新的表。提示属于别的方言时渲染报错。与 Java 一致。
+   */
+  with(hint: (t: Ref<T>) => Clause): Update<T> {
+    return new Update(this.#target.addHint(hint), this.#sets, this.#byId);
+  }
+
   /** 期望影响 rows 行，不符时 `db.execute` 抛出 UnexpectedRowCountError；用于"比较后更新"的状态流转。 */
   expect(rows: number): Update<T> {
     return new Update(this.#target.expect(rows), this.#sets, this.#byId);
@@ -715,6 +741,11 @@ export class Delete<T> extends Write {
     return new Delete(this.#target.expect(rows), this.#byId, this.#physical);
   }
 
+  /** 加一个写在 DELETE（逻辑删除时是 UPDATE）后面的提示，规则同 `update(...).with(...)`。 */
+  with(hint: (t: Ref<T>) => Clause): Delete<T> {
+    return new Delete(this.#target.addHint(hint), this.#byId, this.#physical);
+  }
+
   /** `expect(n)` 写明的行数；没有写而用了 byId 时是行数。 */
   get expected(): number | undefined {
     return this.#target.expected ?? this.#byId?.rows.length;
@@ -752,7 +783,9 @@ export class Delete<T> extends Write {
     const meta = entityMeta(this.#target.table);
     const logic = meta.writes.logicDelete;
     if (logic === undefined || this.#physical) {
-      w.sql("DELETE FROM ");
+      w.sql("DELETE ");
+      this.#target.renderHints(w);
+      w.sql("FROM ");
       ownerOf(this.#target.ref as object).renderSource(w);
       this.#target.renderWhere(w, "deleteFrom(...)", located);
       return w.statement();
