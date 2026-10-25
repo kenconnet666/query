@@ -26,6 +26,13 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 - **通用门面**（[0013](docs/decisions/0013-portable-facade-and-live-tests.md)）：Java `Sql.database(DataSource | ConnectionProvider, configure)` 按连接报告的产品名选方言（方言包经 `dialect.DialectProvider` 登记），TS 核心包的 `database(driver, options)` 用驱动适配器带的方言（`Driver.dialect`）。只用核心写法的代码不必依赖具体的方言包；PolarDB 得到 MySQL 方言。
 - **测试：实库测试按主题拆分**（0013）：Java 全部搬进不发布的 `java/query-it`，测试类标 `@LiveTest(only / except)` 在每个选中的库上各跑一遍；TS 的 `test/src/live` 按同样的主题拆成 `liveSuite`；环境变量 `QUERY_DATABASES` 选库，CI 的实库 job 只设它。建表一律按声明生成，查询写回各个测试里。
 
+### 变更（不兼容，2.x 尚未发布）
+
+- **Java：按逻辑 SQL 类型分的列与表达式**（[0014](docs/decisions/0014-typed-expressions.md)）：列声明成 `ColText<String>`、`ColInteger<Integer>`、`ColBigint<Long>`、`ColDecimal<BigDecimal>`、`ColDate<LocalDate>`、`ColTimestamp<LocalDateTime>` 等（包 `table.column`），表达式接口同名（`expr.typed`），泛型参数是 Java 类型；经转换器存成文本的日期是 `ColText<LocalDate>`。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`。`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。
+- **Java：有主操作数的函数改成实例方法**：`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)` 等约 55 个静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`；加减乘按"宽"的类型提升，`caseWhen`、`lag`、`greatest`、`val`、`lit` 的结果保住类型。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`。
+- **Java：语句式条件**：条件方法返回 `void`，写进条件块（`where(l -> { a; b; })`、`any(() -> {...})`、`all`、`not`、`bool(() -> ...)`、`caseWhen(() -> ..., x)`、`filter(() -> ...)`），可选条件直接写 `if`；`Cond.and`/`or`、`onlyIf`、`ifPresent` 删去。UPDATE 的 `set(t -> { t.x().to(v); ... })` 是赋值块。写错位置的条件和赋值立即报错。
+- 金样例没有变化：新写法渲染出的 SQL 与原来逐字相同。
+
 ## [2.0.0] - 未发布
 
 查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。

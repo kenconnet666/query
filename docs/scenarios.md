@@ -57,11 +57,11 @@
 | 场景 | EasyQuery 的做法 | 本库的做法 | 期 |
 | --- | --- | --- | --- |
 | 半开区间 | `rangeClosedOpen(a, b)` | `e.range(from, until)`：`>= from AND < until`，skipEmpty 下缺少的一端被忽略 | 2.0 |
-| 按开关加条件 | `where(boolean, ...)` | `onlyIf(test, () -> cond)` 写在 `where` 里 | 1 |
+| 按开关加条件 | `where(boolean, ...)` | 条件块里直接写 `if (test) 条件;` | 1 |
 | 值为 null 时忽略条件 | `NotNullOrEmptyValueFilter` 全局开关 | 作用域上的 `skipEmpty()`：与 null、空白字符串、空集合比较的条件省略；不开启时与 null 比较报错 | 2.0 |
 | 根据查询对象生成条件 | `whereObject`、`@EasyWhereCondition` | `where(search)`：每个非空字段一个条件，`@Where` 指定列和比较方式，列可走关系路径，多列为 OR；经过一对多关系时写成 EXISTS，同一关系的字段合并（见 0006） | 2.0 |
 | 动态排序 | `orderByObject` | `sortBy("total desc, material")` 只认结果列；`orderBy` 也接收运行时生成的 `List<Order>` | 2.0 |
-| 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`ifPresent(v, x -> exists(...))`），或多对一关系（没用到时不连接） | 1 / 2.0 |
+| 按条件追加连接表的过滤 | 动态 join | 写成可选的 EXISTS（`if (v != null) exists(...);`），或多对一关系（没用到时不连接） | 1 / 2.0 |
 | 按用户选择取列、选维度 | 动态 select | `only(columns)`、`exclude(...)`：没选的列写成 NULL，相同的分组键和只被它们用到的连接一起去掉 | 2.0 |
 | 复用的 SQL 片段 | 字符串拼接 | 返回 CTE、条件或表达式的普通方法 | 1 |
 | 分组表达式中的常量 | 由用户处理 | SELECT 列表与分组相关子句中的常量自动写成字面量，WHERE 与 ON 仍绑定参数（0002 第 10 条） | 1 |
@@ -106,7 +106,7 @@
 | 装回关联数据 | `fillMany`、`fillOne` | `db.attach(rows, key, ids -> query, keyOf, setter)`、`attachMany` | 2.0 |
 | 主键生成器 | `PrimaryKeyGenerator` | `config.generate(T.class, t -> t.id(), gen)` / TS `generate(...)`：只给为 null 的行生成，不写回对象 | 2.0 |
 | 条件对象的自定义比较 | `@EasyWhereCondition(type = ...)` 的扩展 | `@Where(using = X.class)` / `@where(fn, ...)` | 2.0 |
-| 拦截器的启用与顺序 | `enable()`、`order()`、`apply(entityClass)` | 过滤器、填充按添加顺序生效，按表接口的父类型匹配；动态开关在回调里返回 `Cond.EMPTY` | 2.0 |
+| 拦截器的启用与顺序 | `enable()`、`order()`、`apply(entityClass)` | 过滤器、填充按添加顺序生效，按表接口的父类型匹配；动态开关写在回调的条件块里，不写条件就是不过滤 | 2.0 |
 | 事务 | 自带事务管理 | 不用 Spring 时 `db.transaction(work)`；用 Spring 时交给 `@Transactional` | 2.0 |
 | 实体追踪与差异更新 | `track`、`asTracking()`，线程绑定的快照；无论成败都刷新快照，不写回版本 | `db.tracking(t -> ...)` 显式范围：`t.one/list(表, 查询)` 登记快照，结束时在一个事务里写 `byId(行).diffFrom(快照)`；只有写成功才刷新快照并写回版本；也可以无状态地 `update(T).byId(edited).diffFrom(loaded)` | 2.0 |
 | 对象图级联保存 | `savable(root)` | 暂不做；随流程引擎再按"显式一层子行同步加中间表"评估 | 3 |

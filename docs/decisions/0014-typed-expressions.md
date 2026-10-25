@@ -1,301 +1,153 @@
-# 0014 按类型分家的列与表达式、语句式条件（草案）
+# 0014 按逻辑 SQL 类型分的列与表达式、语句式条件
 
-- 状态：草案（2026-10-25），待用户确认；只做了盘点、参考调研和 Java 语言探针，没有改代码
+- 状态：已采纳（2026-10-25）。Java 已实施（分支 `feat/typed-expressions`）；TypeScript 的值类型与写法见第 7 节，待实施。
 - 起因：
-  - 用户决定把 `Col<T>` 改成按类型的具体类，让文本、数值、日期上的写法可以直接点出来，并删除因此变得多余的写法；
-  - 用户提出条件可以写成一条条语句，不必用 `.and(...)` 链起来，以避开"链到一半返回值是什么类型"的问题；
-  - 其他写法也可以适当改进。
-- 时机：2.0.0 和 2.1.0 都还没有发布，公开 API 现在改，不需要兼容期（0006 第 7 条的先例）。
-- 修订：0002 第 4 条（只给"同类型的多参数运算"用实例方法）、0006 的"列引用用 `Col<T>`"、0005 的条件写法。
-
-## 现状
-
-### 列与表达式
-
-- 每一列都是 `Col<T>`，它继承 `Expr<T>`。`Expr<T>` 上只有与类型无关的实例方法：
-  - 比较：`eq`、`ne`、`gt`、`ge`、`lt`、`le`；
-  - 区间与集合：`between`、`range`、`in`、`notIn`；
-  - 空值：`isNull`、`isNotNull`、`isDistinctFrom`；
-  - 同类型函数：`coalesce`、`nullif`；
-  - 其他：`as`、`asc`、`desc`、`cast`。
-- 按类型才有的运算都是 `Sql` 的静态函数，参数写死类型，用错就编译失败：
-  - 文本 16 个（含 `substring`、`left`、`right`、`locate` 的 int 与表达式重载共 22 个签名）；
-  - 数值 13 个；
-  - 日期与时间 15 个；
-  - 聚合与统计 14 个；
-  - 窗口 11 个。
-- 仓库内（Java 代码与文档）的用法次数：`count` 52、`sum` 39、`plus` 25、`substring` 20、`stringAgg` 11、`minus` 10、`max` 10、`month` 9、`daysBetween` 8，其余多为个位数。
-- **结构上的限制**：`Expr<T>` 的子类不只有 `Col`，还有 `Aggregate`、`Case`、`WindowFunction` 的结果、`Nodes` 里的十来种节点、`Many` 的聚合值、`SqlExpr`。如果让每种节点各自去继承具体的类型类，类的数量是"节点种类 × 类型族"。所以具体类型只能做成**外壳**：外壳是 `Expr<T>` 的子类，内部持有一个节点，渲染时交给节点。
-
-### 条件
-
-- `where`、`having`、`qualify`、连接的 `ON`、关系的 `any`/`none`、聚合的 `filter` 都收一个返回 `Cond` 的 lambda，多个条件用 `all(...)` 或 `cond.and(...)` 组合。
-- 可选条件有三种写法：作用域的 `skipEmpty()`、`onlyIf(flag, () -> cond)`、`ifPresent(value, v -> cond)`。
-- lambda 求值时已经用线程局部状态传递 `skipEmpty` 的开关（`scope/SkipEmpty`），有先例。
-
-### TS
-
-- 表达式的类型由实体字段的 TS 类型推出来（`Ref<E>` 的 `Member<E[K]>`）。文本、小数（精确的十进制字符串）、日期、时间戳在 TS 里**都是 `string`**，按值的类型分不出这四类。
+  - 用户决定把 `Col<T>` 改成按类型的具体接口，让文本、数值、日期上的写法可以直接点出来，并删除因此变得多余的写法；
+  - 用户提出条件写成一条条语句，不必用 `.and(...)` 链起来，以避开"链到一半返回值是什么类型"的问题；
+  - 其他写法也可以适当改进；TS 引入真正的小数、日期类型。
+- 决定的过程：先按 Java 类型命名（`ColString<String>`），讨论后改成**按逻辑 SQL 类型命名**（`ColText<String>`、`ColDecimal<BigDecimal>`），泛型参数是 Java 类型；只有个别库才有的物理类型（无符号整数、NVARCHAR 与 VARCHAR）不进接口，放注解。其余按调研时的推荐：语句式条件（下文第 4 节）、数值按"宽"的类型提升、不要单独的聚合类、方言能力走视图。
+- 时机：2.0.0 还没有发布，公开 API 现在改，不需要兼容期（0006 第 7 条的先例）。
+- 修订：0002 第 4 条（只给"同类型的多参数运算"用实例方法）、0006 的"列引用用 `Col<T>`"、0005 的条件写法、0008 的 `@Column(lob = true)`。
 
 ## 参考做法
 
-看的版本：Querydsl 5.1.0、Jimmer 0.12.4、jOOQ 3.22（快照）、EasyQuery 3.2.17、Exposed 1.5.0、Drizzle 0.45、Kysely 0.28；前四个读源码（`orm-references/` 与 `easy-query/`），Exposed 读 GitHub 源码，TS 两个读文档。
+看的版本：Querydsl 5.1.0、Jimmer 0.12.4、jOOQ 3.22（快照）、EasyQuery 3.2.17、Exposed 1.5.0、Drizzle 0.45、Kysely 0.28；前四个读源码，Exposed 读 GitHub 源码，TS 两个读文档。
 
-| 库 | 族 | 怎样选族 | 结果怎样保住族 | 日期加减 | SET 的目标 |
+| 库 | 类型 | 怎样选 | 结果怎样保住类型 | 日期加减 | SET 的目标 |
 | --- | --- | --- | --- | --- | --- |
 | Querydsl | 数值、文本、布尔、日期、日期时间、时间、枚举、可比较、兜底 | 类别表，可逐字段覆盖 | 每个子类重写 `coalesce`、`min`、`max` 等 | 静态函数 `SQLExpressions.addDays` | 只能是 `Path` |
-| Jimmer | 文本、数值、时间、日期、可比较、兜底 | APT 按 Java 类型 | 每族重写 `coalesce` | 实例方法 `plus(n, 单位)` | 属性 |
+| Jimmer | 文本、数值、时间、日期、可比较、兜底 | APT 按 Java 类型 | 每类重写 `coalesce` | 实例方法 `plus(n, 单位)` | 属性 |
 | jOOQ | 只有一个 `Field<T>`，方法对所有 T 开放 | 无 | 天然保住 | 静态 `localDateAdd` | 任意 `Field` |
 | EasyQuery | 文本、数值、日期时间（含日期）、布尔、JSON、Any 兜底 | APT 按精确类名查表 | 共享基接口带"结果类型"泛型参数 | 实例方法 `plusDays` | 只能是列 |
 | Exposed | 一个 `Column<T>`，函数是带上界的扩展函数 | Kotlin 类型 | 扩展函数的泛型 | 无 | 只能是列 |
 | Drizzle、Kysely | 自由函数 | 结构类型 | 泛型 | 自由函数 | 列名对象 |
 
-可借鉴和要避开的：
+借鉴和避开的：
 
-- **jOOQ 有意不分族**：issue #200（2012）讨论过 `Field` 的子类，结论是"会让 API 和实现都很笨重"，拒绝。所以分族是有代价的选择，不是公认的更好。
-- **漏重写就在运行时出错**：Querydsl #2014、#2123（`coalesce` 的结果少了方法、结果错误）、Jimmer #1529（两个时间戳 `coalesce` 时强转出 `ClassCastException`）。要保住族的方法清单要短，并有测试检查每个族都重写了。
-- **数值规则的坑**：Querydsl 两边类型不同时 `divide` 实际按 Double 算、声明的却是左边的类型（#2788）；EasyQuery 的 `sum()` 结果类型由调用方推断，靠不住，只好另加 `sumInt`、`sumLong`；Jimmer `sum().coalesce(0)` 因 Long 和 Integer 不同报错（#1355）。
-- **日期不要和时间戳合成一族**：EasyQuery 只有一个日期时间族，日期上也能点出 `hour()`。Jimmer 作者在 #989 说日期类不能再细分是因为它只有 4 类表达式、Java 没有扩展函数。
-- **族在 CASE、窗口、标量子查询上丢失**：Querydsl 的窗口结果、EasyQuery 的 CASE 和子查询都退回兜底类型，再用 `asNumber`、`asString`、`asLocalDate` 之类的函数重新定型。
-- **转换器列没人处理**：四个库都按 Java 一侧的类型选族，SQL 函数却作用在库里存的值上；日期存成文本时，`plusDays`、`year` 会生成错误的 SQL。
-- **语句式条件**：EasyQuery 的条件方法返回 `void`，写进查询自己的"当前接收处"（where、having、set 等）；OR、NOT 用无参的语句块 `o.or(() -> {...})` 隔开；要把条件当值用时（SELECT 里的布尔值、CASE 的条件）用 `valueOf(() -> ...)`、`caseWhen(() -> ...)` 转一次。它把"返回表达式"的旧写法标了弃用。每个比较方法另有 `eq(boolean 条件, 值)` 的重载，API 数量翻倍。在没有接收处的地方写条件，抛不带说明的 `UnsupportedOperationException`。
-- **值式条件的做法**：jOOQ `DSL.and(Condition...)`、Querydsl `where(Predicate...)` 跳过 null、Jimmer `where(Predicate...)` 和 `eqIf`、Drizzle `and(...filters)`。调研者的看法：值式的 `Cond` 加"可变参数、忽略空值"能拿到语句式八成的简洁，条件可以返回、存起来、组合，没有可变的作用域状态。
+- **jOOQ 有意不分类型**（issue #200）：分类型有代价，所以要保住类型的方法清单要短，并用测试检查每个类型都重写了（Querydsl #2014、#2123 与 Jimmer #1529 都是漏重写）。
+- **数值规则**：Querydsl 两边类型不同时 `divide` 实际按 Double 算、声明的却是左边的类型（#2788）；EasyQuery 的 `sum()` 结果类型靠调用方推断；Jimmer `sum().coalesce(0)` 因 Long 和 Integer 不同报错（#1355）。本库的规则见第 2 节。
+- **日期不和时间戳合成一类**：EasyQuery 只有一个日期时间类，日期上也能点出 `hour()`。
+- **转换器列没人处理**：四个库都按 Java 一侧的类型选，SQL 函数却作用在库里存的值上，日期存成文本时 `plusDays` 会生成错误的 SQL。本库按库里存的类型选（第 1 节）。
+- **语句式条件**：EasyQuery 的条件方法返回 `void`，写进当前的"接收处"，OR 用 `o.or(() -> {...})`；本库照这个思路做，但不加 `eq(boolean 条件, 值)` 这类重载（可选条件直接写 `if`），在接收处之外写条件时给出说明（EasyQuery 抛不带说明的异常）。
 
 ## Java 语言探针（JBR 17，javac）
 
 | 写法 | 结果 |
 | --- | --- |
-| `where(l -> { l.delivery().contains("D"); l.quantity().gt(x); })`：参数是返回 void 的函数式接口，单个表达式的 lambda 和多行语句块都能写 | 通过，并且能和现有的条件对象重载 `where(Object)` 共存 |
-| 同时保留 `where(返回 Cond 的 lambda)` 和 `where(语句块)` | **编译报"引用不明确"**：Java 对隐式类型的 lambda 不能按返回值区分重载（0005 也记过）。两种只能留一种 |
-| `r.col(Row::name)` 按 getter 的返回类型选重载，得到 `TextExpr`；`r.col(Row::total)` 得到 `NumExpr<BigDecimal>`；再加一个泛型的 `col(Getter<R, T>)` 兜底也不冲突 | 通过（只限方法引用；写成 `x -> x.name()` 报不明确，本库本来就要求方法引用） |
-| `static <E extends Expr<?>> E max(E e)`，`max(l.delivery()).upper()` | 通过：单参数的泛型函数能保住具体类型 |
-| 子类协变重写 `coalesce`，`l.delivery().coalesce("x").upper()` | 通过 |
+| `where(l -> { l.delivery().contains("D"); l.quantity().gt(x); })`：参数是返回 void 的函数式接口 | 通过，并且能和条件对象的重载 `where(Object)` 共存 |
+| 同时保留 `where(返回 Cond 的 lambda)` 和 `where(语句块)` | 编译报"引用不明确"：两种只能留一种 |
+| `r.col(Row::name)` 按 getter 的返回类型选重载 | 通过（只限方法引用） |
+| 接口里协变重写 `coalesce`，`l.delivery().coalesce("x").upper()` | 通过 |
+| 结果是类型变量的泛型方法放进重载的参数：`x.eq(m.items().max(i -> i.v()))` | **引用不明确**：lambda 没写参数类型时不参与重载判断，javac 排除不了 `eq(T)`。所以关系上的 `sum`、`max` 不返回类型变量（第 2 节） |
+| 泛型参数推断 `F extends Expr<T>` 时，`F` 同时要满足 `F <: Integer` | javac 只在两个类的上界无关时报错，接口与 final 类并存不报，这也是上一条的原因 |
 
-## 方案
+## 1. 类型：按逻辑 SQL 类型分，泛型是 Java 类型
 
-### 1. 类型族
-
-按 Java 一侧的类型分族；带转换器、而库里存的类型属于别的族的列，只能用兜底的 `Col<T>`（见表后的说明）：
-
-| 族 | Java 类型 | 表达式 | 列（表接口里写的） | 聚合与窗口的结果 |
+| 逻辑类型 | 表达式接口 | 列接口 | 默认的 Java 类型 | 也存成这一类的 Java 类型 |
 | --- | --- | --- | --- | --- |
-| 文本 | `String` | `TextExpr` | `TextCol` | `TextAgg` |
-| 数值 | `Integer`、`Long`、`BigDecimal`、`Double`，以及少见的 `Short`、`BigInteger`、`Float` | `NumExpr<N>` | `IntCol`、`LongCol`、`DecimalCol`、`DoubleCol`（都继承 `NumCol<N>`；少见类型直接写 `NumCol<Short>`） | `NumAgg<N>` |
-| 日期 | `LocalDate` | `DateExpr` | `DateCol` | `DateAgg` |
-| 时间戳 | `LocalDateTime` | `DateTimeExpr` | `DateTimeCol` | `DateTimeAgg` |
-| 其他 | `Boolean`、枚举、`CodeEnum`、数组、`byte[]`、`Config.type(...)` 注册的自定义类型 | `Expr<T>` | `Col<T>` | `Agg<T>` |
+| 文本 | `ExprText` | `ColText`；不限长度 `ColClob` | `String` | `Character`、按名字存的枚举 |
+| 短整数 | `ExprSmallint` | `ColSmallint` | `Short` | `Byte` |
+| 整数、长整数 | `ExprInteger`、`ExprBigint` | `ColInteger`、`ColBigint` | `Integer`、`Long` | 按编码存的枚举（编码的类型） |
+| 定点小数 | `ExprDecimal` | `ColDecimal` | `BigDecimal` | `BigInteger` |
+| 浮点数 | `ExprDouble` | `ColDouble` | `Double` | `Float` |
+| 布尔值 | `ExprBoolean` | `ColBoolean` | `Boolean` | |
+| 日期、时间戳、时间 | `ExprDate`、`ExprTimestamp`、`ExprTime` | `ColDate`、`ColTimestamp`、`ColTime` | `LocalDate`、`LocalDateTime`、`LocalTime` | |
+| 带时区的时间戳 | `ExprTimestampTz` | `ColTimestampTz` | `Instant` | |
+| 字节串 | `ExprBinary` | `ColBinary`；不限长度 `ColBlob` | `byte[]` | |
+| 其他（JSON、数组、UUID） | `Expr<T>` | `Col<T>` | | |
 
-```java
-@Table(schema = "ERP", value = "LIPS")
-public interface Lips extends Client {
-    @Column("VBELN") TextCol delivery();
-    @Column("MATNR") TextCol material();
-    @Column("ERDAT") @SapDate Col<LocalDate> createdOn();   // 库里是 'yyyyMMdd' 文本：只能比较，不能用日期函数
-    @Column(value = "LFIMG", precision = 13, scale = 3) DecimalCol quantity();
-    @Column("STATUS") Col<NoteState> state();            // 其他类型照旧用 Col<T>
-}
-```
+- **类名表示库里怎么存，泛型参数表示 Java 拿到什么**，正对应 `Converter<J, D>` 的 D 与 J：SAP 以 'yyyyMMdd' 存的日期是 `ColText<LocalDate>`，比较传 `LocalDate`（经转换器绑定成文本），文本函数作用在库里的文本上（结果是 `ExprText<String>`），日期函数在编译期点不出来。`Metadata` 按属性的存储类型检查声明的接口，对不上时报错并给出应写的接口；`ColClob`、`ColBlob` 只在建表时与 `ColText`、`ColBinary` 不同，代替原来的 `@Column(lob = true)`。
+- 逻辑类型与建表的 `ColumnType.Kind`、CAST 的 `CastType.Kind`、TS 的 `TypeKind` 是同一套词，与方言无关，同一个表接口能在各个库上用。只有个别库才有的物理类型不进接口：放进接口会让表接口绑死一个库，做完一次运算方言方法又没了。
+- **结构**：`Expr<T>` 改成接口，节点继承 `ExprNode<T>`；`Family<T, F>` 是有自己方法的类型的共同父接口，F 是这一类的表达式接口，列也实现它（`ColText<T>` 是 `Family<T, ExprText<T>>`）；`Col<T>` 是所有列接口的父接口。`ColText<T>` 同时继承 `Col<T>` 与 `ExprText<T>`，所以列能传给收 `ExprText<?>` 的辅助方法，也能当 `Col<?>` 用。
+- 方法都是接口的 default 方法，所以每种类型的实现只是一个空类：计算的结果包在外壳（`expr.typed.Shells`）里，外壳经由 `w.render(node)` 渲染，渲染器按节点做的替换（QUALIFY 的窗口函数、groupJoin 的聚合）照样认得出被包的节点；按节点种类判断时先 `Nodes.unwrap`。列的实现在 `table.column.Columns`，按存储类型选。
+- 包：`expr`（`Expr`、`ExprNode`、`Family`、条件与节点）、`expr.typed`（各类型的表达式接口与外壳）、`table.column`（列接口与实现）。
 
-- **带转换器的列按库里存的类型约束**：`@SapDate` 把日期存成文本，日期函数作用在文本上会生成错误的 SQL（参考库都没处理）。所以存储类型与 Java 类型不在同一族时，列只能声明成 `Col<T>`：比较、`in`、`between` 照常可用（`yyyyMMdd` 的文本顺序就是日期顺序），日期函数在编译期就点不出来。声明成 `DateCol` 时 `Metadata` 报错，除非转换器声明自己支持 SQL 侧的日期运算。
-- **列与表达式的区别**：列类只多两样东西，UPDATE 的 `to(...)`（只有列能被赋值，编译期就拦住 `upper(x).to(...)`）和所属的来源。
-- **聚合结果类**只多 `filter(条件)` 和 `over(window)`：`l.quantity().sum().filter(...)` 能写，`l.quantity().filter(...)` 编译不过。条件的写法随第 5 节的选择（值或语句块）。
-- **全部由生成器产出**：五个族 × 表达式、列、聚合三种类，加上协变重写的样板，由 `tools/generate-java-scopes.mjs` 一起生成并提交，与 `From1..From16` 同样处理，不手写。
+## 2. 方法放在哪里、结果是什么类型
 
-### 2. 方法放在哪里
+规则：**有一个主操作数的运算是它的实例方法；没有主操作数、或几个操作数地位相同的，留作静态函数。** 函数名沿用原来的静态函数名，`addDays(d, 3)` 变成 `d.addDays(3)`。
 
-一条规则：**有一个主操作数的运算是它的实例方法；没有主操作数、或者几个操作数地位相同的，留作静态函数**。
-
-| 族 | 实例方法（现在的静态函数搬过来） |
+| 类型 | 实例方法 |
 | --- | --- |
-| 所有族（`Expr<T>`） | 现有的比较、区间、空值、`as`、排序、`cast`；`coalesce`、`nullif`、`min()`、`max()`（各族协变重写，返回本族）；`count()`、`countDistinct()`（返回 `NumAgg<Long>`） |
-| 文本 | `contains`、`startsWith`、`endsWith`、`like`、`notLike`、`upper`、`lower`、`trim`、`substring`、`left`、`right`、`replace`、`locate`、`concat`、`lpad`、`rpad`、`stringAgg` |
-| 数值 | `plus`、`minus`、`times`、`divide`（结果是 `NumExpr<BigDecimal>`）、`negate`、`abs`、`round`、`floor`、`ceil`、`mod`、`power`、`sqrt`、`sign`；`sum`、`sumDistinct`、`avg`、`avgDistinct`、`stddevSamp`、`stddevPop`、`varSamp`、`varPop` |
-| 日期 | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`monthStart`、`daysBetween(到哪天)` |
-| 时间戳 | `year`、`month`、`day`、`hour`、`minute`、`second`、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween(到何时)` |
+| 所有表达式 | 条件 `eq`…`le`、`between`、`range`、`in`、`notIn`、`isNull`、`isNotNull`、`isDistinctFrom`、`isNotDistinctFrom`；结果仍是本类型的 `coalesce`（一到两个后备值）、`nullif`、`max`、`min`、`filter`、`over`；`count`、`countDistinct`；`as`、`asc`、`desc`、`cast` |
+| 文本 | `like`、`notLike`、`contains`、`startsWith`、`endsWith`、`upper`、`lower`、`trim`、`substring`、`left`、`right`、`replace`、`locate`、`concat`、`lpad`、`rpad`、`stringAgg` |
+| 数值 | `plus`、`minus`、`times`、`divide`（只有小数、浮点数）、`mod`、`negate`、`abs`、`round`、`floor`、`ceil`、`power`、`sqrt`、`sign`；`sum`、`sumDistinct`、`avg`、`avgDistinct`、`stddevSamp`、`stddevPop`、`varSamp`、`varPop` |
+| 日期 | `year`、`month`、`day`、`addDays`、`addMonths`、`addYears`、`monthStart`、`daysBetween` |
+| 时间戳 | `year`、`month`、`day`、`hour`、`minute`、`second`、`addHours`、`addMinutes`、`addSeconds`、`secondsBetween` |
 
-函数名沿用现有的名字（`addDays` 等），只是从 `addDays(d, 3)` 变成 `d.addDays(3)`，迁移时少记一套新名字。
+**结果类型的规则**：
 
-留作静态函数的：`all`、`any`、`not`（第 5 节选甲时 `any`、`not` 改收语句块，`all` 删掉）、`exists`、`notExists`、`val`、`lit`、`nullOf`、`caseWhen`、`caseOf`、`count()`（无参数）、`rowNumber`、`rank`、`denseRank`、`percentRank`、`cumeDist`、`ntile`、`currentDate`、`currentTimestamp`、`scalar`、`anyOf`、`allOf`、`keys`、`orders`、`sql`、`sqlCond`、`sqlTable`、`identifier`、`call`。
+- 值不变的运算（比较、`coalesce`、`max`、`min`、`filter`、`over`、`in`）保住 T；算出新值的运算回到库里的类型（`upper` 是 `ExprText<String>`，`sum` 是本类型的默认 Java 类型）。计算结果的 SqlType：Java 类型本来就是存储类型时沿用表达式自己的（文本到文本的转换器照样生效），否则用存储类型。
+- 加减乘按"宽"的提升：浮点 > 小数 > 长整数 > 整数（短整数相加按整数，与 Java 一致）。每个运算对常量 `int`、`long`、`double`、`BigDecimal` 和每种数值表达式各有一个重载，由生成器产出。`a.plus(b).plus(c)` 并成一个括号 `(a + b + c)`，与原来的 `plus(a, b, c)` 渲染相同；减法和除法不并。
+- 整数没有 `divide`：整数相除各库有的取整、有的不取整，先 `cast`。
+- `avg` 是 `ExprDecimal`，统计聚合与 `sqrt`、`power` 是 `ExprDouble`，`sign`、`locate`、`year` 等是 `ExprInteger`，`count` 是 `ExprBigint`，`secondsBetween` 是 `ExprBigint`。
+- 不要单独的聚合类：`filter(() -> ...)`、`over(...)` 在每个表达式上，接在非聚合上时立即报错。少一半的类型，误用很少见且第一次运行就暴露。
+- **泛型函数借 `Family<T, F>` 保住类型**：`caseWhen(() -> ..., l.quantity()).otherwise(...)` 是 `ExprDecimal`，`lag(l.quantity(), 1).over(...)`、`greatest(a, b)`、`percentileDisc(p, e)` 与参数同一类型；`val`、`lit`、`caseWhen`、`caseOf(...).when(...)` 的常量参数按值的类给出类型（`val("x")` 是 `ExprText<String>`），由生成器产出各类型的重载。
+- **关系上的 `sum`、`max`、`min` 不返回类型变量**：值来自没写参数类型的 lambda，返回类型若是 `F`，`x.gt(m.items().sum(i -> i.amount()))` 在 `gt(T)` 与 `gt(Expr<T>)` 之间引用不明确（探针）。所以 `sum` 是 `ExprNumber<N>`、`max`/`min` 是 `Expr<T>`，运行时的对象仍是具体类型，要接着用某种类型的方法时包一层 `ExprDecimal.of(...)`。
+- **只有 `Expr<T>` 的地方**（`scalar(q)`、`sql(...)`、`call(...)`）用 `ExprText.of(e)` 等包一层，不提供强转；包一层不改 SQL。
+- **静态函数**只留没有主操作数的：条件块 `any`、`all`、`not`、`exists`、`notExists`、`bool`、`sqlCond`；`val`、`lit`、`nullOf`；`count()`、`grouping`；窗口函数；`caseWhen`、`caseOf`；`scalar`、`anyOf`、`allOf`；`currentDate`、`currentTimestamp`；`keys`、`orders`、`cols`；`sql`、`sqlTable`、`identifier`、`call`。
 
-窗口的取值函数留作静态，但按"单参数泛型保住具体类型"写，`over(...)` 之后回到同一族：
+## 3. 继承与转型
 
-```java
-static <E extends Expr<?>> WindowCall<E> lag(E e, int offset)  // lag(l.quantity(), 1).over(w -> ...) 的类型是 NumExpr<BigDecimal>
-```
+- 向上转型不用写：每种列都是 `Col<T>` 与 `Expr<T>`，每种表达式都是 `Expr<T>`。
+- 向下用显式的 `ExprText.of(e)` 等，不强转：节点本身不是 `ExprText`。
+- 通配符：辅助方法收"任意文本"写 `ExprText<?>`，收"任意数值"写 `ExprNumber<?>`；`mod`、`power`、`divide` 的参数收 `Expr<? extends Number>`。
+- 不用自限定泛型：协变重写的样板交给生成器，每个类型接口重写 `coalesce`、`nullif`、`max`、`min`、`filter`、`over`、`retype`，`TypedExprTest` 用反射检查都重写了。
 
-**结果类型的规则**（避开参考库的坑）：
-
-- 数值：`plus`、`minus`、`times` 的结果取左边的类型；`divide` 和 `avg` 返回 `NumExpr<BigDecimal>`（与现在相同）；`sum` 返回本身的类型；`count`、`countDistinct` 返回 `NumExpr<Long>`；`coalesce` 的字面量参数收任意 `Number`，按列的类型转换。
-- `val(x)` 按值的类型返回对应的族：`val("x")` 是 `TextExpr`，`val(BigDecimal.ONE)` 是 `NumExpr<BigDecimal>`，`val(LocalDate)` 是 `DateExpr`，其余是 `Expr<T>`。这样 `val("x").upper()` 能写。`lit`、`nullOf` 同理。
-- `caseWhen(cond, 结果)` 按第一个结果的类型决定族：结果是值时按值的类型重载（文本、数值、日期、时间戳、其余），是表达式时用单参数的泛型保住族。
-- 每个族的方法控制在 30 个左右，冷门的留在 `Sql`，免得补全列表太长。
-
-**写法对照**：
-
-```java
-// 现在
-.select(l -> cols(upper(l.unit()).as("unit"), sum(l.quantity()).as("total"), stringAgg(l.delivery(), ",", l.delivery().desc()).as("deliveries")))
-.select(e -> cols(addDays(e.onDay(), 3).as("due"), year(e.atTime()).as("y")))          // EVENTS 的真正 DATE、TIMESTAMP 列
-// 之后
-.select(l -> cols(l.unit().upper().as("unit"), l.quantity().sum().as("total"), l.delivery().stringAgg(",", l.delivery().desc()).as("deliveries")))
-.select(e -> cols(e.onDay().addDays(3).as("due"), e.atTime().year().as("y")))
-```
-
-**方言函数**：方言包不能往核心的类里加实例方法，方言的运算经由方言门面的视图，见第 4 节。
-
-### 3. 继承与转型
-
-- **向上**：每个族都是 `Expr<T>` 的子类，接收任意表达式的地方（`cols`、`groupBy`、`orderBy`、`keys`、`in(子查询)`、原生 SQL 的参数）照旧收 `Expr<?>`，不用转换。
-- **向下不用强转**：只拿得到 `Expr<T>` 的地方（标量子查询、原生 SQL 片段 `sql(String.class, ...)`、自定义函数 `call(...)`、还没改的方言函数），用适配函数套一层外壳，类型由参数检查，不会有运行时的 `ClassCastException`：
-
-  ```java
-  static TextExpr text(Expr<String> e)
-  static <N extends Number> NumExpr<N> num(Expr<N> e)
-  static DateExpr date(Expr<LocalDate> e)
-  static DateTimeExpr dateTime(Expr<LocalDateTime> e)
-
-  text(scalar(from(Makt.class).where(...).select(t -> t.text()))).upper()
-  ```
-
-  不提供 `(TextExpr) e` 式的强转：节点本身不是 `TextExpr`，强转必然失败。
-- **通配符**：泛型不协变，`NumExpr<Integer>` 不是 `NumExpr<Number>`。数值运算的参数写成 `NumExpr<? extends Number>`，结果取接收者的类型（与现在的 `plus(Expr<N>, Expr<? extends Number>...)` 规则相同）；`divide`、`avg` 固定返回 `NumExpr<BigDecimal>`。
-- **不用自限定泛型**：`Expr<T, S extends Expr<T, S>>` 能让基类方法直接返回本族，但所有签名都要多写一个类型参数（`Expr<String, ?>`），使用方写辅助方法时也躲不开。改用协变重写，样板交给生成器。
-- **用测试防止漏重写**：要保住族的方法只有 `coalesce`、`nullif`、`min`、`max` 和聚合的 `filter`、`over`。加一个反射单测，检查每个族都按本族的类型重写了它们（Querydsl #2014、Jimmer #1529 就是漏了）。
-- **同类型的多参数运算仍是实例方法**：`static <E extends Expr<?>> E coalesce(E a, E b)` 遇到 `TextExpr` 和 `NumExpr` 会推断成公共父类 `Expr<?>`，悄悄通过编译（0002 第 4 条）。所以只有单参数的泛型函数留作静态。
-
-### 4. 不同数据库的差异
-
-同一个 Java 类型在各库上的差别有两种，处理方法不同：
-
-1. **存储与语义不同**：HANA 的 TIMESTAMP 精确到 100 纳秒、MySQL 的 DATETIME 到微秒；MySQL 的 TIMESTAMP 按会话时区换算、DATETIME 不换算；GREATEST 遇到 NULL 时 PostgreSQL 跳过、HANA 和 MySQL 返回 NULL。这些属于渲染和读写，继续由方言（`Dialect`、`TypeRegistry`、方言的 `SchemaSyntax`）处理，**不进列的类型**。列的族只描述 Java 一侧的值。
-2. **可用的方法不同**：HANA 的日期有 `TO_VARCHAR`、文本有 `LENGTH`、`TO_DATE`；MySQL 有 `DATE_FORMAT`；PostgreSQL 的文本有 `ILIKE`、JSONB 操作。三种做法：
-
-| 做法 | 写法 | 问题 |
-| --- | --- | --- |
-| 甲：列类带上方言 | 表接口里写 `HanaDateCol createdOn()`，它继承 `DateCol`，多出 HANA 的方法 | 表接口绑死一个库，同一张表不能在别的库上用（本库的实库测试、流程引擎都要跨库）；做完核心运算后（`addDays`）结果回到 `DateExpr`，HANA 的方法又没了，要想保住就得"方言 × 族 × 三种类"全部协变重写 |
-| 乙：所有类型带一个方言参数 | `DateCol<D extends Dialect>`，表接口也跟着泛型化 | 所有签名多一个类型参数，比自限定泛型还重 |
-| 丙：表接口保持中立，方言能力经由方言门面的视图（推荐） | `hana(l.createdOn()).toVarchar("YYYYMMDD")`、`mysql(l.createdOn()).dateFormat("%Y%m")`、`pg(l.title()).ilike("ea%")` | 方言运算要先套一层视图；好处是表接口跨库可用，视图的结果回到核心的族，后面照样点 |
-
-丙的视图按参数的静态类型选重载（探针已验证）：
-
-```java
-// Hana 门面
-static DateView hana(DateExpr e)     // toVarchar(format)
-static TextView hana(TextExpr e)     // toDate(format)、length()、likeRegexpr(pattern)
-static <N extends Number> NumView<N> hana(NumExpr<N> e)
-
-hana(l.createdOn()).toVarchar("YYYYMMDD").upper()            // 视图 → TextExpr，继续点
-hana(l.createdOn().addDays(3)).toVarchar("YYYYMMDD")         // 先做核心运算再进视图
-hana(l.delivery()).toDate("YYYYMMDD").addDays(1)              // 文本 → DateExpr
-```
-
-- 视图只是方言函数换了个入口，渲染仍按现在的规则：放到别的方言上渲染时报错。
-- 没有主操作数的方言能力（`hint`、`distinctOn`、`fromView`、`hierarchy`、`intersectAll` 等）照旧是方言门面的静态函数。
-- 0002 里 PostgreSQL 的 `pg(e).isDistinctFrom(x)` 就是这种视图的先例。
-
-### 5. 语句式条件
-
-目的是条件一行一个，不用 `.and(...)` 链起来，也就不用关心链到一半返回的是什么类型。三种做法：
-
-**甲：条件只能写成语句（EasyQuery 的做法，推荐）**
+## 4. 语句式条件
 
 ```java
 from(Lips.class).where(l -> {
-    l.delivery().contains("D");                      // 比较方法返回 void，写进当前的接收处
+    l.delivery().contains("D");                      // 条件方法返回 void，写进最内层的条件块
     l.quantity().gt(new BigDecimal("2"));
     if (maker != null) l.mara().manufacturer().eq(maker);   // 可选条件就是 if
-    any(() -> {                                      // OR 用无参的语句块隔开
+    any(() -> {                                      // OR：块里每行一个选项
         l.unit().eq("EA");
-        l.unit().eq("KG");
+        all(() -> { l.unit().eq("KG"); l.quantity().lt(BigDecimal.TEN); });
     });
 })
-.select(l -> cols(l.delivery(), bool(() -> l.quantity().gt(new BigDecimal("2"))).as("big")))   // 条件当值用：语句块
+.select(l -> cols(l.delivery(), bool(() -> l.quantity().gt(new BigDecimal("2"))).as("big")))
 ```
 
-- **规则**：比较、`in`、`isNull` 等返回 `void`，写进最内层的接收处，块里的条件用 AND 连起来。接收处有 `where`、`having`、`qualify`、连接的 `ON`、关系的 `any`/`none`/`where`、`any(() -> ...)`（OR）、`not(() -> ...)`、`bool(() -> ...)`、`caseWhen(() -> ..., 结果)`、聚合的 `filter(() -> ...)`、全局过滤器的回调。在没有接收处的地方（比如 `select` 的 lambda 里直接写 `l.x().eq(1)`）写条件，立即报错，并说明应该套 `bool(() -> ...)`。
-- **复用**：辅助方法写成返回 `void` 的方法，在块里调用：`static void todo(WorkItem w, String user) { any(() -> { w.assignee().eq(user); ... }); }`。条件不能存进变量、不能传来传去。
-- **没有歧义**：每个位置只有一个返回 `void` 的函数式接口；无参的块 `() -> {...}` 是显式类型的 lambda，也不会和别的重载冲突（探针与 EasyQuery 一致）。
-- **能删掉的**：`Cond` 不再出现在公开 API 里；`all`、`onlyIf`、`ifPresent`、`Cond.and`/`or` 都删掉。不学 EasyQuery 的 `eq(boolean 条件, 值)` 重载，可选条件用 `if` 或作用域的 `skipEmpty()`。
-- **代价**：接收处靠线程局部的栈（与 `skipEmpty` 相同），"写了就生效"是隐式的；所有收条件的 API 都改成收语句块，生成的作用域 `From1..From16` 的签名跟着改。
+- 接收处（`expr.Conditions`，线程局部的栈）：`where`、`having`、`qualify`、连接的 `on`、关系的 `one`/`many`/`where`/`any`/`none`、`any`、`all`、`not`、`bool`、`caseWhen`、聚合的 `filter`、全局过滤器、条件对象的 `@Where(using = ...)`。块里的条件用 AND 连起来，`any` 的块里每个条件是一个 OR 选项。
+- 在条件块外写条件立即报错，并提示用 `bool(() -> ...)`；块里的投影、分组、排序、关系的 `list`/`first` 等 lambda 压一个"不收条件"的标记，在那里写条件也报错，不会悄悄并进外层的块。
+- UPDATE 的赋值同样写成块：`set(t -> { t.title().to("x"); t.qty().to(t.qty().plus(1)); })`（`write.Assignments`）；`to(...)` 只在列上，写在赋值块外报错。
+- 复用条件写成返回 `void` 的方法。条件不能存进变量、不能当返回值传递；`sqlCond(...)` 写进块后返回它本身，`.on(方言类, 模板)` 改的就是块里的那个条件。
+- 删除的写法：`Cond.and`/`or`/`not`、`onlyIf`、`ifPresent`、条件参数的 `all(Cond...)` 和 `any(Cond...)`；`Cond` 不再出现在使用方的代码里，留给方言包和自定义条件节点。
+- 曾考虑过的另两种：条件既是值又自动登记、被组合时撤下（漏了"撤下"就会同时进 AND 和 OR，SQL 不报错、结果悄悄出错）；保持值式只删 `.and`（顶层要包 `all(...)`，可选条件仍要 `onlyIf`）。
 
-**乙：条件既是值、又自动登记，被组合时撤下**
+## 5. 不同数据库的差异
 
-条件照旧返回 `Cond`，创建时登记进当前的块，被 `any`、`caseWhen` 等收下时撤下。改动最小，`any(a, b)`、辅助方法返回 `Cond` 都照旧能写。**不推荐**：只要某个收条件的地方漏了"撤下"，同一个条件会同时进 AND 和 OR，SQL 不报错、结果悄悄出错。
+- **存储与语义不同**（HANA 的 TIMESTAMP 精确到 100 纳秒、MySQL 的 TIMESTAMP 按会话时区换算、GREATEST 遇 NULL 的行为）属于渲染与读写，继续由方言处理，不进类型。
+- **可用的函数不同**：方言门面给出视图，表接口保持中立，视图的结果回到核心的类型接口：
 
-**丙：保持值式，只做小改**
+  ```java
+  hana(l.createdOn()).toVarchar("YYYYMMDD").upper()      // ExprText，接着点
+  hana(l.delivery()).toDate("YYYYMMDD").addDays(1)        // 文本解析成日期
+  postgres(l.unit()).eqAny(units)                         // 条件写进当前的块
+  mysql(e.onDay()).dateFormat("%Y%m")
+  sqlite(l.text()).glob("A*")
+  ```
 
-`where(l -> all(a, b, c))` 本来就不需要链式的 `.and`；只删掉 `Cond.and`/`or`，让 `all`、`any` 忽略值为空的条件。条件可以返回、存起来、组合，没有隐式状态；代价是顶层要包一层 `all(...)`，可选条件还是靠 `skipEmpty` 或 `onlyIf`。
+  视图按参数的静态类型选重载（`hana(ExprText)` 有 `toDate`、`length`，`hana(ExprNumber)` 有 `median`，`hana(Expr)` 有 `toVarchar`、`toNvarchar`）。没有主操作数的（`hint`、`distinctOn`、`fromView`、全文检索、数组）照旧是方言门面的静态函数。
 
-**取舍**：用户要的是"一行一个条件"，甲是能做到这一点、又不会悄悄出错的做法，调研在 EasyQuery 的 issue 里也没有查到针对这种写法的抱怨。如果更看重条件能当值传递和组合，选丙。
+## 6. 其他写法的整理
 
-### 6. 其他写法的整理（候选，逐条确认）
+- 删掉：约 55 个静态的类型函数、`plus(List)`（链式 `plus` 渲染相同）、`Cond.and`/`or`、`onlyIf`、`ifPresent`、`@Column(lob)`。
+- `coalesce` 的多个后备值改成一个或两个的固定重载：接口的 default 方法不能用 `@SafeVarargs`，泛型可变参数会在每个调用处报警告。
+- `cols(Cols first, Expr<?>... more)` 保留：`l.columns()` 加额外列的写法有用处（`Many.first` 也用它）。
+- `CastType<T, F>` 带上结果的类型接口，`cast(CastType.decimal(15, 3))` 是 `ExprDecimal`。
+- `query:pull` 生成的列方法按读回的类型写列接口（`ColClob`、`ColBlob` 代替 `lob = true`）。
 
-| 候选 | 现状 | 建议 |
-| --- | --- | --- |
-| 静态的类型函数 | 约 55 个，与实例方法二选一 | 删掉，只留实例方法（第 2 节） |
-| `onlyIf`、`ifPresent` | 与 `skipEmpty`、`if` 重复 | 第 5 节选甲时删掉 |
-| `Cond.and` / `Cond.or` | 与 `all` / `any` 重复 | 删掉（三种做法都删） |
-| UPDATE 的赋值 | `set(t -> t.title().to("x")).set(t -> t.qty().to(...))` 每列一次 `set` | 改成语句式：`set(t -> { t.title().to("x"); t.qty().to(t.qty().plus(val(1))); })` |
-| `substring`、`left`、`right` 的表达式参数重载 | int 与 `Expr<Integer>` 两套 | 留 int 一套加 `NumExpr<Integer>` 一套，作为实例方法 |
-| `plus(List)` | 与可变参数版本重复 | 删掉，用可变参数 |
-| `cols(Cols first, Expr... more)` | 拼接已有的 `Cols` | 先查用处，没有就删 |
-| `cols(...)` 的结果按名字取值 | `r.get("material")` 无类型，测试里大量 `(BigDecimal) r.get(...)` | 文档推荐局部 record 加 `into(X.class)`；`cols` 只留给真正动态的场景 |
-| 关系的聚合 | `m.deliveries().sum(l -> l.quantity())` 返回 `Expr<N>` | 返回本族；`max`/`min` 用泛型保住类型 |
+## 7. TypeScript（待实施）
 
-### 7. TS：值类型改用 decimal.js 与 @internationalized/date
+TS 的字段类型就是值的类型，所以要先让小数和日期不再是 `string`：用 `decimal.js` 的 `Decimal`、`@internationalized/date` 的 `CalendarDate` / `CalendarDateTime`（与 vue-tsx-pro 一致），作为核心包的 peerDependencies，前端从接口拿到的值不用再转换；`bigint` 不变。之后按字段的 TS 类型选列接口，写法与 Java 对齐成 `l.unit.contains("E")`、`l.quantity.sum()`、`l.createdOn.addDays(3)`、语句式条件。
 
-现在文本、小数、日期、时间戳在 TS 里都是 `string`，按值类型分不出族。用户 2026-10-25 提出：TS 引入真正的小数、日期类型，与 vue-tsx-pro 一致，需要的依赖可以加。vue-tsx-pro（`packages/ui`）现在用的是：
+转换器列（字段类型是 `CalendarDate`、库里存文本）在 TS 的类型系统里看不到装饰器，计划用字段类型上的标记 `Stored<CalendarDate, string>` 让 `Ref` 映射成文本列，实施前先用小探针验证。
 
-| 值 | vue-tsx-pro | 依赖与版本（vue-tsx-pro 的 catalog） |
-| --- | --- | --- |
-| 精确小数 | `Decimal`；组件的数值统一是 `NumericValue = number | bigint | Decimal`，表单有 `decimalSchema` | `decimal.js` 10.6.0；运行时不导入，按 `constructor.isDecimal` 识别，所以 `Decimal.clone` 配过精度的实例也认 |
-| 大整数 | 原生 `bigint` | 无 |
-| 日期 | `CalendarDate` | `@internationalized/date` 3.12.4 |
-| 不带时区的日期时间 | `CalendarDateTime` | 同上；另有 `ZonedDateTime`、`Time` |
+列接口的名字（沿用 Java 的逻辑类型名 `ColText`、`ColDecimal`，还是按 TS 类型叫）待用户确认。
 
-**建议的 TS 值类型**（与 Java 的 `BigDecimal`、`LocalDate`、`LocalDateTime` 一一对应）：
+## 8. 验证
 
-| SQL 类型 | 现在 | 改成 |
-| --- | --- | --- |
-| `decimal` | 十进制字符串 `'3.000'` | `Decimal` |
-| `bigint` | `bigint` | 不变 |
-| `integer`、`double` | `number` | 不变 |
-| `date` | `'YYYY-MM-DD'` | `CalendarDate` |
-| `timestamp` | `'YYYY-MM-DD HH:MM:SS[.fff]'` | `CalendarDateTime` |
-| `text`、`boolean`、`bytes` | 不变 | 不变 |
-
-这样字段的 TS 类型就能区分各族，`Ref` 按字段类型映射：`string` → `TextCol`，`number` / `bigint` / `Decimal` → `NumCol`，`CalendarDate` → `DateCol`，`CalendarDateTime` → `DateTimeCol`，其余 → `Col<T>`。TS 的写法和 Java 对齐成 `l.unit.contains("E")`、`l.quantity.sum()`、`l.createdOn.addDays(3)`。
-
-```ts
-@table("LIPS", { schema: SCHEMA })
-export class Lips extends ClientEntity {
-  @column("VBELN") delivery!: string;
-  @column("ERDAT", sapDate) createdOn!: CalendarDate | null;          // 转换器改成 CalendarDate ↔ 'yyyyMMdd'
-  @column("LFIMG", decimal, { precision: 13, scale: 3 }) quantity!: Decimal;
-}
-```
-
-- **依赖怎么加**：`decimal.js` 和 `@internationalized/date` 作为核心包的 **peerDependencies**，由应用安装，与 vue-tsx-pro 用同一份实例，前端从接口拿到的值不用再转换。代价是核心包不再是"运行时没有第三方依赖"，README 与包描述要改。参数里的 `Decimal` 按 `constructor.isDecimal` 识别（与 vue-tsx-pro 相同），读出的值用默认的 `Decimal` 构造。
-- **其他走法**（不推荐）：
-  - 保持字符串、维持函数写法：两端写法不一致；
-  - 在 `Expr<T>` 上用 `this: Expr<string>` 限定方法：小数、日期列上也能点出 `contains`，限定形同虚设；
-  - 自己做品牌字符串类型（`string & { brand }`）：不另加依赖，但前端拿到的仍是字符串，还要再转一次。
-- **影响**：所有读写小数、日期、时间戳的 TS 代码都要改（读出的值从字符串变成对象，比较用 `compare`/`equals`）；转换器 `sapDate` 改成 `CalendarDate`；SQLite WASM、浏览器里同样适用；`@zerodep-dev/idb` 有自己的编码，这次不动。金样例的 SQL 不受影响，参数的文本写法要核对（`Decimal` 的 `toString` 会去掉末尾的零，参数按 `toFixed()` 写出才与现在相同）。
-
-### 8. 实施与验证
-
-1. 生成器产出五个族的表达式、列、聚合类和协变重写；`Metadata` 认新的列类（值类型从类本身或 `NumCol<N>` 的泛型参数读出）。
-2. 核心函数搬成实例方法，删掉静态版本；方言函数改成方言门面的视图（第 4 节）。
-3. 语句式条件（按第 5 节的选择）：选甲时是接收处的栈、各处收条件的 API 改成语句块、作用域签名，删除 `all`/`onlyIf`/`ifPresent`/`and`/`or`；选丙时只删 `Cond.and`/`or`。
-4. 全部测试、`SpecCases`、文档示例改成新写法。**金样例一个都不应该变**：新写法渲染出的 SQL 与旧写法逐字相同，这是最主要的回归证据。
-5. 实库测试五个库全跑；TS 按第 7 节的选择处理。
-
-## 待确认的问题
-
-1. 族的命名：`TextCol` / `NumCol` / `DateCol` / `DateTimeCol`，还是按 Java 类型叫 `StringCol` / `LocalDateCol`，或者 `ColString` 这种前缀式？
-2. 数值列：常用四种给具体的类名（`DecimalCol quantity()`），还是统一写 `NumCol<BigDecimal>`？
-3. 聚合结果要不要单独的 `XxxAgg` 类（`filter`、`over` 在编译期受限），还是放在各族上、不是聚合时运行时报错（少五个类）？
-4. 语句式条件选甲（只能写成语句）、乙还是丙？
-5. TS 是否改用 `Decimal`、`CalendarDate`、`CalendarDateTime`，并作为 peerDependencies 加入核心包？
-6. 方言能力用丙（方言门面的视图），还是另有偏好？
-7. 第 6 节的候选逐条定。
+- 金样例（`spec/render`）一个都没有变：新写法渲染出的 SQL 与旧写法逐字相同，这是最主要的回归证据。
+- Java 各模块的测试与 HANA、PostgreSQL、MySQL、PolarDB、SQLite 五个库的实库测试全部通过；`CompileTimeSafetyTest` 加了文本列点日期函数、以文本存的日期点日期函数、整数相除、给非列赋值、条件当投影几种不能编译的写法；`TypedExprTest` 检查每个类型接口的协变重写、类型提升和写错位置的条件。
+- 测试与文档的旧写法由一次性的改写脚本转换后逐个复核，可选条件、`.and` 链和返回 `Cond` 的辅助方法手工改。

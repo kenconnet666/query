@@ -26,9 +26,9 @@ import static org.dpdns.zerodep.query.postgres.Postgres.*;   // 核心函数加 
 
 @Table(schema = "erp", value = "lips")
 public interface Lips extends Entity {                              // 表是接口，列是方法
-    @Column("matnr") Col<String> material();
-    @Column("erdat") Col<LocalDate> createdOn();
-    @Column("lfimg") Col<BigDecimal> quantity();
+    @Column("matnr") ColText<String> material();
+    @Column("erdat") ColDate<LocalDate> createdOn();
+    @Column("lfimg") ColDecimal<BigDecimal> quantity();
 }
 
 public record MaterialTotal(String material, BigDecimal quantity) { }
@@ -39,7 +39,7 @@ List<MaterialTotal> rows = db.list(from(Lips.class)
     .where(l -> l.createdOn().ge(start))
     .groupBy(l -> l.material())
     .orderBy(l -> l.material())
-    .select(l -> row(MaterialTotal::new, l.material(), sum(l.quantity()))));
+    .select(l -> row(MaterialTotal::new, l.material(), l.quantity().sum())));
 ```
 
 **TypeScript**：按方言安装 `@zerodep-dev/query-postgres`、`@zerodep-dev/query-mysql`、`@zerodep-dev/query-hana` 或 `@zerodep-dev/query-sqlite`，核心包会随之安装，数据库驱动（`pg`、`mysql2`、`@sap/hana-client`、`@sqlite.org/sqlite-wasm`；`node:sqlite` 是 Node 内置的）由项目自己提供：

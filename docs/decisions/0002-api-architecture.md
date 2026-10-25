@@ -1,6 +1,6 @@
 # 0002 API 与整体架构
 
-- 状态：已采纳（2026-10-21）；Java 第一期与 TypeScript 第二期均已实现，并通过三库实库验证。第 1、3、5 条已由 [0006](0006-query-model-direction.md) 修订（2.0：接口表、导航关系、对象树、条件对象）；"用户必须选定方言包"与实库场景的组织已由 [0013](0013-portable-facade-and-live-tests.md) 修订（通用门面、query-it）
+- 状态：已采纳（2026-10-21）；Java 第一期与 TypeScript 第二期均已实现，并通过三库实库验证。第 1、3、5 条已由 [0006](0006-query-model-direction.md) 修订（2.0：接口表、导航关系、对象树、条件对象）；"用户必须选定方言包"与实库场景的组织已由 [0013](0013-portable-facade-and-live-tests.md) 修订（通用门面、query-it）；第 4 条（只给同类型的多参数运算用实例方法）已由 [0014](0014-typed-expressions.md) 修订（按逻辑 SQL 类型分的接口，有主操作数的运算都是实例方法）
 - 修订 0001：
   - TypeScript 改以 7 为唯一基准；
   - 首批方言为 HANA、PostgreSQL、MySQL，三者同步推进；
