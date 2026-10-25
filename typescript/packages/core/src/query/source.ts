@@ -122,8 +122,12 @@ export function createRef<E>(source: Source<E>, entity: Ctor<unknown> | undefine
   return Object.freeze(ref) as unknown as Ref<E>;
 }
 
-/** 关系属性的值：一对多是 Many；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
+/** 关系属性的值：一对多是 Many，多对多是中间表的 Many 再 through；多对一是目标表的新引用，并登记为本次出现的隐式连接。 */
 function relationValue(owner: RefOwner, self: object, relation: RelationMeta): unknown {
+  if (relation.through !== undefined) {
+    const via = relation.through.via as (self: object) => Many<unknown>;
+    return via(self).through(relation.through.to as never);
+  }
   const on = relation.on as (self: object, target: object) => void;
   if (relation.many) return new Many(owner, relation.target, (t) => on(self, t));
   const target = createRef(tableSource(relation.target()), undefined, true);

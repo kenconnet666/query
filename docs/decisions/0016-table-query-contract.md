@@ -50,3 +50,9 @@ GET /orders?page=2&pageSize=20&sort=-amount,name&total=368
 
   于是投影里的标量子查询（一对多的 `count()`、`sum()`）、窗口函数、只为投影连接的导航关系（多对一、`first()`，都至多一行，`exclude` 早就按这一点去掉它们）、groupJoin 的派生表都不写；WHERE 用到的关系照常连接，用户写的 JOIN 一个不少。其余情况仍是 `SELECT COUNT(*) FROM (查询) COUNTED`，有 LIMIT 时连 ORDER BY 一起留下。
 - 没有学 EasyQuery 把单列 DISTINCT 写成 `COUNT(DISTINCT x)`：它不数 NULL，而 `SELECT DISTINCT x` 把 NULL 当一行，两者在有空值时不相等。分组查询也仍然包一层：要去掉的只有非键的列，省得不多，各库对 `SELECT 1 ... GROUP BY` 的写法与优化又不一样。
+
+### 4. 对象树：多对多与子集合上的条件
+
+- 对象树的加载 EasyQuery 用 `include2` 一次写几条路径，我们在投影里嵌套 `many.where().orderBy().limit().list()`，每层一条按键批量的 IN 查询，能力相同，不另加写法。
+- **多对多**：到中间表的一对多再 `through` 中间表的多对一关系，得到目标表的 `Many`：Java 写 `default Many<Role> roles() { return userRoles().through(UserRole::role); }`，TS 写 `@manyThrough((u) => u.userRoles, (ur) => ur.role) roles!: Many<Role>`。没有另造一种关系：`Many` 记下"查询的表"（中间表）和"从它的行到交给回调的行"的导航，`any`、`count`、`sum`、`list`、`first`、`where`、`orderBy`、groupJoin 都照常在中间表上做，回调里用到的目标列在子查询里 LEFT JOIN 过去。所以条件对象的路径（`roles.name`）和 groupJoin 不用改就能经过多对多；行数是中间表的行数（外键完整时就是目标行数），用不到目标列时不连接目标表。`through` 只能紧跟在到中间表的关系后面，筛选、排序写在它之后。
+- **子集合上的条件对象**：`many.where(条件对象)` 与查询的 `where(filter)` 同一套规则，字段路径从目标表开始，于是前端传来的条件也能筛子集合（`m.deliveries().where(lineFilter).list(...)`）。

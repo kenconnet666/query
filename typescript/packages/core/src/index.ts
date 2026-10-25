@@ -34,6 +34,7 @@ export {
   logicDelete,
   where,
   many,
+  manyThrough,
   NamingStrategy,
   one,
   readAs,
