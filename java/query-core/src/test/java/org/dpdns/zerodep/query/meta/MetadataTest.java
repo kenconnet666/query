@@ -5,8 +5,10 @@ import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ReadAs;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.Col;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.MaraView;
@@ -123,7 +125,7 @@ class MetadataTest {
 
     @Table("X")
     interface WrongConverter extends Entity {
-        @Column(value = "ERDAT", converter = Erp.SapDateConverter.class) Col<String> createdOn();
+        @Column(value = "ERDAT", converter = Erp.SapDateConverter.class) ColText<String> createdOn();
     }
 
     @Table("X")
@@ -134,19 +136,19 @@ class MetadataTest {
 
     @Table("X")
     interface TwoReads extends Entity {
-        @Column("X") @Trimmed @BlankAsNull Col<String> x();
+        @Column("X") @Trimmed @BlankAsNull ColText<String> x();
     }
 
     @Table("X")
     interface NoPlaceholder extends Entity {
-        @Column("X") @ReadAs("TRIM(X)") Col<String> x();
+        @Column("X") @ReadAs("TRIM(X)") ColText<String> x();
     }
 
     @Table("ORDERS")
     interface Order extends Entity {
-        Col<String> orderNumber();
+        ColText<String> orderNumber();
 
-        @Column("ITEM_COUNT") Col<Integer> items();
+        @Column("ITEM_COUNT") ColInteger<Integer> items();
     }
 
     /** ORDERS 的一行。 */

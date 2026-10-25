@@ -2,9 +2,8 @@ package org.dpdns.zerodep.query.select;
 
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
-import org.dpdns.zerodep.query.table.Col;
-import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -35,7 +34,7 @@ final class Members {
     private static Object member(Ref<?> ref, String name) {
         if (ref.entity().isInterface()) return invoke(ref.param(), name);
         EntityMeta<?> meta = Metadata.entity(ref.entity());
-        return meta.has(name) ? new Col<>(ref, meta.property(name)) : null;
+        return meta.has(name) ? Col.of(ref, meta.property(name)) : null;
     }
 
     /** 调用表接口实例上名为 name 的无参方法（只看它实现的接口，不含 hashCode 之类）；没有这个方法时为 null。 */

@@ -26,9 +26,9 @@ class SqliteTest {
 
     @Test
     void GLOB区分大小写而LIKE不区分() {
-        long like = live.db().one(from(Lips.class).unfiltered().where(l -> like(l.unit(), "ea")).select(l -> count()));
-        long lower = live.db().one(from(Lips.class).unfiltered().where(l -> glob(l.unit(), "ea")).select(l -> count()));
-        long pattern = live.db().one(from(Lips.class).unfiltered().where(l -> glob(l.unit(), "E?")).select(l -> count()));
+        long like = live.db().one(from(Lips.class).unfiltered().where(l -> l.unit().like("ea")).select(l -> count()));
+        long lower = live.db().one(from(Lips.class).unfiltered().where(l -> sqlite(l.unit()).glob("ea")).select(l -> count()));
+        long pattern = live.db().one(from(Lips.class).unfiltered().where(l -> sqlite(l.unit()).glob("E?")).select(l -> count()));
         assertEquals(List.of(6L, 0L, 6L), List.of(like, lower, pattern), "LIKE ignores ASCII case on SQLite, GLOB does not");
     }
 
@@ -36,7 +36,7 @@ class SqliteTest {
     void 中位数与百分位数() {
         // M1 的数量是 3、2、1。
         Map<String, Object> r = live.db().one(from(Lips.class).where(l -> l.material().eq("M1"))
-            .select(l -> cols(median(l.quantity()).as("middle"), percentileCont(0.5, l.quantity()).as("p50"), percentileDisc(1, l.quantity()).as("top"))));
+            .select(l -> cols(sqlite(l.quantity()).median().as("middle"), percentileCont(0.5, l.quantity()).as("p50"), percentileDisc(1, l.quantity()).as("top"))));
         assertEquals(2.0, ((Number) r.get("middle")).doubleValue());
         assertEquals(2.0, ((Number) r.get("p50")).doubleValue());
         assertEquals(0, new BigDecimal("3").compareTo((BigDecimal) r.get("top")));

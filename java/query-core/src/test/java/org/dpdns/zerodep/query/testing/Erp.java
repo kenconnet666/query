@@ -11,9 +11,13 @@ import org.dpdns.zerodep.query.annotation.ManyToOne;
 import org.dpdns.zerodep.query.annotation.OneToMany;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
+import org.dpdns.zerodep.query.table.column.ColTimestamp;
 import org.dpdns.zerodep.query.type.Converter;
 
 import java.lang.annotation.ElementType;
@@ -25,7 +29,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-import static org.dpdns.zerodep.query.Sql.all;
 
 /** SAP 风格的测试表与结果类，单元测试和实库测试共用；实库测试的样例数据见 query-it 的 SampleData。 */
 public final class Erp {
@@ -58,73 +61,73 @@ public final class Erp {
     /** 各表共有的集团列，全局过滤器按它匹配。 */
     public interface Client extends Entity {
         /** 集团。 */
-        @Column("MANDT") Col<String> client();
+        @Column("MANDT") ColText<String> client();
     }
 
     /** 物料主数据。 */
     @Table(schema = SCHEMA, value = "MARA")
     public interface Mara extends Client {
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 制造商零件号。 */
-        @Column("MFRPN") Col<String> partNumber();
+        @Column("MFRPN") ColText<String> partNumber();
 
         /** 制造商。 */
-        @Column("MFRNR") Col<String> manufacturer();
+        @Column("MFRNR") ColText<String> manufacturer();
 
         /** 物料类型。 */
-        @Column("MTART") Col<String> materialType();
+        @Column("MTART") ColText<String> materialType();
 
         /** 一对多：这个物料的交货行（同一集团）。 */
-        default Many<Lips> deliveries() { return many(Lips.class, l -> all(l.material().eq(material()), l.client().eq(client()))); }
+        default Many<Lips> deliveries() { return many(Lips.class, l -> { l.material().eq(material()); l.client().eq(client()); }); }
 
         /** 多对一：语言 1 的物料描述。 */
-        default Makt text() { return one(Makt.class, t -> all(t.material().eq(material()), t.client().eq(client()), t.language().eq("1"))); }
+        default Makt text() { return one(Makt.class, t -> { t.material().eq(material()); t.client().eq(client()); t.language().eq("1"); }); }
     }
 
     /** 按 SAP 数据的实际用法读 MARA：零件号去空格、空制造商读作 NULL，同时保留原值列。 */
     @Table(schema = SCHEMA, value = "MARA")
     public interface MaraView extends Client {
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 去掉首尾空格的零件号。 */
-        @Column("MFRPN") @Trimmed Col<String> partNumber();
+        @Column("MFRPN") @Trimmed ColText<String> partNumber();
 
         /** 空串读作 NULL 的制造商。 */
-        @Column("MFRNR") @BlankAsNull Col<String> maker();
+        @Column("MFRNR") @BlankAsNull ColText<String> maker();
 
         /** 制造商的原值。 */
-        @Column("MFRNR") Col<String> storedMaker();
+        @Column("MFRNR") ColText<String> storedMaker();
     }
 
     /** 交货单行项目。 */
     @Table(schema = SCHEMA, value = "LIPS")
     public interface Lips extends Client {
         /** 交货单号。 */
-        @Column("VBELN") Col<String> delivery();
+        @Column("VBELN") ColText<String> delivery();
 
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 创建日期（SAP 日期）。 */
-        @Column("ERDAT") @SapDate Col<LocalDate> createdOn();
+        @Column("ERDAT") @SapDate ColText<LocalDate> createdOn();
 
         /** 交货数量。 */
-        @Column(value = "LFIMG", precision = 13, scale = 3) Col<BigDecimal> quantity();
+        @Column(value = "LFIMG", precision = 13, scale = 3) ColDecimal<BigDecimal> quantity();
 
         /** 单位。 */
-        @Column("VRKME") Col<String> unit();
+        @Column("VRKME") ColText<String> unit();
 
         /** 参考的销售订单号。 */
-        @Column("VGBEL") Col<String> salesOrder();
+        @Column("VGBEL") ColText<String> salesOrder();
 
         /** 多对一：物料主数据（同一集团）。 */
-        default Mara mara() { return one(Mara.class, m -> all(m.material().eq(material()), m.client().eq(client()))); }
+        default Mara mara() { return one(Mara.class, m -> { m.material().eq(material()); m.client().eq(client()); }); }
 
         /** 多对一：语言 1 的物料描述。 */
-        default Makt text() { return one(Makt.class, t -> all(t.material().eq(material()), t.client().eq(client()), t.language().eq("1"))); }
+        default Makt text() { return one(Makt.class, t -> { t.material().eq(material()); t.client().eq(client()); t.language().eq("1"); }); }
 
         /** 一对多（注解写法）：参考的销售订单的业务数据。 */
         @OneToMany(self = "salesOrder", target = "salesOrder") Many<Vbkd> salesData();
@@ -137,72 +140,72 @@ public final class Erp {
     @Table(schema = SCHEMA, value = "MAKT")
     public interface Makt extends Client {
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 语言。 */
-        @Column("SPRAS") Col<String> language();
+        @Column("SPRAS") ColText<String> language();
 
         /** 描述文本。 */
-        @Column("MAKTX") Col<String> text();
+        @Column("MAKTX") ColText<String> text();
     }
 
     /** 销售凭证的业务数据。 */
     @Table(schema = SCHEMA, value = "VBKD")
     public interface Vbkd extends Client {
         /** 销售订单号。 */
-        @Column("VBELN") Col<String> salesOrder();
+        @Column("VBELN") ColText<String> salesOrder();
     }
 
     /** 月度库存历史表的共同形状；数量列在各表的列名不同，由各表重新声明。 */
     public interface PeriodStock extends Client {
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
 
         /** 年度。 */
-        @Column("LFGJA") Col<String> year();
+        @Column("LFGJA") ColText<String> year();
 
         /** 期间（月）。 */
-        @Column("LFMON") Col<String> period();
+        @Column("LFMON") ColText<String> period();
 
         /** 库存数量。 */
-        Col<BigDecimal> quantity();
+        ColDecimal<BigDecimal> quantity();
     }
 
     /** 物料的月度库存历史。 */
     @Table(schema = SCHEMA, value = "MARDH")
     public interface Mardh extends PeriodStock {
         /** 非限制库存。 */
-        @Override @Column(value = "LABST", precision = 13, scale = 3) Col<BigDecimal> quantity();
+        @Override @Column(value = "LABST", precision = 13, scale = 3) ColDecimal<BigDecimal> quantity();
     }
 
     /** 批次的月度库存历史。 */
     @Table(schema = SCHEMA, value = "MCHBH")
     public interface Mchbh extends PeriodStock {
         /** 批次的非限制库存。 */
-        @Override @Column(value = "CLABS", precision = 13, scale = 3) Col<BigDecimal> quantity();
+        @Override @Column(value = "CLABS", precision = 13, scale = 3) ColDecimal<BigDecimal> quantity();
     }
 
     /** 真正的 DATE 与 TIMESTAMP 列，用于检查时区。 */
     @Table(schema = SCHEMA, value = "EVENTS")
     public interface Event extends Entity {
         /** 编号。 */
-        @Column("ID") Col<Integer> id();
+        @Column("ID") ColInteger<Integer> id();
 
         /** 日期。 */
-        @Column("ON_DAY") Col<LocalDate> onDay();
+        @Column("ON_DAY") ColDate<LocalDate> onDay();
 
         /** 时间戳。 */
-        @Column("AT_TIME") Col<LocalDateTime> atTime();
+        @Column("AT_TIME") ColTimestamp<LocalDateTime> atTime();
     }
 
     /** 类名是保留字的表，生成的别名必须加引号。 */
     @Table(schema = SCHEMA, value = "LIPS")
     public interface Order extends Entity {
         /** 交货单号。 */
-        @Column("VBELN") Col<String> delivery();
+        @Column("VBELN") ColText<String> delivery();
 
         /** 物料号。 */
-        @Column("MATNR") Col<String> material();
+        @Column("MATNR") ColText<String> material();
     }
 
     // ---------- 行与结果 ----------

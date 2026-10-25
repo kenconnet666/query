@@ -34,7 +34,7 @@ class SqliteRenderTest {
     @Test
     void 日期字面量写成文本且除法先转成浮点() {
         String sql = from(Lips.class)
-            .select(l -> cols(lit(LocalDate.of(2026, 1, 31)).as("day"), divide(l.quantity(), val(new BigDecimal("2"))).as("half"), cast(l.createdOn(), org.dpdns.zerodep.query.type.CastType.date()).as("d")))
+            .select(l -> cols(lit(LocalDate.of(2026, 1, 31)).as("day"), l.quantity().divide(val(new BigDecimal("2"))).as("half"), l.createdOn().cast(org.dpdns.zerodep.query.type.CastType.date()).as("d")))
             .toSql(SqliteDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT '2026-01-31' AS day, (CAST(lips.LFIMG AS REAL) / 2) AS half, date(lips.ERDAT) AS d"), sql);
     }
@@ -48,16 +48,16 @@ class SqliteRenderTest {
     @Test
     void SQLite不支持的能力渲染时报错() {
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).with(forUpdate(Lock.WAIT)).select(l -> l.delivery()).toSql(SqliteDialect.INSTANCE));
-        assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).groupByRollup(l -> keys(l.material())).select(l -> sum(l.quantity())).toSql(SqliteDialect.INSTANCE));
+        assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).groupByRollup(l -> keys(l.material())).select(l -> l.quantity().sum()).toSql(SqliteDialect.INSTANCE));
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).select(l -> grouping(l.material())).toSql(SqliteDialect.INSTANCE));
-        assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).select(l -> stddevSamp(l.quantity()).over(w -> w.partitionBy(l.material()))).toSql(SqliteDialect.INSTANCE));
+        assertThrows(UnsupportedOperationException.class, () -> from(Lips.class).select(l -> l.quantity().stddevSamp().over(w -> w.partitionBy(l.material()))).toSql(SqliteDialect.INSTANCE));
     }
 
     @Test
     void SQLite专属操作不能在别的方言上渲染() {
-        Query<String> q = from(Lips.class).where(l -> glob(l.unit(), "E*")).select(l -> l.delivery());
+        Query<String> q = from(Lips.class).where(l -> sqlite(l.unit()).glob("E*")).select(l -> l.delivery());
         assertThrows(UnsupportedOperationException.class, () -> q.toSql(new TestDialect()));
-        Query<Double> m = from(Lips.class).select(l -> median(l.quantity()));
+        Query<Double> m = from(Lips.class).select(l -> sqlite(l.quantity()).median());
         assertThrows(UnsupportedOperationException.class, () -> m.toSql(new TestDialect()));
     }
 
@@ -75,7 +75,7 @@ class SqliteRenderTest {
         logger.addHandler(handler);
         try {
             SqliteDialect dialect = new SqliteDialect();
-            for (int i = 0; i < 2; i++) from(Lips.class).select(l -> sqrt(l.quantity())).toSql(dialect);
+            for (int i = 0; i < 2; i++) from(Lips.class).select(l -> l.quantity().sqrt()).toSql(dialect);
             assertEquals(1, records.stream().filter(r -> r.getMessage().startsWith("SQRT()")).count(), () -> records.toString());
         } finally {
             logger.removeHandler(handler);

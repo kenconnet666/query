@@ -13,9 +13,9 @@ import org.dpdns.zerodep.query.annotation.ReadOnly;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.annotation.WriteOnce;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
+import org.dpdns.zerodep.query.table.column.Col;
 import org.dpdns.zerodep.query.type.Converter;
 import org.dpdns.zerodep.query.type.SqlType;
 
@@ -44,7 +44,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * 惰性构建并缓存的元数据。类的扫描结果和 getter 的解析结果都通过 {@link ClassValue} 按类缓存，
  * 只计算一次，也不会让类加载器无法回收。
  *
- * <p>表是继承 {@link Entity} 的接口，列是返回 {@code Col<T>} 的抽象方法。
+ * <p>表是继承 {@link Entity} 的接口，列是返回列接口（{@code ColText<T>}、{@code ColDecimal<T>} 等，统称 {@link Col}）的抽象方法；
+ * 列接口按库里的存储类型选，见 {@link #describeColumn}。
  * 结果类和行类（record、bean）则按字段描述。
  */
 public final class Metadata {
@@ -94,7 +95,7 @@ public final class Metadata {
 
     // ---------- 表接口 ----------
 
-    /** 扫描表接口：把返回 {@code Col<T>} 的抽象方法收集为列，非列的抽象方法报错。 */
+    /** 扫描表接口：把返回列接口的抽象方法收集为列，非列的抽象方法报错。 */
     private static <E> EntityMeta<E> scanTable(Class<E> type) {
         if (!Entity.class.isAssignableFrom(type)) {
             throw new IllegalArgumentException(type.getSimpleName() + " is an interface but does not extend Entity");
@@ -113,9 +114,9 @@ public final class Metadata {
                 relations.put(m.getName(), relation);
                 continue;
             }
-            if (first.getReturnType() != Col.class || first.getParameterCount() != 0) {
+            if (!first.getReturnType().isInterface() || !Col.class.isAssignableFrom(first.getReturnType()) || first.getParameterCount() != 0) {
                 throw new IllegalArgumentException(type.getSimpleName() + "." + m.getName()
-                    + "() is neither a column (Col<T> name()) nor a default method");
+                    + "() is neither a column (e.g. ColText<String> name()) nor a default method");
             }
             columns.put(m.getName(), describeColumn(type, m.getName(), declarations));
             for (Class<? extends Annotation> a : List.of(Id.class, Version.class, Generated.class, LogicDelete.class, ReadOnly.class, WriteOnce.class)) {
@@ -136,7 +137,7 @@ public final class Metadata {
         if (version != null) {
             Class<?> v = columns.get(version).javaType();
             if (v != Integer.class && v != Long.class) {
-                throw new IllegalArgumentException(type.getSimpleName() + "." + version + "(): @Version needs Col<Integer> or Col<Long>");
+                throw new IllegalArgumentException(type.getSimpleName() + "." + version + "(): @Version needs ColInteger<Integer> or ColBigint<Long>");
             }
         }
         String logic = single(type, marked, LogicDelete.class);
@@ -166,7 +167,7 @@ public final class Metadata {
         for (Method d : declarations(type, column.name())) if ((a = d.getAnnotation(LogicDelete.class)) != null) break;
         String where = type.getSimpleName() + "." + column.name() + "()";
         if (a.epochMillis()) {
-            if (javaType != Long.class) throw new IllegalArgumentException(where + ": @LogicDelete(epochMillis = true) needs Col<Long>");
+            if (javaType != Long.class) throw new IllegalArgumentException(where + ": @LogicDelete(epochMillis = true) needs ColBigint<Long>");
             return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), null, false, true);
         }
         return new WriteMeta.LogicDeleteMeta(column.name(), parse(where, javaType, a.active()), parse(where, javaType, a.deleted()), false, false);
@@ -224,15 +225,24 @@ public final class Metadata {
         return out;
     }
 
-    /** 描述一列：注解取自第一个带列注解的声明，值类型取自最具体的声明的泛型参数。 */
+    /**
+     * 描述一列：注解取自第一个带列注解的声明，值类型取自最具体的声明的泛型参数。列接口要与库里的存储类型一致：
+     * 文本列是 {@code ColText}（不限长度的是 {@code ColClob}），以文本保存的日期（转换器存成 String）也是 {@code ColText<LocalDate>}；
+     * 声明成别的接口时报错，免得日期函数作用在文本上生成错误的 SQL。
+     */
     private static PropertyMeta describeColumn(Class<?> owner, String name, List<Method> declarations) {
         Method annotated = declarations.stream().filter(Metadata::describesColumn).findFirst().orElse(declarations.get(0));
         Type returned = declarations.get(0).getGenericReturnType();
         if (!(returned instanceof ParameterizedType p) || !(p.getActualTypeArguments()[0] instanceof Class<?> javaType)) {
-            throw new IllegalArgumentException(owner.getSimpleName() + "." + name + "() must declare its value type, e.g. Col<String>");
+            throw new IllegalArgumentException(owner.getSimpleName() + "." + name + "() must declare its value type, e.g. ColText<String>");
         }
         Column column = annotated.getAnnotation(Column.class);
         SqlType<?> type = sqlType(owner, name, annotated, javaType, column);
+        Class<?> expected = Col.interfaceFor(type.storageType());
+        if (!Col.declarable(declarations.get(0).getReturnType(), type.storageType())) {
+            throw new IllegalArgumentException(owner.getSimpleName() + "." + name + "() is stored as " + type.storageType().getSimpleName()
+                + "; declare it as " + expected.getSimpleName() + "<" + javaType.getSimpleName() + ">");
+        }
         String columnName = column == null || column.value().isEmpty() ? null : column.value();
         return new PropertyMeta(owner, name, columnName, type, null, readTemplate(owner, name, annotated));
     }

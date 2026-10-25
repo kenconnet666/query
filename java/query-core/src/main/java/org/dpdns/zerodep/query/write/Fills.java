@@ -3,8 +3,8 @@ package org.dpdns.zerodep.query.write;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Ref;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.List;

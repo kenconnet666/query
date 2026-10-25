@@ -10,11 +10,11 @@ import org.dpdns.zerodep.query.expr.Order;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Derived;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
 import org.dpdns.zerodep.query.table.Source;
+import org.dpdns.zerodep.query.table.column.Col;
 import org.dpdns.zerodep.query.type.SqlType;
 
 import java.lang.reflect.ParameterizedType;
@@ -275,7 +275,7 @@ public final class Query<R> {
         List<Expr<?>> hits = new ArrayList<>();
         for (SelectSpec.Join j : spec.joins) {
             EntityMeta<?> meta = Metadata.entity(j.ref().entity());
-            if (meta.has(name)) hits.add(new Col<>(j.ref(), meta.property(name)));
+            if (meta.has(name)) hits.add(Col.of(j.ref(), meta.property(name)));
         }
         if (hits.size() == 1) return hits.get(0);
         throw new IllegalArgumentException(type.getSimpleName() + "." + name + (hits.isEmpty()

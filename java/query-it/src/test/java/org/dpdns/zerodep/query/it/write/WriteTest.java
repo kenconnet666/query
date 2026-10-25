@@ -33,12 +33,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.deleteFrom;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
-import static org.dpdns.zerodep.query.Sql.plus;
 import static org.dpdns.zerodep.query.Sql.update;
 import static org.dpdns.zerodep.query.Sql.val;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -81,9 +79,9 @@ class WriteTest {
         assertEquals(2, live.db().execute(twoNotes()));
         // 比较后更新：只改开着的便签，期望改到一行，改到 0 行（已经被关了）就报错。
         var closeN1 = update(Note.class)
-            .set(n -> n.qty().to(plus(n.qty(), val(10))))
+            .set(n -> n.qty().to(n.qty().plus(val(10))))
             .set(n -> n.status().to("closed"))
-            .where(n -> all(n.id().eq("N1"), n.status().eq("open")))
+            .where(n -> { n.id().eq("N1"); n.status().eq("open"); })
             .expect(1);
         assertEquals(1, live.db().execute(closeN1));
         assertEquals(0, assertThrows(UnexpectedRowCountException.class, () -> live.db().execute(closeN1)).actual());

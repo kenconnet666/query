@@ -6,12 +6,15 @@ import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.exec.Page;
 import org.dpdns.zerodep.query.exec.UnexpectedRowCountException;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColClob;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
+import org.dpdns.zerodep.query.table.column.ColTimestamp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,7 +36,6 @@ import static org.dpdns.zerodep.query.Sql.any;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
 import static org.dpdns.zerodep.query.Sql.orders;
-import static org.dpdns.zerodep.query.Sql.plus;
 import static org.dpdns.zerodep.query.Sql.update;
 import static org.dpdns.zerodep.query.Sql.val;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,19 +55,19 @@ class EngineTest {
     @Table(schema = "QUERY_IT", value = "E_INSTANCE")
     interface Instance extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 状态：active、completed。 */
-        @Column(value = "STATUS", length = 20, nullable = false) Col<String> status();
+        @Column(value = "STATUS", length = 20, nullable = false) ColText<String> status();
 
         /** 流程变量（JSON）。 */
-        @Column(value = "VARIABLES", lob = true) Col<String> variables();
+        @Column("VARIABLES") ColClob<String> variables();
 
         /** 版本：乐观锁，推进时加一。 */
-        @Version @Column(value = "REV", nullable = false) Col<Integer> rev();
+        @Version @Column(value = "REV", nullable = false) ColInteger<Integer> rev();
 
         /** 发起时间（UTC）。 */
-        @Column("STARTED_AT") Col<LocalDateTime> startedAt();
+        @Column("STARTED_AT") ColTimestamp<LocalDateTime> startedAt();
     }
 
     record InstanceRow(Long id, String status, String variables, Integer rev, LocalDateTime startedAt) { }
@@ -74,25 +76,25 @@ class EngineTest {
     @Table(schema = "QUERY_IT", value = "E_WORK_ITEM")
     interface WorkItem extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 实例。 */
-        @Column(value = "INSTANCE_ID", nullable = false) Col<Long> instanceId();
+        @Column(value = "INSTANCE_ID", nullable = false) ColBigint<Long> instanceId();
 
         /** 节点。 */
-        @Column(value = "NODE", length = 40, nullable = false) Col<String> node();
+        @Column(value = "NODE", length = 40, nullable = false) ColText<String> node();
 
         /** 岗位收件箱；直接落到人时为空。 */
-        @Column(value = "POOL", length = 40) Col<String> pool();
+        @Column(value = "POOL", length = 40) ColText<String> pool();
 
         /** 处理人；在收件箱里等认领时为空。 */
-        @Column(value = "ASSIGNEE", length = 40) Col<String> assignee();
+        @Column(value = "ASSIGNEE", length = 40) ColText<String> assignee();
 
         /** 状态。 */
-        @Column(value = "STATE", length = 10, nullable = false) Col<String> state();
+        @Column(value = "STATE", length = 10, nullable = false) ColText<String> state();
 
         /** 到达时间（UTC）。 */
-        @Column("CREATED_AT") Col<LocalDateTime> createdAt();
+        @Column("CREATED_AT") ColTimestamp<LocalDateTime> createdAt();
 
         /** 候选人、候选组与被排除的人。 */
         default Many<Candidate> candidates() { return many(Candidate.class, c -> c.workItemId().eq(id())); }
@@ -104,16 +106,16 @@ class EngineTest {
     @Table(schema = "QUERY_IT", value = "E_CANDIDATE")
     interface Candidate extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 待办。 */
-        @Column(value = "WORK_ITEM_ID", nullable = false) Col<Long> workItemId();
+        @Column(value = "WORK_ITEM_ID", nullable = false) ColBigint<Long> workItemId();
 
         /** 种类。 */
-        @Column(value = "KIND", length = 10, nullable = false) Col<String> kind();
+        @Column(value = "KIND", length = 10, nullable = false) ColText<String> kind();
 
         /** 人或组。 */
-        @Column(value = "VAL", length = 40, nullable = false) Col<String> value();
+        @Column(value = "VAL", length = 40, nullable = false) ColText<String> value();
     }
 
     record CandidateRow(Long id, Long workItemId, String kind, String value) { }
@@ -122,16 +124,16 @@ class EngineTest {
     @Table(schema = "QUERY_IT", value = "E_EVENT")
     interface Event extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 实例。 */
-        @Column(value = "INSTANCE_ID", nullable = false) Col<Long> instanceId();
+        @Column(value = "INSTANCE_ID", nullable = false) ColBigint<Long> instanceId();
 
         /** 种类。 */
-        @Column(value = "TYPE", length = 20, nullable = false) Col<String> type();
+        @Column(value = "TYPE", length = 20, nullable = false) ColText<String> type();
 
         /** 时间（UTC）。 */
-        @Column(value = "AT", nullable = false) Col<LocalDateTime> at();
+        @Column(value = "AT", nullable = false) ColTimestamp<LocalDateTime> at();
     }
 
     record EventRow(Long id, Long instanceId, String type, LocalDateTime at) { }
@@ -140,13 +142,13 @@ class EngineTest {
     @Table(schema = "QUERY_IT", value = "E_JOB")
     interface Job extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 到期时间（UTC）。 */
-        @Column(value = "DUE_AT", nullable = false) Col<LocalDateTime> dueAt();
+        @Column(value = "DUE_AT", nullable = false) ColTimestamp<LocalDateTime> dueAt();
 
         /** 领取者；没人领取时为空。 */
-        @Column(value = "LOCKED_BY", length = 40) Col<String> lockedBy();
+        @Column(value = "LOCKED_BY", length = 40) ColText<String> lockedBy();
     }
 
     record JobRow(Long id, LocalDateTime dueAt, String lockedBy) { }
@@ -173,10 +175,10 @@ class EngineTest {
      */
     private void completeSign(long item, long next) {
         live.db().transaction(() -> {
-            live.db().execute(update(Instance.class).set(i -> i.rev().to(plus(i.rev(), val(1)))).where(i -> i.id().eq(1L)).expect(1));
-            live.db().execute(update(WorkItem.class).set(w -> w.state().to("done")).where(w -> all(w.id().eq(item), w.state().eq("open"))).expect(1));
+            live.db().execute(update(Instance.class).set(i -> i.rev().to(i.rev().plus(val(1)))).where(i -> i.id().eq(1L)).expect(1));
+            live.db().execute(update(WorkItem.class).set(w -> w.state().to("done")).where(w -> { w.id().eq(item); w.state().eq("open"); }).expect(1));
             pause(300);
-            long open = live.db().count(from(WorkItem.class).where(w -> all(w.instanceId().eq(1L), w.node().eq("sign"), w.state().eq("open"))).select(w -> w.id()));
+            long open = live.db().count(from(WorkItem.class).where(w -> { w.instanceId().eq(1L); w.node().eq("sign"); w.state().eq("open"); }).select(w -> w.id()));
             if (open == 0) live.db().execute(insertInto(WorkItem.class).values(new WorkItemRow(next, 1L, "after", "review", null, "open", AT)));
         });
     }
@@ -194,7 +196,7 @@ class EngineTest {
     @Test
     void 同一个待办提交两次时第二次改到0行就报错() {
         signInstance();
-        var complete = update(WorkItem.class).set(w -> w.state().to("done")).where(w -> all(w.id().eq(11L), w.state().eq("open"))).expect(1);
+        var complete = update(WorkItem.class).set(w -> w.state().to("done")).where(w -> { w.id().eq(11L); w.state().eq("open"); }).expect(1);
         live.db().execute(complete);
         assertThrows(UnexpectedRowCountException.class, () -> live.db().execute(complete));
     }
@@ -209,12 +211,12 @@ class EngineTest {
         live.db().execute(insertInto(Job.class).values(new JobRow(1L, AT, null), new JobRow(2L, AT.plusMinutes(1), null),
             new JobRow(3L, AT.plusMinutes(2), null), new JobRow(4L, AT.plusMinutes(3), null), new JobRow(5L, AT.plusDays(1), null)));
         Function<String, Callable<List<Long>>> worker = name -> () -> {
-            List<Long> due = live.db().list(from(Job.class).where(j -> all(j.lockedBy().isNull(), j.dueAt().le(AT.plusHours(1))))
+            List<Long> due = live.db().list(from(Job.class).where(j -> { j.lockedBy().isNull(); j.dueAt().le(AT.plusHours(1)); })
                 .orderBy(j -> orders(j.dueAt(), j.id())).limit(10).select(j -> j.id()));
             List<Long> mine = new ArrayList<>();
             for (Long id : due) {
                 if (mine.size() == 2) break;
-                if (live.db().execute(update(Job.class).set(j -> j.lockedBy().to(name)).where(j -> all(j.id().eq(id), j.lockedBy().isNull()))) == 1) mine.add(id);
+                if (live.db().execute(update(Job.class).set(j -> j.lockedBy().to(name)).where(j -> { j.id().eq(id); j.lockedBy().isNull(); })) == 1) mine.add(id);
                 pause(50);
             }
             return mine;
@@ -226,11 +228,20 @@ class EngineTest {
         assertEquals(1L, live.db().count(from(Job.class).where(j -> j.lockedBy().isNull()).select(j -> j.id())), "the job due tomorrow stays");
     }
 
-    /** user 的待办：办理人是自己；或者没有办理人、自己或自己的组是候选，而且自己没有被排除。 */
-    private static Cond todo(WorkItem w, String user, List<String> groups) {
-        return all(w.state().eq("open"), any(w.assignee().eq(user), all(w.assignee().isNull(),
-            w.candidates().any(c -> any(all(c.kind().eq("user"), c.value().eq(user)), all(c.kind().eq("group"), c.value().in(groups)))),
-            w.candidates().none(c -> all(c.kind().eq("excluded"), c.value().eq(user))))));
+    /** user 的待办：办理人是自己；或者没有办理人、自己或自己的组是候选，而且自己没有被排除。在条件块里调用。 */
+    private static void todo(WorkItem w, String user, List<String> groups) {
+        w.state().eq("open");
+        any(() -> {
+            w.assignee().eq(user);
+            all(() -> {
+                w.assignee().isNull();
+                w.candidates().any(c -> any(() -> {
+                    all(() -> { c.kind().eq("user"); c.value().eq(user); });
+                    all(() -> { c.kind().eq("group"); c.value().in(groups); });
+                }));
+                w.candidates().none(c -> { c.kind().eq("excluded"); c.value().eq(user); });
+            });
+        });
     }
 
     @Test

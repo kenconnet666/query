@@ -1,19 +1,16 @@
 package org.dpdns.zerodep.query.write;
 
-import org.dpdns.zerodep.query.Sql;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
-import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
 
 import java.util.List;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -49,15 +46,15 @@ public final class JoinDelete<T extends Entity, S extends Entity> implements Wri
     }
 
     /** 从 table 删除，连接 joined；由方言门面的 {@code deleteJoin} 调用。 */
-    public static <T extends Entity, S extends Entity> JoinDelete<T, S> of(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinDelete<T, S> of(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         Target<T> target = Target.of(table);
         Ref<S> source = Ref.table(joined);
         return new JoinDelete<>(target, source, JoinUpdate.joinCondition(target, source, on), false);
     }
 
     /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
-    public JoinDelete<T, S> where(BiFunction<T, S, Cond> condition) {
-        return new JoinDelete<>(target.withWhere(JoinUpdate.nonNull(condition.apply(target.row(), source.param()))), source, on, physical);
+    public JoinDelete<T, S> where(BiConsumer<T, S> condition) {
+        return new JoinDelete<>(target.withWhere(JoinUpdate.condition(target, source, condition)), source, on, physical);
     }
 
     /** 表上有 {@code @LogicDelete} 列时仍然真正删除。 */
@@ -96,9 +93,7 @@ public final class JoinDelete<T extends Entity, S extends Entity> implements Wri
         if (logic == null || physical) {
             w.dialect().joinDelete(w, JoinUpdate.parts(w, target, source, on, List.of(), "deleteJoin(...)"));
         } else {
-            Col column = new Col<>(target.ref(), meta.property(logic.property()));
-            Assignment deleted = logic.timestamp() ? column.to((Expr) Sql.currentTimestamp()) : column.to(logic.deletedValue());
-            w.dialect().joinUpdate(w, JoinUpdate.parts(w, target, source, on, List.of(deleted), "deleteJoin(...)"));
+            w.dialect().joinUpdate(w, JoinUpdate.parts(w, target, source, on, List.of(Assignment.deleted(target.ref(), meta, logic)), "deleteJoin(...)"));
         }
         return List.of(w.statement());
     }

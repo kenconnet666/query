@@ -28,7 +28,10 @@ class SqlDebugTest {
     @Test
     void 调试SQL把参数写成字面量且不碰字符串里的问号() {
         Rendered r = from(Lips.class)
-            .where(l -> l.material().eq("O'Neil").and(l.createdOn().eq(LocalDate.of(2026, 1, 15))))
+            .where(l -> {
+                l.material().eq("O'Neil");
+                l.createdOn().eq(LocalDate.of(2026, 1, 15));
+            })
             .select(l -> lit("a?b").as("mark"))
             .toSql(DIALECT);
         assertEquals("SELECT 'a?b' AS \"mark\"\nFROM QUERY_IT.LIPS LIPS\nWHERE LIPS.MATNR = 'O''Neil' AND LIPS.ERDAT = '20260115'", r.debugSql());

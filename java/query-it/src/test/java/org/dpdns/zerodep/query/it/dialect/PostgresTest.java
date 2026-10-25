@@ -15,9 +15,14 @@ import org.dpdns.zerodep.query.it.support.SampleData;
 import org.dpdns.zerodep.query.postgres.PostgresDatabase;
 import org.dpdns.zerodep.query.postgres.PostgresDialect;
 import org.dpdns.zerodep.query.select.Query;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.Col;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -61,16 +66,16 @@ class PostgresTest {
     @Table(schema = "QUERY_IT", value = "PG_TAGGED")
     interface Tagged extends Entity {
         /** 编号。 */
-        @Column("ID") Col<Integer> id();
+        @Column("ID") ColInteger<Integer> id();
 
         /** 标签，text[]。 */
         @Column("TAGS") Col<String[]> tags();
 
         /** JSONB 文档，按文本读写。 */
-        @Column("DOC") Col<String> doc();
+        @Column("DOC") ColText<String> doc();
 
         /** 正文。 */
-        @Column("BODY") Col<String> body();
+        @Column("BODY") ColText<String> body();
     }
 
     /** 按日期范围分区的日志：分区键 DAY 必须在主键里；分区本身要另外建。 */
@@ -78,13 +83,13 @@ class PostgresTest {
     @TableOption(dialect = PostgresDialect.class, value = "PARTITION BY RANGE (\"DAY\")")
     interface PartLog extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 日期，分区键。 */
-        @Id @Column("DAY") Col<LocalDate> day();
+        @Id @Column("DAY") ColDate<LocalDate> day();
 
         /** 金额。 */
-        @Column(value = "AMOUNT", precision = 10, scale = 2) Col<BigDecimal> amount();
+        @Column(value = "AMOUNT", precision = 10, scale = 2) ColDecimal<BigDecimal> amount();
     }
 
     record PartLogRow(Long id, LocalDate day, BigDecimal amount) { }
@@ -129,8 +134,8 @@ class PostgresTest {
 
     @Test
     void 聚合FILTER与ILIKE以及IS_DISTINCT_FROM() {
-        assertEquals("6", plain(live.db().one(from(Lips.class).select(l -> sum(l.quantity()).filter(l.material().eq("M1"))))));
-        assertEquals(5L, (long) live.db().one(from(Lips.class).where(l -> ilike(l.unit(), "ea")).select(l -> count())));
+        assertEquals("6", plain(live.db().one(from(Lips.class).select(l -> l.quantity().sum().filter(() -> l.material().eq("M1"))))));
+        assertEquals(5L, (long) live.db().one(from(Lips.class).where(l -> postgres(l.unit()).ilike("ea")).select(l -> count())));
         assertEquals(2L, (long) live.db().one(from(Lips.class).where(l -> l.material().isDistinctFrom(val("M1"))).select(l -> count())));
     }
 
@@ -139,7 +144,7 @@ class PostgresTest {
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), live.db().list(from(Lips.class)
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
-            .select(l -> row((m, d) -> m + "=" + d, l.material(), stringAgg(l.delivery(), ",", l.delivery().asc())))));
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), l.delivery().stringAgg(",", l.delivery().asc())))));
     }
 
     @Test
@@ -147,7 +152,7 @@ class PostgresTest {
         assertEquals(List.of("M1=6", "M2=12", "null=18"), live.db().list(from(Lips.class)
             .groupBy(l -> groupingSets(keys(l.material()), keys()))
             .orderBy(l -> orders(grouping(l.material()), l.material()))
-            .select(l -> row((m, total) -> m + "=" + plain(total), l.material(), sum(l.quantity())))));
+            .select(l -> row((m, total) -> m + "=" + plain(total), l.material(), l.quantity().sum()))));
         assertEquals(6, live.db().list(from(Lips.class).groupBy(l -> cube(l.material(), l.unit())).select(l -> count())).size(),
             "material x unit, material, unit and the grand total");
     }
@@ -168,7 +173,7 @@ class PostgresTest {
         // 不写 ORDER BY，因为排序会先算出每一行。
         Query<BigDecimal> q = from(Lips.class)
             .where(l -> l.client().eq("100"))
-            .select(l -> divide(lit(BigDecimal.ONE), minus(l.quantity(), lit(new BigDecimal("5")))));
+            .select(l -> lit(BigDecimal.ONE).divide(l.quantity().minus(lit(new BigDecimal("5")))));
         try (Stream<BigDecimal> rows = live.database(tracking, c -> c.fetchSize(1)).stream(q)) {
             Iterator<BigDecimal> it = rows.iterator();
             assertEquals(0, new BigDecimal("-0.5").compareTo(it.next()));
@@ -246,7 +251,7 @@ class PostgresTest {
         Cte<Step> steps = recursiveCte("steps",
             from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> cols(l.delivery(), lit(1).as("depth"))).into(Step.class),
             self -> from(self).where(s -> s.col(Step::depth).lt(3))
-                .select(s -> cols(s.col(Step::delivery), plus(s.col(Step::depth), lit(1)).as("depth"))).into(Step.class));
+                .select(s -> cols(s.col(Step::delivery), s.col(Step::depth).plus(lit(1)).as("depth"))).into(Step.class));
         assertEquals(List.of(1, 2, 3), live.db().list(from(steps).orderBy(s -> s.col(Step::depth)).select(s -> s.col(Step::depth))));
     }
 
@@ -291,21 +296,24 @@ class PostgresTest {
 
     @Test
     void 数组参数与数组列() {
-        List<Map<String, Object>> rows = live.db().list(from(Tagged.class).where(t -> eqAny(t.id(), List.of(1, 2, 3))).orderBy(t -> t.id())
+        List<Map<String, Object>> rows = live.db().list(from(Tagged.class).where(t -> postgres(t.id()).eqAny(List.of(1, 2, 3))).orderBy(t -> t.id())
             .select(t -> cols(t.id(), t.tags(), cardinality(t.tags()).as("count"))));
         assertEquals(List.of("1:[red, blue]:2", "2:[red]:1", "3:[]:0"),
             rows.stream().map(r -> r.get("id") + ":" + Arrays.toString((String[]) r.get("tags")) + ":" + r.get("count")).toList());
         assertEquals(List.of(1, 2), live.db().list(from(Tagged.class).where(t -> arrayContains(t.tags(), new String[] {"red"})).orderBy(t -> t.id()).select(t -> t.id())));
         assertEquals(List.of(1), live.db().list(from(Tagged.class).where(t -> arrayOverlaps(t.tags(), new String[] {"blue", "green"})).select(t -> t.id())));
-        assertEquals(List.of(), live.db().list(from(Tagged.class).where(t -> eqAny(t.id(), List.of())).select(t -> t.id())), "an empty array matches nothing");
+        assertEquals(List.of(), live.db().list(from(Tagged.class).where(t -> postgres(t.id()).eqAny(List.of())).select(t -> t.id())), "an empty array matches nothing");
         String[] deliveries = live.db().one(from(Lips.class).where(l -> l.material().eq("M2")).select(l -> arrayAgg(l.delivery(), String[].class, l.delivery().desc())));
         assertEquals(List.of("D4", "D3"), List.of(deliveries));
     }
 
     @Test
     void JSONB的包含键与路径文本() {
-        assertEquals(List.of("1:ann"), live.db().list(from(Tagged.class).where(t -> all(jsonContains(t.doc(), "{\"status\":\"open\"}"), jsonHasKey(t.doc(), "owner")))
-            .select(t -> cols(t.id(), jsonText(t.doc(), "owner", "name").as("owner")))).stream().map(r -> r.get("id") + ":" + r.get("owner")).toList());
+        assertEquals(List.of("1:ann"), live.db().list(from(Tagged.class).where(t -> {
+            postgres(t.doc()).jsonContains("{\"status\":\"open\"}");
+            postgres(t.doc()).jsonHasKey("owner");
+        })
+            .select(t -> cols(t.id(), postgres(t.doc()).jsonText("owner", "name").as("owner")))).stream().map(r -> r.get("id") + ":" + r.get("owner")).toList());
     }
 
     @Test

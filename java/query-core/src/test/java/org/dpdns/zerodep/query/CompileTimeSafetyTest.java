@@ -31,8 +31,8 @@ class CompileTimeSafetyTest {
         比较值类型和列类型不符       | from(Lips.class).where(l -> l.quantity().eq("x"));
         连接键类型不符               | from(Lips.class).join(Mara.class, (l, ma) -> ma.client().eq(l.quantity()));
         COALESCE的两个参数类型不符   | from(Lips.class).select(l -> l.quantity().coalesce(l.unit()));
-        对文本列求和                 | from(Lips.class).select(l -> sum(l.unit()));
-        构造器某个位置的类型不符     | from(Lips.class).select(l -> row(Delivery::new, l.quantity(), l.unit(), sum(l.quantity())));
+        对文本列求和                 | from(Lips.class).select(l -> l.unit().sum());
+        构造器某个位置的类型不符     | from(Lips.class).select(l -> row(Delivery::new, l.quantity(), l.unit(), l.quantity().sum()));
         构造器参数个数不符           | from(Lips.class).select(l -> row(Delivery::new, l.material(), l.unit()));
         嵌套row的类型不符            | from(Lips.class).select(l -> row(PartTotal::new, l.material(), row(PartTotal.Amount::new, l.unit(), lit(1.0))));
         UNION两段的结果类型不同      | Scenarios.stock("2026").unionAll(Scenarios.lines());
@@ -40,6 +40,11 @@ class CompileTimeSafetyTest {
         日期列传入字符串             | from(Lips.class).where(l -> l.createdOn().between("20260101", "20260131"));
         窗口函数缺少OVER             | from(Lips.class).select(l -> rowNumber());
         CTE的getter不属于它的行类    | from(cte("x", from(Lips.class).select(l -> cols(l.material())).into(Erp.MaterialScope.class))).where(x -> x.col(Erp.Delivery::name).eq("y"));
+        文本列没有日期函数           | from(Lips.class).select(l -> l.unit().addDays(1));
+        文本存的日期没有日期函数     | from(Lips.class).select(l -> l.createdOn().addDays(1));
+        整数没有除法                 | from(Event.class).select(e -> e.id().divide(2));
+        只有列能在SET里赋值          | update(Lips.class).set(l -> l.unit().upper().to("x"));
+        条件不能直接当投影           | from(Lips.class).select(l -> l.unit().eq("KG"));
         """)
     void 错误写法不能编译(String name, String statement) throws IOException {
         DiagnosticCollector<JavaFileObject> diagnostics = compile(statement);
@@ -50,7 +55,8 @@ class CompileTimeSafetyTest {
     void 正确写法可以编译() throws IOException {
         DiagnosticCollector<JavaFileObject> diagnostics = compile(
             "from(Lips.class).join(Mara.class, (l, ma) -> ma.material().eq(l.material()))"
-                + ".select((l, ma) -> row(Delivery::new, ma.partNumber(), l.unit(), sum(l.quantity())));");
+                + ".where((l, ma) -> { l.createdOn().ge(java.time.LocalDate.of(2026, 1, 1)); any(() -> { l.unit().eq(\"KG\"); l.unit().eq(\"EA\"); }); })"
+                + ".select((l, ma) -> row(Delivery::new, ma.partNumber(), l.unit(), l.quantity().sum().times(2)));");
         assertTrue(diagnostics.getDiagnostics().isEmpty(), diagnostics.getDiagnostics().toString());
     }
 

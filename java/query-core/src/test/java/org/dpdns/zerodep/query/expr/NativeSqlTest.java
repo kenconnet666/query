@@ -50,9 +50,8 @@ class NativeSqlTest {
             .on(Dialect.class, "ANY({0})")
             .on(TestDialect.class, "TEST({0})");
         assertEquals("SELECT TEST('x') AS \"value\"", from(Lips.class).select(l -> e).limit(1).toSql(DIALECT).sql().lines().findFirst().orElseThrow());
-        SqlCond c = sqlCond("1 = 1").on(Dialect.class, "2 = 2");
         assertEquals("SELECT LIPS.VBELN AS \"delivery\"\nFROM QUERY_IT.LIPS LIPS\nWHERE 2 = 2",
-            from(Lips.class).where(l -> c).select(l -> l.delivery()).toSql(DIALECT).sql());
+            from(Lips.class).where(l -> sqlCond("1 = 1").on(Dialect.class, "2 = 2")).select(l -> l.delivery()).toSql(DIALECT).sql());
     }
 
     @Test

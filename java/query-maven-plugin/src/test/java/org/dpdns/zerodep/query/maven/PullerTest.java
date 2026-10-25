@@ -37,8 +37,8 @@ class PullerTest {
         List<Path> first = Puller.write(c, TABLES::get);
         assertEquals(List.of(dir.resolve("com/example/gen/LipsColumns.java"), dir.resolve("com/example/gen/Material.java")), first);
         String lips = Files.readString(first.get(0));
-        assertTrue(lips.contains("@Id @Column(value = \"VBELN\", length = 10) Col<String> vbeln();"), lips);
-        assertTrue(lips.contains("@Column(value = \"LFIMG\", precision = 13, scale = 3) Col<BigDecimal> lfimg();"), lips);
+        assertTrue(lips.contains("@Id @Column(value = \"VBELN\", length = 10) ColText<String> vbeln();"), lips);
+        assertTrue(lips.contains("@Column(value = \"LFIMG\", precision = 13, scale = 3) ColDecimal<BigDecimal> lfimg();"), lips);
         assertTrue(!lips.contains("POSNR"), lips);
         assertEquals(List.of(), Puller.write(c, TABLES::get));
     }

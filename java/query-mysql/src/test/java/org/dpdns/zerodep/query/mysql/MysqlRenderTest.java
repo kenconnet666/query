@@ -25,7 +25,7 @@ class MysqlRenderTest {
 
     @Test
     void 拼接用CONCAT而不是双竖线() {
-        String sql = from(Lips.class).select(l -> concat(l.material(), lit("-"), l.unit()))
+        String sql = from(Lips.class).select(l -> l.material().concat(lit("-"), l.unit()))
             .toSql(MysqlDialect.INSTANCE).sql();
         assertTrue(sql.startsWith("SELECT CONCAT(`lips`.`MATNR`, '-', `lips`.`VRKME`)"), sql);
     }
@@ -51,17 +51,17 @@ class MysqlRenderTest {
 
     @Test
     void 类型转换与优化器提示() {
-        Query<Long> q = from(Lips.class).with(maxExecutionTime(1000)).select(l -> cast(l.quantity(), CastType.bigint()));
+        Query<Long> q = from(Lips.class).with(maxExecutionTime(1000)).select(l -> l.quantity().cast(CastType.bigint()));
         assertEquals("SELECT /*+ MAX_EXECUTION_TIME(1000) */ CAST(`lips`.`LFIMG` AS SIGNED) AS `value`\nFROM `QUERY_IT`.`LIPS` `lips`",
             q.toSql(MysqlDialect.INSTANCE).sql());
         assertThrows(UnsupportedOperationException.class,
-            () -> from(Lips.class).select(l -> cast(l.quantity(), CastType.bool())).toSql(MysqlDialect.INSTANCE));
+            () -> from(Lips.class).select(l -> l.quantity().cast(CastType.bool())).toSql(MysqlDialect.INSTANCE));
     }
 
     @Test
     void MySQL专属函数和子句不能在别的方言上渲染() {
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class)
-            .select(l -> dateFormat(l.createdOn(), "%Y")).toSql(new TestDialect()));
+            .select(l -> mysql(l.createdOn()).dateFormat("%Y")).toSql(new TestDialect()));
         assertThrows(UnsupportedOperationException.class, () -> from(Lips.class)
             .with(maxExecutionTime(10)).select(l -> l.delivery()).toSql(new TestDialect()));
     }

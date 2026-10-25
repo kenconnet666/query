@@ -14,17 +14,16 @@ import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.JdbcExecutor;
 import org.dpdns.zerodep.query.exec.QueryCache;
 import org.dpdns.zerodep.query.exec.QueryListener;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.ShardRule;
 import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
+import org.dpdns.zerodep.query.table.column.Col;
 import org.dpdns.zerodep.query.type.SqlType;
 import org.dpdns.zerodep.query.type.TypeRegistry;
 import org.dpdns.zerodep.query.write.Fills;
@@ -522,11 +521,11 @@ public abstract class Database {
 
         /**
          * 全局过滤器：表接口是 type（或继承了 type）的每张表都加上这个条件，FROM 的表加到 WHERE，JOIN 的表加到 ON。
-         * 例如 {@code filter(Client.class, c -> c.client().eq("100"))}；单个查询用 {@code .unfiltered()} 关闭。
+         * 例如 {@code filter(Client.class, c -> c.client().eq("100"))}，条件一行写一个；单个查询用 {@code .unfiltered()} 关闭。
          */
         @SuppressWarnings("unchecked")
-        public <T> Config filter(Class<T> type, Function<? super T, Cond> condition) {
-            filters.add(new SourceFilters.Filter(null, type, table -> condition.apply((T) table)));
+        public <T> Config filter(Class<T> type, Consumer<? super T> condition) {
+            filters.add(new SourceFilters.Filter(null, type, table -> condition.accept((T) table)));
             return this;
         }
 
@@ -536,10 +535,10 @@ public abstract class Database {
          * 逻辑删除的条件仍然生效。
          */
         @SuppressWarnings("unchecked")
-        public <T> Config filter(String name, Class<T> type, Function<? super T, Cond> condition) {
+        public <T> Config filter(String name, Class<T> type, Consumer<? super T> condition) {
             Objects.requireNonNull(name, "name");
             if (filters.stream().anyMatch(f -> name.equals(f.name()))) throw new IllegalArgumentException("A filter named " + name + " is already configured");
-            filters.add(new SourceFilters.Filter(name, type, table -> condition.apply((T) table)));
+            filters.add(new SourceFilters.Filter(name, type, table -> condition.accept((T) table)));
             return this;
         }
 

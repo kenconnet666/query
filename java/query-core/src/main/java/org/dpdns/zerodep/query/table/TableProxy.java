@@ -1,7 +1,6 @@
 package org.dpdns.zerodep.query.table;
 
-import org.dpdns.zerodep.query.Sql;
-import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.EntityMeta;
@@ -9,6 +8,7 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
 import org.dpdns.zerodep.query.meta.RelationMeta;
 import org.dpdns.zerodep.query.select.Cols;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -20,7 +20,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
+import java.util.function.Consumer;
 
 /**
  * 为表的一次出现实现表接口：列方法返回这次出现的列，default 方法照原样运行并记住结果，
@@ -77,8 +77,8 @@ public final class TableProxy implements InvocationHandler {
         }
         if (method.getDeclaringClass() == Entity.class) {
             return switch (method.getName()) {
-                case "one" -> one((Class<Entity>) args[0], (Function<Entity, Cond>) args[1]);
-                case "many" -> new Many<>(ref, (Class<Entity>) args[0], (Function<Entity, Cond>) args[1], null);
+                case "one" -> one((Class<Entity>) args[0], (Consumer<Entity>) args[1]);
+                case "many" -> new Many<>(ref, (Class<Entity>) args[0], (Consumer<Entity>) args[1], null);
                 default -> columns();
             };
         }
@@ -90,7 +90,7 @@ public final class TableProxy implements InvocationHandler {
     }
 
     /** 按属性名取这次出现的列。 */
-    Col<?> column(String name) { return columns.computeIfAbsent(name, n -> new Col<>(ref, meta.property(n))); }
+    Col<?> column(String name) { return columns.computeIfAbsent(name, n -> Col.of(ref, meta.property(n))); }
 
     /** 这张表的全部列，按属性顺序。 */
     private Cols columns() {
@@ -101,26 +101,24 @@ public final class TableProxy implements InvocationHandler {
 
     /** 多对一：LEFT JOIN 目标表的一次新出现，登记为本次出现的隐式连接。 */
     @SuppressWarnings("unchecked")
-    private <R extends Entity> R one(Class<R> target, Function<R, Cond> on) {
+    private <R extends Entity> R one(Class<R> target, Consumer<R> on) {
         Ref<R> joined = Ref.table(target);
         R row = joined.param();
-        ref.relate(joined, on.apply(row));
+        ref.relate(joined, Conditions.collect(() -> on.accept(row)));
         return row;
     }
 
     /** 注解声明的关系：两边的列按名配对做等值连接。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Object annotated(RelationMeta relation) {
-        Function<Entity, Cond> on = target -> {
+        Consumer<Entity> on = target -> {
             TableProxy other = (TableProxy) Proxy.getInvocationHandler(target);
-            List<Cond> pairs = new ArrayList<>();
             for (int i = 0; i < relation.self().size(); i++) {
-                pairs.add(Nodes.compare(other.column(relation.keys().get(i)), "=", column(relation.self().get(i))));
+                Conditions.add(Nodes.compare(other.column(relation.keys().get(i)), "=", column(relation.self().get(i))));
             }
-            return Sql.all(pairs);
         };
         Class<? extends Entity> target = (Class<? extends Entity>) relation.target();
-        return relation.many() ? new Many(ref, target, on, null) : one(target, (Function) on);
+        return relation.many() ? new Many(ref, target, on, null) : one(target, (Consumer) on);
     }
 
     /** 同一方法、同样实参的结果只计算一次。递归调用不能用 computeIfAbsent，所以先查后放。 */

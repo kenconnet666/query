@@ -15,23 +15,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.TimeZone;
 
-import static org.dpdns.zerodep.query.Sql.addDays;
-import static org.dpdns.zerodep.query.Sql.addHours;
-import static org.dpdns.zerodep.query.Sql.addMinutes;
-import static org.dpdns.zerodep.query.Sql.addMonths;
-import static org.dpdns.zerodep.query.Sql.addSeconds;
-import static org.dpdns.zerodep.query.Sql.addYears;
 import static org.dpdns.zerodep.query.Sql.cols;
-import static org.dpdns.zerodep.query.Sql.day;
-import static org.dpdns.zerodep.query.Sql.daysBetween;
 import static org.dpdns.zerodep.query.Sql.from;
-import static org.dpdns.zerodep.query.Sql.hour;
 import static org.dpdns.zerodep.query.Sql.lit;
-import static org.dpdns.zerodep.query.Sql.minute;
-import static org.dpdns.zerodep.query.Sql.month;
-import static org.dpdns.zerodep.query.Sql.monthStart;
-import static org.dpdns.zerodep.query.Sql.second;
-import static org.dpdns.zerodep.query.Sql.year;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -68,9 +54,9 @@ class DateTimeTest {
         List<String> rows = live.db().list(from(Event.class)
                 .where(e -> e.onDay().range(LocalDate.of(2011, 1, 1), LocalDate.of(2025, 1, 1)))
                 .orderBy(e -> e.id())
-                .select(e -> cols(e.id(), year(e.onDay()).as("y"), month(e.atTime()).as("m"), day(e.onDay()).as("d"),
-                    addDays(e.onDay(), 3).as("plusDays"), addMonths(e.onDay(), -1).as("minusMonth"), addYears(e.onDay(), 1).as("plusYear"),
-                    daysBetween(e.onDay(), lit(LocalDate.of(2024, 4, 30))).as("days"))))
+                .select(e -> cols(e.id(), e.onDay().year().as("y"), e.atTime().month().as("m"), e.onDay().day().as("d"),
+                    e.onDay().addDays(3).as("plusDays"), e.onDay().addMonths(-1).as("minusMonth"), e.onDay().addYears(1).as("plusYear"),
+                    e.onDay().daysBetween(lit(LocalDate.of(2024, 4, 30))).as("days"))))
             .stream().map(r -> r.get("id") + ":" + r.get("y") + ":" + r.get("m") + ":" + r.get("d") + ":" + r.get("plusDays") + ":"
                 + r.get("minusMonth") + ":" + r.get("plusYear") + ":" + r.get("days"))
             .toList();
@@ -82,9 +68,9 @@ class DateTimeTest {
     void 时间部分与加减小时分钟秒和月初() {
         List<String> rows = live.db().list(from(Event.class)
                 .orderBy(e -> e.id())
-                .select(e -> cols(e.id(), hour(e.atTime()).as("h"), minute(e.atTime()).as("mi"), second(e.atTime()).as("s"),
-                    addHours(e.atTime(), 25).as("plusHours"), addMinutes(e.atTime(), -31).as("minusMinutes"), addSeconds(e.atTime(), 59).as("plusSeconds"),
-                    monthStart(e.onDay()).as("monthStart"))))
+                .select(e -> cols(e.id(), e.atTime().hour().as("h"), e.atTime().minute().as("mi"), e.atTime().second().as("s"),
+                    e.atTime().addHours(25).as("plusHours"), e.atTime().addMinutes(-31).as("minusMinutes"), e.atTime().addSeconds(59).as("plusSeconds"),
+                    e.onDay().monthStart().as("monthStart"))))
             .stream().map(r -> r.get("id") + ":" + r.get("h") + ":" + r.get("mi") + ":" + r.get("s") + ":" + r.get("plusHours") + ":"
                 + r.get("minusMinutes") + ":" + r.get("plusSeconds") + ":" + r.get("monthStart"))
             .toList();

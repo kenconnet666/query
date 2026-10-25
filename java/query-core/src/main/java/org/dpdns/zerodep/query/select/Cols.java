@@ -12,7 +12,7 @@ import java.util.Set;
 
 /**
  * 按列名选取的一组列，来自 {@link Sql#cols}。列名取自列方法的名字；只包着一列的函数或聚合沿用该列名
- * （{@code sum(l.quantity())} 叫 "quantity"），其他表达式必须写 {@code .as("name")}。
+ * （{@code l.quantity().sum()} 叫 "quantity"），其他表达式必须写 {@code .as("name")}。
  * 结果行是 Map；用 {@code into(X.class)} 可以按列名对应属性，映射成指定的类。
  */
 public final class Cols implements Selection<Map<String, Object>> {

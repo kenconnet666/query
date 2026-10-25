@@ -15,6 +15,7 @@ import org.junit.jupiter.params.Parameter;
 
 import java.util.List;
 
+import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.deleteFrom;
 import static org.dpdns.zerodep.query.Sql.from;

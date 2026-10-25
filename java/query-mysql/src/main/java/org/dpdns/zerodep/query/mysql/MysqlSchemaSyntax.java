@@ -1,7 +1,7 @@
 package org.dpdns.zerodep.query.mysql;
 
-import org.dpdns.zerodep.query.ddl.ColumnType;
 import org.dpdns.zerodep.query.ddl.ColumnType.Kind;
+import org.dpdns.zerodep.query.ddl.ColumnType;
 import org.dpdns.zerodep.query.ddl.SchemaSyntax;
 import org.dpdns.zerodep.query.ddl.TableDef;
 

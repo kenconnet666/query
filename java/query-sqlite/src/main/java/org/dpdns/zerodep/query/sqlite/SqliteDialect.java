@@ -249,7 +249,7 @@ public class SqliteDialect extends Dialect {
     }
 
     /** 转换的类型名按 SQLite 的亲和：文本 TEXT、小数 NUMERIC、整数 INTEGER、浮点 REAL。 */
-    @Override public String castType(CastType<?> type) {
+    @Override public String castType(CastType<?, ?> type) {
         return switch (type.kind()) {
             case TEXT -> "TEXT";
             case DECIMAL -> "NUMERIC";
@@ -260,7 +260,7 @@ public class SqliteDialect extends Dialect {
     }
 
     /** 转成日期写成 {@code date(x)}、转成时间戳写成规整的时间戳文本：{@code CAST(x AS DATE)} 在 SQLite 上得到数字。 */
-    @Override public void cast(SqlWriter w, Renderable inner, CastType<?> target) {
+    @Override public void cast(SqlWriter w, Renderable inner, CastType<?, ?> target) {
         switch (target.kind()) {
             case DATE -> w.sql("date(").render(inner).sql(")");
             case TIMESTAMP -> timestamp(w, inner);

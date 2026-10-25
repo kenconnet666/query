@@ -1,5 +1,12 @@
 package org.dpdns.zerodep.query.ddl;
 
+import org.dpdns.zerodep.query.table.column.Col;
+import org.dpdns.zerodep.query.table.column.ColBlob;
+import org.dpdns.zerodep.query.table.column.ColClob;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -46,17 +53,19 @@ public final class SourceGenerator {
      */
     public static String java(TableDef table, String packageName, String typeName, List<String> columns) {
         List<TableDef.Column> chosen = choose(table, columns);
-        Set<String> imports = new TreeSet<>(List.of("org.dpdns.zerodep.query.annotation.Column", "org.dpdns.zerodep.query.table.Col", "org.dpdns.zerodep.query.table.Entity"));
+        Set<String> imports = new TreeSet<>(List.of("org.dpdns.zerodep.query.annotation.Column", "org.dpdns.zerodep.query.table.Entity"));
         List<String> body = new ArrayList<>();
         for (TableDef.Column c : chosen) {
             boolean id = table.primaryKey().stream().anyMatch(k -> k.equalsIgnoreCase(c.name()));
-            String javaType = javaType(c.type());
-            if (javaType.contains(".")) imports.add(javaType);
+            Class<?> javaType = javaType(c.type());
+            Class<?> column = c.type().kind() == ColumnType.Kind.CLOB ? ColClob.class : c.type().kind() == ColumnType.Kind.BLOB ? ColBlob.class : Col.interfaceFor(javaType);
+            if (!javaType.isArray() && !javaType.getPackageName().equals("java.lang")) imports.add(javaType.getName());
+            imports.add(column.getName());
             if (id) imports.add("org.dpdns.zerodep.query.annotation.Id");
             if (c.identity()) imports.add("org.dpdns.zerodep.query.annotation.Generated");
             body.add("    /** " + describe(c, id) + " */");
-            body.add("    " + (id ? "@Id " : "") + (c.identity() ? "@Generated " : "") + "@Column(" + columnAttributes(c, id) + ") Col<"
-                + javaType.substring(javaType.lastIndexOf('.') + 1) + "> " + propertyName(c.name()) + "();");
+            body.add("    " + (id ? "@Id " : "") + (c.identity() ? "@Generated " : "") + "@Column(" + columnAttributes(c, id) + ") "
+                + column.getSimpleName() + "<" + javaType.getSimpleName() + "> " + propertyName(c.name()) + "();");
             body.add("");
         }
         if (!body.isEmpty()) body.remove(body.size() - 1);
@@ -102,7 +111,6 @@ public final class SourceGenerator {
                     attributes.add("scale = " + t.scale());
                 }
             }
-            case CLOB, BLOB -> attributes.add("lob = true");
             default -> { }
         }
         if (!c.nullable() && !id && !c.identity()) attributes.add("nullable = false");
@@ -111,19 +119,19 @@ public final class SourceGenerator {
         return attributes.size() == 1 ? "\"" + c.name() + "\"" : String.join(", ", attributes);
     }
 
-    /** 列的 Java 类型（全名，基本类型用包装类）。 */
-    private static String javaType(ColumnType t) {
+    /** 列的 Java 类型（基本类型用包装类）；列接口按它选，见 {@link Col#interfaceFor}。 */
+    private static Class<?> javaType(ColumnType t) {
         return switch (t.kind()) {
-            case TEXT, CLOB -> "String";
-            case DECIMAL -> "java.math.BigDecimal";
-            case SMALLINT -> "Short";
-            case INTEGER -> "Integer";
-            case BIGINT -> "Long";
-            case DOUBLE -> "Double";
-            case BOOLEAN -> "Boolean";
-            case DATE -> "java.time.LocalDate";
-            case TIMESTAMP -> "java.time.LocalDateTime";
-            case BYTES, BLOB -> "byte[]";
+            case TEXT, CLOB -> String.class;
+            case DECIMAL -> BigDecimal.class;
+            case SMALLINT -> Short.class;
+            case INTEGER -> Integer.class;
+            case BIGINT -> Long.class;
+            case DOUBLE -> Double.class;
+            case BOOLEAN -> Boolean.class;
+            case DATE -> LocalDate.class;
+            case TIMESTAMP -> LocalDateTime.class;
+            case BYTES, BLOB -> byte[].class;
         };
     }
 

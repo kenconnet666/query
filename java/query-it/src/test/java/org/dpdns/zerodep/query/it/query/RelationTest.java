@@ -48,7 +48,10 @@ class RelationTest {
             .where(l -> l.mara().materialType().eq("ZMAT")).orderBy(l -> l.delivery()).select(l -> l.delivery())));
         assertEquals(List.of("D5"), live.db().list(from(Lips.class).where(l -> l.salesData().none()).select(l -> l.delivery())), "S9 没有销售订单数据");
         assertEquals(List.of("M1"), live.db().list(from(Mara.class)
-            .where(m -> m.deliveries().any(l -> l.quantity().gt(new BigDecimal("2.5"))).and(m.deliveries().count().ge(3L)))
+            .where(m -> {
+                m.deliveries().any(l -> l.quantity().gt(new BigDecimal("2.5")));
+                m.deliveries().count().ge(3L);
+            })
             .select(m -> m.material())));
     }
 

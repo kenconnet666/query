@@ -4,6 +4,7 @@ import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.FunctionRenderer;
 import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
+import org.dpdns.zerodep.query.expr.typed.Shells;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
 import org.dpdns.zerodep.query.type.CastType;
@@ -11,6 +12,7 @@ import org.dpdns.zerodep.query.type.SqlType;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /** 内置的表达式节点和条件节点。包内可见：用户通过公开 API 构造它们，不直接使用本类。 */
 public final class Nodes {
@@ -20,7 +22,7 @@ public final class Nodes {
     // ---------- expressions ----------
 
     /** 绑定参数。默认渲染为 {@code ?} 占位符，写入器要求内联常量时渲染为字面量。 */
-    public static final class Param<T> extends Expr<T> {
+    public static final class Param<T> extends ExprNode<T> {
         private final T value;
 
         /** 按 type 绑定的值。 */
@@ -41,7 +43,7 @@ public final class Nodes {
     }
 
     /** 直接写进 SQL 文本的字面量，只用于代码里的固定常量。 */
-    public static final class Literal<T> extends Expr<T> {
+    public static final class Literal<T> extends ExprNode<T> {
         private final T value;
 
         /** 按 type 写成字面量的值。 */
@@ -58,7 +60,7 @@ public final class Nodes {
     }
 
     /** 带列名的表达式：渲染与 {@code inner} 完全相同，只是把投影时使用的列名换成 {@code label}。 */
-    public static final class Labeled<T> extends Expr<T> {
+    public static final class Labeled<T> extends ExprNode<T> {
         final Expr<T> inner;
         private final String label;
 
@@ -77,7 +79,7 @@ public final class Nodes {
     }
 
     /** 函数调用。有 {@link FunctionDef} 时由它决定各方言的写法，否则渲染为 {@code NAME(arg, ...)}。 */
-    public static final class Call<T> extends Expr<T> {
+    public static final class Call<T> extends ExprNode<T> {
         private final FunctionDef function;
         private final String name;
         private final List<? extends Expr<?>> args;
@@ -108,7 +110,7 @@ public final class Nodes {
     }
 
     /** 算术运算：用 {@code operator} 连接各操作数，整体加括号，结果类型由调用方指定。 */
-    public static final class Arithmetic<T> extends Expr<T> {
+    public static final class Arithmetic<T> extends ExprNode<T> {
         private final String operator;
         private final List<? extends Expr<?>> operands;
 
@@ -124,12 +126,12 @@ public final class Nodes {
     }
 
     /** 取负。操作数放在括号里，负数字面量就不会和前面的减号拼成注释。 */
-    public static final class Negated<T> extends Expr<T> {
-        private final Expr<T> operand;
+    public static final class Negated<T> extends ExprNode<T> {
+        private final Expr<?> operand;
 
-        /** 对 operand 取负，类型不变。 */
-        public Negated(Expr<T> operand) {
-            super(operand.type());
+        /** 对 operand 取负，结果类型为 type（库里的数值类型）。 */
+        public Negated(SqlType<T> type, Expr<?> operand) {
+            super(type);
             this.operand = operand;
         }
 
@@ -141,12 +143,12 @@ public final class Nodes {
     }
 
     /** 类型转换 {@code CAST(inner AS type)}，目标类型的写法由方言决定。 */
-    public static final class Cast<T> extends Expr<T> {
+    public static final class Cast<T> extends ExprNode<T> {
         private final Expr<?> inner;
-        private final CastType<T> target;
+        private final CastType<T, ?> target;
 
         /** 把 inner 转换成 target。 */
-        public Cast(Expr<?> inner, CastType<T> target) {
+        public Cast(Expr<?> inner, CastType<T, ?> target) {
             super(SqlType.of(target.javaType()));
             this.inner = inner;
             this.target = target;
@@ -160,7 +162,7 @@ public final class Nodes {
     }
 
     /** 标量子查询：单列查询当作一个值使用，类型取自那一列。 */
-    public static final class Scalar<T> extends Expr<T> {
+    public static final class Scalar<T> extends ExprNode<T> {
         private final Query<T> query;
 
         /** 只选一列的子查询，类型取自那一列。 */
@@ -178,7 +180,7 @@ public final class Nodes {
     }
 
     /** {@code ANY (子查询)} 或 {@code ALL (子查询)}，只能放在比较的右侧：{@code x.gt(allOf(q))}。 */
-    public static final class Quantified<T> extends Expr<T> {
+    public static final class Quantified<T> extends ExprNode<T> {
         private final String quantifier;
         private final Query<T> query;
 
@@ -201,7 +203,7 @@ public final class Nodes {
      * 条件作为布尔值：{@code CASE WHEN c THEN TRUE WHEN NOT (c) THEN FALSE END}，条件未知时为 NULL。
      * HANA 不能直接把条件写在 SELECT 列表里，所以三个库都这样写。
      */
-    public static final class Truth extends Expr<Boolean> {
+    public static final class Truth extends ExprNode<Boolean> {
         private final Cond condition;
 
         /** 把 condition 的真假写成布尔列。 */
@@ -218,7 +220,7 @@ public final class Nodes {
     }
 
     /** 原样写出的 SQL 片段，如 {@code NULL}、{@code CURRENT_DATE}；只能放代码里的固定文本。 */
-    public static final class Raw<T> extends Expr<T> {
+    public static final class Raw<T> extends ExprNode<T> {
         private final String sql;
 
         /** 原样写出的 SQL 文本，类型为 type。 */
@@ -230,6 +232,42 @@ public final class Nodes {
         /** 原样写出 SQL 文本。 */
         @Override public void render(SqlWriter w) { w.sql(sql); }
     }
+
+    /** 绑定为参数的常量，类型取自 type；value 不能为 null。 */
+    public static <T> Param<T> param(Class<T> type, T value) { return new Param<>(SqlType.of(type), Objects.requireNonNull(value, "value")); }
+
+    /** 写成字面量的常量，类型取自 type；value 不能为 null。 */
+    public static <T> Literal<T> literal(Class<T> type, T value) { return new Literal<>(SqlType.of(type), Objects.requireNonNull(value, "value")); }
+
+    /** COALESCE(e, fallbacks...)，类型与 e 相同。 */
+    public static <T> Expr<T> coalesce(Expr<T> e, Expr<?>... fallbacks) {
+        List<Expr<?>> args = new ArrayList<>();
+        args.add(e);
+        args.addAll(List.of(fallbacks));
+        return call(e.type(), "COALESCE", args);
+    }
+
+    /** NULLIF(e, value)，类型与 e 相同。 */
+    public static <T> Expr<T> nullif(Expr<T> e, T value) { return call(e.type(), "NULLIF", List.of(e, e.param(value))); }
+
+    /** 结果与 e 同一类型的聚合，例如 MAX(e)。 */
+    public static <T> Expr<T> aggregate(Expr<T> e, String name) { return new Aggregate<>(e.type(), name, false, List.of(e)); }
+
+    /**
+     * 算术运算 {@code (left op right)}，结果类型为 type。左边已经是同一运算符的加法或乘法时并成一个，
+     * 所以 {@code a.plus(b).plus(c)} 写成 {@code (a + b + c)}；减法和除法不并，括号保留原来的结合顺序。
+     */
+    public static <T> Expr<T> arithmetic(SqlType<T> type, String operator, Expr<?> left, Expr<?> right) {
+        if ((operator.equals("+") || operator.equals("*")) && unwrap(left) instanceof Arithmetic<?> a && a.operator.equals(operator)) {
+            List<Expr<?>> operands = new ArrayList<>(a.operands);
+            operands.add(right);
+            return new Arithmetic<>(type, operator, operands);
+        }
+        return new Arithmetic<>(type, operator, List.of(left, right));
+    }
+
+    /** 拆掉类型接口的外壳（{@code ExprText.of(node)} 等），得到真正的节点；按节点种类判断时先调用它。 */
+    public static <T> Expr<T> unwrap(Expr<T> e) { return Shells.unwrap(e); }
 
     /** 按函数名调用，没有方言差异的函数用这个。 */
     public static <T> Expr<T> call(SqlType<T> type, String name, List<? extends Expr<?>> args) { return new Call<>(type, null, name, args); }

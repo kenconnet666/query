@@ -1,8 +1,10 @@
 package org.dpdns.zerodep.query.testing;
 
 import org.dpdns.zerodep.query.annotation.Where;
-import org.dpdns.zerodep.query.expr.Expr;
 import org.dpdns.zerodep.query.expr.Window.Bound;
+import org.dpdns.zerodep.query.expr.typed.ExprDecimal;
+import org.dpdns.zerodep.query.expr.typed.ExprInteger;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Event;
@@ -58,8 +60,8 @@ public final class SpecCases {
             .select(m -> m.material())
             .offset(5)));
         cases.put("conditions", SpecCase.plain(SpecCases::conditions));
-        cases.put("case-template", SpecCase.plain(() -> from(Mara.class).select(m -> caseWhen(m.materialType().eq("ZMAT"), "material")
-            .when(m.materialType().eq("ZOTH"), "other")
+        cases.put("case-template", SpecCase.plain(() -> from(Mara.class).select(m -> caseWhen(() -> m.materialType().eq("ZMAT"), "material")
+            .when(() -> m.materialType().eq("ZOTH"), "other")
             .otherwise(sql(String.class, "LOWER({0})", m.materialType())))));
         cases.put("literals", SpecCase.plain(() -> from(Mara.class).select(m -> cols(
             lit("O'Brien").as("quote"),
@@ -77,11 +79,11 @@ public final class SpecCases {
             .select(l -> cols(
                 l.material(),
                 count().as("lines"),
-                countDistinct(l.salesOrder()).as("orders"),
-                avg(l.quantity()).as("average"),
-                min(l.quantity()).as("smallest"),
-                max(l.quantity()).as("largest"),
-                sum(l.quantity()).as("total")))));
+                l.salesOrder().countDistinct().as("orders"),
+                l.quantity().avg().as("average"),
+                l.quantity().min().as("smallest"),
+                l.quantity().max().as("largest"),
+                l.quantity().sum().as("total")))));
         cases.put("windows", SpecCase.plain(SpecCases::windows));
         cases.put("values", SpecCase.plain(() -> {
             Cte<Category> categories = cte("category_def", values(Category.class,
@@ -91,30 +93,30 @@ public final class SpecCases {
                 .select(c -> cols(c.col(Category::zfl), c.col(Category::name)));
         }));
         cases.put("text-functions", SpecCase.plain(() -> from(Lips.class).select(l -> {
-            Expr<BigDecimal> quantity = l.quantity();
+            ExprDecimal<BigDecimal> quantity = l.quantity();
             return cols(
-                left(l.delivery(), 2).as("prefix"),
-                right(l.delivery(), 3).as("suffix"),
-                substring(l.material(), 2, 3).as("middle"),
-                substring(l.material(), 2).as("tail"),
-                replace(l.unit(), "-", "").as("cleaned"),
-                negate(quantity).as("negative"),
-                plus(List.of(quantity, quantity.coalesce(BigDecimal.ZERO))).as("periods"));
+                l.delivery().left(2).as("prefix"),
+                l.delivery().right(3).as("suffix"),
+                l.material().substring(2, 3).as("middle"),
+                l.material().substring(2).as("tail"),
+                l.unit().replace("-", "").as("cleaned"),
+                quantity.negate().as("negative"),
+                quantity.plus(quantity.coalesce(BigDecimal.ZERO)).as("periods"));
         })));
         cases.put("grouped-constants", SpecCase.plain(() -> from(Lips.class)
             .where(l -> l.unit().eq("EA"))
-            .groupBy(l -> keys(bucket(l), substring(l.delivery(), 1, 1)))
+            .groupBy(l -> keys(bucket(l), l.delivery().substring(1, 1)))
             .having(l -> count().gt(1L))
             .orderBy(l -> bucket(l))
             .select(l -> cols(
                 bucket(l).as("bucket"),
-                substring(l.delivery(), 1, 1).as("prefix"),
+                l.delivery().substring(1, 1).as("prefix"),
                 count().as("lines"),
-                sum(caseWhen(l.unit().eq("EA"), l.quantity()).otherwise(BigDecimal.ZERO)).as("total")))));
+                caseWhen(() -> l.unit().eq("EA"), l.quantity()).otherwise(BigDecimal.ZERO).sum().as("total")))));
         cases.put("column-transforms", SpecCase.plain(() -> from(MaraView.class)
-            .where(m -> all(m.maker().isNotNull(), m.storedMaker().ne("")))
+            .where(m -> { m.maker().isNotNull(); m.storedMaker().ne(""); })
             .groupBy(m -> m.partNumber())
-            .select(m -> cols(m.partNumber(), countDistinct(m.maker()).as("makers")))));
+            .select(m -> cols(m.partNumber(), m.maker().countDistinct().as("makers")))));
         cases.put("rollup", SpecCase.plain(SpecCases::rollup));
         cases.put("union-grouping", SpecCase.plain(SpecCases::unionGrouping));
         cases.put("text-positions", SpecCase.plain(SpecCases::textPositions));
@@ -168,12 +170,12 @@ public final class SpecCases {
         cases.put("shard-month-range", SpecCase.plain(() -> from(Shards.ShEvent.class)
             .where(e -> e.day().range(LocalDate.of(2026, 1, 15), LocalDate.of(2026, 3, 1)))
             .groupBy(e -> e.note())
-            .select(e -> cols(e.note(), sum(e.amount()).as("total")))));
+            .select(e -> cols(e.note(), e.amount().sum().as("total")))));
         cases.put("shard-single", SpecCase.plain(() -> from(Shards.ShEvent.class)
-            .where(e -> all(e.day().eq(LocalDate.of(2026, 2, 10)), like(e.note(), "a%")))
+            .where(e -> { e.day().eq(LocalDate.of(2026, 2, 10)); e.note().like("a%"); })
             .select(e -> e.id())));
         cases.put("shard-modulo-in", SpecCase.plain(() -> from(Shards.ShOrder.class)
-            .where(o -> any(o.customer().in(List.of(1, 3)), o.customer().eq(5)))
+            .where(o -> any(() -> { o.customer().in(List.of(1, 3)); o.customer().eq(5); }))
             .select(o -> cols(o.customer(), o.total()))));
         cases.put("shard-all", SpecCase.plain(() -> from(Shards.ShOrder.class).allShards().select(o -> count())));
         cases.put("shard-update", SpecCase.plain(() -> update(Shards.ShEvent.class)
@@ -185,61 +187,69 @@ public final class SpecCases {
     /** 码表作为常量行。 */
     public record Category(String zfl, String name, Integer sortNo) { }
 
-    private static Expr<String> bucket(Lips l) {
-        Expr<BigDecimal> quantity = l.quantity();
-        return caseWhen(quantity.le(new BigDecimal("2")), "small").when(quantity.le(new BigDecimal("5")), "medium").otherwise("large");
+    private static ExprText<String> bucket(Lips l) {
+        ExprDecimal<BigDecimal> quantity = l.quantity();
+        return caseWhen(() -> quantity.le(new BigDecimal("2")), "small").when(() -> quantity.le(new BigDecimal("5")), "medium").otherwise("large");
     }
 
     /** 各种条件；skipEmpty 下与空值比较的条件被省略，between 只留下有值的一边。 */
     private static Query<String> conditions() {
         String missing = null;
         return from(Mara.class).skipEmpty().where(m -> {
-            Expr<String> material = m.material();
-            return all(
-                any(material.eq("A"), m.partNumber().ne("B").and(m.manufacturer().isNull())),
-                not(m.materialType().in(List.of("ZMAT", "ZOTH"))),
-                material.notIn(List.of("X")),
-                like(m.partNumber(), "P%"),
-                notLike(m.manufacturer(), "%X"),
-                material.between("A", "Z"),
-                m.manufacturer().isNotNull(),
-                material.gt("0").and(material.ge("1")).and(material.lt("9")).and(material.le("8")),
-                material.eq(missing),
-                like(material, missing),
-                material.between("A", missing));
+            ExprText<String> material = m.material();
+            any(() -> {
+                material.eq("A");
+                all(() -> {
+                    m.partNumber().ne("B");
+                    m.manufacturer().isNull();
+                });
+            });
+            not(() -> m.materialType().in(List.of("ZMAT", "ZOTH")));
+            material.notIn(List.of("X"));
+            m.partNumber().like("P%");
+            m.manufacturer().notLike("%X");
+            material.between("A", "Z");
+            m.manufacturer().isNotNull();
+            material.gt("0");
+            material.ge("1");
+            material.lt("9");
+            material.le("8");
+            material.eq(missing);
+            material.like(missing);
+            material.between("A", missing);
         }).select(m -> m.material());
     }
 
     private static Query<Map<String, Object>> functions() {
         return from(Lips.class).select(l -> {
-            Expr<BigDecimal> quantity = l.quantity();
+            ExprDecimal<BigDecimal> quantity = l.quantity();
             return cols(
-                upper(l.material()).as("upper"),
-                lower(l.unit()).as("lower"),
-                trim(l.delivery()).as("trimmed"),
-                concat(l.material(), val("-"), l.unit()).as("joined"),
+                l.material().upper().as("upper"),
+                l.unit().lower().as("lower"),
+                l.delivery().trim().as("trimmed"),
+                l.material().concat(val("-"), l.unit()).as("joined"),
                 l.unit().coalesce("EA").as("fallback"),
                 l.unit().nullif("").as("emptyUnit"),
-                plus(quantity, quantity).as("total"),
-                minus(quantity, val(1)).as("difference"),
-                times(quantity, val(2)).as("product"),
-                divide(quantity, val(3)).as("ratio"),
-                abs(quantity).as("magnitude"),
-                round(quantity, 1).as("rounded"),
-                cast(quantity, CastType.text(20)).as("asText"),
+                quantity.plus(quantity).as("total"),
+                quantity.minus(val(1)).as("difference"),
+                quantity.times(val(2)).as("product"),
+                quantity.divide(val(3)).as("ratio"),
+                quantity.abs().as("magnitude"),
+                quantity.round(1).as("rounded"),
+                quantity.cast(CastType.text(20)).as("asText"),
                 l.material().cast(CastType.decimal(15, 3)).as("asDecimal"),
-                cast(quantity, CastType.integer()).as("asInteger"),
-                cast(quantity, CastType.doublePrecision()).as("asDouble"),
-                cast(l.salesOrder(), CastType.date()).as("asDate"),
-                cast(l.salesOrder(), CastType.timestamp()).as("asTimestamp"));
+                quantity.cast(CastType.integer()).as("asInteger"),
+                quantity.cast(CastType.doublePrecision()).as("asDouble"),
+                l.salesOrder().cast(CastType.date()).as("asDate"),
+                l.salesOrder().cast(CastType.timestamp()).as("asTimestamp"));
         });
     }
 
     private static Query<Map<String, Object>> windows() {
         return from(Lips.class).select(l -> {
-            Expr<String> material = l.material();
-            Expr<String> delivery = l.delivery();
-            Expr<BigDecimal> quantity = l.quantity();
+            ExprText<String> material = l.material();
+            ExprText<String> delivery = l.delivery();
+            ExprDecimal<BigDecimal> quantity = l.quantity();
             return cols(
                 delivery,
                 rowNumber().over(w -> w.partitionBy(material).orderBy(delivery)).as("position"),
@@ -247,9 +257,9 @@ public final class SpecCases {
                 denseRank().over(w -> w.orderBy(quantity.desc())).as("dense"),
                 lag(delivery, 1).over(w -> w.orderBy(delivery)).as("previous"),
                 lead(delivery, 2).over(w -> w.orderBy(delivery)).as("next"),
-                sum(quantity).over(w -> w.partitionBy(material).orderBy(delivery)
+                quantity.sum().over(w -> w.partitionBy(material).orderBy(delivery)
                     .rows(Bound.unboundedPreceding(), Bound.currentRow())).as("running"),
-                avg(quantity).over(w -> w.orderBy(delivery).rows(Bound.preceding(2), Bound.following(1))).as("moving"));
+                quantity.avg().over(w -> w.orderBy(delivery).rows(Bound.preceding(2), Bound.following(1))).as("moving"));
         });
     }
 
@@ -258,7 +268,7 @@ public final class SpecCases {
         return from(Lips.class)
             .groupByRollup(l -> keys(l.material(), l.unit()))
             .orderBy(l -> orders(grouping(l.material()), l.material(), grouping(l.unit())))
-            .select(l -> cols(l.material(), l.unit(), sum(l.quantity()).as("total"), grouping(l.material()).as("level")));
+            .select(l -> cols(l.material(), l.unit(), l.quantity().sum().as("total"), grouping(l.material()).as("level")));
     }
 
     /** 逗号分隔的代码，SAP 在一个字段里存多个 ATA 章节。 */
@@ -270,11 +280,11 @@ public final class SpecCases {
         return from(codes)
             .orderBy(c -> c.col(Code::text))
             .select(c -> {
-                Expr<String> text = c.col(Code::text);
-                Expr<Integer> comma = locate(text, ",");
+                ExprText<String> text = c.col(Code::text);
+                ExprInteger<Integer> comma = text.locate(",");
                 return cols(text.as("text"), comma.as("comma"),
-                    caseWhen(comma.gt(0), substring(text, lit(1), minus(comma, lit(1)))).otherwise(text).as("head"),
-                    caseWhen(comma.gt(0), substring(text, plus(comma, lit(1)))).end().as("tail"));
+                    caseWhen(() -> comma.gt(0), text.substring(lit(1), comma.minus(lit(1)))).otherwise(text).as("head"),
+                    caseWhen(() -> comma.gt(0), text.substring(comma.plus(lit(1)))).end().as("tail"));
             });
     }
 
@@ -292,8 +302,8 @@ public final class SpecCases {
         return from(Lips.class)
             .orderBy(l -> l.delivery())
             .select(l -> {
-                Expr<BigDecimal> half = divide(l.quantity(), lit(new BigDecimal("2")));
-                return cols(l.delivery(), floor(half).as("down"), ceil(half).as("up"));
+                ExprDecimal<BigDecimal> half = l.quantity().divide(lit(new BigDecimal("2")));
+                return cols(l.delivery(), half.floor().as("down"), half.ceil().as("up"));
             });
     }
 
@@ -302,7 +312,7 @@ public final class SpecCases {
         return from(Lips.class)
             .groupBy(l -> keys(l.material(), l.unit(), l.mara().partNumber()))
             .orderBy(l -> orders(l.material().asc(), l.unit().asc()))
-            .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), sum(l.quantity()).as("total")))
+            .select(l -> cols(l.material(), l.unit(), l.mara().partNumber(), l.quantity().sum().as("total")))
             .exclude("unit", "partNumber")
             .sortBy("total desc, material");
     }
@@ -358,7 +368,7 @@ public final class SpecCases {
     /** 一对多：EXISTS、相关子查询（行数、合计）和每组第一行。 */
     public static Query<Map<String, Object>> oneToMany() {
         return from(Mara.class)
-            .where(m -> all(m.materialType().eq("ZMAT"), m.deliveries().any(l -> l.unit().eq("EA"))))
+            .where(m -> { m.materialType().eq("ZMAT"); m.deliveries().any(l -> l.unit().eq("EA")); })
             .orderBy(m -> m.material())
             .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total"),
                 m.deliveries().first(l -> l.createdOn().desc()).delivery().as("latest")));
@@ -369,26 +379,26 @@ public final class SpecCases {
         return from(Event.class)
             .where(e -> e.onDay().range(LocalDate.of(2011, 1, 1), LocalDate.of(2025, 1, 1)))
             .orderBy(e -> e.id())
-            .select(e -> cols(e.id(), year(e.onDay()).as("y"), month(e.atTime()).as("m"), day(e.onDay()).as("d"),
-                addDays(e.onDay(), 3).as("plusDays"), addMonths(e.onDay(), -1).as("minusMonth"), addYears(e.onDay(), 1).as("plusYear"),
-                daysBetween(e.onDay(), lit(LocalDate.of(2024, 4, 30))).as("days")));
+            .select(e -> cols(e.id(), e.onDay().year().as("y"), e.atTime().month().as("m"), e.onDay().day().as("d"),
+                e.onDay().addDays(3).as("plusDays"), e.onDay().addMonths(-1).as("minusMonth"), e.onDay().addYears(1).as("plusYear"),
+                e.onDay().daysBetween(lit(LocalDate.of(2024, 4, 30))).as("days")));
     }
 
     /** 时间部分、加减小时分钟秒与月初。 */
     public static Query<Map<String, Object>> timeFunctions() {
         return from(Event.class)
             .orderBy(e -> e.id())
-            .select(e -> cols(e.id(), hour(e.atTime()).as("h"), minute(e.atTime()).as("mi"), second(e.atTime()).as("s"),
-                addHours(e.atTime(), 25).as("plusHours"), addMinutes(e.atTime(), -31).as("minusMinutes"), addSeconds(e.atTime(), 59).as("plusSeconds"),
-                monthStart(e.onDay()).as("monthStart")));
+            .select(e -> cols(e.id(), e.atTime().hour().as("h"), e.atTime().minute().as("mi"), e.atTime().second().as("s"),
+                e.atTime().addHours(25).as("plusHours"), e.atTime().addMinutes(-31).as("minusMinutes"), e.atTime().addSeconds(59).as("plusSeconds"),
+                e.onDay().monthStart().as("monthStart")));
     }
 
     /** 补齐、余数、乘方、开方与符号。 */
     public static Query<Map<String, Object>> numberTextFunctions() {
         return from(Lips.class)
             .where(l -> l.delivery().eq("D1"))
-            .select(l -> cols(lpad(l.material(), 5, "0").as("padded"), rpad(l.unit(), 4, "*").as("unit"), mod(l.quantity(), 2).as("remainder"),
-                power(l.quantity(), 2).as("squared"), sqrt(l.quantity()).as("root"), sign(minus(l.quantity(), lit(new BigDecimal("4")))).as("sign")));
+            .select(l -> cols(l.material().lpad(5, "0").as("padded"), l.unit().rpad(4, "*").as("unit"), l.quantity().mod(2).as("remainder"),
+                l.quantity().power(2).as("squared"), l.quantity().sqrt().as("root"), l.quantity().minus(lit(new BigDecimal("4"))).sign().as("sign")));
     }
 
     /** 每个物料最新的两张交货单：窗口条件包成派生表，不在结果里的排序列作为额外的列带出来。 */
@@ -431,14 +441,15 @@ public final class SpecCases {
     public static Query<Map<String, Object>> subqueryComparisons() {
         return from(Mara.class)
             .rightJoin(Lips.class, (m, l) -> m.material().eq(l.material()))
-            .where((m, l) -> all(
-                keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material()))),
-                l.quantity().ge(anyOf(from(Lips.class).where(x -> x.unit().eq("KG")).select(x -> x.quantity()))),
-                l.quantity().lt(allOf(from(Lips.class).where(x -> x.unit().eq("PC")).select(x -> x.quantity()))),
-                m.manufacturer().isNotDistinctFrom(m.partNumber()).not(),
-                l.unit().isDistinctFrom(m.materialType())))
+            .where((m, l) -> {
+                keys(l.delivery(), l.material()).in(from(Lips.class).where(x -> x.unit().eq("EA")).select(x -> cols(x.delivery(), x.material())));
+                l.quantity().ge(anyOf(from(Lips.class).where(x -> x.unit().eq("KG")).select(x -> x.quantity())));
+                l.quantity().lt(allOf(from(Lips.class).where(x -> x.unit().eq("PC")).select(x -> x.quantity())));
+                not(() -> m.manufacturer().isNotDistinctFrom(m.partNumber()));
+                l.unit().isDistinctFrom(m.materialType());
+            })
             .orderBy((m, l) -> l.delivery())
-            .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(l.quantity().gt(BigDecimal.ONE)).as("big")));
+            .select((m, l) -> cols(l.delivery(), m.partNumber(), bool(() -> l.quantity().gt(BigDecimal.ONE)).as("big")));
     }
 
     /** 去重的求和与平均、样本与总体的标准差和方差。 */
@@ -447,12 +458,12 @@ public final class SpecCases {
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
             .select(l -> cols(l.material(),
-                sumDistinct(l.quantity()).as("distinctTotal"),
-                avgDistinct(l.quantity()).as("distinctAverage"),
-                stddevSamp(l.quantity()).as("sampleDeviation"),
-                stddevPop(l.quantity()).as("populationDeviation"),
-                varSamp(l.quantity()).as("sampleVariance"),
-                varPop(l.quantity()).as("populationVariance")));
+                l.quantity().sumDistinct().as("distinctTotal"),
+                l.quantity().avgDistinct().as("distinctAverage"),
+                l.quantity().stddevSamp().as("sampleDeviation"),
+                l.quantity().stddevPop().as("populationDeviation"),
+                l.quantity().varSamp().as("sampleVariance"),
+                l.quantity().varPop().as("populationVariance")));
     }
 
     /** 相对排名、累计分布和窗口里的第 n 行。 */
@@ -481,10 +492,10 @@ public final class SpecCases {
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
             .select(l -> cols(l.material(),
-                sum(l.quantity()).filter(l.unit().eq("KG")).as("kg"),
-                count().filter(l.unit().eq("EA")).as("eachLines"),
-                countDistinct(l.unit()).filter(l.quantity().gt(BigDecimal.ZERO)).as("units"),
-                stringAgg(l.delivery(), ",", l.delivery().asc()).as("deliveries")));
+                l.quantity().sum().filter(() -> l.unit().eq("KG")).as("kg"),
+                count().filter(() -> l.unit().eq("EA")).as("eachLines"),
+                l.unit().countDistinct().filter(() -> l.quantity().gt(BigDecimal.ZERO)).as("units"),
+                l.delivery().stringAgg(",", l.delivery().asc()).as("deliveries")));
     }
 
     /** 同一个一对多关系上的存在判断、行数、合计和带筛选的行数，合成一个按连接键分组的派生表。 */
@@ -518,11 +529,13 @@ public final class SpecCases {
         Query<String> parts = from(Mara.class).where(m -> m.materialType().eq("ZMAT")).select(m -> m.material());
         Query<OpenLine> open = from(Lips.class).select(l -> cols(l.delivery(), l.material())).into(OpenLine.class);
         return from(open.asTable())
-            .where(o -> all(o.col(OpenLine::material).in(parts),
-                notExists(from(Vbkd.class).where(v -> v.salesOrder().eq(o.col(OpenLine::delivery))))))
+            .where(o -> {
+                o.col(OpenLine::material).in(parts);
+                notExists(from(Vbkd.class).where(v -> v.salesOrder().eq(o.col(OpenLine::delivery))));
+            })
             .select(o -> cols(
                 o.col(OpenLine::delivery),
                 scalar(from(Makt.class).where(mk -> mk.material().eq(o.col(OpenLine::material)))
-                    .select(mk -> max(mk.text()))).as("text")));
+                    .select(mk -> mk.text().max())).as("text")));
     }
 }

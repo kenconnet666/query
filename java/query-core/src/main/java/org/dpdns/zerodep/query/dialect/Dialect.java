@@ -145,7 +145,7 @@ public abstract class Dialect {
     }
 
     /** CAST 目标类型在本方言中的类型名；方言可覆盖。 */
-    public String castType(CastType<?> type) {
+    public String castType(CastType<?, ?> type) {
         return switch (type.kind()) {
             case TEXT -> "VARCHAR(" + type.length() + ")";
             case DECIMAL -> "DECIMAL(" + type.length() + "," + type.scale() + ")";
@@ -277,7 +277,7 @@ public abstract class Dialect {
     public boolean windowable(String name) { return true; }
 
     /** 写出类型转换；默认 {@code CAST(inner AS 类型名)}，类型名见 {@link #castType}。 */
-    public void cast(SqlWriter w, Renderable inner, CastType<?> target) {
+    public void cast(SqlWriter w, Renderable inner, CastType<?, ?> target) {
         w.sql("CAST(").render(inner).sql(" AS ").sql(castType(target)).sql(")");
     }
 

@@ -2,10 +2,10 @@ package org.dpdns.zerodep.query.table;
 
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
-import org.dpdns.zerodep.query.testing.Shards;
 import org.dpdns.zerodep.query.testing.Shards.ShEvent;
 import org.dpdns.zerodep.query.testing.Shards.ShEventRow;
 import org.dpdns.zerodep.query.testing.Shards.ShOrder;
+import org.dpdns.zerodep.query.testing.Shards;
 import org.dpdns.zerodep.query.testing.TestDatabase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,13 +33,13 @@ class ShardingTest {
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> db.render(from(ShEvent.class).where(x -> x.note().eq("a")).select(x -> x.id())));
         assertTrue(e.getMessage().contains("allShards()"), e.getMessage());
         assertThrows(IllegalStateException.class, () -> db.render(from(ShEvent.class)
-            .where(x -> any(x.day().eq(LocalDate.of(2026, 1, 3)), x.note().eq("a"))).select(x -> x.id())));
+            .where(x -> any(() -> { x.day().eq(LocalDate.of(2026, 1, 3)); x.note().eq("a"); })).select(x -> x.id())));
     }
 
     @Test
     void AND取交集OR取并集且范围外的月份不读() {
         String sql = db.render(from(ShEvent.class)
-            .where(x -> all(x.day().ge(LocalDate.of(2025, 6, 1)), x.day().le(LocalDate.of(2026, 2, 1)), x.note().eq("a")))
+            .where(x -> { x.day().ge(LocalDate.of(2025, 6, 1)); x.day().le(LocalDate.of(2026, 2, 1)); x.note().eq("a"); })
             .select(x -> x.id())).sql();
         assertTrue(sql.contains("SH_EVENT_202601") && sql.contains("SH_EVENT_202602") && !sql.contains("SH_EVENT_202603"), sql);
         String none = db.render(from(ShEvent.class).where(x -> x.day().lt(LocalDate.of(2026, 1, 1))).select(x -> x.id())).sql();

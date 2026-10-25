@@ -11,9 +11,13 @@ import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.it.support.SampleData;
 import org.dpdns.zerodep.query.mysql.MysqlDialect;
 import org.dpdns.zerodep.query.select.Query;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColDate;
+import org.dpdns.zerodep.query.table.column.ColDecimal;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.Event;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Mara;
@@ -49,16 +53,16 @@ class MysqlTest {
     @Table(schema = "QUERY_IT", value = "MY_ARTICLE")
     interface Article extends Entity {
         /** 编号。 */
-        @Column("ID") Col<Integer> id();
+        @Column("ID") ColInteger<Integer> id();
 
         /** JSON 文档，按文本读写。 */
-        @Column("DOC") Col<String> doc();
+        @Column("DOC") ColText<String> doc();
 
         /** 标题。 */
-        @Column("TITLE") Col<String> title();
+        @Column("TITLE") ColText<String> title();
 
         /** 正文。 */
-        @Column("BODY") Col<String> body();
+        @Column("BODY") ColText<String> body();
     }
 
     /** 按日期范围分区的日志：分区键 DAY 必须在主键里。 */
@@ -67,13 +71,13 @@ class MysqlTest {
         + "PARTITION p2026 VALUES LESS THAN ('2027-01-01'), PARTITION pmax VALUES LESS THAN (MAXVALUE))")
     interface PartLog extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<Long> id();
+        @Id @Column("ID") ColBigint<Long> id();
 
         /** 日期，分区键。 */
-        @Id @Column("DAY") Col<LocalDate> day();
+        @Id @Column("DAY") ColDate<LocalDate> day();
 
         /** 金额。 */
-        @Column(value = "AMOUNT", precision = 10, scale = 2) Col<BigDecimal> amount();
+        @Column(value = "AMOUNT", precision = 10, scale = 2) ColDecimal<BigDecimal> amount();
     }
 
     record PartLogRow(Long id, LocalDate day, BigDecimal amount) { }
@@ -91,12 +95,12 @@ class MysqlTest {
     @Test
     void DATEDIFF与GROUP_CONCAT() {
         LocalDate day = LocalDate.of(2026, 1, 1);
-        assertEquals(31, (int) live.db().one(from(Lips.class).limit(1).select(l -> daysBetween(lit(day), lit(LocalDate.of(2026, 2, 1))))));
+        assertEquals(31, (int) live.db().one(from(Lips.class).limit(1).select(l -> lit(day).daysBetween(lit(LocalDate.of(2026, 2, 1))))));
         assertEquals(List.of("M1=D1,D2,D5", "M2=D3,D4"), live.db().list(from(Lips.class)
             .with(maxExecutionTime(5000))
             .groupBy(l -> l.material())
             .orderBy(l -> l.material())
-            .select(l -> row((m, d) -> m + "=" + d, l.material(), stringAgg(l.delivery(), ",", l.delivery().asc())))));
+            .select(l -> row((m, d) -> m + "=" + d, l.material(), l.delivery().stringAgg(",", l.delivery().asc())))));
     }
 
     @Test
@@ -137,7 +141,7 @@ class MysqlTest {
         Cte<Step> steps = recursiveCte("steps",
             from(Lips.class).where(l -> l.delivery().eq("D1")).select(l -> cols(l.delivery(), lit(1).as("depth"))).into(Step.class),
             self -> from(self).where(s -> s.col(Step::depth).lt(3))
-                .select(s -> cols(s.col(Step::delivery), plus(s.col(Step::depth), lit(1)).as("depth"))).into(Step.class));
+                .select(s -> cols(s.col(Step::delivery), s.col(Step::depth).plus(lit(1)).as("depth"))).into(Step.class));
         assertEquals(List.of(1, 2, 3), live.db().list(from(steps).orderBy(s -> s.col(Step::depth)).select(s -> s.col(Step::depth))));
     }
 
@@ -176,8 +180,8 @@ class MysqlTest {
 
     @Test
     void JSON的包含与路径文本() {
-        List<Map<String, Object>> rows = live.db().list(from(Article.class).where(a -> jsonContains(a.doc(), "{\"status\":\"open\"}")).orderBy(a -> a.id())
-            .select(a -> cols(a.id(), jsonText(a.doc(), "$.owner.name").as("owner"))));
+        List<Map<String, Object>> rows = live.db().list(from(Article.class).where(a -> mysql(a.doc()).jsonContains("{\"status\":\"open\"}")).orderBy(a -> a.id())
+            .select(a -> cols(a.id(), mysql(a.doc()).jsonText("$.owner.name").as("owner"))));
         assertEquals(List.of("1:ann", "3:null"), rows.stream().map(r -> r.get("id") + ":" + r.get("owner")).toList());
     }
 

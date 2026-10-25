@@ -8,11 +8,10 @@ import org.dpdns.zerodep.query.dialect.Dialect;
 import org.dpdns.zerodep.query.dialect.FunctionDef;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.QueryRenderer;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.Client;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.dpdns.zerodep.query.testing.Erp.Makt;
@@ -85,9 +84,17 @@ class RenderTest {
     @Test
     void EXISTS直接接收作用域且列可以直接与另一张表的列比较() {
         String sql = from(Lips.class)
-            .join(Mara.class, (l, m) -> m.material().eq(l.material()).and(m.material().ge(l.material())))
-            .where((l, m) -> all(notExists(from(Mara.class).where(x -> x.material().lt(m.material()))),
-                l.material().gt(m.material()).or(l.material().le(m.material()))))
+            .join(Mara.class, (l, m) -> {
+                m.material().eq(l.material());
+                m.material().ge(l.material());
+            })
+            .where((l, m) -> {
+                notExists(from(Mara.class).where(x -> x.material().lt(m.material())));
+                any(() -> {
+                    l.material().gt(m.material());
+                    l.material().le(m.material());
+                });
+            })
             .select((l, m) -> l.delivery()).toSql(DIALECT).sql();
         assertTrue(sql.contains("MARA.MATNR >= LIPS.MATNR"), sql);
         assertTrue(sql.contains("NOT EXISTS (SELECT 1\nFROM QUERY_IT.MARA MARA2\nWHERE MARA2.MATNR < MARA.MATNR)"), sql);
@@ -191,16 +198,16 @@ class RenderTest {
     void skipEmpty省略与空值比较的条件() {
         String none = null;
         Rendered r = from(Mara.class).skipEmpty()
-            .where(m -> all(
-                m.material().eq(none),
-                m.material().ne("  "),
-                m.material().in(List.of()),
-                m.material().notIn(List.of()),
-                like(m.partNumber(), none),
-                m.material().between("A", none),
-                m.manufacturer().gt("M"),
-                onlyIf(false, () -> m.material().eq("x")),
-                ifPresent(none, v -> m.material().eq(v))))
+            .where(m -> {
+                m.material().eq(none);
+                m.material().ne("  ");
+                m.material().in(List.of());
+                m.material().notIn(List.of());
+                m.partNumber().like(none);
+                m.material().between("A", none);
+                m.manufacturer().gt("M");
+                if (none != null) m.material().eq(none);
+            })
             .select(m -> m.material())
             .toSql(DIALECT);
         assertTrue(r.sql().endsWith("WHERE MARA.MATNR >= ? AND MARA.MFRNR > ?"), r.sql());
@@ -222,8 +229,8 @@ class RenderTest {
     void 条件聚合写成CASE且多次过滤按AND合并而空条件不过滤() {
         String sql = from(Lips.class)
             .select(l -> cols(
-                count().filter(l.unit().eq("EA")).filter(l.material().eq("M1")).as("n"),
-                sum(l.quantity()).filter(onlyIf(false, () -> l.unit().eq("KG"))).as("total")))
+                count().filter(() -> l.unit().eq("EA")).filter(() -> l.material().eq("M1")).as("n"),
+                l.quantity().sum().filter(() -> { }).as("total")))
             .toSql(DIALECT).sql();
         assertTrue(sql.startsWith("SELECT COUNT(CASE WHEN LIPS.VRKME = 'EA' AND LIPS.MATNR = 'M1' THEN 1 END) AS \"n\", SUM(LIPS.LFIMG) AS \"total\""), sql);
     }
@@ -233,7 +240,7 @@ class RenderTest {
         assertThrows(IllegalArgumentException.class, () -> from(Lips.class)
             .qualify(l -> l.unit().eq("EA")).select(l -> l.delivery()).toSql(DIALECT));
         assertEquals(from(Lips.class).select(l -> l.delivery()).toSql(DIALECT).sql(),
-            from(Lips.class).qualify(l -> onlyIf(false, () -> rowNumber().over(w -> w).eq(1L))).select(l -> l.delivery()).toSql(DIALECT).sql());
+            from(Lips.class).qualify(l -> { }).select(l -> l.delivery()).toSql(DIALECT).sql());
     }
 
     @Test
@@ -247,8 +254,8 @@ class RenderTest {
     void skipEmpty也作用于连接条件和子查询且不开启时与null比较报错() {
         String none = null;
         String sql = from(Lips.class).skipEmpty()
-            .join(Mara.class, (l, m) -> all(m.material().eq(l.material()), m.manufacturer().eq(none)))
-            .where((l, m) -> exists(from(Mara.class).where(x -> all(x.material().eq(l.material()), x.materialType().eq(none)))))
+            .join(Mara.class, (l, m) -> { m.material().eq(l.material()); m.manufacturer().eq(none); })
+            .where((l, m) -> exists(from(Mara.class).where(x -> { x.material().eq(l.material()); x.materialType().eq(none); })))
             .select((l, m) -> l.delivery()).toSql(DIALECT).sql();
         assertTrue(sql.contains("JOIN QUERY_IT.MARA MARA ON MARA.MATNR = LIPS.MATNR\n"), sql);
         assertTrue(sql.endsWith("WHERE MARA2.MATNR = LIPS.MATNR)"), sql);
@@ -258,9 +265,13 @@ class RenderTest {
 
     @Test
     void OR的每个分支都加括号() {
-        String sql = where(m -> any(
-            m.material().eq("A"),
-            m.partNumber().eq("B").and(m.manufacturer().eq("C"))));
+        String sql = where(m -> any(() -> {
+            m.material().eq("A");
+            all(() -> {
+                m.partNumber().eq("B");
+                m.manufacturer().eq("C");
+            });
+        }));
         assertTrue(sql.endsWith("WHERE ((MARA.MATNR = ?) OR (MARA.MFRPN = ? AND MARA.MFRNR = ?))"), sql);
     }
 
@@ -369,7 +380,7 @@ class RenderTest {
 
     @Test
     void 条件作为布尔列和窗口第n行的参数要有效() {
-        assertThrows(IllegalArgumentException.class, () -> bool(Cond.EMPTY));
+        assertThrows(IllegalArgumentException.class, () -> bool(() -> { }));
         assertThrows(IllegalArgumentException.class, () -> nthValue(lit(1), 0));
     }
 
@@ -410,8 +421,8 @@ class RenderTest {
 
     @Test
     void CASE与类型化原生片段且SELECT列表里的常量写成字面量() {
-        String sql = from(Mara.class).select(m -> caseWhen(m.materialType().eq("ZMAT"), "material")
-            .when(m.materialType().eq("ZOTH"), "other").otherwise(sql(String.class, "LOWER({0})", m.materialType())))
+        String sql = from(Mara.class).select(m -> caseWhen(() -> m.materialType().eq("ZMAT"), "material")
+            .when(() -> m.materialType().eq("ZOTH"), "other").otherwise(sql(String.class, "LOWER({0})", m.materialType())))
             .toSql(DIALECT).sql();
         assertTrue(sql.startsWith("SELECT CASE WHEN MARA.MTART = 'ZMAT' THEN 'material' WHEN MARA.MTART = 'ZOTH' THEN 'other' ELSE LOWER(MARA.MTART) END"), sql);
     }
@@ -420,10 +431,10 @@ class RenderTest {
     @Table("PROBE")
     interface ConcurrencyProbe extends Entity {
         /** 编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
     }
 
     /** PROBE 的一行。 */
@@ -485,7 +496,7 @@ class RenderTest {
         assertTrue(sql.contains("JOIN QUERY_IT.MARA MARA16 ON MARA16.MATNR = MARA.MATNR"), sql);
     }
 
-    private static String where(Fn.F1<Mara, Cond> cond) {
+    private static String where(Fn.C1<Mara> cond) {
         return from(Mara.class).where(cond).select(m -> m.material()).toSql(DIALECT).sql();
     }
 

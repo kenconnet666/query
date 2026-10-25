@@ -44,7 +44,7 @@ class HanaSpecTest extends RenderSpec {
                 .select(l -> cols(
                     greatest(l.quantity(), val(new BigDecimal("4"))).as("atLeast4"),
                     least(l.quantity(), val(new BigDecimal("4"))).as("atMost4"),
-                    toInteger(substring(l.delivery(), 2)).as("number")))),
+                    hana(l.delivery().substring(2)).toInteger().as("number")))),
             "hana-grouping-sets", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> groupingSets(keys(l.material(), l.unit()), keys(l.material()), keys()))
                 .select(l -> cols(l.material(), l.unit(), count().as("lines")))),
@@ -54,22 +54,22 @@ class HanaSpecTest extends RenderSpec {
             "hana-functions", SpecCase.plain(() -> from(Lips.class)
                 .with(hint("NO_CS_JOIN", "IGNORE_PLAN_CACHE"))
                 .select(l -> cols(
-                    daysBetween(lit(first), addDays(lit(first), 3)).as("days"),
-                    addMonths(lit(day), 1).as("months"),
-                    addYears(lit(day), 2).as("years"),
-                    toVarchar(lit(day), "YYYYMMDD").as("text"),
-                    toDate(l.delivery(), "YYYYMMDD").as("day"),
-                    length(l.material()).as("size")))),
+                    lit(first).daysBetween(lit(first).addDays(3)).as("days"),
+                    lit(day).addMonths(1).as("months"),
+                    lit(day).addYears(2).as("years"),
+                    hana(lit(day)).toVarchar("YYYYMMDD").as("text"),
+                    hana(l.delivery()).toDate("YYYYMMDD").as("day"),
+                    hana(l.material()).length().as("size")))),
             "hana-regexpr", SpecCase.plain(() -> from(Lips.class)
-                .where(l -> likeRegexpr(l.delivery(), "^D[0-9]+$"))
+                .where(l -> hana(l.delivery()).likeRegexpr("^D[0-9]+$"))
                 .select(l -> cols(
-                    toNvarchar(l.quantity()).as("text"),
-                    toNvarchar(lit(day), "YYYYMMDD").as("day")))),
+                    hana(l.quantity()).toNvarchar().as("text"),
+                    hana(lit(day)).toNvarchar("YYYYMMDD").as("day")))),
             "hana-string-agg", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> l.material())
                 .select(l -> cols(
                     l.material(),
-                    stringAgg(l.delivery(), ",", l.delivery().asc(), l.unit().desc())
+                    l.delivery().stringAgg(",", l.delivery().asc(), l.unit().desc())
                         .as("deliveries")))));
     }
 
@@ -83,7 +83,7 @@ class HanaSpecTest extends RenderSpec {
                     percentileDisc(0.5, l.quantity()).over(w -> w.partitionBy(l.material())).as("lower")))),
             "hana-median", SpecCase.plain(() -> from(Lips.class)
                 .groupBy(l -> l.material())
-                .select(l -> cols(l.material(), median(l.quantity()).as("median"), corr(l.quantity(), l.quantity()).as("self")))),
+                .select(l -> cols(l.material(), hana(l.quantity()).median().as("median"), corr(l.quantity(), l.quantity()).as("self")))),
             "hana-full-join", SpecCase.plain(() -> from(Lips.class)
                 .fullJoin(Mara.class, (l, m) -> m.material().eq(l.material()))
                 .select((l, m) -> cols(l.delivery(), m.material()))));
@@ -108,9 +108,12 @@ class HanaSpecTest extends RenderSpec {
                 .orderBy(n -> n.col(OrgNode::nodeId))
                 .select(n -> cols(n.col(OrgNode::nodeId), n.col(OrgNode::hierarchyDistance)))),
             "hana-search", SpecCase.plain(() -> from(Lips.class)
-                .where(l -> all(contains("M1", l.material()), containsFuzzy(0.8, "D1", l.delivery(), l.material())))
+                .where(l -> {
+                    contains("M1", l.material());
+                    containsFuzzy(0.8, "D1", l.delivery(), l.material());
+                })
                 .orderBy(l -> score().desc())
-                .select(l -> cols(l.delivery(), score().as("score"), jsonValue(l.unit(), "$.unit").as("json")))));
+                .select(l -> cols(l.delivery(), score().as("score"), hana(l.unit()).jsonValue("$.unit").as("json")))));
     }
 
     /** 组织表作为层级的来源：编号与上级编号改名为 nodeId、parentId。 */

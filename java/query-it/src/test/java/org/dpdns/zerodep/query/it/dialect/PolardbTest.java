@@ -7,8 +7,9 @@ import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.mysql.Mysql;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.Parameter;
@@ -35,10 +36,10 @@ class PolardbTest {
     @Table(schema = "QUERY_IT", value = "P_STOCK")
     interface Stock extends Entity {
         /** 编号。 */
-        @Column("ID") Col<Long> id();
+        @Column("ID") ColBigint<Long> id();
 
         /** 数量。 */
-        @Column("QTY") Col<Integer> qty();
+        @Column("QTY") ColInteger<Integer> qty();
     }
 
     /** 删掉并重建 P_STOCK，写入 rows（形如 {@code (1, 10), (2, 20)}，为空时不写）。 */
@@ -72,12 +73,12 @@ class PolardbTest {
     void 库存提示改到预期行数时提交整个事务否则整个事务回滚() {
         stock("(1, 1), (2, 5)");
         // 扣到 0 为止：第一次改到一行，提交；第二次条件不满足，改到 0 行，数据库报错并回滚同一事务里之前的改动
-        live.db().transaction(() -> live.db().execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(minus(s.qty(), val(1))))
-            .where(s -> all(s.id().eq(1L), s.qty().gt(0)))));
+        live.db().transaction(() -> live.db().execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(s.qty().minus(val(1))))
+            .where(s -> { s.id().eq(1L); s.qty().gt(0); })));
         assertThrows(RuntimeException.class, () -> live.db().transaction(() -> {
             live.db().execute(update(Stock.class).set(s -> s.qty().to(0)).where(s -> s.id().eq(2L)));
-            live.db().execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(minus(s.qty(), val(1))))
-                .where(s -> all(s.id().eq(1L), s.qty().gt(0))));
+            live.db().execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(s.qty().minus(val(1))))
+                .where(s -> { s.id().eq(1L); s.qty().gt(0); }));
         }));
         assertEquals(List.of(0, 5), live.db().list(from(Stock.class).orderBy(s -> s.id()).select(s -> s.qty())));
         assertThrows(RuntimeException.class, () -> live.db().execute(update(Stock.class).with(s -> inventory(1)).set(s -> s.qty().to(9)).where(s -> s.id().eq(2L))),

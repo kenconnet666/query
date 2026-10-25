@@ -1,7 +1,6 @@
 package org.dpdns.zerodep.query.it.workflow;
 
 import org.dpdns.zerodep.query.dialect.Lock;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.select.Query;
@@ -21,19 +20,19 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import static org.dpdns.zerodep.query.Sql.all;
 import static org.dpdns.zerodep.query.Sql.any;
 import static org.dpdns.zerodep.query.Sql.cols;
 import static org.dpdns.zerodep.query.Sql.count;
+import static org.dpdns.zerodep.query.Sql.exists;
 import static org.dpdns.zerodep.query.Sql.forUpdate;
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.dpdns.zerodep.query.Sql.insertInto;
 import static org.dpdns.zerodep.query.Sql.orders;
 import static org.dpdns.zerodep.query.Sql.rowNumber;
-import static org.dpdns.zerodep.query.Sql.secondsBetween;
-import static org.dpdns.zerodep.query.Sql.sum;
 import static org.dpdns.zerodep.query.it.support.Db.SQLITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -119,8 +118,13 @@ class WorkflowQueryTest {
      */
     private static Query<Map<String, Object>> todo(String user, List<String> groups, TodoSearch search) {
         return from(Task.class)
-            .where(t -> any(t.assignee().eq(user),
-                all(t.assignee().isNull(), t.candidates().any(l -> any(l.userId().eq(user), l.groupId().in(groups))))))
+            .where(t -> any(() -> {
+                t.assignee().eq(user);
+                all(() -> {
+                    t.assignee().isNull();
+                    t.candidates().any(l -> any(() -> { l.userId().eq(user); l.groupId().in(groups); }));
+                });
+            }))
             .where(search)
             .orderBy(t -> orders(t.createTime().desc(), t.id()))
             .select(t -> cols(t.id(), t.name(), t.assignee(), t.definition().defKey().as("process"), t.instance().businessKey()));
@@ -141,26 +145,37 @@ class WorkflowQueryTest {
         assertEquals(1, page.rows().size());
     }
 
-    /** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */
-    private static Cond variable(ProcInst p, String name, Function<Variable, Cond> value) {
-        return p.variables().any(v -> all(v.name().eq(name), value.apply(v)));
+    /** 某个变量满足条件：变量名相等，值的条件写在 value 里；在条件块里调用。 */
+    private static void variable(ProcInst p, String name, Consumer<Variable> value) {
+        p.variables().any(v -> {
+            v.name().eq(name);
+            value.accept(v);
+        });
     }
 
     @Test
     void 按变量筛选实例的三种写法结果相同() {
         // 运行中、金额大于 1000 且部门是 X 的实例只有 P1（P2 金额 500，P3 已结束）。
         Query<String> exists = from(ProcInst.class)        // 每个变量条件一个 EXISTS（Flowable 的写法）
-            .where(p -> all(p.endTime().isNull(), variable(p, "amount", v -> v.longValue().gt(1000L)), variable(p, "dept", v -> v.textValue().eq("X"))))
+            .where(p -> {
+                p.endTime().isNull();
+                variable(p, "amount", v -> v.longValue().gt(1000L));
+                variable(p, "dept", v -> v.textValue().eq("X"));
+            })
             .orderBy(p -> p.id())
             .select(p -> p.id());
         Query<String> grouped = from(ProcInst.class)       // 变量条件合成一个按实例分组的派生表
             .groupJoin(p -> p.variables())
-            .where(p -> all(p.endTime().isNull(), variable(p, "amount", v -> v.longValue().gt(1000L)), variable(p, "dept", v -> v.textValue().eq("X"))))
+            .where(p -> {
+                p.endTime().isNull();
+                variable(p, "amount", v -> v.longValue().gt(1000L));
+                variable(p, "dept", v -> v.textValue().eq("X"));
+            })
             .orderBy(p -> p.id())
             .select(p -> p.id());
         Query<String> joined = from(ProcInst.class)        // 每个变量条件连接一次变量表（Activiti 的多别名 JOIN 写法）
-            .join(Variable.class, (p, a) -> all(a.procInstId().eq(p.id()), a.name().eq("amount"), a.longValue().gt(1000L)))
-            .join(Variable.class, (p, a, d) -> all(d.procInstId().eq(p.id()), d.name().eq("dept"), d.textValue().eq("X")))
+            .join(Variable.class, (p, a) -> { a.procInstId().eq(p.id()); a.name().eq("amount"); a.longValue().gt(1000L); })
+            .join(Variable.class, (p, a, d) -> { d.procInstId().eq(p.id()); d.name().eq("dept"); d.textValue().eq("X"); })
             .where((p, a, d) -> p.endTime().isNull())
             .orderBy((p, a, d) -> p.id())
             .select((p, a, d) -> p.id());
@@ -187,7 +202,7 @@ class WorkflowQueryTest {
     void 已办与统计() {
         // 已办：alice 办完的历史任务，按结束时间倒序。
         assertEquals(List.of("H2:pay:5400000", "H1:approve:3600000"), live.db().list(from(HiTask.class)
-                .where(h -> all(h.assignee().eq("alice"), h.endTime().isNotNull()))
+                .where(h -> { h.assignee().eq("alice"); h.endTime().isNotNull(); })
                 .orderBy(h -> orders(h.endTime().desc(), h.id()))
                 .select(h -> cols(h.id(), h.name(), h.endTime(), h.duration())))
             .stream().map(r -> r.get("id") + ":" + r.get("name") + ":" + r.get("duration")).toList());
@@ -205,15 +220,15 @@ class WorkflowQueryTest {
         // 耗时在读取时计算（Warm-Flow、SnakerFlow 不存耗时），单位秒；未办完的为空。
         assertEquals(List.of("H1:518400", "H2:90000", "H3:600", "H4:null"), live.db().list(from(HiTask.class)
                 .orderBy(h -> h.id())
-                .select(h -> cols(h.id(), secondsBetween(h.startTime(), h.endTime()).as("seconds"))))
+                .select(h -> cols(h.id(), h.startTime().secondsBetween(h.endTime()).as("seconds"))))
             .stream().map(r -> r.get("id") + ":" + r.get("seconds")).toList());
         // 每个办理人办完的任务数和总耗时，以及其中超过一小时的任务数。
         assertEquals(List.of("alice:2:9000000:1", "bob:1:600000:0"), live.db().list(from(HiTask.class)
                 .where(h -> h.endTime().isNotNull())
                 .groupBy(h -> h.assignee())
                 .orderBy(h -> h.assignee())
-                .select(h -> cols(h.assignee(), count().as("tasks"), sum(h.duration()).as("totalDuration"),
-                    count().filter(h.duration().gt(3_600_000L)).as("slow"))))
+                .select(h -> cols(h.assignee(), count().as("tasks"), h.duration().sum().as("totalDuration"),
+                    count().filter(() -> h.duration().gt(3_600_000L)).as("slow"))))
             .stream().map(r -> r.get("assignee") + ":" + r.get("tasks") + ":" + r.get("totalDuration") + ":" + r.get("slow")).toList());
     }
 

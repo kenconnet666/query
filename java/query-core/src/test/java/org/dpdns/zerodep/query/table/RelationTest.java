@@ -63,7 +63,7 @@ class RelationTest {
     @Test
     void 一对多用EXISTS和相关子查询() {
         String sql = from(Mara.class)
-            .where(m -> all(m.deliveries().any(l -> l.quantity().gt(BigDecimal.ONE)), m.deliveries().where(l -> l.unit().eq("KG")).none()))
+            .where(m -> { m.deliveries().any(l -> l.quantity().gt(BigDecimal.ONE)); m.deliveries().where(l -> l.unit().eq("KG")).none(); })
             .select(m -> cols(m.material(), m.deliveries().count().as("lines"), m.deliveries().sum(l -> l.quantity()).as("total")))
             .toSql(DIALECT).sql();
         assertEquals("""

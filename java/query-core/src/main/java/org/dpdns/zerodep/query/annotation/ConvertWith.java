@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
  * @Retention(RUNTIME) @Target(METHOD) @ConvertWith(SapDateConverter.class)
  * public @interface SapDate { }
  *
- * @Column("ERDAT") @SapDate Col<LocalDate> createdOn();
+ * @Column("ERDAT") @SapDate ColText<LocalDate> createdOn();   // 库里是 'yyyyMMdd' 文本，所以是文本列
  * }</pre>
  */
 @Documented

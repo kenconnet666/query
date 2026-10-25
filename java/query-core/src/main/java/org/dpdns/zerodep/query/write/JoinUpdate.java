@@ -5,19 +5,20 @@ import org.dpdns.zerodep.query.dialect.Renderable;
 import org.dpdns.zerodep.query.dialect.Rendered;
 import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Ref;
 import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BiFunction;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -57,28 +58,23 @@ public final class JoinUpdate<T extends Entity, S extends Entity> implements Wri
     }
 
     /** 更新 table，连接 joined；由方言门面的 {@code updateJoin} 调用。 */
-    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> of(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> of(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         Target<T> target = Target.of(table);
         Ref<S> source = Ref.table(joined);
         return new JoinUpdate<>(target, source, joinCondition(target, source, on), List.of());
     }
 
-    /** 追加一个 SET 项，值可以引用连接的表：{@code set((c, u) -> c.owner().to(u.name()))}。 */
-    public JoinUpdate<T, S> set(BiFunction<T, S, Assignment> assignment) {
-        Assignment a = assignment.apply(target.row(), source.param());
-        if (a == null || a.skipped()) throw new IllegalArgumentException("set(...) returned null; write col.to(value)");
-        if (a.column().ref() != target.ref()) throw new IllegalArgumentException("set(...) must assign a column of the updated table");
-        if (Metadata.entity(target.ref().entity()).writes().readOnly().contains(a.column().property().name())) {
-            throw new IllegalArgumentException(target.ref().entity().getSimpleName() + "." + a.column().property().name() + "() is @ReadOnly");
-        }
+    /** SET 项，一行写一个，值可以引用连接的表：{@code set((c, u) -> c.owner().to(u.name()))}；多次调用依次追加。 */
+    public JoinUpdate<T, S> set(BiConsumer<T, S> assignments) {
+        List<Assignment> written = Conditions.outside(() -> Assignments.collect(() -> assignments.accept(target.row(), source.param())));
         List<Assignment> all = new ArrayList<>(sets);
-        all.add(a);
+        for (Assignment a : written) all.add(target.assignable(a));
         return new JoinUpdate<>(target, source, on, List.copyOf(all));
     }
 
-    /** 追加 WHERE 条件，可以引用两张表；多次调用之间是 AND。 */
-    public JoinUpdate<T, S> where(BiFunction<T, S, Cond> condition) {
-        return new JoinUpdate<>(target.withWhere(nonNull(condition.apply(target.row(), source.param()))), source, on, sets);
+    /** 追加 WHERE 条件，一行写一个，可以引用两张表；多次调用之间是 AND。 */
+    public JoinUpdate<T, S> where(BiConsumer<T, S> condition) {
+        return new JoinUpdate<>(target.withWhere(condition(target, source, condition)), source, on, sets);
     }
 
     /** 两张表都不套用全局过滤器，也不加逻辑删除的条件。 */
@@ -149,7 +145,7 @@ public final class JoinUpdate<T extends Entity, S extends Entity> implements Wri
         List<Renderable> keys = new ArrayList<>();
         List<Renderable> keyColumns = new ArrayList<>();
         for (String id : meta.writes().ids()) {
-            Col<?> key = new Col<>(ref, meta.property(id));
+            Col<?> key = Col.of(ref, meta.property(id));
             keys.add(key::renderName);
             keyColumns.add(key);
         }
@@ -159,16 +155,15 @@ public final class JoinUpdate<T extends Entity, S extends Entity> implements Wri
             sets.stream().map(a -> (Renderable) a.value()).toList(), keys, keyColumns);
     }
 
-    /** 用两张表的表接口算出连接条件。 */
-    static <T extends Entity, S extends Entity> Cond joinCondition(Target<T> target, Ref<S> source, BiFunction<T, S, Cond> on) {
-        Cond c = nonNull(on.apply(target.row(), source.param()));
+    /** 用两张表的表接口算出连接条件；块里没有条件时报错。 */
+    static <T extends Entity, S extends Entity> Cond joinCondition(Target<T> target, Ref<S> source, BiConsumer<T, S> on) {
+        Cond c = condition(target, source, on);
         if (c.isEmpty()) throw new IllegalArgumentException("A join needs a condition");
         return c;
     }
 
-    /** 条件不能是 null。 */
-    static Cond nonNull(Cond c) {
-        if (c == null) throw new IllegalArgumentException("A condition is null; use Cond.EMPTY for no condition");
-        return c;
+    /** 在两张表的表接口上运行条件块，收集写下的条件。 */
+    static <T extends Entity, S extends Entity> Cond condition(Target<T> target, Ref<S> source, BiConsumer<T, S> block) {
+        return Conditions.collect(() -> block.accept(target.row(), source.param()));
     }
 }

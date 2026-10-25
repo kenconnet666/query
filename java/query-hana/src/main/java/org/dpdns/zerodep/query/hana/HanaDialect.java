@@ -142,7 +142,7 @@ public class HanaDialect extends Dialect {
     }
 
     /** CAST 的目标类型：文本用 NVARCHAR，浮点用 DOUBLE，其余沿用默认。 */
-    @Override public String castType(CastType<?> type) {
+    @Override public String castType(CastType<?, ?> type) {
         return switch (type.kind()) {
             case TEXT -> "NVARCHAR(" + type.length() + ")";
             case DOUBLE -> "DOUBLE";

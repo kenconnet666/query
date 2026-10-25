@@ -23,10 +23,10 @@ class SqliteSpecTest extends RenderSpec {
     /** SQLite 专属的函数，以及补齐、左右截取这些在 SQLite 上要改写的核心函数。 */
     @Override protected Map<String, SpecCase> dialectCases() {
         return Map.of("sqlite-functions", SpecCase.plain(() -> from(Lips.class)
-            .where(l -> glob(l.unit(), "E*"))
+            .where(l -> sqlite(l.unit()).glob("E*"))
             .groupBy(l -> l.material())
-            .select(l -> cols(l.material(), median(l.quantity()).as("middle"), percentileCont(0.9, l.quantity()).as("p90"),
-                percentileDisc(0.5, l.quantity()).as("p50"), lpad(l.material(), 5, "0").as("padded"), left(l.material(), 1).as("head")))));
+            .select(l -> cols(l.material(), sqlite(l.quantity()).median().as("middle"), percentileCont(0.9, l.quantity()).as("p90"),
+                percentileDisc(0.5, l.quantity()).as("p50"), l.material().lpad(5, "0").as("padded"), l.material().left(1).as("head")))));
     }
 
     /** SQLite 没有 ROLLUP，也没有加锁读。 */

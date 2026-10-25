@@ -2,14 +2,17 @@ package org.dpdns.zerodep.query.table;
 
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
+import org.dpdns.zerodep.query.expr.Nodes;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.WriteMeta;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Function;
+import java.util.function.Consumer;
 
 /**
  * 表的每次出现要追加的条件：数据库实例配置的全局过滤器（按父类型或接口匹配），以及表上 {@code @LogicDelete} 列的"未删除"条件。
@@ -23,7 +26,7 @@ public final class SourceFilters {
      * @param type      表接口或它继承的接口
      * @param condition 收到这张表的表接口，返回条件
      */
-    public record Filter(String name, Class<?> type, Function<Object, Cond> condition) { }
+    public record Filter(String name, Class<?> type, Consumer<Object> condition) { }
 
     /** 没有配置全局过滤器：只有逻辑删除的条件，没有数据库实例时（例如 {@code toSql(dialect)}）也用它。 */
     public static final SourceFilters NONE = new SourceFilters(List.of(), true);
@@ -68,7 +71,7 @@ public final class SourceFilters {
         if (!ref.source().filtered()) return List.of();
         List<Cond> out = new ArrayList<>();
         for (Filter f : filters) {
-            if (f.type().isAssignableFrom(ref.entity())) out.add(f.condition().apply(ref.param()));
+            if (f.type().isAssignableFrom(ref.entity())) out.add(Conditions.collect(() -> f.condition().accept(ref.param())));
         }
         if (logicDelete) {
             Cond active = active(ref);
@@ -83,7 +86,7 @@ public final class SourceFilters {
         EntityMeta<?> meta = Metadata.entity(ref.entity());
         WriteMeta.LogicDeleteMeta logic = meta.writes().logicDelete();
         if (logic == null) return null;
-        Col column = new Col<>(ref, meta.property(logic.property()));
-        return logic.timestamp() ? column.isNull() : column.eq(logic.active());
+        Col column = Col.of(ref, meta.property(logic.property()));
+        return logic.timestamp() ? Nodes.postfix(column, " IS NULL") : Nodes.compare(column, "=", new Nodes.Param(column.type(), logic.active()));
     }
 }

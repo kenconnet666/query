@@ -9,8 +9,11 @@ import org.dpdns.zerodep.query.annotation.ReadOnly;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Version;
 import org.dpdns.zerodep.query.annotation.WriteOnce;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
+import org.dpdns.zerodep.query.table.column.ColTimestamp;
 import org.dpdns.zerodep.query.type.CodeEnum;
 import org.dpdns.zerodep.query.write.Delete;
 import org.dpdns.zerodep.query.write.Insert;
@@ -34,39 +37,39 @@ public final class Writes {
     /** 带租户列的表，全局过滤器按它匹配。 */
     public interface Tenanted extends Entity {
         /** 租户。 */
-        @Column("TENANT") Col<String> tenant();
+        @Column("TENANT") ColText<String> tenant();
     }
 
     /** 便签：主键是文本，数量和状态用于更新的场景。 */
     @Table(schema = SCHEMA, value = "W_NOTE")
     public interface Note extends Tenanted {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 标题。 */
-        @Column("TITLE") Col<String> title();
+        @Column("TITLE") ColText<String> title();
 
         /** 数量。 */
-        @Column("QTY") Col<Integer> qty();
+        @Column("QTY") ColInteger<Integer> qty();
 
         /** 状态。 */
-        @Column("STATUS") Col<String> status();
+        @Column("STATUS") ColText<String> status();
     }
 
     /** 文档：带乐观锁的版本列。 */
     @Table(schema = SCHEMA, value = "W_DOC")
     public interface Doc extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 标题。 */
-        @Column("TITLE") Col<String> title();
+        @Column("TITLE") ColText<String> title();
 
         /** 版本号。 */
-        @Version @Column("VERSION") Col<Integer> version();
+        @Version @Column("VERSION") ColInteger<Integer> version();
 
         /** 来源：由数据库默认值维护，本库从不写。 */
-        @ReadOnly @Column(value = "SOURCE", defaultValue = "'db'") Col<String> source();
+        @ReadOnly @Column(value = "SOURCE", defaultValue = "'db'") ColText<String> source();
     }
 
     /** 文档的一行。 */
@@ -107,10 +110,10 @@ public final class Writes {
     @Table(schema = SCHEMA, value = "W_SEQ")
     public interface Seq extends Entity {
         /** 生成的编号。 */
-        @Id @Generated @Column("ID") Col<Integer> id();
+        @Id @Generated @Column("ID") ColInteger<Integer> id();
 
         /** 名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
     }
 
     /** 插入 {@link Seq} 的一行：不带编号。 */
@@ -125,26 +128,26 @@ public final class Writes {
     /** 带审计列的表：创建时间、修改时间和修改人由数据库实例的 onInsert、onUpdate 自动填。 */
     public interface Audited extends Entity {
         /** 创建时间：只在插入时写。 */
-        @WriteOnce @Column("CREATED_AT") Col<LocalDateTime> createdAt();
+        @WriteOnce @Column("CREATED_AT") ColTimestamp<LocalDateTime> createdAt();
 
         /** 修改时间。 */
-        @Column("UPDATED_AT") Col<LocalDateTime> updatedAt();
+        @Column("UPDATED_AT") ColTimestamp<LocalDateTime> updatedAt();
 
         /** 修改人。 */
-        @Column("UPDATED_BY") Col<String> updatedBy();
+        @Column("UPDATED_BY") ColText<String> updatedBy();
     }
 
     /** 工单：逻辑删除（DELETED 为 1 表示已删除）加审计列。 */
     @Table(schema = SCHEMA, value = "W_TICKET")
     public interface Ticket extends Audited {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 标题。 */
-        @Column("TITLE") Col<String> title();
+        @Column("TITLE") ColText<String> title();
 
         /** 是否已删除。 */
-        @LogicDelete @Column("DELETED") Col<Integer> deleted();
+        @LogicDelete @Column("DELETED") ColInteger<Integer> deleted();
     }
 
     /** 工单的一行：删除标记和审计列不用写。 */
@@ -154,10 +157,10 @@ public final class Writes {
     @Table(schema = SCHEMA, value = "W_ARCHIVE")
     public interface Archive extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 删除时间，未删除为 NULL。 */
-        @LogicDelete @Column("DELETED_AT") Col<LocalDateTime> deletedAt();
+        @LogicDelete @Column("DELETED_AT") ColTimestamp<LocalDateTime> deletedAt();
     }
 
     /** 审计填充用的固定时间，便于核对。 */
@@ -206,17 +209,17 @@ public final class Writes {
     @Table(schema = SCHEMA, value = "W_NOTE")
     public interface StatefulNote extends Tenanted {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 状态。 */
-        @Column("STATUS") Col<NoteState> state();
+        @Column("STATUS") ColText<NoteState> state();
     }
 
     /** 声明在逻辑 schema APP 里的便签表，由数据库实例的 schema 映射换成 QUERY_IT。 */
     @Table(schema = "APP", value = "W_NOTE")
     public interface AppNote extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
     }
 
     /** 编码表：逻辑删除列记录删除时刻的毫秒数，{@code (CODE, DELETED)} 唯一，所以同一个编码删除后可以再建。 */
@@ -224,13 +227,13 @@ public final class Writes {
     @Index(name = "UX_W_CODE", columns = {"code", "deleted"}, unique = true)
     public interface Code extends Entity {
         /** 编号。 */
-        @Id @Column("ID") Col<String> id();
+        @Id @Column("ID") ColText<String> id();
 
         /** 编码。 */
-        @Column("CODE") Col<String> code();
+        @Column("CODE") ColText<String> code();
 
         /** 删除时刻的毫秒数，未删除为 0。 */
-        @LogicDelete(epochMillis = true) @Column("DELETED") Col<Long> deleted();
+        @LogicDelete(epochMillis = true) @Column("DELETED") ColBigint<Long> deleted();
     }
 
     /** 编码表的一行。 */
@@ -259,9 +262,9 @@ public final class Writes {
     /** 把开着的便签数量加 10 并关闭："比较后更新"。 */
     public static Update<Note> closeOpenNote(String id) {
         return update(Note.class)
-            .set(n -> n.qty().to(plus(n.qty(), val(10))))
+            .set(n -> n.qty().to(n.qty().plus(val(10))))
             .set(n -> n.status().to("closed"))
-            .where(n -> all(n.id().eq(id), n.status().eq("open")))
+            .where(n -> { n.id().eq(id); n.status().eq("open"); })
             .expect(1);
     }
 

@@ -6,8 +6,13 @@ import org.dpdns.zerodep.query.dialect.SqlWriter;
 import org.dpdns.zerodep.query.exec.ConnectionProvider;
 import org.dpdns.zerodep.query.exec.Database;
 import org.dpdns.zerodep.query.expr.Cond;
+import org.dpdns.zerodep.query.expr.Conditions;
 import org.dpdns.zerodep.query.expr.Expr;
+import org.dpdns.zerodep.query.expr.Family;
 import org.dpdns.zerodep.query.expr.Nodes;
+import org.dpdns.zerodep.query.expr.typed.ExprDouble;
+import org.dpdns.zerodep.query.expr.typed.ExprNumber;
+import org.dpdns.zerodep.query.expr.typed.ExprText;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.type.CastType;
 import org.dpdns.zerodep.query.type.SqlType;
@@ -15,13 +20,15 @@ import org.dpdns.zerodep.query.write.JoinDelete;
 import org.dpdns.zerodep.query.write.JoinUpdate;
 
 import java.util.List;
-import java.util.function.BiFunction;
+import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
 /**
  * SQLite 门面：包含 {@link Sql} 的全部能力，外加 SQLite 专属的函数。一次静态导入即可使用全部词汇：
  * <pre>{@code import static org.dpdns.zerodep.query.sqlite.Sqlite.*;}</pre>
+ * 有主操作数的 SQLite 函数经由视图调用：{@code sqlite(l.text()).glob("A*")}、{@code sqlite(l.quantity()).median()}。
  * SQLite 专属函数在其他方言上渲染时会报错。核心里 SQLite 不支持的能力（ROLLUP、{@code grouping()}、{@code forUpdate()}）
  * 渲染时报错；需要编译选项的函数（数学函数、百分位数）第一次渲染时记一条警告。
  */
@@ -52,46 +59,74 @@ public final class Sqlite extends Sql {
         return new SqliteDatabase(connections, configure);
     }
 
-    // ---------- 函数 ----------
+    // ---------- 视图：有主操作数的 SQLite 函数 ----------
 
-    /**
-     * 区分大小写的通配匹配 {@code e GLOB pattern}：{@code *} 任意串、{@code ?} 一个字符、{@code [...]} 字符集。
-     * SQLite 的 LIKE 不区分 ASCII 大小写，要区分时用它。pattern 为 null 时按 skipEmpty 的规则处理。
-     */
-    public static Cond glob(Expr<String> e, String pattern) {
-        Expr<String> p = val(pattern);
-        return new Cond() {
-            @Override public void render(SqlWriter w) {
-                requireSqlite(w, "GLOB");
-                w.render(e).sql(" GLOB ").render(p);
+    /** 文本上的 SQLite 函数：{@code sqlite(l.text()).glob("A*")}。 */
+    public static <T> ViewString<T> sqlite(ExprText<T> e) { return new ViewString<>(e); }
+
+    /** 数值上的 SQLite 函数：{@code sqlite(l.quantity()).median()}。 */
+    public static <T> ViewNumber<T> sqlite(ExprNumber<T> e) { return new ViewNumber<>(e); }
+
+    /** 文本上的 SQLite 函数，由 {@code sqlite(文本表达式)} 得到。 */
+    public static final class ViewString<T> {
+        /** 视图的主操作数。 */
+        private final ExprText<T> e;
+
+        ViewString(ExprText<T> e) { this.e = Objects.requireNonNull(e, "e"); }
+
+        /**
+         * 区分大小写的通配匹配 {@code this GLOB pattern}，写进当前的条件块：{@code *} 任意串、{@code ?} 一个字符、{@code [...]} 字符集。
+         * SQLite 的 LIKE 不区分 ASCII 大小写，要区分时用它。skipEmpty 下模式为空时没有条件。
+         */
+        public void glob(String pattern) {
+            if (skipped(pattern)) {
+                Conditions.add(Cond.EMPTY);
+                return;
             }
-        };
+            Expr<String> p = val(pattern);
+            Conditions.add(new Cond() {
+                @Override public void render(SqlWriter w) {
+                    requireSqlite(w, "GLOB");
+                    w.render(e).sql(" GLOB ").render(p);
+                }
+            });
+        }
     }
 
-    /** 中位数 {@code median(e)}（需要 SQLITE_ENABLE_PERCENTILE，3.51 起）。 */
-    public static Expr<Double> median(Expr<? extends Number> e) {
-        return Nodes.call(SqlType.of(Double.class), MEDIAN, List.of(cast(e, CastType.doublePrecision())));
+    /** 数值上的 SQLite 函数，由 {@code sqlite(数值表达式)} 得到。 */
+    public static final class ViewNumber<T> {
+        /** 视图的主操作数。 */
+        private final ExprNumber<T> e;
+
+        ViewNumber(ExprNumber<T> e) { this.e = Objects.requireNonNull(e, "e"); }
+
+        /** 中位数 {@code median(this)}（聚合，需要 SQLITE_ENABLE_PERCENTILE，3.51 起）。 */
+        public ExprDouble<Double> median() {
+            return ExprDouble.of(Nodes.call(SqlType.of(Double.class), MEDIAN, List.of(e.cast(CastType.doublePrecision()))));
+        }
     }
+
+    // ---------- 百分位数 ----------
 
     /** 连续百分位数 {@code percentile_cont(e, p)}，p 取 0 到 1，是普通聚合（不是 WITHIN GROUP）；需要 SQLITE_ENABLE_PERCENTILE。 */
-    public static Expr<Double> percentileCont(double p, Expr<? extends Number> e) {
-        return Nodes.call(SqlType.of(Double.class), PERCENTILE_CONT, List.of(cast(e, CastType.doublePrecision()), lit(fraction(p))));
+    public static ExprDouble<Double> percentileCont(double p, ExprNumber<?> e) {
+        return ExprDouble.of(Nodes.call(SqlType.of(Double.class), PERCENTILE_CONT, List.of(e.cast(CastType.doublePrecision()), lit(fraction(p)))));
     }
 
-    /** 离散百分位数 {@code percentile_disc(e, p)}：取实际存在的一个值；规则同 {@link #percentileCont}。 */
-    public static <T> Expr<T> percentileDisc(double p, Expr<T> e) {
-        return Nodes.call(e.type(), PERCENTILE_DISC, List.of(e, lit(fraction(p))));
+    /** 离散百分位数 {@code percentile_disc(e, p)}：取实际存在的一个值，结果与 e 同一类型；规则同 {@link #percentileCont}。 */
+    public static <T, F extends Expr<T>> F percentileDisc(double p, Family<T, F> e) {
+        return e.retype(Nodes.call(e.type(), PERCENTILE_DISC, List.of(e, lit(fraction(p)))));
     }
 
     // ---------- 联表写入 ----------
 
     /** 联表更新：SET 和 WHERE 可以引用 joined 表，写成 UPDATE ... FROM；见 {@link JoinUpdate}。 */
-    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinUpdate<T, S> updateJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinUpdate.of(table, joined, on);
     }
 
     /** 联表删除：WHERE 可以引用 joined 表，写成 WHERE EXISTS 子查询；见 {@link JoinDelete}。 */
-    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiFunction<T, S, Cond> on) {
+    public static <T extends Entity, S extends Entity> JoinDelete<T, S> deleteJoin(Class<T> table, Class<S> joined, BiConsumer<T, S> on) {
         return JoinDelete.of(table, joined, on);
     }
 

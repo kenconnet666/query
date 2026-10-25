@@ -219,7 +219,7 @@ class WriteTest {
         assertTrue(e.getMessage().contains("without where(...)"), e.getMessage());
         assertThrows(IllegalStateException.class, () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> n.id().eq(d.id())).all().toSql(DIALECT),
             "nothing to SET");
-        assertThrows(IllegalArgumentException.class, () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> org.dpdns.zerodep.query.expr.Cond.EMPTY));
+        assertThrows(IllegalArgumentException.class, () -> JoinUpdate.of(Writes.Note.class, Writes.Doc.class, (n, d) -> { }));
         var nav = assertThrows(IllegalArgumentException.class, () -> JoinUpdate.of(Lips.class, Writes.Doc.class, (l, d) -> l.delivery().eq(d.id()))
             .set((l, d) -> l.unit().to(d.title())).where((l, d) -> l.mara().manufacturer().eq("MK1")).toSql(DIALECT));
         assertTrue(nav.getMessage().contains("cannot follow relations"), nav.getMessage());

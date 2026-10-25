@@ -4,16 +4,18 @@ import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Where;
 import org.dpdns.zerodep.query.dialect.Lock;
-import org.dpdns.zerodep.query.expr.Cond;
 import org.dpdns.zerodep.query.select.Query;
-import org.dpdns.zerodep.query.table.Col;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.Many;
+import org.dpdns.zerodep.query.table.column.ColBigint;
+import org.dpdns.zerodep.query.table.column.ColInteger;
+import org.dpdns.zerodep.query.table.column.ColText;
+import org.dpdns.zerodep.query.table.column.ColTimestamp;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.function.Consumer;
 
 import static org.dpdns.zerodep.query.Sql.*;
 
@@ -34,16 +36,16 @@ public final class Workflow {
     @Table(schema = SCHEMA, value = "WF_PROCDEF")
     public interface ProcDef extends Entity {
         /** 定义编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 流程的 key，各版本相同。 */
-        @Column("DEF_KEY") Col<String> defKey();
+        @Column("DEF_KEY") ColText<String> defKey();
 
         /** 名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
 
         /** 版本号，从 1 开始。 */
-        @Column("VERSION") Col<Integer> version();
+        @Column("VERSION") ColInteger<Integer> version();
 
         /** 这个定义启动的流程实例。 */
         default Many<ProcInst> instances() { return many(ProcInst.class, p -> p.defId().eq(id())); }
@@ -56,25 +58,25 @@ public final class Workflow {
     @Table(schema = SCHEMA, value = "WF_PROCINST")
     public interface ProcInst extends Entity {
         /** 实例编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 流程定义编号。 */
-        @Column("DEF_ID") Col<String> defId();
+        @Column("DEF_ID") ColText<String> defId();
 
         /** 业务主键。 */
-        @Column("BUSINESS_KEY") Col<String> businessKey();
+        @Column("BUSINESS_KEY") ColText<String> businessKey();
 
         /** 发起人。 */
-        @Column("START_USER") Col<String> startUser();
+        @Column("START_USER") ColText<String> startUser();
 
         /** 开始时间。 */
-        @Column("START_TIME") Col<LocalDateTime> startTime();
+        @Column("START_TIME") ColTimestamp<LocalDateTime> startTime();
 
         /** 结束时间，运行中为空。 */
-        @Column("END_TIME") Col<LocalDateTime> endTime();
+        @Column("END_TIME") ColTimestamp<LocalDateTime> endTime();
 
         /** 耗时（毫秒），运行中为空。 */
-        @Column("DURATION") Col<Long> duration();
+        @Column("DURATION") ColBigint<Long> duration();
 
         /** 所属的流程定义。 */
         default ProcDef definition() { return one(ProcDef.class, d -> d.id().eq(defId())); }
@@ -87,22 +89,22 @@ public final class Workflow {
     @Table(schema = SCHEMA, value = "WF_TASK")
     public interface Task extends Entity {
         /** 任务编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 任务名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
 
         /** 办理人，待认领时为空。 */
-        @Column("ASSIGNEE") Col<String> assignee();
+        @Column("ASSIGNEE") ColText<String> assignee();
 
         /** 流程实例编号。 */
-        @Column("PROC_INST_ID") Col<String> procInstId();
+        @Column("PROC_INST_ID") ColText<String> procInstId();
 
         /** 流程定义编号。 */
-        @Column("DEF_ID") Col<String> defId();
+        @Column("DEF_ID") ColText<String> defId();
 
         /** 创建时间。 */
-        @Column("CREATE_TIME") Col<LocalDateTime> createTime();
+        @Column("CREATE_TIME") ColTimestamp<LocalDateTime> createTime();
 
         /** 所属的流程定义。 */
         default ProcDef definition() { return one(ProcDef.class, d -> d.id().eq(defId())); }
@@ -111,70 +113,70 @@ public final class Workflow {
         default ProcInst instance() { return one(ProcInst.class, p -> p.id().eq(procInstId())); }
 
         /** 候选人和候选组。 */
-        default Many<Link> candidates() { return many(Link.class, l -> all(l.taskId().eq(id()), l.kind().eq("candidate"))); }
+        default Many<Link> candidates() { return many(Link.class, l -> { l.taskId().eq(id()); l.kind().eq("candidate"); }); }
     }
 
     /** 任务的身份链接：候选人（USER_ID）或候选组（GROUP_ID）。 */
     @Table(schema = SCHEMA, value = "WF_LINK")
     public interface Link extends Entity {
         /** 链接编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 任务编号。 */
-        @Column("TASK_ID") Col<String> taskId();
+        @Column("TASK_ID") ColText<String> taskId();
 
         /** 链接类型，例如 candidate。 */
-        @Column("KIND") Col<String> kind();
+        @Column("KIND") ColText<String> kind();
 
         /** 候选人。 */
-        @Column("USER_ID") Col<String> userId();
+        @Column("USER_ID") ColText<String> userId();
 
         /** 候选组。 */
-        @Column("GROUP_ID") Col<String> groupId();
+        @Column("GROUP_ID") ColText<String> groupId();
     }
 
     /** 流程变量：按值的类型分列存放，文本在 TEXT_VALUE，整数在 LONG_VALUE。 */
     @Table(schema = SCHEMA, value = "WF_VARIABLE")
     public interface Variable extends Entity {
         /** 变量编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 流程实例编号。 */
-        @Column("PROC_INST_ID") Col<String> procInstId();
+        @Column("PROC_INST_ID") ColText<String> procInstId();
 
         /** 变量名。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
 
         /** 文本值。 */
-        @Column("TEXT_VALUE") Col<String> textValue();
+        @Column("TEXT_VALUE") ColText<String> textValue();
 
         /** 整数值。 */
-        @Column("LONG_VALUE") Col<Long> longValue();
+        @Column("LONG_VALUE") ColBigint<Long> longValue();
     }
 
     /** 历史任务：结束时间不为空表示已办完；耗时在结束时写入（毫秒）。 */
     @Table(schema = SCHEMA, value = "WF_HI_TASK")
     public interface HiTask extends Entity {
         /** 任务编号。 */
-        @Column("ID") Col<String> id();
+        @Column("ID") ColText<String> id();
 
         /** 任务名称。 */
-        @Column("NAME") Col<String> name();
+        @Column("NAME") ColText<String> name();
 
         /** 办理人。 */
-        @Column("ASSIGNEE") Col<String> assignee();
+        @Column("ASSIGNEE") ColText<String> assignee();
 
         /** 流程实例编号。 */
-        @Column("PROC_INST_ID") Col<String> procInstId();
+        @Column("PROC_INST_ID") ColText<String> procInstId();
 
         /** 开始时间。 */
-        @Column("START_TIME") Col<LocalDateTime> startTime();
+        @Column("START_TIME") ColTimestamp<LocalDateTime> startTime();
 
         /** 结束时间，未办完时为空。 */
-        @Column("END_TIME") Col<LocalDateTime> endTime();
+        @Column("END_TIME") ColTimestamp<LocalDateTime> endTime();
 
         /** 耗时（毫秒）。 */
-        @Column("DURATION") Col<Long> duration();
+        @Column("DURATION") ColBigint<Long> duration();
     }
 
     // ---------- 查询 ----------
@@ -191,8 +193,16 @@ public final class Workflow {
      */
     public static Query<Map<String, Object>> todo(String user, List<String> groups, TodoSearch search) {
         return from(Task.class)
-            .where(t -> any(t.assignee().eq(user),
-                all(t.assignee().isNull(), t.candidates().any(l -> any(l.userId().eq(user), l.groupId().in(groups))))))
+            .where(t -> any(() -> {
+                t.assignee().eq(user);
+                all(() -> {
+                    t.assignee().isNull();
+                    t.candidates().any(l -> any(() -> {
+                        l.userId().eq(user);
+                        l.groupId().in(groups);
+                    }));
+                });
+            }))
             .where(search)
             .orderBy(t -> orders(t.createTime().desc(), t.id()))
             .select(t -> cols(t.id(), t.name(), t.assignee(), t.definition().defKey().as("process"), t.instance().businessKey()));
@@ -208,17 +218,22 @@ public final class Workflow {
             .select(t -> t.id());
     }
 
-    /** 某个变量满足条件：变量名相等，值的条件写在 value 里。 */
-    public static Cond variable(ProcInst p, String name, Function<Variable, Cond> value) {
-        return p.variables().any(v -> all(v.name().eq(name), value.apply(v)));
+    /** 某个变量满足条件：变量名相等，值的条件写在 value 里；在条件块里调用，EXISTS 写进调用处的块。 */
+    public static void variable(ProcInst p, String name, Consumer<Variable> value) {
+        p.variables().any(v -> {
+            v.name().eq(name);
+            value.accept(v);
+        });
     }
 
     /** 运行中、金额大于 1000 且部门是 X 的流程实例：每个变量条件一个 EXISTS（Flowable 的写法）。 */
     public static Query<String> instancesByVariables() {
         return from(ProcInst.class)
-            .where(p -> all(p.endTime().isNull(),
-                variable(p, "amount", v -> v.longValue().gt(1000L)),
-                variable(p, "dept", v -> v.textValue().eq("X"))))
+            .where(p -> {
+                p.endTime().isNull();
+                variable(p, "amount", v -> v.longValue().gt(1000L));
+                variable(p, "dept", v -> v.textValue().eq("X"));
+            })
             .orderBy(p -> p.id())
             .select(p -> p.id());
     }
@@ -227,9 +242,11 @@ public final class Workflow {
     public static Query<String> instancesByVariablesGrouped() {
         return from(ProcInst.class)
             .groupJoin(p -> p.variables())
-            .where(p -> all(p.endTime().isNull(),
-                variable(p, "amount", v -> v.longValue().gt(1000L)),
-                variable(p, "dept", v -> v.textValue().eq("X"))))
+            .where(p -> {
+                p.endTime().isNull();
+                variable(p, "amount", v -> v.longValue().gt(1000L));
+                variable(p, "dept", v -> v.textValue().eq("X"));
+            })
             .orderBy(p -> p.id())
             .select(p -> p.id());
     }
@@ -237,8 +254,8 @@ public final class Workflow {
     /** 同上，每个变量条件连接一次变量表（Activiti 的多别名 JOIN 写法）。 */
     public static Query<String> instancesByVariablesJoined() {
         return from(ProcInst.class)
-            .join(Variable.class, (p, a) -> all(a.procInstId().eq(p.id()), a.name().eq("amount"), a.longValue().gt(1000L)))
-            .join(Variable.class, (p, a, d) -> all(d.procInstId().eq(p.id()), d.name().eq("dept"), d.textValue().eq("X")))
+            .join(Variable.class, (p, a) -> { a.procInstId().eq(p.id()); a.name().eq("amount"); a.longValue().gt(1000L); })
+            .join(Variable.class, (p, a, d) -> { d.procInstId().eq(p.id()); d.name().eq("dept"); d.textValue().eq("X"); })
             .where((p, a, d) -> p.endTime().isNull())
             .orderBy((p, a, d) -> p.id())
             .select((p, a, d) -> p.id());
@@ -263,7 +280,7 @@ public final class Workflow {
     /** 已办：某人办完的历史任务，按结束时间倒序。 */
     public static Query<Map<String, Object>> done(String user) {
         return from(HiTask.class)
-            .where(h -> all(h.assignee().eq(user), h.endTime().isNotNull()))
+            .where(h -> { h.assignee().eq(user); h.endTime().isNotNull(); })
             .orderBy(h -> orders(h.endTime().desc(), h.id()))
             .select(h -> cols(h.id(), h.name(), h.endTime(), h.duration()));
     }
@@ -283,7 +300,7 @@ public final class Workflow {
     public static Query<Map<String, Object>> elapsed() {
         return from(HiTask.class)
             .orderBy(h -> h.id())
-            .select(h -> cols(h.id(), secondsBetween(h.startTime(), h.endTime()).as("seconds")));
+            .select(h -> cols(h.id(), h.startTime().secondsBetween(h.endTime()).as("seconds")));
     }
 
     /** 每个办理人办完的任务数和总耗时，以及其中超过一小时的任务数。 */
@@ -292,7 +309,7 @@ public final class Workflow {
             .where(h -> h.endTime().isNotNull())
             .groupBy(h -> h.assignee())
             .orderBy(h -> h.assignee())
-            .select(h -> cols(h.assignee(), count().as("tasks"), sum(h.duration()).as("totalDuration"),
-                count().filter(h.duration().gt(3_600_000L)).as("slow")));
+            .select(h -> cols(h.assignee(), count().as("tasks"), h.duration().sum().as("totalDuration"),
+                count().filter(() -> h.duration().gt(3_600_000L)).as("slow")));
     }
 }

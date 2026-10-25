@@ -3,12 +3,14 @@ package org.dpdns.zerodep.query.ddl;
 import org.dpdns.zerodep.query.annotation.Column;
 import org.dpdns.zerodep.query.annotation.ForeignKey;
 import org.dpdns.zerodep.query.annotation.Index;
-import org.dpdns.zerodep.query.annotation.TableOption;
 import org.dpdns.zerodep.query.annotation.Table;
+import org.dpdns.zerodep.query.annotation.TableOption;
 import org.dpdns.zerodep.query.meta.EntityMeta;
 import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.meta.NamingStrategy;
 import org.dpdns.zerodep.query.meta.PropertyMeta;
+import org.dpdns.zerodep.query.table.column.ColBlob;
+import org.dpdns.zerodep.query.table.column.ColClob;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
@@ -90,11 +92,12 @@ public final class Declarations {
         }
     }
 
-    /** 按存储类型（经过转换器之后）推断列类型，长度、精度来自 {@code @Column}。 */
+    /** 按存储类型（经过转换器之后）推断列类型，长度、精度来自 {@code @Column}；声明成 {@code ColClob}、{@code ColBlob} 的是不限长度的类型。 */
     private static ColumnType type(Class<?> table, PropertyMeta p, Column c) {
         Class<?> storage = p.type().storageType();
         int length = c == null ? 0 : c.length();
-        boolean lob = c != null && c.lob();
+        Class<?> declared = method(table, p.name()).getReturnType();
+        boolean lob = declared == ColClob.class || declared == ColBlob.class;
         if (storage == String.class || storage.isEnum() || storage == Character.class) {
             return lob ? ColumnType.of(ColumnType.Kind.CLOB) : ColumnType.text(length > 0 ? length : storage.isEnum() ? 50 : DEFAULT_TEXT);
         }
