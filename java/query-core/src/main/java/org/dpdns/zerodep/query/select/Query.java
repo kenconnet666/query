@@ -388,7 +388,8 @@ public final class Query<R> {
     }
 
     /**
-     * 按排序串排序，例如 {@code "partNumber desc, material"}：逗号分隔，每项是一个结果列名，可以跟 asc 或 desc。
+     * 按排序串排序：逗号分隔，每项是一个结果列名，前面带减号是倒序（同 JSON:API，前端 useTableQuery 发的
+     * {@code sort=-total,material} 就是这种写法），也可以写成 {@code "total desc, material"}。
      * 只能按结果里的列排序，相当于白名单，所以可以直接传入用户的排序参数；未知列名或写法报错。
      * spec 为 null 或空白时保持原来的 ORDER BY，否则替换它。合并后的查询先放进 CTE 再排序。
      */
@@ -398,11 +399,13 @@ public final class Query<R> {
         List<Expr<?>> items = arms.get(0).items();
         List<Order> orders = new ArrayList<>();
         for (String part : spec.split(",")) {
-            String[] words = part.trim().split("\\s+");
-            if (words[0].isEmpty()) continue;
-            String direction = words.length > 1 ? words[1].toLowerCase(Locale.ROOT) : "asc";
-            if (words.length > 2 || !(direction.equals("asc") || direction.equals("desc"))) {
-                throw new IllegalArgumentException("Cannot read sort item '" + part.trim() + "'; write 'column', 'column asc' or 'column desc'");
+            String item = part.trim();
+            if (item.isEmpty()) continue;
+            boolean minus = item.startsWith("-");
+            String[] words = (minus ? item.substring(1) : item).trim().split("\\s+");
+            String direction = minus ? "desc" : words.length > 1 ? words[1].toLowerCase(Locale.ROOT) : "asc";
+            if (words[0].isEmpty() || words.length > (minus ? 1 : 2) || !(direction.equals("asc") || direction.equals("desc"))) {
+                throw new IllegalArgumentException("Cannot read sort item '" + item + "'; write 'column', '-column', 'column asc' or 'column desc'");
             }
             int i = positionsOf(List.of(words[0]), "sortBy").iterator().next();
             if (items.get(i) instanceof Omitted<?>) throw new IllegalArgumentException("Cannot sort by '" + words[0] + "', it is excluded");

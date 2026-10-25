@@ -69,9 +69,14 @@ ORDER BY LIPS.MATNR ASC`,
     assert.equal(q.sortBy(undefined), q);
   });
 
+  it("sortBy 认减号表示倒序", () => {
+    const sql = totals().sortBy("-total,material").toSql(DIALECT).sql;
+    assert.ok(sql.endsWith("ORDER BY SUM(LIPS.LFIMG) DESC, LIPS.MATNR ASC"), sql);
+  });
+
   it("sortBy 只认结果列和 asc 与 desc", () => {
     const q = totals();
-    for (const bad of ["plant", "total; DROP TABLE x", "total sideways", "total desc nulls"]) assert.throws(() => q.sortBy(bad), Error, bad);
+    for (const bad of ["plant", "total; DROP TABLE x", "total sideways", "total desc nulls", "-total desc", "-", "--total"]) assert.throws(() => q.sortBy(bad), Error, bad);
     assert.throws(() => q.exclude("total").sortBy("total"), /excluded/);
     const units = () => from(Lips).select((l) => ({ unit: l.unit }));
     assert.throws(() => units().unionAll(units()).sortBy("unit"), /single SELECT/);

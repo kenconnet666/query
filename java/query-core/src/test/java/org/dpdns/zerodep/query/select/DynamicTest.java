@@ -88,9 +88,15 @@ class DynamicTest {
     }
 
     @Test
+    void sortBy认减号表示倒序() {
+        String sql = totals().sortBy("-total,material").toSql(DIALECT).sql();
+        assertTrue(sql.endsWith("ORDER BY SUM(LIPS.LFIMG) DESC, LIPS.MATNR ASC"), sql);
+    }
+
+    @Test
     void sortBy只认结果列和asc与desc() {
         Query<Map<String, Object>> q = totals();
-        for (String bad : Arrays.asList("plant", "total; DROP TABLE x", "total sideways", "total desc nulls")) {
+        for (String bad : Arrays.asList("plant", "total; DROP TABLE x", "total sideways", "total desc nulls", "-total desc", "-", "--total")) {
             assertThrows(IllegalArgumentException.class, () -> q.sortBy(bad), bad);
         }
         assertThrows(IllegalArgumentException.class, () -> q.exclude("total").sortBy("total"));

@@ -385,7 +385,8 @@ export class Query<R> {
   }
 
   /**
-   * 按排序串排序，例如 `"partNumber desc, material"`：逗号分隔，每项是一个结果列名，可以跟 asc 或 desc。
+   * 按排序串排序：逗号分隔，每项是一个结果列名，前面带减号是倒序（同 JSON:API，前端 useTableQuery 发的
+   * `sort=-total,material` 就是这种写法），也可以写成 `"total desc, material"`。
    * 只能按结果里的列排序，相当于白名单，所以可以直接传入用户的排序参数；未知列名或写法报错。
    * spec 为空时保持原来的 ORDER BY，否则替换它。合并后的查询先放进 CTE 再排序。
    */
@@ -395,12 +396,14 @@ export class Query<R> {
     const items = this.#s.arms[0]!.items;
     const orders: Order[] = [];
     for (const part of spec.split(",")) {
-      const words = part.trim().split(/\s+/);
+      const text = part.trim();
+      if (text === "") continue;
+      const minus = text.startsWith("-");
+      const words = (minus ? text.slice(1) : text).trim().split(/\s+/);
       const name = words[0]!;
-      if (name === "") continue;
-      const direction = (words[1] ?? "asc").toLowerCase();
-      if (words.length > 2 || (direction !== "asc" && direction !== "desc")) {
-        throw new Error(`Cannot read sort item '${part.trim()}'; write 'column', 'column asc' or 'column desc'`);
+      const direction = minus ? "desc" : (words[1] ?? "asc").toLowerCase();
+      if (name === "" || words.length > (minus ? 1 : 2) || (direction !== "asc" && direction !== "desc")) {
+        throw new Error(`Cannot read sort item '${text}'; write 'column', '-column', 'column asc' or 'column desc'`);
       }
       const at = [...this.#positionsOf([name], "sortBy")];
       if (at.length !== 1) throw new Error(`Cannot sort by '${name}'; it names a nested object, sort by one of its columns`);
