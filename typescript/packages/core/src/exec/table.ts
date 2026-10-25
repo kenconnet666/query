@@ -1,7 +1,10 @@
+import { parseConditionTree, type ConditionTree } from "../query/condition-tree.js";
+
 /**
  * 一次表格查询的请求：页码、每页条数、排序、已知的总数和表头筛选，与 vue-tsx-pro 的 `tableParams` 写出的地址栏参数一一对应（0016）：
  *
  *   page=2 & pageSize=20 & sort=-amount,name & total=368 & filter.status=draft & filter.status=paid & search.supplier=启航
+ *   & condition={"any":[{"field":"amount","op":"gte","value":10000},{"field":"urgent","op":"eq","value":true}]}
  *
  * 其余参数是查询栏的条件，交给条件对象（`where(filter)`，字段的文字按列的类型读）。交给 `db.table` 执行，结果经 `toWire` 发回：
  *
@@ -23,6 +26,8 @@ export interface TableRequest {
   readonly filter: Readonly<Record<string, readonly string[]>>;
   /** 表头的关键字筛选：结果列名 → 关键字（`Query.searchBy`） */
   readonly search: Readonly<Record<string, string>>;
+  /** 高级筛选的条件树（`Query.conditionBy`，0017）；没有时 undefined */
+  readonly condition: ConditionTree | undefined;
 }
 
 /** 没有 pageSize 参数时的每页条数，同 vue-tsx-pro 的默认值。 */
@@ -35,8 +40,9 @@ export const MAX_PAGE_SIZE = 2000;
 export type QueryParams = Iterable<readonly [string, string]> | Readonly<Record<string, string | readonly string[] | null | undefined>>;
 
 /**
- * 读地址栏参数：page、pageSize、sort、total 取第一个值，`filter.列名` 取全部值，`search.列名` 取第一个值；其余参数不管。
- * 写错的数字、超过 maxPageSize（默认 {@link MAX_PAGE_SIZE}）的条数报 RangeError（Web 层据此回 400）。
+ * 读地址栏参数：page、pageSize、sort、total 取第一个值，`filter.列名` 取全部值，`search.列名` 取第一个值，
+ * `condition` 是条件树的 JSON 文字；其余参数不管。
+ * 写错的数字、超过 maxPageSize（默认 {@link MAX_PAGE_SIZE}）的条数报 RangeError，条件树写错报 TypeError（Web 层据此回 400）。
  */
 export function parseTableRequest(params: QueryParams, options: { readonly maxPageSize?: number } = {}): TableRequest {
   const entries = Symbol.iterator in params ? [...groupParams(params as Iterable<readonly [string, string]>)] : Object.entries(params);
@@ -66,7 +72,9 @@ export function parseTableRequest(params: QueryParams, options: { readonly maxPa
   const totalText = first("total");
   const total = totalText === undefined || totalText.trim() === "" ? undefined : integer(totalText, "total", 0);
   if (total !== undefined && total < 0) throw new RangeError(`total must not be negative, got ${total}`);
-  return Object.freeze({ page, pageSize, sort: sort === "" ? undefined : sort, total, filter: Object.freeze(filter), search: Object.freeze(search) });
+  const conditionText = first("condition")?.trim();
+  const condition = conditionText ? parseConditionTree(conditionText) : undefined;
+  return Object.freeze({ page, pageSize, sort: sort === "" ? undefined : sort, total, filter: Object.freeze(filter), search: Object.freeze(search), condition });
 }
 
 /** 整数参数；没有或空白时是 fallback，写错时报错并指出参数名。 */

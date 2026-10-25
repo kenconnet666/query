@@ -1,7 +1,7 @@
 import { parseDate, type CalendarDate } from "@internationalized/date";
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { from, parseTableRequest, where, type Range } from "@zerodep-dev/query-core";
+import { from, parseTableRequest, where, type ConditionTree, type Range } from "@zerodep-dev/query-core";
 import { Lips } from "../../fixtures/erp.js";
 import { liveSuite } from "../support/live.js";
 
@@ -47,5 +47,23 @@ liveSuite("表格查询", (live) => {
       live.db.list(from(Lips).where(Object.assign(new CreatedSearch(), { created })).orderBy((l) => l.delivery).select((l) => l.delivery));
     assert.deepEqual(await deliveries({ start: parseDate("2026-01-15"), end: parseDate("2026-01-20") }), ["D1", "D2"]);
     assert.deepEqual(await deliveries({ start: parseDate("2026-02-01"), end: null }), ["D3", "D5"]);
+  });
+
+  it("条件树（0017）：any 里套 all、介于含两端、不等于与不包含，经 db.table 的 condition 参数", async () => {
+    const tree = {
+      any: [
+        { all: [{ field: "material", op: "eq", value: "M1" }, { field: "quantity", op: "gte", value: 3 }] },
+        { field: "delivery", op: "in", value: ["D4", "D5"] },
+      ],
+    };
+    const page = await live.db.table(lines(), parseTableRequest({ condition: JSON.stringify(tree), sort: "delivery" }));
+    assert.deepEqual([page.rows.map((r) => r.delivery), page.total], [["D1", "D4", "D5"], 3]);
+    const deliveries = async (condition: ConditionTree) =>
+      (await live.db.list(lines().conditionBy(condition).sortBy("delivery"))).map((r) => r.delivery);
+    assert.deepEqual(await deliveries({ field: "quantity", op: "between", value: [2, 5] }), ["D1", "D2", "D3"]);
+    assert.deepEqual(
+      await deliveries({ all: [{ field: "partNumber", op: "ne", value: "P2" }, { field: "partNumber", op: "notContains", value: "2" }] }),
+      ["D1", "D2", "D5"],
+    );
   });
 });

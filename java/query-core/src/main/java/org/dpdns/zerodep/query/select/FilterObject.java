@@ -170,7 +170,7 @@ public final class FilterObject {
      * 起端是那天的零点，止端写成 {@code <} 后一天的零点，这一整天都算在内。两端都空时不加条件。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static void range(Expr column, Object value, String owner) {
+    static void range(Expr column, Object value, String owner) {
         if (value == null) return;
         Object[] ends = ends(value, owner);
         boolean timestamp = column.type().javaType() == LocalDateTime.class;
@@ -205,7 +205,7 @@ public final class FilterObject {
     /**
      * 文字按列的 Java 类型读（地址栏里的值都是文字）：空白是 null（不加条件），列本身是文字时原样返回；别的值原样返回。
      */
-    private static Object textAs(Expr<?> column, Object value) {
+    static Object textAs(Expr<?> column, Object value) {
         if (!(value instanceof String s)) return value;
         if (s.isBlank()) return null;
         Class<?> type = column.type().javaType();

@@ -32,7 +32,7 @@ class TableRequestTest {
     void 读地址栏参数_其余参数不管() {
         TableRequest r = TableRequest.parse(params("page", "2", "pageSize", "20", "sort", "-total,material", "total", "368",
             "filter.unit", "EA", "filter.unit", "KG", "filter.material", " ", "search.material", " 泵 ", "keyword", "x"));
-        assertEquals(new TableRequest(2, 20, "-total,material", 368L, Map.of("unit", List.of("EA", "KG")), Map.of("material", "泵")), r);
+        assertEquals(new TableRequest(2, 20, "-total,material", 368L, Map.of("unit", List.of("EA", "KG")), Map.of("material", "泵"), null), r);
         TableRequest defaults = TableRequest.parse(Map.of());
         assertEquals(1, defaults.page());
         assertEquals(TableRequest.DEFAULT_PAGE_SIZE, defaults.pageSize());

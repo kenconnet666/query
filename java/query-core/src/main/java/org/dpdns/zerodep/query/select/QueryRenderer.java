@@ -17,6 +17,7 @@ import org.dpdns.zerodep.query.table.Sharding;
 import org.dpdns.zerodep.query.table.SourceFilters;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -64,7 +65,7 @@ public final class QueryRenderer {
         if (!s.groupBy.isEmpty() || s.distinct || !Nodes.all(s.having).isEmpty() || !Nodes.all(s.qualify).isEmpty()) return false;
         if (s.limit != null || s.offset != null || !s.clauses.isEmpty()) return false;
         for (Expr<?> item : arm.items()) if (Aggregation.kindOf(w, item) == Aggregation.Kind.AGGREGATE) return false;
-        for (SelectSpec.ResultFilter f : s.resultFilters) if (Aggregation.kindOf(w, f.item()) == Aggregation.Kind.AGGREGATE) return false;
+        for (SelectSpec.ResultFilter f : s.resultFilters) for (Expr<?> item : f.items()) if (Aggregation.kindOf(w, item) == Aggregation.Kind.AGGREGATE) return false;
         return true;
     }
 
@@ -114,12 +115,18 @@ public final class QueryRenderer {
         List<Cond> where = new ArrayList<>();
         List<Cond> having = new ArrayList<>();
         for (SelectSpec.ResultFilter f : s.resultFilters) {
-            switch (Aggregation.kindOf(w, f.item())) {
-                case PLAIN -> where.add(f.condition());
-                case AGGREGATE -> having.add(f.condition());
-                case WINDOW -> throw new IllegalArgumentException("filterBy(...) and searchBy(...) cannot filter a window function column; "
+            Set<Aggregation.Kind> kinds = EnumSet.noneOf(Aggregation.Kind.class);
+            for (Expr<?> item : f.items()) kinds.add(Aggregation.kindOf(w, item));
+            if (kinds.contains(Aggregation.Kind.WINDOW)) {
+                throw new IllegalArgumentException("filterBy(...), searchBy(...) and conditionBy(...) cannot filter a window function column; "
                     + "put the query in a CTE and filter that");
             }
+            // 一个条件里逐行的列与聚合的列混在一起（同一个 any、not 里）：WHERE、HAVING 都放不下
+            if (kinds.size() > 1) {
+                throw new IllegalArgumentException("conditionBy(...): one branch mixes plain and aggregated columns; "
+                    + "split it at the top-level all, or put the query in a CTE and filter that");
+            }
+            (kinds.contains(Aggregation.Kind.AGGREGATE) ? having : where).add(f.condition());
         }
         return List.of(where, having);
     }

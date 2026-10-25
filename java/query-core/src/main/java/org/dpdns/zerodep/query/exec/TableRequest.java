@@ -1,5 +1,7 @@
 package org.dpdns.zerodep.query.exec;
 
+import org.dpdns.zerodep.query.select.ConditionTree;
+
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,6 +10,7 @@ import java.util.Map;
  * 一次表格查询的请求：页码、每页条数、排序、已知的总数和表头筛选，与 vue-tsx-pro 的 {@code tableParams} 写出的地址栏参数一一对应（0016）：
  * <pre>
  * page=2 &amp; pageSize=20 &amp; sort=-amount,name &amp; total=368 &amp; filter.status=draft &amp; filter.status=paid &amp; search.supplier=启航
+ * &amp; condition={"any":[{"field":"amount","op":"gte","value":10000},{"field":"urgent","op":"eq","value":true}]}
  * </pre>
  * 其余参数是查询栏的条件，由 Spring 绑定到条件对象（{@code where(filter)}）。交给 {@link Database#table} 执行：
  * <pre>{@code
@@ -23,8 +26,10 @@ import java.util.Map;
  * @param total    前端已知的总数（只翻页、换排序时沿用上一次的），有它时不再执行 COUNT；null 表示要数
  * @param filter   表头的多选筛选：结果列名 → 选中的值（{@link org.dpdns.zerodep.query.select.Query#filterBy}）
  * @param search   表头的关键字筛选：结果列名 → 关键字（{@link org.dpdns.zerodep.query.select.Query#searchBy}）
+ * @param condition 高级筛选的条件树（{@link org.dpdns.zerodep.query.select.Query#conditionBy}，0017）；没有时为 null
  */
-public record TableRequest(int page, int pageSize, String sort, Long total, Map<String, List<String>> filter, Map<String, String> search) {
+public record TableRequest(int page, int pageSize, String sort, Long total, Map<String, List<String>> filter, Map<String, String> search,
+                           ConditionTree condition) {
     /** 没有 pageSize 参数时的每页条数，同 vue-tsx-pro 的默认值。 */
     public static final int DEFAULT_PAGE_SIZE = 10;
 
@@ -45,7 +50,8 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
 
     /**
      * 读地址栏参数：{@code page}、{@code pageSize}、{@code sort}、{@code total} 取第一个值，{@code filter.列名} 取全部值，
-     * {@code search.列名} 取第一个值；其余参数不管。写错的数字、超过 maxPageSize 的条数报错（Web 层据此回 400）。
+     * {@code search.列名} 取第一个值，{@code condition} 是条件树的 JSON 文字；其余参数不管。
+     * 写错的数字、超过 maxPageSize 的条数、写错的条件树报错（Web 层据此回 400）。
      */
     public static TableRequest parse(Map<String, ? extends List<String>> params, int maxPageSize) {
         Map<String, List<String>> filter = new LinkedHashMap<>();
@@ -63,8 +69,10 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
         if (pageSize > maxPageSize) throw new IllegalArgumentException("pageSize must be at most " + maxPageSize + ", got " + pageSize);
         String sort = first(params, "sort");
         String total = first(params, "total");
+        String condition = first(params, "condition");
         return new TableRequest((int) number(params, "page", 1), pageSize, sort == null || sort.isBlank() ? null : sort,
-            total == null || total.isBlank() ? null : number(params, "total", 0), filter, search);
+            total == null || total.isBlank() ? null : number(params, "total", 0), filter, search,
+            condition == null || condition.isBlank() ? null : ConditionTree.parse(condition));
     }
 
     /** 参数的第一个值；没有时为 null。 */

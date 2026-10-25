@@ -72,8 +72,11 @@ public final class SelectSpec {
      */
     final List<ResultFilter> resultFilters;
 
-    /** 一个按结果列的条件：item 是那一列的表达式，condition 是比较它的条件。 */
-    record ResultFilter(Expr<?> item, Cond condition) { }
+    /** 一个按结果列的条件：items 是条件用到的列（filterBy、searchBy 是一列，conditionBy 的一棵子树可能几列），condition 是条件。 */
+    record ResultFilter(List<Expr<?>> items, Cond condition) {
+        /** 复制成不可变的列表。 */
+        ResultFilter { items = List.copyOf(items); }
+    }
 
     /** 全部字段逐个赋值；每个修改方法都通过它构造副本。 */
     private SelectSpec(List<Join> joins, List<Cond> where, List<Expr<?>> groupBy, boolean rollup, List<Cond> having, List<Cond> qualify, List<Order> orderBy,
@@ -148,9 +151,9 @@ public final class SelectSpec {
     }
 
     /** 追加按结果列的条件：item 是那一列的表达式；渲染时按它有没有聚合写进 WHERE 或 HAVING。 */
-    SelectSpec resultFilter(Expr<?> item, Cond c) {
+    SelectSpec resultFilter(List<Expr<?>> items, Cond c) {
         return new SelectSpec(joins, where, groupBy, rollup, having, qualify, orderBy, distinct, limit, offset, filtering, skipEmpty, clauses, groupJoins,
-            plus(resultFilters, new ResultFilter(item, nonNull(c))));
+            plus(resultFilters, new ResultFilter(items, nonNull(c))));
     }
 
     /** 追加窗口函数上的条件，多次调用之间是 AND。 */

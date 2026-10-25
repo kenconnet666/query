@@ -495,12 +495,14 @@ totals.only(req.columns())                    // 只取这些列；null 或空�
 totals.sortBy("-total,material")              // 按排序串替换原来的 ORDER BY；也可以写 "total desc, material"
 totals.filterBy(Map.of("unit", List.of("EA", "KG")))   // 结果列 IN (...)：表头的多选筛选
 totals.searchBy(Map.of("material", "泵"))      // 结果列 LIKE %泵%：表头的关键字筛选（文字列）
+totals.conditionBy(ConditionTree.parse(json))  // 条件树：前端条件构造器的 all / any / not 加比较（0017）
 ```
 
 - 被排除的列在 SQL 里是 `NULL`，结果的形态不变（`row` 的对应参数收到 null）；只被它们用到的关系不再连接。有分组时，与它们相同的分组键一并去掉，于是同一个查询可以按用户选的维度汇总。
 - 列名就是 `q.labels()`，不分大小写和下划线；不存在的列名报错并列出可用的列。
 - `sortBy` 只认结果里的列名，前面带减号是倒序（同 JSON:API，前端 `useTableQuery` 发的就是这种写法），也认 `asc` / `desc`；等于白名单，所以可以直接传入用户的排序参数；未知列名、被排除的列或其他写法都会报错。`null` 或空白保持原来的排序。UNION 之后不能直接 `sortBy`，先包成 CTE。
 - `filterBy`、`searchBy` 同样只认结果列。值是地址栏里的文字，按列的 Java 类型读（`Wire.parse`，见第 20 节）；空白的值跳过。逐行计算的列写进 WHERE，聚合的列（`sum()`、`stringAgg` 等）写进 HAVING，在渲染时判断；窗口函数的列不能这样筛选。`searchBy` 只能用在文字列上。
+- `conditionBy(tree)` 接前端条件构造器（vue-tsx-pro 的 `ConditionBuilder`、FilterBar 的高级筛选）的条件树，规则见 [0017](decisions/0017-condition-tree.md)：`ConditionTree.parse(json)` 读地址栏里的 JSON 文字（wire 的 `Json.read`，不依赖 JSON 库），`ConditionTree.from(map)` 读 Jackson 读好的请求体。字段只认结果列，值按列的类型读；不等于、不在其中、不包含把空值算作满足，没填完整的比较与空的组不加条件，与前端的 `matchesCondition` 一致。最外层的 `all` 拆开各自判断 WHERE / HAVING，一个分支里混着逐行与聚合的列时报错。
 
 ### 条件对象
 
@@ -690,7 +692,7 @@ from(totals)
 | `db.count(q)` | 行数。单段、没有分组、DISTINCT、HAVING、QUALIFY、LIMIT 和方言子句、投影里没有聚合时直接 `SELECT COUNT(*) FROM ... WHERE ...`：投影里的标量子查询、窗口函数和只为投影连接的导航关系都不写；其余情况外包 `COUNT(*)` |
 | `db.exists(q)` | 是否至少有一行：`SELECT CASE WHEN EXISTS (q) THEN 1 ELSE 0 END`，不读出行 |
 | `db.page(q, page, size)` | 页号从 1 开始，返回 `Page`（`rows()`、`total()`、`page()`、`size()`、`totalPages()`、`toWire()`）；已知总数时 `db.page(q, page, size, total)` 不再执行 COUNT |
-| `db.table(q, TableRequest.parse(params))` | 表格查询：依次 `filterBy`、`searchBy`、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 20 节 |
+| `db.table(q, TableRequest.parse(params))` | 表格查询：依次 `filterBy`、`searchBy`、`conditionBy`、`sortBy`、分页，请求带了已知总数时不 COUNT，见第 20 节 |
 | `db.withAncestors(Dept.class, d -> d.id(), d -> d.parentId(), d -> hits, d -> select)` | 命中的行加上全部祖先（树的服务端搜索），交给 `Trees.build` 组装；PostgreSQL、MySQL、SQLite 一条递归 CTE，HANA 一层一层按键查，见第 20 节 |
 | `db.sql("... :name IN (:ids)").bind("ids", ids).list(Type.class)` | 原生 SQL；集合参数自动展开；按列标签映射；另有 `first`、`one`、`bindNull`、`timeout`。引号、注释和方言的引用（PostgreSQL 的 `$$…$$`、`::` 类型转换、MySQL 的反引号）里的 `:name` 不是参数 |
 | `db.attach(rows, key, ids -> query, keyOf, setter)` / `db.attachMany(...)` | 按键把另一个查询的结果装回已读出的行（一对一 / 一对多）：键去重后每批 1000 个查询，没有对应的写 null / 空列表；适合不便声明成关系的数据，例如别的库或别的模块的表 |
@@ -1222,7 +1224,7 @@ Object orders(@RequestParam MultiValueMap<String, String> params, OrderFilter fi
 ```
 
 - `TableRequest.parse(params[, maxPageSize])`：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字报 `IllegalArgumentException`，Web 层据此回 400。
-- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
+- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`（地址栏的 `condition` 参数）、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
 - 查询栏的条件交给条件对象（第 7 节）：Spring 按字段类型绑定，区间写成 `Range<LocalDate>` 或两项的 `List<LocalDate>`。
 
 **typed JSON**：`Page.toWire()` 和 `Wire.encode(任意对象)`（`wire` 模块，`org.dpdns.zerodep.wire`，不依赖 Jackson）把 Long、BigInteger、BigDecimal、java.time 的值、字节写成文字，根上附一张 `$types`，前端的请求层据此还原，JavaScript 不会丢精度：

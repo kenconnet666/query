@@ -5,6 +5,7 @@ import org.dpdns.zerodep.query.exec.Page;
 import org.dpdns.zerodep.query.exec.TableRequest;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
+import org.dpdns.zerodep.query.select.ConditionTree;
 import org.dpdns.zerodep.query.select.Query;
 import org.dpdns.zerodep.query.select.Range;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
@@ -85,5 +86,22 @@ class TableQueryTest {
             from(Lips.class).where(new CreatedSearch(created)).orderBy(l -> l.delivery()).select(l -> l.delivery()));
         assertEquals(List.of("D1", "D2"), deliveries.apply(new Range<>(LocalDate.of(2026, 1, 15), LocalDate.of(2026, 1, 20))));
         assertEquals(List.of("D3", "D5"), deliveries.apply(new Range<>(LocalDate.of(2026, 2, 1), null)));
+    }
+
+    @Test
+    void 条件树_any里套all_介于含两端_不等于与不包含_经table的condition参数() {
+        String tree = """
+            {"any": [{"all": [{"field": "material", "op": "eq", "value": "M1"}, {"field": "quantity", "op": "gte", "value": 3}]},
+                     {"field": "delivery", "op": "in", "value": ["D4", "D5"]}]}""";
+        Page<Line> page = live.db().table(lines(), request("condition", tree, "sort", "delivery"));
+        assertEquals(List.of("D1", "D4", "D5"), page.rows().stream().map(Line::delivery).toList());
+        assertEquals(3L, page.total());
+        assertEquals(List.of("D1", "D2", "D3"), deliveries("{\"field\": \"quantity\", \"op\": \"between\", \"value\": [2, 5]}"));
+        assertEquals(List.of("D1", "D2", "D5"), deliveries("""
+            {"all": [{"field": "partNumber", "op": "ne", "value": "P2"}, {"field": "partNumber", "op": "notContains", "value": "2"}]}"""));
+    }
+
+    private List<String> deliveries(String tree) {
+        return live.db().list(lines().conditionBy(ConditionTree.parse(tree)).sortBy("delivery")).stream().map(Line::delivery).toList();
     }
 }
