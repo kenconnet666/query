@@ -1,9 +1,9 @@
 package org.dpdns.zerodep.query.it.query;
 
+import org.dpdns.zerodep.query.expr.Window.Bound;
 import org.dpdns.zerodep.query.it.support.Live;
 import org.dpdns.zerodep.query.it.support.LiveTest;
 import org.dpdns.zerodep.query.it.support.SampleData;
-import org.dpdns.zerodep.query.expr.Window.Bound;
 import org.dpdns.zerodep.query.table.Cte;
 import org.dpdns.zerodep.query.testing.Erp.Lips;
 import org.junit.jupiter.api.DisplayName;
