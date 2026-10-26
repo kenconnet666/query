@@ -2,6 +2,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.1.0] - 未发布
+
+### 修复
+
+- `query-it` 不再参与签名：`-P release deploy` 以前会在这个只有测试的模块上失败。
+
 ## [2.0.0] - 2026-10-26
 
 查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法；同一版本还带来 SQLite 方言（两端，兼容 SQLite WASM）、PolarDB 方言和面向前端的 IndexedDB 本地存储。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)、[0009](docs/decisions/0009-sqlite-dialect.md)、[0010](docs/decisions/0010-indexeddb-local-store.md)、[0012](docs/decisions/0012-polardb-dialect.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。

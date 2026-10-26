@@ -63,7 +63,17 @@
 
    PowerShell 的 PATH 里没有 `gpg`，所以要显式指定；GPG 口令由 pinentry 窗口询问。插件把所有模块打成一个包上传，并等到 Portal 校验完成（`waitUntil=validated`）。校验失败时命令会报错，原因在 Portal 的 Deployments 页面里；只是公钥没取到时，重试几次即可，失败的 deployment 不影响发布，可以在 Portal 里 Drop。
 
+   - **`No pinentry`（没有口令窗口）**：gpg-agent 在配置写好之前就启动过，没读到 `pinentry-program`。先 `gpgconf --kill gpg-agent` 让它重启，再在能显示窗口的 PowerShell 里单独签一个文件，把口令预热进代理的缓存（默认 10 分钟），然后马上执行 `deploy`：
+
+     ```powershell
+     & "C:\Program Files\Git\usr\bin\gpg.exe" --batch --yes --armor --detach-sign --local-user <指纹> -o x.asc x.txt
+     ```
+
+   - **用 `Start-Process` 启动 Maven 时**，带空格的 `-Dgpg.executable=C:\Program Files\...` 要把整串参数写成一个字符串并保留引号，否则会被拆成两个参数，Maven 立刻报 `Unknown lifecycle phase`。
+
 5. **确认发布**：在 <https://central.sonatype.com/publishing/deployments> 检查文件清单，点 Publish；发现问题就点 Drop，修好后重新上传。发布后通常 30 分钟内能在 <https://repo1.maven.org/maven2/org/dpdns/zerodep/> 看到。已发布的版本不能删除或覆盖。
+
+   也可以用接口代替网页上的按钮：`POST https://central.sonatype.com/api/v1/publisher/deployment/<deploymentId>` 发布，`POST .../api/v1/publisher/status?id=<deploymentId>` 查状态和构件清单（purls）；认证头是 `Authorization: Bearer <Base64(令牌用户名:令牌密码)>`。状态从 `VALIDATED` 到 `PUBLISHING` 再到 `PUBLISHED`，`PUBLISHING` 可能持续十几分钟。
 6. **打标签**：
 
    ```powershell
@@ -93,3 +103,5 @@ corepack pnpm -r --filter "@zerodep-dev/*" publish --access public --no-git-chec
 ```
 
 `pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。`wire` 要先于核心包、核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。
+
+新版本和新包发布后要经过一两分钟校验才出现在版本列表里。发布中途如果报 `409 Cannot publish over previously staged version`，说明上传已被接收、正在校验，等版本出现即可，不要重发；`pnpm -r` 中断后用 `--filter` 只补发还没发的包。
