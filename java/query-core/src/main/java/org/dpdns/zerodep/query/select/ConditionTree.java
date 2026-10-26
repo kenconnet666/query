@@ -108,7 +108,7 @@ public sealed interface ConditionTree permits ConditionTree.Rule, ConditionTree.
 
     /**
      * 读已经解析好的 JSON 树：Jackson、Gson 读出的 Map 与 List，或 {@link Json#read} 的结果。
-     * 形状不对、比较方式不认识时报 IllegalArgumentException（Web 层据此回 400）。
+     * 形状不对、比较方式不认识时报 IllegalArgumentException（读表格请求时 {@link org.dpdns.zerodep.query.exec.TableRequest#parse} 换成 {@code query.request-invalid}）。
      */
     static ConditionTree from(Object json) { return read(json, "condition", 0); }
 

@@ -4,6 +4,15 @@
 
 ## [2.1.0] - 未发布
 
+### 新增
+
+- 业务错误码（`spec/error-codes.json`，两端一致）：抛出的异常都带 `code`，写法是 `query.empty-result` 这样带命名空间的文字，HTTP 接口原样写进响应体，前端按码取文案。Java 的异常实现 `CodedException`（`code()` 是 `QueryErrorCode`），TS 的错误类带 `code` 字段，清单是 `QUERY_ERROR_CODES` 与本地库的 `IDB_ERROR_CODES`。
+- 表格请求读不懂时报 `InvalidRequestException` / `InvalidRequestError`（`query.request-invalid`）：页码、条数写错，条件树写错，以及 `db.table` 里排序、筛选用了结果里没有的列。Java 的它继承 `IllegalArgumentException`。
+
+### 变化
+
+- TS 的 `parseTableRequest` 以前对写错的数字报 `RangeError`、对写错的条件树报 `TypeError`，现在都报 `InvalidRequestError`；`sortBy`、`filterBy`、`searchBy`、`conditionBy` 的列名错误由 `Error` 改为 `TypeError`（与 Java 的 `IllegalArgumentException` 对应）。
+
 ### 修复
 
 - `query-it` 不再参与签名：`-P release deploy` 以前会在这个只有测试的模块上失败。

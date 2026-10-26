@@ -7,6 +7,8 @@ import { Source } from "./query.js";
  * 浏览器在那时就自动提交了事务。把那些工作挪到事务之前或之后。
  */
 export class TransactionClosedError extends Error {
+  readonly code = "query.transaction-closed";
+
   constructor(stores: readonly string[]) {
     super(
       `The transaction on [${stores.join(", ")}] has already committed: the callback awaited non-IndexedDB work (fetch, a timer, another database). Do that work before or after the transaction.`,
@@ -17,6 +19,8 @@ export class TransactionClosedError extends Error {
 
 /** 批量写入里有行失败：整批（连同所在的事务）回滚。failures 逐行列出序号和原因。 */
 export class BatchWriteError extends Error {
+  readonly code = "query.batch-write-failed";
+
   constructor(
     readonly store: string,
     readonly failures: readonly { readonly index: number; readonly reason: string }[],
@@ -28,6 +32,8 @@ export class BatchWriteError extends Error {
 
 /** 写入超出了浏览器给这个源的配额。usage、quota 是 `navigator.storage.estimate()` 的估计值（字节），拿不到时为 undefined。 */
 export class QuotaError extends Error {
+  readonly code = "query.quota-exceeded";
+
   constructor(
     readonly usage: number | undefined,
     readonly quota: number | undefined,

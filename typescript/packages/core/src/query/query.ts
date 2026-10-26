@@ -416,12 +416,12 @@ export class Query<R> {
       const name = words[0]!;
       const direction = minus ? "desc" : (words[1] ?? "asc").toLowerCase();
       if (name === "" || words.length > (minus ? 1 : 2) || (direction !== "asc" && direction !== "desc")) {
-        throw new Error(`Cannot read sort item '${text}'; write 'column', '-column', 'column asc' or 'column desc'`);
+        throw new TypeError(`Cannot read sort item '${text}'; write 'column', '-column', 'column asc' or 'column desc'`);
       }
       const at = [...this.#positionsOf([name], "sortBy")];
-      if (at.length !== 1) throw new Error(`Cannot sort by '${name}'; it names a nested object, sort by one of its columns`);
+      if (at.length !== 1) throw new TypeError(`Cannot sort by '${name}'; it names a nested object, sort by one of its columns`);
       const item = items[at[0]!]!;
-      if (item instanceof Omitted) throw new Error(`Cannot sort by '${name}', it is excluded`);
+      if (item instanceof Omitted) throw new TypeError(`Cannot sort by '${name}', it is excluded`);
       orders.push(direction === "desc" ? item.desc() : item.asc());
     }
     return this.#withSpec({ ...this.#s.arms[0]!.spec, orderBy: orders });
@@ -452,7 +452,7 @@ export class Query<R> {
     for (const [name, keyword] of Object.entries(search ?? {})) {
       const item = this.#filterable(name, "searchBy");
       if (keyword === undefined || keyword.trim() === "") continue;
-      if (item.type.kind !== "text") throw new Error(`searchBy(...): '${name}' is not a text column; filter it with filterBy(...)`);
+      if (item.type.kind !== "text") throw new TypeError(`searchBy(...): '${name}' is not a text column; filter it with filterBy(...)`);
       q = q.#withResultFilter([item], collect(() => (item as ExprNode<string>).contains(keyword.trim())));
     }
     return q;
@@ -462,7 +462,7 @@ export class Query<R> {
    * 按条件树筛选，给前端的条件构造器（vue-tsx-pro 的 FilterBar 高级筛选）用：tree 是 `ConditionTree`，或它的 JSON 文字
    * （地址栏的 `condition` 参数）。字段是结果列名（白名单，同 {@link filterBy}），值按列的类型读；
    * 没填完整的比较与空的组不加条件，tree 为空时保持不变。最外层的 all 拆成几个条件，各自判断进 WHERE 还是 HAVING；
-   * 一棵子树里既有逐行计算的列又有聚合的列时报错。形状不对、比较方式不认识时报 TypeError（Web 层回 400）。
+   * 一棵子树里既有逐行计算的列又有聚合的列时报错。形状不对、比较方式不认识时报 TypeError（`db.table` 换成 `query.request-invalid`）。
    */
   conditionBy(tree: ConditionTree | string | null | undefined): Query<R> {
     if (tree == null || (typeof tree === "string" && tree.trim() === "")) return this;
@@ -485,7 +485,7 @@ export class Query<R> {
     const i = at[0]!;
     if ((arm.slots ?? []).some((s) => i >= s.start && i < s.start + s.children.outer.length)) throw new Error(`${use}(...): '${name}' is a child list`);
     const item = arm.items[i]!;
-    if (item instanceof Omitted) throw new Error(`${use}(...): '${name}' is excluded`);
+    if (item instanceof Omitted) throw new TypeError(`${use}(...): '${name}' is excluded`);
     return item;
   }
 
@@ -502,7 +502,7 @@ export class Query<R> {
     for (const name of names) {
       const key = normalize(name);
       const hits = labels.flatMap((label, i) => (label === key || label.startsWith(`${key}.`) ? [i] : []));
-      if (hits.length === 0) throw new Error(`${use}(...): unknown column '${name}'; the query has [${this.#s.labels.join(", ")}]`);
+      if (hits.length === 0) throw new TypeError(`${use}(...): unknown column '${name}'; the query has [${this.#s.labels.join(", ")}]`);
       for (const i of hits) found.add(i);
     }
     return found;

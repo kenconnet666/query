@@ -758,7 +758,13 @@ assertTrue(events.get(0).statement().sql().contains("LIPS"));
 | 连接与监听 | `ConnectionProvider`、`QueryListener`、`QueryCache` |
 | 执行前改写或拦截 | `config.intercept(StatementInterceptor)`：每条语句（查询、写语句、计数、原生 SQL）执行前调用，返回要执行的 `Rendered`；抛出异常则不执行 |
 | 条件对象的比较 | `@Where(using = MyOperator.class)`，见第 7 节 |
-| 结果异常 | `db.one` 没有行时抛 `EmptyResultException`，多于一行（以及 `db.optional`）抛 `TooManyRowsException`，都继承 `IllegalStateException`，全局异常处理里可以分别映射成 404 和 500 |
+| 结果异常 | `db.one` 没有行时抛 `EmptyResultException`，多于一行（以及 `db.optional`）抛 `TooManyRowsException`，都继承 `IllegalStateException`，全局异常处理里可以分别处理；错误码见下面的"业务错误码" |
+
+**业务错误码**：query 抛出的异常都实现 `CodedException`，`code()` 是 `QueryErrorCode`，`code().code()` 是写进响应体的文字（`query.empty-result`、`query.request-invalid` 等，清单在 `spec/error-codes.json`，与 TypeScript 一致）。HTTP 一律回 200，前端按码取文案：
+
+```java
+String code = e instanceof CodedException c ? c.code().code() : "app.internal-error";
+```
 
 **执行前钩子**：
 
@@ -814,7 +820,7 @@ Java 不跟踪可空性，所以结果属性要用包装类型。
 8. **全局过滤器**：多租户的条件配成 `filter(...)`，逻辑删除用 `@LogicDelete`，不要在每个查询里重复写；`unfiltered()` 只用于确实要跨租户或看已删除行的查询。
 9. **写入**：多行写入和 `byId` 已自动放进一个事务；跨多条语句的业务操作放进 `db.transaction(...)` 或 `@Transactional`。
 
-**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`SqlValues`、`Fn`；`table`、`table.column`、`expr`、`expr.typed`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`NativeQuery`、`Page`、`TableRequest`、`Trees`；`dialect` 包里的 `Aggregation`、`FunctionDef.aggregating()`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`；`wire` 模块的 `Wire`、`WireType`。
+**兼容性承诺**：2.x 内不破坏这些公开 API：根包的 `Sql`、`SqlValues`、`Fn`；`table`、`table.column`、`expr`、`expr.typed`、`scope`、`select`、`write`、`annotation`、`type` 包里的公开类型；`meta` 包里的 `Getter`、`NamingStrategy`；`exec` 包里的 `Database`、`ConnectionProvider`、`QueryCache`、`QueryListener`、`QueryExecutionException`、`UnexpectedRowCountException`、`InvalidRequestException`、`CodedException`、`QueryErrorCode`、`NativeQuery`、`Page`、`TableRequest`、`Trees`；`dialect` 包里的 `Aggregation`、`FunctionDef.aggregating()`；各方言门面与数据库实例；`query-spring` 的 `SpringConnections`；`wire` 模块的 `Wire`、`WireType`。
 
 `dialect` 包是扩展点，方法签名可能在次版本中增加参数。`exec.JdbcExecutor`、`MappingPlan` 等其余公开类型只供库内部跨包使用，不在承诺范围内。
 
@@ -1223,8 +1229,8 @@ Object orders(@RequestParam MultiValueMap<String, String> params, OrderFilter fi
 }
 ```
 
-- `TableRequest.parse(params[, maxPageSize])`：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字报 `IllegalArgumentException`，Web 层据此回 400。
-- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`（地址栏的 `condition` 参数）、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
+- `TableRequest.parse(params[, maxPageSize])`：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字、写错的条件树报 `InvalidRequestException`（继承 `IllegalArgumentException`）。
+- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`（地址栏的 `condition` 参数）、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。用了没有的列时也报 `InvalidRequestException`。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
 - 查询栏的条件交给条件对象（第 7 节）：Spring 按字段类型绑定，区间写成 `Range<LocalDate>` 或两项的 `List<LocalDate>`。
 
 **typed JSON**：`Page.toWire()` 和 `Wire.encode(任意对象)`（`wire` 模块，`org.dpdns.zerodep.wire`，不依赖 Jackson）把 Long、BigInteger、BigDecimal、java.time 的值、字节写成文字，根上附一张 `$types`，前端的请求层据此还原，JavaScript 不会丢精度：

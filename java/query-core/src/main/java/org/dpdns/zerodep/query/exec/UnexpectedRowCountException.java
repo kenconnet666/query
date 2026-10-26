@@ -6,7 +6,7 @@ import org.dpdns.zerodep.query.dialect.Rendered;
  * 写语句影响的行数与期望的不符：{@code expect(n)} 写明的行数，或 {@code byId(row)} 期望的每行一行。
  * 带版本列的按主键更新出现它，通常是别人已经改过或删掉了这一行（乐观锁冲突）。
  */
-public final class UnexpectedRowCountException extends RuntimeException {
+public final class UnexpectedRowCountException extends RuntimeException implements CodedException {
     /** 期望影响的行数。 */
     private final long expected;
 
@@ -26,4 +26,7 @@ public final class UnexpectedRowCountException extends RuntimeException {
 
     /** 实际影响的行数。 */
     public long actual() { return actual; }
+
+    @Override
+    public QueryErrorCode code() { return QueryErrorCode.UNEXPECTED_ROW_COUNT; }
 }

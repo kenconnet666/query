@@ -38,9 +38,9 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
 
     /** 校验页码、条数和总数，复制并冻结两张筛选表。 */
     public TableRequest {
-        if (page < 1) throw new IllegalArgumentException("page must be at least 1, got " + page);
-        if (pageSize < 1) throw new IllegalArgumentException("pageSize must be at least 1, got " + pageSize);
-        if (total != null && total < 0) throw new IllegalArgumentException("total must not be negative, got " + total);
+        if (page < 1) throw new InvalidRequestException("page must be at least 1, got " + page);
+        if (pageSize < 1) throw new InvalidRequestException("pageSize must be at least 1, got " + pageSize);
+        if (total != null && total < 0) throw new InvalidRequestException("total must not be negative, got " + total);
         filter = filter == null ? Map.of() : Map.copyOf(filter);
         search = search == null ? Map.of() : Map.copyOf(search);
     }
@@ -51,7 +51,7 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
     /**
      * 读地址栏参数：{@code page}、{@code pageSize}、{@code sort}、{@code total} 取第一个值，{@code filter.列名} 取全部值，
      * {@code search.列名} 取第一个值，{@code condition} 是条件树的 JSON 文字；其余参数不管。
-     * 写错的数字、超过 maxPageSize 的条数、写错的条件树报错（Web 层据此回 400）。
+     * 写错的数字、超过 maxPageSize 的条数、写错的条件树报 {@link InvalidRequestException}（{@code query.request-invalid}）。
      */
     public static TableRequest parse(Map<String, ? extends List<String>> params, int maxPageSize) {
         Map<String, List<String>> filter = new LinkedHashMap<>();
@@ -66,13 +66,22 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
             }
         }
         int pageSize = (int) number(params, "pageSize", DEFAULT_PAGE_SIZE);
-        if (pageSize > maxPageSize) throw new IllegalArgumentException("pageSize must be at most " + maxPageSize + ", got " + pageSize);
+        if (pageSize > maxPageSize) throw new InvalidRequestException("pageSize must be at most " + maxPageSize + ", got " + pageSize);
         String sort = first(params, "sort");
         String total = first(params, "total");
         String condition = first(params, "condition");
         return new TableRequest((int) number(params, "page", 1), pageSize, sort == null || sort.isBlank() ? null : sort,
             total == null || total.isBlank() ? null : number(params, "total", 0), filter, search,
-            condition == null || condition.isBlank() ? null : ConditionTree.parse(condition));
+            condition == null || condition.isBlank() ? null : condition(condition));
+    }
+
+    /** condition 参数读成条件树；写错时报请求读不懂。 */
+    private static ConditionTree condition(String text) {
+        try {
+            return ConditionTree.parse(text);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidRequestException(e.getMessage(), e);
+        }
     }
 
     /** 参数的第一个值；没有时为 null。 */
@@ -90,7 +99,7 @@ public record TableRequest(int page, int pageSize, String sort, Long total, Map<
             if (!name.equals("total") && n > Integer.MAX_VALUE) throw new NumberFormatException();
             return n;
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(name + " must be an integer, got '" + text + "'", e);
+            throw new InvalidRequestException(name + " must be an integer, got '" + text + "'", e);
         }
     }
 }
