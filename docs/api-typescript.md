@@ -748,6 +748,8 @@ class Seq {
 | `@readOnly`、`@writeOnce` | 只读列插入和更新都不写，`set(...)` 显式写报错；只插入列（例如创建时间）插入时写，`byId` 和插入或更新的更新部分不写 |
 | `.withoutFills()` | 插入、更新、删除都可以加：不套用审计填充，例如迁移数据时保留原值 |
 | `await db.insertKeys<number>(insertInto(Seq).values(...))` | 按行的顺序取回 `@generated` 列：PostgreSQL 用 `RETURNING`，MySQL 用 `insertId`，HANA 在同一连接上查 `CURRENT_IDENTITY_VALUE()` |
+| `const [saved] = await db.insertReturning<SeqRow>(insertInto(Seq).values(row))` | 插入后拿回带编号的行：`@generated` 字段换成生成的值，返回新对象，原来的行不变 |
+| `update(Note).set({ status: "closed", qty: 0 }).where(...)` | SET 直接给对象（DTO）：每个字段一个 SET 项，规则同回调的写法；与 Java 的 `set(dto)` 一致 |
 | `.onConflict().update((d) => d.title)`、`.onConflict((d) => d.id).doNothing()` | 插入或更新；不写键时用 `@id` 的列，`update()` 不写列时更新键以外的全部列 |
 | `.with(forUpdate("skipLocked"))` | 加锁读，另有 `"wait"`（默认）、`"nowait"`；HANA 写作 `IGNORE LOCKED` |
 | `update(Lips).with((l) => noIndex(l, "IX_LIPS")).set(...)`、`deleteFrom(...).with(...)` | 写在 UPDATE、DELETE 关键字后面的提示（MySQL 的优化器提示、PolarDB 的 `inventory(n)`），同一方言的合并进一个注释，别的方言的提示渲染时报错；插入暂不支持 |

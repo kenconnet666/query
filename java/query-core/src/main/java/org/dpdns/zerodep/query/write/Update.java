@@ -9,6 +9,7 @@ import org.dpdns.zerodep.query.meta.Metadata;
 import org.dpdns.zerodep.query.scope.SkipEmpty;
 import org.dpdns.zerodep.query.select.ImplicitJoins;
 import org.dpdns.zerodep.query.table.Entity;
+import org.dpdns.zerodep.query.table.column.Col;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -96,6 +97,28 @@ public final class Update<T extends Entity> implements Write {
             () -> Conditions.outside(() -> Assignments.collect(() -> assignments.accept(target.row()))));
         List<Assignment> all = new ArrayList<>(sets);
         for (Assignment a : written) all.add(target.assignable(a));
+        return new Update<>(target, List.copyOf(all), byId);
+    }
+
+    /**
+     * 把一个对象（record 或普通类）的每个属性 SET 到同名的列，按名字对列的规则同 {@code insertInto(...).values(row)}：
+     * <pre>{@code
+     * record Completion(String state, String outcome, String completedBy, Instant completedAt) { }
+     * update(WorkItem.class).set(completion).where(w -> { w.id().eq(id); w.state().eq("open"); });
+     * }</pre>
+     * 属性找不到同名的列、类型对不上时报错；skipEmpty 下值为空的属性省略；列上的转换器照常生效。可以和赋值块连着写，按调用顺序追加。
+     */
+    public Update<T> set(Object values) {
+        if (values == null) throw new IllegalArgumentException("set(values): values is null");
+        List<RowColumns.Column> columns = RowColumns.of(Metadata.entity(target.ref().entity()), values.getClass());
+        List<Assignment> all = new ArrayList<>(sets);
+        SkipEmpty.within(target.skipping(), () -> {
+            for (RowColumns.Column c : columns) {
+                Assignment a = Assignment.value(Col.of(target.ref(), c.column()), c.value(values));
+                if (!a.skipped()) all.add(target.assignable(a));
+            }
+            return null;
+        });
         return new Update<>(target, List.copyOf(all), byId);
     }
 

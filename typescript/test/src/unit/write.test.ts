@@ -132,6 +132,27 @@ WHERE NOTE.TENANT = ? AND NOTE.ID = ? AND NOTE.STATUS = ?`,
     await assert.rejects(dry.insertKeys(insertNotes()), /has no @generated column/);
   });
 
+  it("插入后拿回的行带上生成的编号", async () => {
+    const insert = insertInto(Seq).values({ name: "a" }, { name: "b" });
+    assert.deepEqual(insert.withGenerated([7, 8]), [{ name: "a", id: 7 }, { name: "b", id: 8 }]);
+    assert.throws(() => insert.withGenerated([1]), /2 row\(s\)/);
+    const dry = new TestDatabase({}, dryRunDriver());
+    assert.deepEqual(await dry.insertReturning(insertInto(Seq).values({ name: "a" })), [{ name: "a", id: null }]);
+  });
+
+  it("更新可以直接用对象给出要改的列", () => {
+    assert.equal(
+      db.render(update(Note).set({ title: "x" }).set((n) => ({ status: "open" })).where((n) => n.id.eq("N1")))[0]!.sql,
+      "UPDATE QUERY_IT.W_NOTE NOTE\nSET TITLE = ?, STATUS = ?\nWHERE NOTE.ID = ?",
+    );
+    assert.equal(
+      db.render(update(Note).skipEmpty().set({ title: null }).set(() => ({ status: "open" })).where((n) => n.id.eq("N1")))[0]!.sql,
+      "UPDATE QUERY_IT.W_NOTE NOTE\nSET STATUS = ?\nWHERE NOTE.ID = ?",
+      "skipEmpty 时空字段不写",
+    );
+    assert.throws(() => update(Note).set({ color: "red" } as never), /color is not a column/);
+  });
+
   it("插入或更新由方言写出，键必须是插入的列", () => {
     assert.throws(() => db.render(upsertDoc({ id: "D1", title: "a", version: 1 })), /has no insert-or-update statement/);
     assert.throws(() => db.render(insertInto(Doc).values({ title: "a" }).onConflict().doNothing()), /must be one of the inserted columns/);

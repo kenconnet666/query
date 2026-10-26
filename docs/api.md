@@ -875,6 +875,7 @@ db.execute(deleteFrom(Note.class).where(n -> n.status().eq("closed")));
 - **行**：record 或 POJO，按属性名对应表的列，属性名找不到列时报错；所有属性都写，null 写成 NULL。多行插入按 JDBC 批量执行（每批 500 行），并自动放在一个事务里。
 - **从查询插入**：查询的列名（`cols` 的名字或 `as(...)`）对应表的属性名。
 - **SET**：`set(t -> { ... })` 是赋值块，块里一行一个 `col.to(值)` 或 `col.to(表达式)`，多次 `set` 依次追加；只有列有 `to`，所以给计算结果赋值在编译期就拦住。`skipEmpty()` 下值为空的 SET 项省略，全部省略时不执行；`to(...)` 写在赋值块外立即报错。
+- **SET 一个对象**：`set(completion)` 把 record 或 POJO 的每个属性 SET 到同名的列，按名字对列的规则同插入的行（属性找不到列、类型对不上时报错，转换器照常生效），可以和赋值块连着写，例如 `update(WorkItem.class).set(completion).set(w -> w.rev().to(w.rev().plus(1))).where(...)`。适合"一份结果 + 一行条件"的条件更新；整行写回用下面的 `byId`。
 - **WHERE**：lambda 条件或条件对象（同第 7 节）。没有条件的 UPDATE、DELETE 直接报错，确实要改整张表时写 `.all()`。全局过滤器和逻辑删除的条件照常加进 WHERE，`unfiltered()`、`unfiltered("tenant")`、`withDeleted()` 同查询。
 - **WHERE 里的导航**：`where(l -> l.mara().manufacturer().eq("MK1"))` 写成 `EXISTS (SELECT 1 FROM (SELECT 1) seed LEFT JOIN MARA ... WHERE ...)`，与查询里导航的 LEFT JOIN 语义相同；SET 里不能用导航，要读别的表时用标量子查询或联表更新。
 
@@ -916,6 +917,14 @@ List<Long> ids = db.insertKeys(insertInto(Seq.class).values(new SeqRow("a"), new
 ```
 
 按行的顺序返回 `@Generated` 列的值。PostgreSQL、MySQL 用 `getGeneratedKeys`；HANA 在同一连接上执行 `SELECT CURRENT_IDENTITY_VALUE() FROM DUMMY`，所以逐行执行。
+
+要的是插入后带编号的整行时用 `insertReturning`，省掉"拿到编号再拼一遍记录"：
+
+```java
+WorkItem saved = db.<WorkItem>insertReturning(insertInto(WorkItemTable.class).values(draft)).get(0);   // draft.id() 为 null，saved.id() 是生成的编号
+```
+
+行是 record 时按规范构造器重建一份（其余属性照抄），是普通类时直接设属性、返回原来的对象；行类没有 `@Generated` 对应的属性时报错。
 
 ### 插入或更新
 
