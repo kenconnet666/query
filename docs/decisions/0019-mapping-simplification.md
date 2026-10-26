@@ -1,6 +1,6 @@
 # 0019 映射再省事一点：流程引擎用下来的几处
 
-- 状态：讨论中（2026-10-26 提出，待用户定）。第 1、2 条已做（PR #27、#28），第 3、4 条是提案，第 5 条（DTO 当表）待用户选方向
+- 状态：讨论中（2026-10-26 提出，待用户定）。第 1、2 条已做（PR #27、#28），第 3、4、6 条是提案，第 5 条（DTO 当表）待用户选方向
 - 起因：flow 仓库的默认存储（`java/flow-core` 的 `store/query`）用 query 读写十张表。用户要求"少用 Object、多用映射到实体类的写法，
   代码尽量简单"，存储改写时碰到几处 query 不够顺手的地方，记在这里，按需要先后做。
 
@@ -92,16 +92,67 @@ List<WorkItemRow> saved = db.insertReturning(insertInto(WorkItemRowTable.class).
 - 计算列、`default` 方法这类只有接口能写的，仍然可以手写一个接口继承生成的接口。
 - 注解处理器只读注解、生成源码，不在运行时做事；没有引入它的项目照旧手写接口。
 
+**B 的样子**（对照用）：不生成代码，在运行时登记"DTO 的哪个属性是哪一列"，写条件时用 DTO 的 getter 方法引用指列（MyBatis-Plus 的
+`LambdaQueryWrapper`、EasyQuery 的 lambda 写法就是这一类）：
+
+```java
+Mapping<WorkItem> items = Mapping.of(WorkItem.class).table("flow_work_item").id(WorkItem::id).column(WorkItem::assigneeId, "assignee_id");
+db.list(from(items).where(q -> { q.eq(WorkItem::state, "open"); q.isNull(WorkItem::assigneeId); }));
+```
+
+- 好处：DTO 一行注解都不用加，别的模块里的 record 也能映射。
+- 难处：getter 返回的是值，没有类型化的"列"可以接着点方法，所以 `contains`、`plus`、日期函数、条件树、关系这些都得换成
+  `q.like(WorkItem::title, …)` 这样一个个包一层，等于再做一套写法；编译期也拦不住"给文字列用日期函数"这类错。
+
 **对 flow 的影响**：`store/query` 下的 `FlowTables`（十张表的接口）不再手写。但模型包（`flow-model`）里的 `WorkItem`、`FlowEvent`
 不依赖 query，不能加 query 的注解，所以要么把 query 的注解拆成一个只有注解、零依赖的小包（`query-annotations`）给模型包用，
 要么存储里另写一份行记录再 `selectAs` 成模型包的记录（又回到两份）。前者更彻底，建议一起做。
 
 **和第 3、4 条的关系**：第 4 条（插入后拿回带编号的 DTO）在 A 之下最自然；第 3 条（通用 JSON 列）与 A 无关，照常做。
 
+## 6. 提案：从 DTO 拷贝属性到 SET（`set(dto)`）
+
+**现状**：带条件的更新（认领、处理这类"只在打开着时改到"）要在 SET 块里一行一列地写：
+
+```java
+update(WorkItemTable.class).set(r -> {
+    r.state().to(DONE);
+    r.outcome().to(c.outcome());
+    r.comment().to(c.comment());
+    r.completedBy().to(c.userId());
+    r.completedByName().to(c.userName());
+    r.completedAt().to(c.at());
+}).where(r -> { r.id().eq(id); r.state().eq(OPEN); });
+```
+
+**做法**：`set(Object dto)` 把 DTO 里每个属性按名字 SET 到同名的列——同 `where(Object filter)` 按名字对条件对象、
+`insertInto().values(row)` 按名字对行。可以和赋值块连着写；`skipEmpty()` 下空的属性省略；属性找不到同名的列时报错；转换器照常生效。
+
+```java
+record Completion(String state, String outcome, String comment, String completedBy, String completedByName, Instant completedAt) { }
+
+update(WorkItemTable.class)
+    .set(completion)                                  // 把这份处理结果写进去
+    .set(r -> r.rev().to(r.rev().plus(val(1))))       // 版本加一
+    .where(r -> { r.id().eq(id); r.state().eq(OPEN); });   // 只在打开着时
+```
+
+- TS 一侧的 `set` 本来就收对象（`set((l) => ({ unit: "KG" }))`），再加一个直接收对象的重载，两端写法就一致了。
+- 只是"属性 → 同名列"的拷贝，不做别的：不是 BeanUtils 那种对象之间的拷贝，表接口本身也不会因此变成数据。
+
+**代价**：小（与 `insertInto().values(row)` 共用按名字对列的代码）。**收益**：条件更新写成"一个 DTO + 一行条件"，读起来就是一句话。
+
+## 关于"把 DTO 的属性拷贝到接口"
+
+Java 里接口不能"继承"一个 record 的属性声明——record 的访问器返回值、接口的列方法返回 `Col`，类型不同，语言层面没有办法把一份声明
+变成另一份。要只写一份，只有两条路：编译时生成（第 5 条的 A），或运行时映射加另一套条件写法（第 5 条的 B）。
+在不生成代码的前提下，能省掉的是"值的拷贝"：读用 `selectAs`（列 → 属性）、插入用 `values(row)`、整行更新用 `byId(row)`、
+部分更新用第 6 条的 `set(dto)`（属性 → 列）。这四个合起来，存储里就不再有逐个字段的赋值。
+
 ## 建议的先后
 
 1. 第 5 条选 A（DTO 当表 + 注解处理器生成接口），连同拆出零依赖的 `query-annotations`：一次解决重复，Java 与 TS 写法对齐。
-2. 第 4 条（插入后拿回带编号的 DTO）跟着 A 做。
+2. 第 4 条（插入后拿回带编号的 DTO）与第 6 条（set(dto)）跟着 A 做，都小；不选 A 也可以单独做。
 3. 第 3 条（通用 JSON 列，两端，含 PG 的 jsonb 绑定）。
 
 用户选了之后，按选的方向改 API 文档与迁移指南，两端一起做，flow 的存储随后换过去。
