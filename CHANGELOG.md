@@ -6,6 +6,7 @@
 
 ### 新增
 
+- `selectAs` 里类型是 Map、List、值对象的属性，同名的是一列（转换器存成 JSON 文字）时按列取；以前一律当对象树的分支去找关系。
 - 列的值类型可以本身带泛型（`ColClob<Map<String, Object>>`、`ColClob<List<Line>>`）：按原始类对上转换器，以前报"must declare its value type"。
 - `wire` 的 `Json.write(value)`：`Json.read` 的反向，把 Map、List、文字、数字、布尔与 null 写成紧凑的 JSON 文字（BigDecimal 不用科学计数法），不依赖 JSON 库；给存进库里的 JSON 列用（流程引擎的变量、运行状态）。
 - 业务错误码（`spec/error-codes.json`，两端一致）：抛出的异常都带 `code`，写法是 `query.empty-result` 这样带命名空间的文字，HTTP 接口原样写进响应体，前端按码取文案。Java 的异常实现 `CodedException`（`code()` 是 `QueryErrorCode`），TS 的错误类带 `code` 字段，清单是 `QUERY_ERROR_CODES` 与本地库的 `IDB_ERROR_CODES`。

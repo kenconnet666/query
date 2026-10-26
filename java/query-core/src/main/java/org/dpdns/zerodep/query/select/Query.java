@@ -172,7 +172,7 @@ public final class Query<R> {
     /**
      * selectAs(VO.class)：VO 的每个属性取自作用域里恰好一张表的同名列。VO 里有对象树时：类型是另一个 VO 的属性
      * 取同名的多对一关系（隐式 LEFT JOIN），{@code List<X>} 属性取同名的一对多关系（子行由 {@code list(...)} 批量加载），
-     * 都按同样的规则逐层映射。
+     * 都按同样的规则逐层映射。属性的类型是 Map、List、值对象而同名的是一列（列上的转换器存成 JSON 文字）时按列取。
      */
     public static <V> Query<V> auto(SelectSpec spec, Class<V> type) {
         List<PropertyMeta> properties = Metadata.entity(type).properties();
@@ -204,8 +204,13 @@ public final class Query<R> {
                 parts[i] = column.apply(p);
                 continue;
             }
-            boolean many = List.class.isAssignableFrom(p.field().getType());
             Object related = lookup.apply(p.name());
+            // 同名的是一列（转换器把 Map、List、值对象存成一列 JSON 文字）：按列取，不当对象树的分支
+            if (related instanceof Expr<?>) {
+                parts[i] = column.apply(p);
+                continue;
+            }
+            boolean many = List.class.isAssignableFrom(p.field().getType());
             if (many && related instanceof Many<?> m) {
                 Class<?> element = elementType(type, p);
                 parts[i] = m.list(r -> nested(element, r));
