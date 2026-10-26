@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Json.read：对象保持键顺序、整数是 Long、其余数字是 BigDecimal、转义与代理对、写错时报错并带位置、嵌套层数的上限。 */
+/** Json.read：对象保持键顺序、整数是 Long、其余数字是 BigDecimal、转义与代理对、写错时报错并带位置、嵌套层数的上限；Json.write 与读互逆。 */
 class JsonTest {
     @Test
     void readsObjectsArraysAndScalars() {
@@ -67,5 +67,23 @@ class JsonTest {
         assertTrue(e.getMessage().contains("nested more than"), e.getMessage());
         String ok = "[".repeat(Json.MAX_DEPTH) + "]".repeat(Json.MAX_DEPTH);
         assertTrue(Json.read(ok) instanceof List<?>);
+    }
+
+    @Test
+    void writesWhatItReadsAndWhatJacksonReads() throws Exception {
+        String text = "{\"any\":[{\"field\":\"amount\",\"op\":\"gte\",\"value\":10000.50}],\"s\":\"a\\\"b\\\\c\\n\\t\\u0001 中\",\"n\":null,\"b\":[true,false,-12]}";
+        String written = Json.write(Json.read(text));
+        assertEquals(Json.read(text), Json.read(written));
+        assertEquals(new ObjectMapper().readTree(text), new ObjectMapper().readTree(written));
+        assertEquals("[1000,1000,0.5]", Json.write(List.of(new BigDecimal("1E+3"), 1000L, 0.5)));
+        assertEquals("{\"k\":[\"x\"]}", Json.write(Map.of("k", new String[] {"x"})));
+    }
+
+    @Test
+    void refusesWhatJsonCannotHold() {
+        for (Object bad : new Object[] {Double.NaN, Float.POSITIVE_INFINITY, new Object(), List.of(java.time.LocalDate.of(2026, 1, 1))}) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Json.write(bad), String.valueOf(bad));
+            assertTrue(e.getMessage().startsWith("Json.write: "), e.getMessage());
+        }
     }
 }
