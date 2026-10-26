@@ -7,6 +7,7 @@ import org.dpdns.zerodep.query.annotation.Table;
 import org.dpdns.zerodep.query.annotation.Trimmed;
 import org.dpdns.zerodep.query.table.Entity;
 import org.dpdns.zerodep.query.table.column.Col;
+import org.dpdns.zerodep.query.table.column.ColClob;
 import org.dpdns.zerodep.query.table.column.ColInteger;
 import org.dpdns.zerodep.query.table.column.ColText;
 import org.dpdns.zerodep.query.testing.Erp.LineVO;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.dpdns.zerodep.query.Sql.from;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -100,6 +102,27 @@ class MetadataTest {
     void 列方法必须声明值类型() {
         var e = assertThrows(IllegalArgumentException.class, () -> Metadata.entity(RawColumn.class));
         assertTrue(e.getMessage().contains("must declare its value type"), e.getMessage());
+    }
+
+    @Test
+    void 带泛型的值类型取原始类_由转换器对上存储类型() {
+        PropertyMeta p = Metadata.entity(JsonColumns.class).property("tags");
+        assertEquals(Map.class, p.javaType());
+        assertEquals(String.class, p.type().storageType());
+        @SuppressWarnings("unchecked")
+        var type = (org.dpdns.zerodep.query.type.SqlType<Map<String, Object>>) p.type();
+        assertEquals("a=1", type.toDatabase(Map.of("a", 1)));
+    }
+
+    /** 把 Map 存成 "键=值" 文字的转换器（只为测试泛型的值类型） */
+    public static final class MapText implements org.dpdns.zerodep.query.type.Converter<Map<String, Object>, String> {
+        @Override public String toDatabase(Map<String, Object> value) { return value.entrySet().iterator().next().toString(); }
+        @Override public Map<String, Object> fromDatabase(String value) { return Map.of(); }
+    }
+
+    @Table("X")
+    interface JsonColumns extends Entity {
+        @Column(value = "TAGS", converter = MapText.class) ColClob<Map<String, Object>> tags();
     }
 
     @Test

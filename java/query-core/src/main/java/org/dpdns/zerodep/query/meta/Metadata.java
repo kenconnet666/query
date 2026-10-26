@@ -226,6 +226,16 @@ public final class Metadata {
     }
 
     /**
+     * 列的值类型：{@code ColText<String>} 的 String；本身带泛型的（转换器存成 JSON 文字的 {@code ColClob<Map<String, Object>>}、
+     * {@code ColClob<List<Line>>}）取它的原始类，同转换器的类型参数（{@code Converters}）。是类型变量、通配符时为 null。
+     */
+    private static Class<?> valueClass(Type argument) {
+        if (argument instanceof Class<?> c) return c;
+        if (argument instanceof ParameterizedType p && p.getRawType() instanceof Class<?> raw) return raw;
+        return null;
+    }
+
+    /**
      * 描述一列：注解取自第一个带列注解的声明，值类型取自最具体的声明的泛型参数。列接口要与库里的存储类型一致：
      * 文本列是 {@code ColText}（不限长度的是 {@code ColClob}），以文本保存的日期（转换器存成 String）也是 {@code ColText<LocalDate>}；
      * 声明成别的接口时报错，免得日期函数作用在文本上生成错误的 SQL。
@@ -233,7 +243,8 @@ public final class Metadata {
     private static PropertyMeta describeColumn(Class<?> owner, String name, List<Method> declarations) {
         Method annotated = declarations.stream().filter(Metadata::describesColumn).findFirst().orElse(declarations.get(0));
         Type returned = declarations.get(0).getGenericReturnType();
-        if (!(returned instanceof ParameterizedType p) || !(p.getActualTypeArguments()[0] instanceof Class<?> javaType)) {
+        Class<?> javaType = returned instanceof ParameterizedType p ? valueClass(p.getActualTypeArguments()[0]) : null;
+        if (javaType == null) {
             throw new IllegalArgumentException(owner.getSimpleName() + "." + name + "() must declare its value type, e.g. ColText<String>");
         }
         Column column = annotated.getAnnotation(Column.class);
