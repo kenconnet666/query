@@ -46,6 +46,28 @@ class TreeTest {
         }
     }
 
+    /** 把一组键值存成 "k=v" 文字的转换器：列的值类型是 Map（只为测试） */
+    public static final class KeyValue implements org.dpdns.zerodep.query.type.Converter<Map<String, Object>, String> {
+        @Override public String toDatabase(Map<String, Object> value) { return value.entrySet().iterator().next().toString(); }
+        @Override public Map<String, Object> fromDatabase(String value) { return Map.of(value.split("=")[0], value.split("=")[1]); }
+    }
+
+    @org.dpdns.zerodep.query.annotation.Table("TAGGED")
+    interface Tagged extends org.dpdns.zerodep.query.table.Entity {
+        @org.dpdns.zerodep.query.annotation.Column("CODE") org.dpdns.zerodep.query.table.column.ColText<String> code();
+        @org.dpdns.zerodep.query.annotation.Column(value = "TAGS", converter = KeyValue.class)
+        org.dpdns.zerodep.query.table.column.ColClob<Map<String, Object>> tags();
+    }
+
+    /** 值类型是 Map 的属性：同名的是一列，不是关系 */
+    public record TaggedRow(String code, Map<String, Object> tags) { }
+
+    @Test
+    void selectAs里Map类型的属性同名的是一列时按列取_不当对象树() {
+        Query<TaggedRow> q = from(Tagged.class).selectAs(TaggedRow.class);
+        assertEquals("SELECT TAGGED.CODE AS \"code\", TAGGED.TAGS AS \"tags\"\nFROM TAGGED TAGGED", q.toSql(DIALECT).sql());
+    }
+
     private static Query<MaterialLines> materialLines() {
         return from(Mara.class)
             .orderBy(m -> m.material())
