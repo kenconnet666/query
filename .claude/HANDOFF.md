@@ -2,9 +2,9 @@
 
 长期约定见 [CLAUDE.md](../CLAUDE.md)，本文件只记录当前进度。换电脑继续时先看[换电脑后的准备](#换电脑后的准备)。
 
-1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）2026-10-25 经 PR #18 合并进 `master`。之后与前端表格配合的一组能力（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)）经 PR #19、条件树（[0017](../docs/decisions/0017-condition-tree.md)）经 PR #20、一对多取第一行改用 LATERAL（[0018](../docs/decisions/0018-lateral-first.md)）经 PR #21，2026-10-26 都已合并进 `master`。
+2.0.0 已于 2026-10-26 发布（npm 八个包 `@zerodep-dev/wire|idb|query-core|hana|postgres|mysql|sqlite|polardb@2.0.0`，Maven 中央仓库 `org.dpdns.zerodep:*:2.0.0`，标签 `v2.0.0` 指向 `de40599`，GitHub Release 已建；Java 与 TS 的版本现在是 `2.1.0-SNAPSHOT` / `2.1.0-dev`）。1.0.0 已于 2026-10-22 发布（Maven 中央仓库 `org.dpdns.zerodep:*:1.0.0`，npm `@zerodep-dev/query-*@1.0.0`，标签 `v1.0.0` 指向 `966a236`）。2.0 的全部七期、阶段 A（对照 EasyQuery 补全）、阶段 B（流程引擎读查询）、写入能力、A/B/C 三批补全和 [0008](../docs/decisions/0008-schema-tracking-sharding.md)（结构变更与迁移、`query:pull`、实体追踪、分区与分表），以及 [0009](../docs/decisions/0009-sqlite-dialect.md) 的 SQLite 方言和 [0010](../docs/decisions/0010-indexeddb-local-store.md) 的 IndexedDB 本地存储包，都已经经 PR 合并进 `master`（`feat/v2`、`feat/sqlite-idb`），尚未发布。之后为流程引擎（flow 仓库）做的下面"为流程引擎做的准备"一节，2026-10-25 经 PR #15 合并进 `master`，同样尚未发布。再之后的"通用门面与实库测试的组织"2026-10-25 经 PR #17 合并进 `master`。按逻辑 SQL 类型分的列与语句式条件（[0014](../docs/decisions/0014-typed-expressions.md)）2026-10-25 经 PR #18 合并进 `master`。之后与前端表格配合的一组能力（[0015](../docs/decisions/0015-typed-json-wire.md)、[0016](../docs/decisions/0016-table-query-contract.md)）经 PR #19、条件树（[0017](../docs/decisions/0017-condition-tree.md)）经 PR #20、一对多取第一行改用 LATERAL（[0018](../docs/decisions/0018-lateral-first.md)）经 PR #21，2026-10-26 都已合并进 `master`。
 
-**一句话现状**：全部工作都在 `master` 上，没有未合并的分支；2.x 尚未发布，等用户定版本号后手动发布（见“待用户决定或执行”）。流程引擎在 flow 仓库（私有，`kenconnet666/flow`），它的交接文档在仓库根目录 `HANDOFF.md`。
+**一句话现状**：全部工作都在 `master` 上，没有未合并的分支；2.0.0 已发布（见上面），之后的改动记在 CHANGELOG 的 `[2.1.0]`。流程引擎在 flow 仓库（私有，`kenconnet666/flow`），它的交接文档在仓库根目录 `HANDOFF.md`。
 
 ## 当前状态
 
@@ -114,7 +114,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 ## 待用户决定或执行
 
-- **发布 2.x（先定版本号）**：根 POM 是 `2.0.0-SNAPSHOT`、TS 包是 `2.0.0-dev`，CHANGELOG 里 `[2.1.0]` 与 `[2.0.0]` 都标“未发布”。两种做法：一次发 2.0.0（把 2.1.0 的条目并进 2.0.0），或者先发 2.0.0 再发 2.1.0。定了以后根 POM、各模块 parent、TS 各包、`docs/api.md` 的依赖示例一起改成正式版本，按 [docs/release.md](../docs/release.md) 手动发布（Maven 中央仓库与 npm）。流程引擎（flow）以发布的包为依赖。
+- **发布后的收尾**：2.0.0 的 Maven 构件已用 Portal 接口点了发布，通常半小时内出现在 <https://repo1.maven.org/maven2/org/dpdns/zerodep/>；发布流程里踩到的坑已写进 [docs/release.md](../docs/release.md)。流程引擎（flow）现在可以依赖已发布的 2.0.0 包。
 - **前身仓库是否冻结**：0001 里唯一的待定项。
 - **PolarDB MySQL 兼容**：2026-10-24 调研完，结论在 [0011](../docs/decisions/0011-polardb-mysql.md)。用户说先不动代码、以后再说；以后要做时先在 PolarDB 测试集群上跑 MySQL 实库场景。
 - **流程引擎本身**：2026-10-24 开始在 flow 仓库做，本库按它的需要补能力（上面"为流程引擎做的准备"）；方向与表设计在 flow 的 `docs/decisions/`。
@@ -122,7 +122,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 ## 下一步
 
-下面各节的工作都已合并进 `master`。还等用户的：定版本号并发布 2.x、前身仓库是否冻结。流程引擎在 flow 仓库按它的交接文档推进，本库按引擎的需要补能力（先讨论再动手，MySQL / PostgreSQL 优先：两者都支持的写法按性能更好的做，其他库给退路）。
+下面各节的工作都已合并进 `master`。还等用户的：前身仓库是否冻结。流程引擎在 flow 仓库按它的交接文档推进，本库按引擎的需要补能力（先讨论再动手，MySQL / PostgreSQL 优先：两者都支持的写法按性能更好的做，其他库给退路）。
 
 2026-10-24 对照 EasyQuery 讨论后规划并完成了四批（用户确认"暂不做代码生成"后要求四批都做；每批两端、三方言同步，带金样例与实库场景，各批的提交与 CI 见 git log）：
 

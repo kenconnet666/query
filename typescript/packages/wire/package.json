@@ -1,6 +1,6 @@
 {
   "name": "@zerodep-dev/wire",
-  "version": "2.0.0",
+  "version": "2.1.0-dev",
   "type": "module",
   "description": "Typed JSON for the wire: bigint, Decimal, calendar dates and bytes travel as text and come back as values, guided by a $types table",
   "license": "Apache-2.0",
