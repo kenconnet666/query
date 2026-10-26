@@ -202,6 +202,19 @@ public final class Insert<T extends Entity> implements Write {
         return table.property(table.writes().generated());
     }
 
+    /**
+     * 把生成的值填回插入的行（{@code db.insertReturning} 用）：第 i 个值放进第 i 行的 {@code @Generated} 属性。
+     * record 不可变，按规范构造器重建一份；普通类直接设属性，返回的就是原来的对象。行类没有这个属性时报错。
+     */
+    @SuppressWarnings("unchecked")
+    public <R> List<R> withGenerated(List<?> keys) {
+        PropertyMeta generated = generated();
+        if (keys.size() != rows.size()) throw new IllegalStateException("got " + keys.size() + " generated value(s) for " + rows.size() + " row(s)");
+        List<R> out = new ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) out.add((R) GeneratedValues.fill(rows.get(i), generated.name(), keys.get(i)));
+        return out;
+    }
+
     /** 每行一条 {@code INSERT INTO 表 (列, ...) VALUES (?, ...)}；INSERT ... SELECT 是一条。 */
     @Override public List<Rendered> render(Supplier<SqlWriter> writers) {
         if (source != null) {

@@ -665,6 +665,14 @@ export abstract class Database {
   }
 
   /**
+   * 插入并返回插入的行，`@generated` 字段换成数据库生成的值（自增主键），按行的顺序：
+   * `const [saved] = await db.insertReturning(insertInto(WorkItems).values(draft))`。只要编号用 {@link insertKeys}。
+   */
+  async insertReturning<R extends object>(insert: Insert<any>): Promise<R[]> {
+    return insert.withGenerated<R>(await this.insertKeys(insert));
+  }
+
+  /**
    * 执行会返回行的写语句（例如 PostgreSQL 的 `... RETURNING`），用 decode 把每行变成对象，各条语句的行依次连起来；
    * 供方言的数据库实例使用。多条语句在一个事务里执行，执行后清空结果缓存。
    */

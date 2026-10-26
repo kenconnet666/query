@@ -6,6 +6,8 @@
 
 ### 新增
 
+- 更新可以直接 SET 一个对象：Java 的 `update(T).set(dto)`、TS 的 `update(T).set({ ... })`，每个属性 SET 到同名的列，可以和赋值块连着写（[0019](docs/decisions/0019-mapping-simplification.md) 第 5 条）。
+- `db.insertReturning(insert)`：插入后返回带上生成编号的行（Java 的 record 按规范构造器重建、普通类直接设属性；TS 返回新对象），不必拿到编号再拼一遍（0019 第 4 条）。
 - `selectAs` 里类型是 Map、List、值对象的属性，同名的是一列（转换器存成 JSON 文字）时按列取；以前一律当对象树的分支去找关系。
 - 列的值类型可以本身带泛型（`ColClob<Map<String, Object>>`、`ColClob<List<Line>>`）：按原始类对上转换器，以前报"must declare its value type"。
 - `wire` 的 `Json.write(value)`：`Json.read` 的反向，把 Map、List、文字、数字、布尔与 null 写成紧凑的 JSON 文字（BigDecimal 不用科学计数法），不依赖 JSON 库；给存进库里的 JSON 列用（流程引擎的变量、运行状态）。

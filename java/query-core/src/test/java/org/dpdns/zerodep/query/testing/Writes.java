@@ -119,6 +119,9 @@ public final class Writes {
     /** 插入 {@link Seq} 的一行：不带编号。 */
     public record SeqRow(String name) { }
 
+    /** 插入 {@link Seq} 后拿回的一行：编号由 insertReturning 填上。 */
+    public record SeqSaved(Integer id, String name) { }
+
     /** 按主键改标题：版本号加一，版本不对时没有改到行。 */
     public static Update<Doc> renameDoc(DocRow row) { return update(Doc.class).byId(row); }
 

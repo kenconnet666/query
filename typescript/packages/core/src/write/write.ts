@@ -223,6 +223,15 @@ export class Insert<T> extends Write {
     return entityMeta(this.#table).property(name)!;
   }
 
+  /**
+   * 把生成的值填回插入的行（`db.insertReturning` 用）：第 i 个值放进第 i 行的 `@generated` 字段，返回新对象，原来的行不变。
+   */
+  withGenerated<R extends object>(keys: readonly unknown[]): R[] {
+    const name = this.generated().name;
+    if (keys.length !== this.#rows.length) throw new Error(`got ${keys.length} generated value(s) for ${this.#rows.length} row(s)`);
+    return this.#rows.map((row, i) => ({ ...row, [name]: keys[i] }) as R);
+  }
+
   /** 每行一条 `INSERT INTO 表 (列, ...) VALUES (?, ...)`；INSERT ... SELECT 是一条。分表时每行写到它的分表键所在的表。 */
   render(writer: () => SqlWriter): Rendered[] {
     const source = this.#source;
@@ -546,11 +555,18 @@ export class Update<T> extends Write {
   }
 
   /** 追加 SET 项：回调返回列字段到新值的对象；skipEmpty 下值为空的项被省略，否则 null 设为 NULL。 */
-  set(assign: (t: Ref<T>) => Assignments<T>): Update<T> {
+  set(assign: (t: Ref<T>) => Assignments<T>): Update<T>;
+  /**
+   * 直接给出对象（DTO）：每个字段一个 SET 项，例如 `update(WorkItems).set({ state: "done", outcome }).where(...)`；
+   * 字段必须是表的列，undefined 的字段不写，规则同回调的写法。与 Java 的 `set(Object)` 一致。
+   */
+  set(values: InsertRow<T>): Update<T>;
+  set(assign: ((t: Ref<T>) => Assignments<T>) | InsertRow<T>): Update<T> {
     const target = this.#target;
     const sets = [...this.#sets];
     withSkipEmpty(target.skipping, () => {
-      for (const [name, value] of Object.entries(outside(() => assign(target.ref)) as object)) {
+      const values = typeof assign === "function" ? outside(() => assign(target.ref)) : assign;
+      for (const [name, value] of Object.entries(values as object)) {
         const column = (target.ref as Record<string, unknown>)[name];
         if (!(column instanceof Column) || column.owner !== ownerOf(target.ref as object)) throw new Error(`set(...): ${name} is not a column of ${target.table.name}`);
         if (entityMeta(target.table).writes.readOnly.includes(name)) throw new Error(`set(...): ${target.table.name}.${name} is @readOnly`);

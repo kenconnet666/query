@@ -144,6 +144,42 @@ class WriteTest {
         assertThrows(IllegalStateException.class, () -> db.insertKeys(Writes.insertNotes()));
     }
 
+    /** 普通类的行：编号字段直接被设上。 */
+    static final class SeqBean {
+        Integer id;
+        String name = "b";
+    }
+
+    @Test
+    void 插入后拿回的行带上生成的编号() {
+        Insert<Writes.Seq> insert = insertInto(Writes.Seq.class).values(new Writes.SeqSaved(null, "a"), new Writes.SeqSaved(null, "b"));
+        List<Writes.SeqSaved> saved = insert.withGenerated(List.of(7, 8));
+        assertEquals(List.of(new Writes.SeqSaved(7, "a"), new Writes.SeqSaved(8, "b")), saved, "record 按规范构造器重建");
+
+        SeqBean bean = new SeqBean();
+        List<SeqBean> beans = insertInto(Writes.Seq.class).values(bean).withGenerated(List.of(9));
+        assertTrue(beans.get(0) == bean && bean.id == 9, "普通类直接设属性，返回原对象");
+
+        assertThrows(IllegalArgumentException.class, () -> insertInto(Writes.Seq.class).values(new Writes.SeqRow("a")).withGenerated(List.of(1)),
+            "行类没有编号属性时报错");
+        assertThrows(IllegalStateException.class, () -> insert.withGenerated(List.of(1)), "值的个数要和行数一致");
+        assertEquals(Arrays.asList(new Writes.SeqSaved(null, "a")),
+            TestDatabase.dryRun(null).insertReturning(insertInto(Writes.Seq.class).values(new Writes.SeqSaved(null, "a"))));
+    }
+
+    @Test
+    void 更新可以直接用对象给出要改的列() {
+        record Rename(String title) { }
+        assertEquals("UPDATE QUERY_IT.W_NOTE NOTE\nSET TITLE = ?, STATUS = ?\nWHERE NOTE.ID = ?",
+            update(Note.class).set(new Rename("x")).set(n -> n.status().to("open")).where(n -> n.id().eq("N1")).toSql(DIALECT).get(0).sql());
+        String none = null;
+        assertEquals("UPDATE QUERY_IT.W_NOTE NOTE\nSET STATUS = ?\nWHERE NOTE.ID = ?",
+            update(Note.class).skipEmpty().set(new Rename(none)).set(n -> n.status().to("open")).where(n -> n.id().eq("N1")).toSql(DIALECT).get(0).sql(),
+            "skipEmpty 时空属性不写");
+        record Stray(String color) { }
+        assertThrows(IllegalArgumentException.class, () -> update(Note.class).set(new Stray("red")), "表里没有的属性报错");
+    }
+
     @Test
     void 插入或更新由方言写出且键必须是插入的列() {
         assertThrows(UnsupportedOperationException.class, () -> Writes.upsertDoc(new Writes.DocRow("D1", "a", 1)).toSql(DIALECT),

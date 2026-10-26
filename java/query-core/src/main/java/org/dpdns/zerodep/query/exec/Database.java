@@ -299,6 +299,17 @@ public abstract class Database {
     }
 
     /**
+     * 插入并返回插入的行，{@code @Generated} 的属性换成数据库生成的值（自增主键），按行的顺序：
+     * <pre>{@code
+     * WorkItem saved = db.<WorkItem>insertReturning(insertInto(WorkItemTable.class).values(draft)).get(0);
+     * }</pre>
+     * record 按规范构造器重建一份；普通类直接设属性。行类没有这个属性时报错（只要编号用 {@link #insertKeys}）。
+     */
+    public <R> List<R> insertReturning(Insert<?> insert) {
+        return insert.withGenerated(insertKeys(insert));
+    }
+
+    /**
      * 执行会返回行的写语句（例如 PostgreSQL 的 {@code ... RETURNING}），把各条语句返回的行按列标签映射成 shape 并依次连起来；
      * 供方言的数据库实例使用。多条语句在一个事务里执行，执行后清空结果缓存。
      */
