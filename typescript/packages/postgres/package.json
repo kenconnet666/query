@@ -1,6 +1,6 @@
 {
   "name": "@zerodep-dev/query-postgres",
-  "version": "2.0.0-dev",
+  "version": "2.0.0",
   "type": "module",
   "description": "PostgreSQL dialect: functions, clauses and a pg driver",
   "license": "Apache-2.0",

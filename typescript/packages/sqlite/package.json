@@ -1,6 +1,6 @@
 {
   "name": "@zerodep-dev/query-sqlite",
-  "version": "2.0.0-dev",
+  "version": "2.0.0",
   "type": "module",
   "description": "SQLite dialect (3.46+): functions, schema changes and drivers for node:sqlite and SQLite WASM",
   "license": "Apache-2.0",

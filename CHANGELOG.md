@@ -2,55 +2,9 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.1.0] - 未发布
+## [2.0.0] - 2026-10-26
 
-SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本地存储。设计见 [0009](docs/decisions/0009-sqlite-dialect.md)、[0010](docs/decisions/0010-indexeddb-local-store.md)。
-
-### 新增
-
-- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有视图 `sqlite(e)` 的 `glob`、`median`，以及 `percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
-  - 需要编译选项的函数照常渲染，每个数据库实例第一次渲染时警告（TS 选项 `warn`）；ROLLUP、`grouping()`、`forUpdate()` 报错，TS 从 SQLite 包导入时写不出来。
-  - 结构变更里不能就地改的列归入只报告（REBUILD）。
-- **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
-- **浏览器里的核心包**：`db.transaction(async (tx) => ...)` 的回调收到绑定在事务上的数据库；库内部的多语句写入、追踪写回和迁移都经由它执行，不依赖 AsyncLocalStorage。迁移的校验和改用 Web Crypto，结果不变。
-- **IndexedDB 本地存储** `@zerodep-dev/idb`（不依赖核心包）：`@store` / `@key` / `@index`（unique、multiEntry、optional、boolean / bigint / lowercase 编码器）、`@one` / `@many` 与 `include`；`openLocal` 按版本升级并核对结构；只按索引查询，`scan` / `sortBy` 写在明处；事务回调 await 了别的工作时报 `TransactionClosedError`；批量写入整批回滚并列出失败的行；实时查询按仓库失效，并经由 BroadcastChannel 通知其他标签页；`QuotaError`、`persist`、`estimate`。
-- 开发编译器升到 TypeScript 7.1.0-dev.20261023.1（7.1 的 dev 构建）；`exclude` / `excludeIf` 的返回形态改用具名类型 `ExcludedKeys<R, K>`（7.1 不再把两处同样的内联映射类型当成同一个类型），核心包导出它。
-- 投影、`groupJoin` 和写入的列筛选用品牌类型 `AnyMany`（核心包导出）认一对多关系，不再写成 `Many<any>`：编辑器只检查单个文件时，`Many<Lips>` 赋不给 `Many<any>`，带关系的投影被推成 `Query<unknown>`（TS2769）。`groupJoin` 收到的不是一对多关系时报 `TypeError`。
-- 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
-- **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 之后，`db.transaction(...)` 与多行写入的自动事务由这个事务管理器执行（传播行为 REQUIRED，已有事务时加入）。多数据源的项目每个数据源各传自己的事务管理器；只给 DataSource 时仍然报错。连接来源的接口加了 `startsTransactions()` 与 `transaction(work)`。
-- **迁移历史表可以改名**：`migrator.historyTable("flow_migration")`（两端），锁表跟着改名；同一个库里几套各自迁移的表不再共用 `QUERY_MIGRATION`。
-- **PolarDB 方言**（[0012](docs/decisions/0012-polardb-dialect.md)）：Java `query-polardb` 与 TS `@zerodep-dev/query-polardb` 继承 MySQL 方言（MySQL 的全部实库场景在开源的 PolarDB-X 引擎上原样通过），另有闪回查询 `fromAsOf(表, 时刻)` 与热点行的库存提示 `inventory(n)`。`infra/polardb` 是本机与 CI 用的单节点引擎实例。`Mysql`、`MysqlDatabase` 去掉 final，TS 的 `MysqlDatabase` 构造器可以传方言，`Hint` 可以指定所属方言。
-- **写语句的提示**：`update(...)` / `deleteFrom(...)` 的 `with(t -> 提示)`（两端），提示写在关键字后面并按方言合并；金样例 `mysql-update-hints`、`mysql-delete-hints`。
-- **金样例可以沿用别的方言**：Java `RenderSpec.fallbackDialect()`、TS 的 `fallbacks`；PolarDB 只有专属写法有自己的文件。
-- **流程引擎写法的实库场景**（两端、五个库）：并发汇聚只推进一次、重复提交、作业领取、候选与排除、长 JSON 文本、流转记录分页。
-- **通用门面**（[0013](docs/decisions/0013-portable-facade-and-live-tests.md)）：Java `Sql.database(DataSource | ConnectionProvider, configure)` 按连接报告的产品名选方言（方言包经 `dialect.DialectProvider` 登记），TS 核心包的 `database(driver, options)` 用驱动适配器带的方言（`Driver.dialect`）。只用核心写法的代码不必依赖具体的方言包；PolarDB 得到 MySQL 方言。
-- **测试：实库测试按主题拆分**（0013）：Java 全部搬进不发布的 `java/query-it`，测试类标 `@LiveTest(only / except)` 在每个选中的库上各跑一遍；TS 的 `test/src/live` 按同样的主题拆成 `liveSuite`；环境变量 `QUERY_DATABASES` 选库，CI 的实库 job 只设它。建表一律按声明生成，查询写回各个测试里。
-- **typed JSON**（[0015](docs/decisions/0015-typed-json-wire.md)）：Java `java/wire`（`org.dpdns.zerodep:wire`，零依赖）与 TS `@zerodep-dev/wire`。`Wire.encode` / `toWire` 把大整数、小数、日期、时间、时间戳（带不带时区）、NaN 与无穷、字节写成文字，根上附 `$types`（路径到类型），`decode` / `fromWire` 按它还原；结果是普通的 Map / List 树，任何 JSON 库都能写。不限于查询结果，两端共用 `spec/wire` 的样例。查询库读地址栏里的值（表头筛选、条件对象的文字字段、区间）也用它的文字格式。
-- **前端表格的请求**（[0016](docs/decisions/0016-table-query-contract.md)）：`sortBy` 认 JSON:API 的 `-amount,name`；`filterBy`（多选值写成 IN）、`searchBy`（LIKE）只认结果列，值按列的类型从文字读出，聚合列的条件放进 HAVING（渲染时判断，`FunctionDef.aggregating()` 标出方言的聚合函数），窗口列报错；`TableRequest.parse(params)` / `parseTableRequest(params)` 读 `page`、`pageSize`、`sort`、`total`、`filter.列`、`search.列`，条数上限默认 2000；`db.table(q, request)` 依次筛选、搜索、排序、分页，带了已知总数时不计数；`Page.toWire()`。
-- **TS 转换器列的文字**：`converted(storage, converter, name, field)` 的第 4 个参数声明字段值在线上的种类，表头筛选、条件对象、条件树里的文字先按它读成字段值再经转换器存（以前原样交给绑定，日期存成文本的列筛不出来）。
-- **一对多 `first(...)` 在 PostgreSQL、MySQL 上用 LATERAL**（[0018](docs/decisions/0018-lateral-first.md)）：方言能力 `supportsLateral()`；这两个库写成按父行取一行的 `LEFT JOIN LATERAL (… LIMIT 1) ON TRUE`，不再给整张子表排名；HANA、SQLite 与小版本未知的 PolarDB 仍写成 ROW_NUMBER 派生表。金样例 `one-to-many` 随之更新，PolarDB 有了自己的文件。
-- **条件树**（[0017](docs/decisions/0017-condition-tree.md)）：`Query.conditionBy(tree)`（两端）接前端条件构造器的 all / any / not 加比较，14 种比较方式；字段只认结果列，值按列的类型读，与前端 `matchesCondition` 的规则一致（不等于类把空值算作满足、没填完整的比较与空组不加条件），最外层的 all 拆开各自进 WHERE 或 HAVING。`TableRequest` / `parseTableRequest` 读 `condition` 参数，`db.table` 随之筛选。Java 的 `ConditionTree`（`parse`、`from`）与 wire 模块的 `Json.read`（不依赖 JSON 库）；TS 的 `parseConditionTree`、`conditionTreeCond`。
-- **条件对象的区间与文字**：`Range<T>` 字段（`@Where(RANGE)` / `@where("range")`）写成 `>= 起 AND <= 止`，缺一端只写另一端；时间戳列配日期时止端写成 `<` 后一天的零点，整天都算在内；文字字段按列的类型读（`textAs`），地址栏里的参数可以直接装进条件对象。
-- **计数直接数行**：单段查询没有分组、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET、方言子句，投影和按结果列的条件里没有聚合时，`count` / `page` 写成 `SELECT COUNT(*) FROM ... WHERE ...`，投影里的子查询、只为投影连接的关系和 ORDER BY 都不写；否则仍在外面包一层。
-- **多对多**：Java `many(UserRole.class, ...).through(ur -> ur.role())`，TS `@manyThrough((u) => u.userRoles, (ur) => ur.role)` 或查询时的 `through(...)`；查询中间表，用到的目标列 LEFT JOIN 过去，`any`、`count`、`list`、`first`、`groupJoin`、条件对象的路径都照常可用。`Many.where(条件对象)` 两端都可以用。
-- **树形数据**：`Trees.build` / `buildTree` 把带父键的平铺行组装成树（同级保持顺序，键重复或成环时报错）；`db.withAncestors(表, key, parent, hits, select)` 取命中的行和全部祖先，PostgreSQL、MySQL（PolarDB）、SQLite 一条 `WITH RECURSIVE ... UNION`（`Dialect.supportsRecursiveCte`），HANA 一层一层按键查；不来自 SQL 的数据用 `Trees.withAncestors` / `withAncestors(rows, { key, parent, load })`。`Cte.recursive` 可以写成 UNION。
-- **前端配合**：vue-tsx-pro 的 `useTableQuery` 发出上面的表格请求（多列排序、表头筛选、已知总数），`http` 的 `wire` 选项按 `$types` 还原响应，`buildTree` 组装服务端搜索的结果；见两份 API 说明的"与前端配合"一节。
-
-### 变更（不兼容，2.x 尚未发布）
-
-- **Java：按逻辑 SQL 类型分的列与表达式**（[0014](docs/decisions/0014-typed-expressions.md)）：列声明成 `ColText<String>`、`ColInteger<Integer>`、`ColBigint<Long>`、`ColDecimal<BigDecimal>`、`ColDate<LocalDate>`、`ColTimestamp<LocalDateTime>` 等（包 `table.column`），表达式接口同名（`expr.typed`），泛型参数是 Java 类型；经转换器存成文本的日期是 `ColText<LocalDate>`。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`。`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。
-- **Java：有主操作数的函数改成实例方法**：`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)` 等约 55 个静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`；加减乘按"宽"的类型提升，`caseWhen`、`lag`、`greatest`、`val`、`lit` 的结果保住类型。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`。
-- **Java：语句式条件**：条件方法返回 `void`，写进条件块（`where(l -> { a; b; })`、`any(() -> {...})`、`all`、`not`、`bool(() -> ...)`、`caseWhen(() -> ..., x)`、`filter(() -> ...)`），可选条件直接写 `if`；`Cond.and`/`or`、`onlyIf`、`ifPresent` 删去。UPDATE 的 `set(t -> { t.x().to(v); ... })` 是赋值块。写错位置的条件和赋值立即报错。
-- **TypeScript：小数与日期是值对象**：`decimal`、`date`、`timestamp` 列读写 decimal.js 的 `Decimal`、@internationalized/date 的 `CalendarDate`、`CalendarDateTime`（与前端组件一致），两个库是核心包的 peerDependencies；字段从 `string` 改成这些类型。绑定时仍接受文本形式（按格式校验）。`CalendarDateTime` 精确到毫秒，更细的部分读出来时舍去；`Decimal` 不保留末尾的零。`query-pull` 生成的字段同改。
-- **TypeScript：按逻辑 SQL 类型分的列与表达式**：查询回调里的字段按字段类型成为 `ColText<T>`、`ColNumber<T>`、`ColBigint<T>`、`ColDecimal<T>`、`ColDate<T>`、`ColTimestamp<T>`（`Col<T>` 兜底），表达式接口同名，结果按值类型给出接口（`ExprOf<T>`）。以另一种类型存的转换器列写成 `Stored<CalendarDate, string>`，是 `ColText`；没写时 `@column` 在编译期报错。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`；`SqlType` 多了存储种类的类型参数。
-- **TypeScript：实例方法、语句式条件与方言视图**：与 Java 相同——`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)`、`like(e, p)` 等静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`、`e.like(p)`（加减乘按"宽"的类型提升，接着写的 `plus` 并成一个括号）；条件方法返回 `void`，写进条件块（`where((l) => { a; b; })`、`any(() => {...})`、`all`、`not`、`bool(() => ...)`、`caseWhen(() => ..., x)`、聚合的 `filter(() => ...)`、关系与全局过滤器的回调），`Cond.and`/`or`/`not`、`onlyIf`、`ifPresent` 删去；`sqlCond` 一写下就在块里，`.on(...)` 改的是它本身。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`；全文检索、数组等条件函数写进当前的块。UPDATE 的 `set` 仍是对象字面量，表达式要是这一列的那一类。PolarDB 的 `fromAsOf` 收 `CalendarDateTime`。
-- Java：方言视图 `ViewString` 改名 `ViewText`，与逻辑类型的命名一致。
-- `where(Object)` 收到 lambda（例如 `java.util.function.Consumer`）或没有字段的对象时报错：以前会当成条件对象，一个条件也不加。
-- 金样例只有 `literals` 一处变了：小数常量由 12.50 改成 12.5（`Decimal` 不保留末尾的零，两端的用例输入同改）；其余新写法渲染出的 SQL 与原来逐字相同。
-
-## [2.0.0] - 未发布
-
-查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。
+查询写法的重做：Java 的表改为接口，增加导航关系、对象树、动态列、条件对象和原生 SQL 片段，删除重复和复杂的写法；同一版本还带来 SQLite 方言（两端，兼容 SQLite WASM）、PolarDB 方言和面向前端的 IndexedDB 本地存储。升级对照见[迁移指南](docs/migration.md#从-1x-升级到-20)，设计取舍见 [0006](docs/decisions/0006-query-model-direction.md)、[0009](docs/decisions/0009-sqlite-dialect.md)、[0010](docs/decisions/0010-indexeddb-local-store.md)、[0012](docs/decisions/0012-polardb-dialect.md)。1.x 已有场景的金样例除 `postgres-aggregates`（聚合过滤改为 CASE 写法）外全部不变。
 
 ### 不兼容的变化
 
@@ -104,6 +58,48 @@ SQLite 方言（两端，兼容 SQLite WASM）和面向前端的 IndexedDB 本�
 
 - 空跑或没有行时 `count` 不再出错。
 - UPDATE、DELETE 的 WHERE 经过多对一导航时渲染出没有连接的列（SQL 无效）；现在写成 `EXISTS (... LEFT JOIN ...)`，语义与查询里的导航相同，SET 里用导航时报错。
+
+### 新增：SQLite、PolarDB、IndexedDB 与其后的补充
+
+- **SQLite 方言**：Java `query-sqlite`（sqlite-jdbc）与 TS `@zerodep-dev/query-sqlite`（`node:sqlite` 与 `@sqlite.org/sqlite-wasm` 两个驱动），金样例与三库逐字节对照，实库场景随单元测试运行。方言包另有视图 `sqlite(e)` 的 `glob`、`median`，以及 `percentileCont`、`percentileDisc`、`updateJoin`、`deleteJoin`、`query-pull-sqlite`。
+  - 需要编译选项的函数照常渲染，每个数据库实例第一次渲染时警告（TS 选项 `warn`）；ROLLUP、`grouping()`、`forUpdate()` 报错，TS 从 SQLite 包导入时写不出来。
+  - 结构变更里不能就地改的列归入只报告（REBUILD）。
+- **核心的方言钩子**：按名字覆盖函数渲染、窗口、CAST、算术、量化子查询、集合运算的分组、写语句的别名；结构变更的能力声明（能否改列、内联外键、注释）。
+- **浏览器里的核心包**：`db.transaction(async (tx) => ...)` 的回调收到绑定在事务上的数据库；库内部的多语句写入、追踪写回和迁移都经由它执行，不依赖 AsyncLocalStorage。迁移的校验和改用 Web Crypto，结果不变。
+- **IndexedDB 本地存储** `@zerodep-dev/idb`（不依赖核心包）：`@store` / `@key` / `@index`（unique、multiEntry、optional、boolean / bigint / lowercase 编码器）、`@one` / `@many` 与 `include`；`openLocal` 按版本升级并核对结构；只按索引查询，`scan` / `sortBy` 写在明处；事务回调 await 了别的工作时报 `TransactionClosedError`；批量写入整批回滚并列出失败的行；实时查询按仓库失效，并经由 BroadcastChannel 通知其他标签页；`QuotaError`、`persist`、`estimate`。
+- 开发编译器升到 TypeScript 7.1.0-dev.20261023.1（7.1 的 dev 构建）；`exclude` / `excludeIf` 的返回形态改用具名类型 `ExcludedKeys<R, K>`（7.1 不再把两处同样的内联映射类型当成同一个类型），核心包导出它。
+- 投影、`groupJoin` 和写入的列筛选用品牌类型 `AnyMany`（核心包导出）认一对多关系，不再写成 `Many<any>`：编辑器只检查单个文件时，`Many<Lips>` 赋不给 `Many<any>`，带关系的投影被推成 `Query<unknown>`（TS2769）。`groupJoin` 收到的不是一对多关系时报 `TypeError`。
+- 测试：Chrome 里的浏览器测试（`corepack pnpm test:browser`，`playwright-core` 用本机或 runner 预装的 Chrome）。
+- **Spring 的事务管理器**：`SpringConnections.of(dataSource, transactionManager)` 之后，`db.transaction(...)` 与多行写入的自动事务由这个事务管理器执行（传播行为 REQUIRED，已有事务时加入）。多数据源的项目每个数据源各传自己的事务管理器；只给 DataSource 时仍然报错。连接来源的接口加了 `startsTransactions()` 与 `transaction(work)`。
+- **迁移历史表可以改名**：`migrator.historyTable("flow_migration")`（两端），锁表跟着改名；同一个库里几套各自迁移的表不再共用 `QUERY_MIGRATION`。
+- **PolarDB 方言**（[0012](docs/decisions/0012-polardb-dialect.md)）：Java `query-polardb` 与 TS `@zerodep-dev/query-polardb` 继承 MySQL 方言（MySQL 的全部实库场景在开源的 PolarDB-X 引擎上原样通过），另有闪回查询 `fromAsOf(表, 时刻)` 与热点行的库存提示 `inventory(n)`。`infra/polardb` 是本机与 CI 用的单节点引擎实例。`Mysql`、`MysqlDatabase` 去掉 final，TS 的 `MysqlDatabase` 构造器可以传方言，`Hint` 可以指定所属方言。
+- **写语句的提示**：`update(...)` / `deleteFrom(...)` 的 `with(t -> 提示)`（两端），提示写在关键字后面并按方言合并；金样例 `mysql-update-hints`、`mysql-delete-hints`。
+- **金样例可以沿用别的方言**：Java `RenderSpec.fallbackDialect()`、TS 的 `fallbacks`；PolarDB 只有专属写法有自己的文件。
+- **流程引擎写法的实库场景**（两端、五个库）：并发汇聚只推进一次、重复提交、作业领取、候选与排除、长 JSON 文本、流转记录分页。
+- **通用门面**（[0013](docs/decisions/0013-portable-facade-and-live-tests.md)）：Java `Sql.database(DataSource | ConnectionProvider, configure)` 按连接报告的产品名选方言（方言包经 `dialect.DialectProvider` 登记），TS 核心包的 `database(driver, options)` 用驱动适配器带的方言（`Driver.dialect`）。只用核心写法的代码不必依赖具体的方言包；PolarDB 得到 MySQL 方言。
+- **测试：实库测试按主题拆分**（0013）：Java 全部搬进不发布的 `java/query-it`，测试类标 `@LiveTest(only / except)` 在每个选中的库上各跑一遍；TS 的 `test/src/live` 按同样的主题拆成 `liveSuite`；环境变量 `QUERY_DATABASES` 选库，CI 的实库 job 只设它。建表一律按声明生成，查询写回各个测试里。
+- **typed JSON**（[0015](docs/decisions/0015-typed-json-wire.md)）：Java `java/wire`（`org.dpdns.zerodep:wire`，零依赖）与 TS `@zerodep-dev/wire`。`Wire.encode` / `toWire` 把大整数、小数、日期、时间、时间戳（带不带时区）、NaN 与无穷、字节写成文字，根上附 `$types`（路径到类型），`decode` / `fromWire` 按它还原；结果是普通的 Map / List 树，任何 JSON 库都能写。不限于查询结果，两端共用 `spec/wire` 的样例。查询库读地址栏里的值（表头筛选、条件对象的文字字段、区间）也用它的文字格式。
+- **前端表格的请求**（[0016](docs/decisions/0016-table-query-contract.md)）：`sortBy` 认 JSON:API 的 `-amount,name`；`filterBy`（多选值写成 IN）、`searchBy`（LIKE）只认结果列，值按列的类型从文字读出，聚合列的条件放进 HAVING（渲染时判断，`FunctionDef.aggregating()` 标出方言的聚合函数），窗口列报错；`TableRequest.parse(params)` / `parseTableRequest(params)` 读 `page`、`pageSize`、`sort`、`total`、`filter.列`、`search.列`，条数上限默认 2000；`db.table(q, request)` 依次筛选、搜索、排序、分页，带了已知总数时不计数；`Page.toWire()`。
+- **TS 转换器列的文字**：`converted(storage, converter, name, field)` 的第 4 个参数声明字段值在线上的种类，表头筛选、条件对象、条件树里的文字先按它读成字段值再经转换器存（以前原样交给绑定，日期存成文本的列筛不出来）。
+- **一对多 `first(...)` 在 PostgreSQL、MySQL 上用 LATERAL**（[0018](docs/decisions/0018-lateral-first.md)）：方言能力 `supportsLateral()`；这两个库写成按父行取一行的 `LEFT JOIN LATERAL (… LIMIT 1) ON TRUE`，不再给整张子表排名；HANA、SQLite 与小版本未知的 PolarDB 仍写成 ROW_NUMBER 派生表。金样例 `one-to-many` 随之更新，PolarDB 有了自己的文件。
+- **条件树**（[0017](docs/decisions/0017-condition-tree.md)）：`Query.conditionBy(tree)`（两端）接前端条件构造器的 all / any / not 加比较，14 种比较方式；字段只认结果列，值按列的类型读，与前端 `matchesCondition` 的规则一致（不等于类把空值算作满足、没填完整的比较与空组不加条件），最外层的 all 拆开各自进 WHERE 或 HAVING。`TableRequest` / `parseTableRequest` 读 `condition` 参数，`db.table` 随之筛选。Java 的 `ConditionTree`（`parse`、`from`）与 wire 模块的 `Json.read`（不依赖 JSON 库）；TS 的 `parseConditionTree`、`conditionTreeCond`。
+- **条件对象的区间与文字**：`Range<T>` 字段（`@Where(RANGE)` / `@where("range")`）写成 `>= 起 AND <= 止`，缺一端只写另一端；时间戳列配日期时止端写成 `<` 后一天的零点，整天都算在内；文字字段按列的类型读（`textAs`），地址栏里的参数可以直接装进条件对象。
+- **计数直接数行**：单段查询没有分组、DISTINCT、HAVING、QUALIFY、LIMIT、OFFSET、方言子句，投影和按结果列的条件里没有聚合时，`count` / `page` 写成 `SELECT COUNT(*) FROM ... WHERE ...`，投影里的子查询、只为投影连接的关系和 ORDER BY 都不写；否则仍在外面包一层。
+- **多对多**：Java `many(UserRole.class, ...).through(ur -> ur.role())`，TS `@manyThrough((u) => u.userRoles, (ur) => ur.role)` 或查询时的 `through(...)`；查询中间表，用到的目标列 LEFT JOIN 过去，`any`、`count`、`list`、`first`、`groupJoin`、条件对象的路径都照常可用。`Many.where(条件对象)` 两端都可以用。
+- **树形数据**：`Trees.build` / `buildTree` 把带父键的平铺行组装成树（同级保持顺序，键重复或成环时报错）；`db.withAncestors(表, key, parent, hits, select)` 取命中的行和全部祖先，PostgreSQL、MySQL（PolarDB）、SQLite 一条 `WITH RECURSIVE ... UNION`（`Dialect.supportsRecursiveCte`），HANA 一层一层按键查；不来自 SQL 的数据用 `Trees.withAncestors` / `withAncestors(rows, { key, parent, load })`。`Cte.recursive` 可以写成 UNION。
+- **前端配合**：vue-tsx-pro 的 `useTableQuery` 发出上面的表格请求（多列排序、表头筛选、已知总数），`http` 的 `wire` 选项按 `$types` 还原响应，`buildTree` 组装服务端搜索的结果；见两份 API 说明的"与前端配合"一节。
+
+### 变更（不兼容，相对上面写法的进一步调整）
+
+- **Java：按逻辑 SQL 类型分的列与表达式**（[0014](docs/decisions/0014-typed-expressions.md)）：列声明成 `ColText<String>`、`ColInteger<Integer>`、`ColBigint<Long>`、`ColDecimal<BigDecimal>`、`ColDate<LocalDate>`、`ColTimestamp<LocalDateTime>` 等（包 `table.column`），表达式接口同名（`expr.typed`），泛型参数是 Java 类型；经转换器存成文本的日期是 `ColText<LocalDate>`。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`。`ColClob`、`ColBlob` 代替 `@Column(lob = true)`。
+- **Java：有主操作数的函数改成实例方法**：`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)` 等约 55 个静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`；加减乘按"宽"的类型提升，`caseWhen`、`lag`、`greatest`、`val`、`lit` 的结果保住类型。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`。
+- **Java：语句式条件**：条件方法返回 `void`，写进条件块（`where(l -> { a; b; })`、`any(() -> {...})`、`all`、`not`、`bool(() -> ...)`、`caseWhen(() -> ..., x)`、`filter(() -> ...)`），可选条件直接写 `if`；`Cond.and`/`or`、`onlyIf`、`ifPresent` 删去。UPDATE 的 `set(t -> { t.x().to(v); ... })` 是赋值块。写错位置的条件和赋值立即报错。
+- **TypeScript：小数与日期是值对象**：`decimal`、`date`、`timestamp` 列读写 decimal.js 的 `Decimal`、@internationalized/date 的 `CalendarDate`、`CalendarDateTime`（与前端组件一致），两个库是核心包的 peerDependencies；字段从 `string` 改成这些类型。绑定时仍接受文本形式（按格式校验）。`CalendarDateTime` 精确到毫秒，更细的部分读出来时舍去；`Decimal` 不保留末尾的零。`query-pull` 生成的字段同改。
+- **TypeScript：按逻辑 SQL 类型分的列与表达式**：查询回调里的字段按字段类型成为 `ColText<T>`、`ColNumber<T>`、`ColBigint<T>`、`ColDecimal<T>`、`ColDate<T>`、`ColTimestamp<T>`（`Col<T>` 兜底），表达式接口同名，结果按值类型给出接口（`ExprOf<T>`）。以另一种类型存的转换器列写成 `Stored<CalendarDate, string>`，是 `ColText`；没写时 `@column` 在编译期报错。`Expr<T>` 改成接口，自定义节点继承 `ExprNode<T>`；`SqlType` 多了存储种类的类型参数。
+- **TypeScript：实例方法、语句式条件与方言视图**：与 Java 相同——`upper(e)`、`sum(e)`、`addDays(d, n)`、`plus(a, b)`、`like(e, p)` 等静态函数删去，写成 `e.upper()`、`e.sum()`、`d.addDays(n)`、`a.plus(b)`、`e.like(p)`（加减乘按"宽"的类型提升，接着写的 `plus` 并成一个括号）；条件方法返回 `void`，写进条件块（`where((l) => { a; b; })`、`any(() => {...})`、`all`、`not`、`bool(() => ...)`、`caseWhen(() => ..., x)`、聚合的 `filter(() => ...)`、关系与全局过滤器的回调），`Cond.and`/`or`/`not`、`onlyIf`、`ifPresent` 删去；`sqlCond` 一写下就在块里，`.on(...)` 改的是它本身。方言函数经由视图：`hana(e).toVarchar(fmt)`、`postgres(e).ilike(p)`、`mysql(e).dateFormat(fmt)`、`sqlite(e).glob(p)`；全文检索、数组等条件函数写进当前的块。UPDATE 的 `set` 仍是对象字面量，表达式要是这一列的那一类。PolarDB 的 `fromAsOf` 收 `CalendarDateTime`。
+- Java：方言视图 `ViewString` 改名 `ViewText`，与逻辑类型的命名一致。
+- `where(Object)` 收到 lambda（例如 `java.util.function.Consumer`）或没有字段的对象时报错：以前会当成条件对象，一个条件也不加。
+- 金样例只有 `literals` 一处变了：小数常量由 12.50 改成 12.5（`Decimal` 不保留末尾的零，两端的用例输入同改）；其余新写法渲染出的 SQL 与原来逐字相同。
 
 ## [1.0.0] - 2026-10-22
 
