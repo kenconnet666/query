@@ -6,6 +6,7 @@
 
 ### 新增
 
+- `wire` 的 `Json.write(value)`：`Json.read` 的反向，把 Map、List、文字、数字、布尔与 null 写成紧凑的 JSON 文字（BigDecimal 不用科学计数法），不依赖 JSON 库；给存进库里的 JSON 列用（流程引擎的变量、运行状态）。
 - 业务错误码（`spec/error-codes.json`，两端一致）：抛出的异常都带 `code`，写法是 `query.empty-result` 这样带命名空间的文字，HTTP 接口原样写进响应体，前端按码取文案。Java 的异常实现 `CodedException`（`code()` 是 `QueryErrorCode`），TS 的错误类带 `code` 字段，清单是 `QUERY_ERROR_CODES` 与本地库的 `IDB_ERROR_CODES`。
 - 表格请求读不懂时报 `InvalidRequestException` / `InvalidRequestError`（`query.request-invalid`）：页码、条数写错，条件树写错，以及 `db.table` 里排序、筛选用了结果里没有的列。Java 的它继承 `IllegalArgumentException`。
 

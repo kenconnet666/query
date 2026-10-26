@@ -1240,7 +1240,7 @@ Object orders(@RequestParam MultiValueMap<String, String> params, OrderFilter fi
   "$types": { "rows.id": "bigint", "rows.amount": "decimal", "rows.createdOn": "date" } }
 ```
 
-结果只由 Map、List、String、Number、Boolean 组成，Jackson 2、3 都原样写出，也不受 ObjectMapper 的配置影响；对象取 record 的组件或公开的 getter，不认 `@JsonIgnore`。读请求不需要它：Jackson 本来就把 `"12.50"`、`"9007199254740993"`、ISO 日期读成 BigDecimal、Long、LocalDate，Spring Boot 默认忽略 `$types`。地址栏里的单个值用 `Wire.text(value)` / `Wire.parse(Type.class, text)`。
+结果只由 Map、List、String、Number、Boolean 组成，Jackson 2、3 都原样写出，也不受 ObjectMapper 的配置影响；对象取 record 的组件或公开的 getter，不认 `@JsonIgnore`。读请求不需要它：Jackson 本来就把 `"12.50"`、`"9007199254740993"`、ISO 日期读成 BigDecimal、Long、LocalDate，Spring Boot 默认忽略 `$types`。地址栏里的单个值用 `Wire.text(value)` / `Wire.parse(Type.class, text)`。不用 Web 框架、要自己写成文字时（存进库里的 JSON 列）用 `Json.write(Wire.encode(value))`，读回用 `Json.read(text)`。
 
 **树**：
 
