@@ -169,7 +169,7 @@ public interface Lips extends Client {
 public @interface SapDate { }
 ```
 
-列的值与比较时的参数都会经过转换器，例如 `l.createdOn().between(start, end)` 绑定的是 `'20260101'`。
+列的值与比较时的参数都会经过转换器，例如 `l.createdOn().between(start, end)` 绑定的是 `'20260101'`。值类型本身带泛型时（转换器把 `Map<String, Object>`、`List<Line>` 存成 JSON 文字）写成 `ColClob<Map<String, Object>>`，按原始类对上转换器。
 
 **枚举**：默认按名字存取。实现 `CodeEnum<C>` 的枚举按编码存取，不用给每列加注解：
 
