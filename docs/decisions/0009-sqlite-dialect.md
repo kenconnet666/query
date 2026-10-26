@@ -1,7 +1,7 @@
 # 0009 SQLite 方言（兼容 SQLite WASM）
 
 - 状态：已采纳并实现（2026-10-24，`feat/sqlite-idb`），两端同步；用法见 [api.md 第 18 节](../api.md#18-sqlite) 和 [api-typescript.md 第 19 节](../api-typescript.md#19-sqlite-与浏览器)
-- 目标版本：2.1
+- 目标版本：2.0（与 0010 一起并入 2.0.0 发布）
 - 修订对象：CLAUDE.md 的"首批方言"（三库之外加 SQLite）；0001 的方言范围
 
 ## 背景

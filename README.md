@@ -2,7 +2,7 @@
 
 面向分析型复杂查询的 SQL 构建库，同时提供 Java 与 TypeScript 两个实现。它不依赖 EasyQuery，也不做完整 ORM：把查询和写语句（插入、更新、删除、插入或更新）写成可组合、可复用、可校验的值，再按方言渲染并执行；另有结构变更与版本化迁移、从库生成列接口、显式范围的实体追踪和同库分表（0008），不做级联、懒加载和对象图保存。前端另有一个不依赖它的 IndexedDB 本地存储包。
 
-当前开发 2.0.0（`master` 分支，尚未发布；1.0.0 已发布）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL（含 PolarDB）和 SQLite（含浏览器里的 SQLite WASM）；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
+当前版本 2.0.0（`master` 分支；上一个发布版本是 1.0.0）：Java 与 TypeScript 功能对齐，覆盖 SAP HANA、PostgreSQL、MySQL（含 PolarDB）和 SQLite（含浏览器里的 SQLite WASM）；两端渲染出的 SQL 由 `spec/render/` 的金样例保证一致。
 
 - 用法：[Java API 使用说明](docs/api.md)、[TypeScript API 使用说明](docs/api-typescript.md)、[IndexedDB 本地存储](docs/api-idb.md)、[迁移指南](docs/migration.md)（从手写 SQL 迁移、从 1.x 升级）
 - 版本：[变更记录](CHANGELOG.md)、[手动发布步骤](docs/release.md)

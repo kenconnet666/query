@@ -1,7 +1,7 @@
 # 0010 面向前端的 IndexedDB 本地存储
 
 - 状态：已采纳并实现第一、二阶段（2026-10-24，`feat/sqlite-idb`）；用法见 [api-idb.md](../api-idb.md)
-- 目标版本：2.1（与 0009 的 SQLite 方言分开发布）
+- 目标版本：2.0（与 0009 的 SQLite 方言一起并入 2.0.0 发布）
 - 范围：只有 TypeScript；不涉及 Java，也不进入现有的 SQL 核心包
 
 ## 背景

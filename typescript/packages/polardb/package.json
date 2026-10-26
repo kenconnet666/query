@@ -1,6 +1,6 @@
 {
   "name": "@zerodep-dev/query-polardb",
-  "version": "2.0.0-dev",
+  "version": "2.0.0",
   "type": "module",
   "description": "PolarDB for MySQL dialect: everything in the MySQL 8 dialect plus flashback queries and inventory hints",
   "license": "Apache-2.0",
