@@ -210,10 +210,17 @@ public abstract class Database {
 
     /**
      * 表格查询（0016）：按请求依次做表头筛选（{@code filterBy}、{@code searchBy}）、排序（{@code sortBy}）和分页；请求带了已知的总数时不再 COUNT。
-     * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。返回的 {@link Page#toWire()} 交给前端。
+     * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列；用了没有的列、给文字以外的列做关键字筛选时报
+     * {@link InvalidRequestException}。返回的 {@link Page#toWire()} 交给前端。
      */
     public <R> Page<R> table(Query<R> q, TableRequest request) {
-        Query<R> shaped = q.filterBy(request.filter()).searchBy(request.search()).conditionBy(request.condition()).sortBy(request.sort());
+        Query<R> shaped;
+        try {
+            shaped = q.filterBy(request.filter()).searchBy(request.search()).conditionBy(request.condition()).sortBy(request.sort());
+        } catch (IllegalArgumentException e) {
+            // 列名、排序串都来自前端，这里的参数错误就是请求写错了
+            throw e instanceof InvalidRequestException ? e : new InvalidRequestException(e.getMessage(), e);
+        }
         return request.total() == null
             ? page(shaped, request.page(), request.pageSize())
             : page(shaped, request.page(), request.pageSize(), request.total());

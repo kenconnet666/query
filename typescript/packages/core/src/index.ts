@@ -213,6 +213,7 @@ export {
 } from "./exec/database.js";
 export { Tracker } from "./exec/tracker.js";
 export { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseTableRequest, type QueryParams, type TableRequest } from "./exec/table.js";
+export { InvalidRequestError, QUERY_ERROR_CODES, type QueryErrorCode } from "./exec/errors.js";
 export { buildTree, TREE_BATCH, withAncestors, type AncestorLoad, type TreeNode, type TreeShape } from "./exec/trees.js";
 export { Conflict, Delete, deleteFrom, forUpdate, Insert, insertInto, generate, JoinDelete, JoinUpdate, onInsert, onUpdate, update, Update, Write, type Assignments, type Columns, type Fill, type InsertRow } from "./write/write.js";
 export { columnType, declaredTable, describeType, findColumn, qualifiedName, sameType, widensTo, type ColumnDef, type ColumnKind, type ColumnType, type ForeignKeyDef, type IndexDef, type TableDef, type TableOption } from "./ddl/model.js";

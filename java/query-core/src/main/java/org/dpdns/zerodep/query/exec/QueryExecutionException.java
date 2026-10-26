@@ -3,7 +3,7 @@ package org.dpdns.zerodep.query.exec;
 import org.dpdns.zerodep.query.dialect.Rendered;
 
 /** 语句执行失败，异常里带着 SQL，不开调试器也能定位原因。 */
-public final class QueryExecutionException extends RuntimeException {
+public final class QueryExecutionException extends RuntimeException implements CodedException {
     private final transient Rendered statement;
     private final boolean timeout;
 
@@ -24,4 +24,8 @@ public final class QueryExecutionException extends RuntimeException {
 
     /** 数据库是否因语句超过超时时间而取消了它。 */
     public boolean isTimeout() { return timeout; }
+
+    /** 超时是 {@code query.statement-timeout}，其余是 {@code query.execution-failed}。 */
+    @Override
+    public QueryErrorCode code() { return timeout ? QueryErrorCode.STATEMENT_TIMEOUT : QueryErrorCode.EXECUTION_FAILED; }
 }

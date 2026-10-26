@@ -1,0 +1,16 @@
+{
+  "description": "query 的业务错误码（flow 仓库 docs/decisions/0008）：异常上的 code 用这些写法，Java 的 QueryErrorCode、TS 各包的 *_ERROR_CODES 都要和这份清单一致，vue-tsx-pro 的语言包按它给文案。package 是抛它的包。",
+  "namespace": "query",
+  "codes": [
+    { "code": "query.request-invalid", "package": "core", "description": "表格请求读不懂：页码、条数写错，条件树写错，排序、筛选用了结果里没有的列" },
+    { "code": "query.empty-result", "package": "core", "description": "要求恰好一行的查询没有读到行" },
+    { "code": "query.too-many-rows", "package": "core", "description": "最多一行的查询读到了多行" },
+    { "code": "query.unexpected-row-count", "package": "core", "description": "写语句影响的行数与期望的不符（乐观锁冲突）" },
+    { "code": "query.statement-timeout", "package": "core", "description": "语句超时被数据库取消" },
+    { "code": "query.execution-failed", "package": "core", "description": "语句执行失败" },
+    { "code": "query.invalid-row", "package": "idb", "description": "行不能写入本地库：主键或索引字段为空、不是合法的键" },
+    { "code": "query.batch-write-failed", "package": "idb", "description": "批量写入里有行失败，整批回滚" },
+    { "code": "query.transaction-closed", "package": "idb", "description": "本地库的事务已提交：回调里等了别的异步工作" },
+    { "code": "query.quota-exceeded", "package": "idb", "description": "写入超出了浏览器给这个源的配额" }
+  ]
+}

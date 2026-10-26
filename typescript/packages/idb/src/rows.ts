@@ -2,6 +2,8 @@ import { describe, isKey, SHADOW, type IndexMeta, type StoreMeta } from "./metad
 
 /** 行不能写入：主键或索引字段为空、不是合法的键。problems 逐条说明是哪个字段。 */
 export class InvalidRowError extends TypeError {
+  readonly code = "query.invalid-row";
+
   constructor(
     readonly store: string,
     readonly problems: readonly string[],

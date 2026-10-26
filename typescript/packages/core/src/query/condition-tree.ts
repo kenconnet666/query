@@ -70,7 +70,7 @@ const MAX_DEPTH = 32;
 
 /**
  * 读条件树：JSON 文字（地址栏参数）或已经解析好的对象（请求体）。形状不对、比较方式不认识时报 TypeError，
- * 消息里带出错的位置（`condition.all[1].op`），Web 层据此回 400。
+ * 消息里带出错的位置（`condition.all[1].op`）；读表格请求时 `parseTableRequest` 换成 `query.request-invalid`。
  */
 export function parseConditionTree(input: unknown): ConditionTree {
   const value = typeof input === "string" ? (JSON.parse(input) as unknown) : input;

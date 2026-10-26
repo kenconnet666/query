@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { from, parseConditionTree, parseTableRequest, type ConditionTree } from "@zerodep-dev/query-core";
+import { from, InvalidRequestError, parseConditionTree, parseTableRequest, type ConditionTree } from "@zerodep-dev/query-core";
 import { Lips } from "../fixtures/erp.js";
 import { TestDialect } from "../fixtures/support.js";
 
@@ -102,6 +102,6 @@ describe("条件树（conditionBy）", () => {
     const request = parseTableRequest({ page: "1", condition: JSON.stringify(condition) });
     assert.deepEqual(request.condition, condition);
     assert.equal(parseTableRequest({}).condition, undefined);
-    assert.throws(() => parseTableRequest({ condition: '{"field":"unit","op":"nope"}' }), TypeError);
+    assert.throws(() => parseTableRequest({ condition: '{"field":"unit","op":"nope"}' }), InvalidRequestError);
   });
 });

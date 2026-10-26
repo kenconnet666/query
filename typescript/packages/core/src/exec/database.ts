@@ -9,6 +9,7 @@ import { Rendered, SqlWriter, type RenderSettings } from "../sql/writer.js";
 import { Tracker, type TrackerHost } from "./tracker.js";
 import { Sharding, type ShardConfig } from "../query/sharding.js";
 import type { TableRequest } from "./table.js";
+import { InvalidRequestError } from "./errors.js";
 import { TREE_BATCH, withAncestors as withAncestorRows } from "./trees.js";
 import { Cte, type Ref } from "../query/source.js";
 import type { ExprNode, Expr } from "../sql/expr.js";
@@ -107,6 +108,8 @@ const DRY_RUN = new WeakSet<Driver>();
  * 带版本列的按主键更新出现它，通常是别人已经改过或删掉了这一行（乐观锁冲突）。
  */
 export class UnexpectedRowCountError extends Error {
+  readonly code = "query.unexpected-row-count";
+
   constructor(
     readonly database: string,
     readonly statement: Rendered,
@@ -120,6 +123,8 @@ export class UnexpectedRowCountError extends Error {
 
 /** 要求恰好一行（`db.one(q)`）的查询没有读到行；应用可以在全局错误处理里把它单独映射成"未找到"。 */
 export class EmptyResultError extends Error {
+  readonly code = "query.empty-result";
+
   constructor(message: string) {
     super(message);
     this.name = "EmptyResultError";
@@ -128,6 +133,8 @@ export class EmptyResultError extends Error {
 
 /** 最多一行（`db.one(q)`、`db.optional(q)`）的查询读到了多行，通常说明条件写漏了。 */
 export class TooManyRowsError extends Error {
+  readonly code = "query.too-many-rows";
+
   constructor(message: string) {
     super(message);
     this.name = "TooManyRowsError";
@@ -284,6 +291,11 @@ export class QueryExecutionError extends Error {
   ) {
     super(`${database}${timedOut ? " (timed out)" : ""}: ${cause instanceof Error ? cause.message : String(cause)}\n${statement.sql}`, { cause });
     this.name = "QueryExecutionError";
+  }
+
+  /** 超时是 `query.statement-timeout`，其余是 `query.execution-failed` */
+  get code(): "query.statement-timeout" | "query.execution-failed" {
+    return this.timedOut ? "query.statement-timeout" : "query.execution-failed";
   }
 }
 
@@ -534,10 +546,17 @@ export abstract class Database {
 
   /**
    * 表格查询（0016）：按请求依次做表头筛选（`filterBy`、`searchBy`）、排序（`sortBy`）和分页；请求带了已知的总数时不再 COUNT。
-   * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列。结果交给 `toWire` 发回前端。
+   * 筛选和排序只认结果列，所以请求里的列名不会碰到结果以外的列；用了没有的列、给文字以外的列做关键字筛选时报 `InvalidRequestError`。
+   * 结果交给 `toWire` 发回前端。
    */
   async table<R>(q: Query<R>, request: TableRequest): Promise<Page<R>> {
-    const shaped = q.filterBy(request.filter).searchBy(request.search).conditionBy(request.condition).sortBy(request.sort);
+    let shaped: Query<R>;
+    try {
+      shaped = q.filterBy(request.filter).searchBy(request.search).conditionBy(request.condition).sortBy(request.sort);
+    } catch (e) {
+      // 列名、排序串都来自前端，这里的参数错误（TypeError）就是请求写错了
+      throw e instanceof TypeError ? new InvalidRequestError(e.message, { cause: e }) : e;
+    }
     return this.page(shaped, request.page, request.pageSize, request.total);
   }
 

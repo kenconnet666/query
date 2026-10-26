@@ -660,6 +660,8 @@ console.log(events[0]!.statement.debugSql());
 | 条件对象的比较 | `@where((column, value) => { 条件 }, "列")`，见第 6 节 |
 | 结果错误 | `db.one` 没有行时抛 `EmptyResultError`，多于一行（以及 `db.optional`）抛 `TooManyRowsError` |
 
+**业务错误码**：query 抛出的错误都带 `code`（`query.empty-result`、`query.request-invalid` 等，清单是 `QUERY_ERROR_CODES`，本地库另有 `IDB_ERROR_CODES`，与 Java、`spec/error-codes.json` 一致）。HTTP 一律回 200，把码原样写进响应体，前端按码取文案。
+
 **记录语句**：只想看 SQL 时用 `printSql`；要接入项目已有的日志（pino、winston 或 console），用监听器。事件里有数据库名、SQL 与参数、耗时、行数、异常，以及是否命中缓存：
 
 ```ts
@@ -971,8 +973,8 @@ export default defineEventHandler(async (event) => {
 });
 ```
 
-- `parseTableRequest(params, { maxPageSize })` 接受 `URLSearchParams` 或 `getQuery` / `req.query` 那样的对象：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字报 `RangeError`，Web 层据此回 400。
-- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`sortBy`、`page`；只认结果列。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
+- `parseTableRequest(params, { maxPageSize })` 接受 `URLSearchParams` 或 `getQuery` / `req.query` 那样的对象：没写时第 1 页、每页 10 条；条数上限默认 2000（同 Spring Data），超过时报错。写错的数字、写错的条件树报 `InvalidRequestError`。
+- `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`、`sortBy`、`page`；只认结果列，用了没有的列时也报 `InvalidRequestError`。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
 - 查询栏的条件交给条件对象（第 6 节）：地址栏里的文字按列的类型读，区间写成 `Range<CalendarDate>` 或两个同名参数。
 
 **typed JSON**：`toWire(value)`（`@zerodep-dev/wire`，核心包重新导出）把 bigint、Decimal、`CalendarDate`、`CalendarDateTime`、`Time`、`ZonedDateTime`、字节写成文字，根上附一张 `$types`；`fromWire(json)` 按它还原。h3、Express 直接返回 `toWire(...)` 的结果即可（`JSON.stringify` 写不了 bigint，decimal.js 的 `toJSON` 会用科学计数法，`CalendarDate` 会写成对象）。地址栏里的单个值用 `wireText(value)` / `parseWire(kind, text)`。
