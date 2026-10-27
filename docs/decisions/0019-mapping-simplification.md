@@ -44,12 +44,12 @@ db.execute(update(Instance.class).byId(record));                                
 ```
 
 - 写：wire 的 `Wire.encode` + `Json.write`（record 取组件，Map / List 原样）。
-- 读：wire 新增**按类型还原**（`Wire.decode(Type, tree)`）：record 按组件名、Map / List 按泛型参数、标量同 `Wire.parse`；
+- 读：json-wire 新增**按类型还原**（`Wire.decode(Type, tree)`）：record 按组件名、Map / List 按泛型参数、标量同 `Wire.parse`；
   值类（如 `Variables`）认一个静态的 `of(Map)` 工厂。
 - TS 一侧：`json<T>()` 列类型，读写用 `JSON.parse` / `toWire`。
 - MySQL 列是 `JSON`，PostgreSQL 是 `jsonb`（绑定参数要 `?::jsonb`，在方言里处理），HANA 是 `NCLOB`，SQLite 是 `TEXT`。
 
-**代价**：wire 多一个按类型还原的入口（约两三百行，两端）；PG 的 jsonb 绑定要在方言里加转换。**收益**：每种 JSON 不用再写转换器类。
+**代价**：json-wire 多一个按类型还原的入口（约两三百行，两端）；PG 的 jsonb 绑定要在方言里加转换。**收益**：每种 JSON 不用再写转换器类。
 
 ## 4. 插入后拿回带编号的记录（已做）
 

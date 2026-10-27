@@ -10,7 +10,7 @@
   - 17 及以上，`maven.compiler.release=17`。本机 JDK 为 `C:\Users\lionheart\.jdks\jbr-17.0.14`，IDEA 中的 SDK 名为 `jbr-17`。
   - 实体用注解声明，可以要求用户使用 Lombok。
   - 不使用注解处理器（APT），编译期不生成代码；只有用户显式运行 `query:pull` 时才连库生成列的父接口（0008）。
-- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）、`packages/wire`（`@zerodep-dev/wire`，线上的 typed JSON，0015；核心包依赖它）和私有测试包 `test`。小数和日期是 `decimal.js`、`@internationalized/date` 的值对象（核心包的 peerDependencies，与 vue-tsx-pro 一致）；列和表达式按字段类型分接口（`sql/typed.ts`，0014），运行时只有 `ExprNode` 一个节点类。
+- **TypeScript**：以 7 为唯一基准，开发编译器固定为 7.1.0-dev.20261023.1（原生编译器，跟随 vue-tsx-pro 用 7.1 的 dev 构建），不再兼顾 6.0。使用标准装饰器，不用 `experimentalDecorators`。工程是 `typescript/` 下的 pnpm 工作区：`packages/core|hana|postgres|mysql|polardb|sqlite`（包名 `@zerodep-dev/query-*`）、`packages/idb`（`@zerodep-dev/idb`）和私有测试包 `test`；核心包依赖单独仓库的 `@zerodep-dev/json-wire`（线上的 typed JSON，0015），开发时用 `file:` 指向旁边的 `../json-wire`（不用 `link:`，理由见 0015 第 4 节），它重新构建后要在这里再 `pnpm install`。小数和日期是 `decimal.js`、`@internationalized/date` 的值对象（核心包的 peerDependencies，与 vue-tsx-pro 一致）；列和表达式按字段类型分接口（`sql/typed.ts`，0014），运行时只有 `ExprNode` 一个节点类。
 - **方言**：SAP HANA、PostgreSQL、MySQL、SQLite 同步推进，任何能力都要在四个方言上一起实现和验证。PolarDB 方言继承 MySQL 方言（写法相同，金样例沿用 MySQL 的文件，实库测试也跑 MySQL 的全部专属场景），只多 PolarDB 专属的能力；专属能力只纳入在开源 PolarDB-X 引擎上实测过、并且与阿里云 PolarDB 写法一致的（0012）。SQLite 缺的能力按 0009 处理：需要编译选项的照常渲染并警告，完全不支持的在类型上拦住或渲染时报错。DuckDB 延后。
 - **方言不抹平**：核心包只包含各库语义一致的能力，方言专属能力只出现在对应的方言包里。实例由方言门面创建，或由通用门面按连接选方言创建（Java 的 `Sql.database(...)`、TS 核心包的 `database(driver)`，0013）。
 - **文档**：
@@ -73,7 +73,7 @@ corepack pnpm test:live                  # 实库测试：服务端的库要变�
 corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览器测试（playwright-core，不下载浏览器）
 ```
 
-- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/wire`（线上的 typed JSON，0015，与 SQL 无关；`query-core` 依赖它）和 `java/query-core|hana|postgres|mysql|polardb|sqlite|spring|maven-plugin`（`query:pull` 代码生成）`|it`（全部实库测试，只有测试、不发布）。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
+- **模块**：根 `pom.xml` 是聚合父工程，Java 模块在 `java/query-core|hana|postgres|mysql|polardb|sqlite|spring|maven-plugin`（`query:pull` 代码生成）`|it`（全部实库测试，只有测试、不发布）；`query-core` 依赖单独仓库的 `org.dpdns.zerodep:json-wire`（0015），本机先在 `../json-wire` 里 `mvnw install`。`query-spring` 的 spring-jdbc 为 `provided`，默认按 5.3 编译，用 `-Dspring.version=` 换版本测试。TS 用 `tsc -b` 项目引用构建，测试是 `node:test`，编译后在 `typescript/test/dist` 里运行。
 - **源码目录**：Java 核心包按职责分子包：根包只放门面 `Sql` 和 `Fn`；`table`（表接口、列、来源）、`expr`（表达式与条件）、`scope`（作用域）、`select`（查询与投影）、`write`（写语句）、`exec`（执行），另有 `annotation`、`dialect`、`meta`、`type`。TS 的 `packages/core/src` 分为 `schema`、`sql`、`query`、`write`、`ddl`、`exec`；测试在 `test/src` 的 `unit`、`live`、`browser`，夹具在 `fixtures`。
 - **生成代码**：`scope/From1..From16`、`select/Rows`、`Fn`、按逻辑 SQL 类型分的数值与通用表达式接口（`expr/typed`）、外壳 `Shells`、列接口与实现（`table/column`）、`table/RefColumns`、`meta/Getter`、`SqlValues`、`expr/CaseOf` 由 `node tools/generate-java.mjs` 生成，改生成器后重新运行并提交生成结果，不要手改；`ExprText`、`ExprDate`、`ExprTimestamp`、`ExprNumber` 有各自的函数，手写。
 - **发布**：发布到 Maven 中央仓库和 npm 的步骤见 [docs/release.md](docs/release.md)。版本号同时改根 POM、各模块的 parent、TS 包和 `docs/api.md` 的依赖示例，变化记入 `CHANGELOG.md`。
@@ -85,7 +85,7 @@ corepack pnpm test:browser               # 本机 Chrome 或 Edge 里的浏览�
   - Spring 适配在 6.2 与 7.0 下的事务测试（5.3 由 Java 单元测试 job 覆盖）；
   - TypeScript 编译、编译期检查、单元与金样例测试，加上 SQLite 的实库场景（`node:sqlite` 与 WASM）和 runner 预装的 Chrome 里的浏览器测试（`QUERY_REQUIRE_BROWSER=1`）；Java 的 SQLite 实库测试（`query-it`）用临时文件库，随 Java 单元测试运行。
 
-  容器定义在 `infra/`。
+  容器定义在 `infra/`。要编译的 job 先用复合 action `.github/actions/json-wire` 把 json-wire 检出到旁边，按需装 Java 的 SNAPSHOT、构建 TS 包。
 - **CI 的提速规则**：
   - 实库 job 先在后台启动数据库，安装、编译、构建都放在数据库启动的等待时间里，最后才等待就绪；
   - 托管 runner 用完即销毁，不写清理步骤；

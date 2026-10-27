@@ -10,12 +10,13 @@
 - `db.insertReturning(insert)`：插入后返回带上生成编号的行（Java 的 record 按规范构造器重建、普通类直接设属性；TS 返回新对象），不必拿到编号再拼一遍（0019 第 4 条）。
 - `selectAs` 里类型是 Map、List、值对象的属性，同名的是一列（转换器存成 JSON 文字）时按列取；以前一律当对象树的分支去找关系。
 - 列的值类型可以本身带泛型（`ColClob<Map<String, Object>>`、`ColClob<List<Line>>`）：按原始类对上转换器，以前报"must declare its value type"。
-- `wire` 的 `Json.write(value)`：`Json.read` 的反向，把 Map、List、文字、数字、布尔与 null 写成紧凑的 JSON 文字（BigDecimal 不用科学计数法），不依赖 JSON 库；给存进库里的 JSON 列用（流程引擎的变量、运行状态）。
+- wire 的 `Json.write(value)`（现在在 json-wire 里，见下面的“变化”）：`Json.read` 的反向，把 Map、List、文字、数字、布尔与 null 写成紧凑的 JSON 文字（BigDecimal 不用科学计数法），不依赖 JSON 库；给存进库里的 JSON 列用（流程引擎的变量、运行状态）。
 - 业务错误码（`spec/error-codes.json`，两端一致）：抛出的异常都带 `code`，写法是 `query.empty-result` 这样带命名空间的文字，HTTP 接口原样写进响应体，前端按码取文案。Java 的异常实现 `CodedException`（`code()` 是 `QueryErrorCode`），TS 的错误类带 `code` 字段，清单是 `QUERY_ERROR_CODES` 与本地库的 `IDB_ERROR_CODES`。
 - 表格请求读不懂时报 `InvalidRequestException` / `InvalidRequestError`（`query.request-invalid`）：页码、条数写错，条件树写错，以及 `db.table` 里排序、筛选用了结果里没有的列。Java 的它继承 `IllegalArgumentException`。
 
 ### 变化
 
+- typed JSON 搬到单独的仓库 [json-wire](https://github.com/kenconnet666/json-wire)（[0015](docs/decisions/0015-typed-json-wire.md) 第 4 节）：Maven 坐标 `org.dpdns.zerodep:wire` 换成 `org.dpdns.zerodep:json-wire`，npm 包 `@zerodep-dev/wire` 换成 `@zerodep-dev/json-wire`；Java 的包名、类名不变，TS 核心包重新导出的名字不变，另外导出 `fromWire` 的选项类型 `FromWireOptions`。json-wire 另有 Java 的 `Wire.decode`（按 `$types` 还原）和两端注册自定义值类型的扩展口。
 - TS 的 `parseTableRequest` 以前对写错的数字报 `RangeError`、对写错的条件树报 `TypeError`，现在都报 `InvalidRequestError`；`sortBy`、`filterBy`、`searchBy`、`conditionBy` 的列名错误由 `Error` 改为 `TypeError`（与 Java 的 `IllegalArgumentException` 对应）。
 
 ### 修复

@@ -979,7 +979,7 @@ export default defineEventHandler(async (event) => {
 - `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`、`sortBy`、`page`；只认结果列，用了没有的列时也报 `InvalidRequestError`。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
 - 查询栏的条件交给条件对象（第 6 节）：地址栏里的文字按列的类型读，区间写成 `Range<CalendarDate>` 或两个同名参数。
 
-**typed JSON**：`toWire(value)`（`@zerodep-dev/wire`，核心包重新导出）把 bigint、Decimal、`CalendarDate`、`CalendarDateTime`、`Time`、`ZonedDateTime`、字节写成文字，根上附一张 `$types`；`fromWire(json)` 按它还原。h3、Express 直接返回 `toWire(...)` 的结果即可（`JSON.stringify` 写不了 bigint，decimal.js 的 `toJSON` 会用科学计数法，`CalendarDate` 会写成对象）。地址栏里的单个值用 `wireText(value)` / `parseWire(kind, text)`。
+**typed JSON**：`toWire(value)`（[`@zerodep-dev/json-wire`](https://github.com/kenconnet666/json-wire)，核心包重新导出）把 bigint、Decimal、`CalendarDate`、`CalendarDateTime`、`Time`、`ZonedDateTime`、字节写成文字，根上附一张 `$types`；`fromWire(json)` 按它还原。h3、Express 直接返回 `toWire(...)` 的结果即可（`JSON.stringify` 写不了 bigint，decimal.js 的 `toJSON` 会用科学计数法，`CalendarDate` 会写成对象）。地址栏里的单个值用 `wireText(value)` / `parseWire(kind, text)`。
 
 **树**：
 
