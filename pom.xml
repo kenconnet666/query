@@ -41,7 +41,6 @@
     </issueManagement>
 
     <modules>
-        <module>java/wire</module>
         <module>java/query-core</module>
         <module>java/query-hana</module>
         <module>java/query-postgres</module>
@@ -67,6 +66,8 @@
         <spring.version>5.3.39</spring.version>
         <h2.version>2.5.252</h2.version>
         <jackson.version>2.19.0</jackson.version>
+        <!-- json-wire（typed JSON，0015）在单独的仓库：本机在 ../json-wire 里 mvnw install，CI 先构建它 -->
+        <json-wire.version>0.1.0-SNAPSHOT</json-wire.version>
         <surefire.version>3.6.0</surefire.version>
         <maven.api.version>3.9.9</maven.api.version>
         <maven.plugin.tools.version>3.15.1</maven.plugin.tools.version>
@@ -83,8 +84,8 @@
             </dependency>
             <dependency>
                 <groupId>org.dpdns.zerodep</groupId>
-                <artifactId>wire</artifactId>
-                <version>${project.version}</version>
+                <artifactId>json-wire</artifactId>
+                <version>${json-wire.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.dpdns.zerodep</groupId>

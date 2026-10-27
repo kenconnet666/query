@@ -16,9 +16,6 @@
   ],
   "references": [
     {
-      "path": "../packages/wire"
-    },
-    {
       "path": "../packages/core"
     },
     {

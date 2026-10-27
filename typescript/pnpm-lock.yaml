@@ -14,9 +14,9 @@ importers:
 
   packages/core:
     dependencies:
-      '@zerodep-dev/wire':
-        specifier: workspace:*
-        version: link:../wire
+      '@zerodep-dev/json-wire':
+        specifier: file:../../../../json-wire/typescript/packages/json-wire
+        version: file:../../json-wire/typescript/packages/json-wire(@internationalized/date@3.12.4)(decimal.js@10.6.0)
     devDependencies:
       '@internationalized/date':
         specifier: 3.12.4
@@ -107,15 +107,6 @@ importers:
         specifier: 24.19.2
         version: 24.19.2
 
-  packages/wire:
-    devDependencies:
-      '@internationalized/date':
-        specifier: 3.12.4
-        version: 3.12.4
-      decimal.js:
-        specifier: 10.6.0
-        version: 10.6.0
-
   test:
     dependencies:
       '@internationalized/date':
@@ -139,9 +130,6 @@ importers:
       '@zerodep-dev/query-sqlite':
         specifier: workspace:*
         version: link:../packages/sqlite
-      '@zerodep-dev/wire':
-        specifier: workspace:*
-        version: link:../packages/wire
       decimal.js:
         specifier: 10.6.0
         version: 10.6.0
@@ -161,6 +149,9 @@ importers:
       '@zerodep-dev/idb':
         specifier: workspace:*
         version: link:../packages/idb
+      '@zerodep-dev/json-wire':
+        specifier: file:../../../json-wire/typescript/packages/json-wire
+        version: file:../../json-wire/typescript/packages/json-wire(@internationalized/date@3.12.4)(decimal.js@10.6.0)
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
@@ -237,6 +228,12 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@zerodep-dev/json-wire@file:../../json-wire/typescript/packages/json-wire':
+    resolution: {directory: ../../json-wire/typescript/packages/json-wire, type: directory}
+    peerDependencies:
+      '@internationalized/date': ^3.12.4
+      decimal.js: ^10.6.0
 
   aws-ssl-profiles@1.1.2:
     resolution: {integrity: sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==}
@@ -416,6 +413,11 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.1.0-dev.20261023.1':
     optional: true
+
+  '@zerodep-dev/json-wire@file:../../json-wire/typescript/packages/json-wire(@internationalized/date@3.12.4)(decimal.js@10.6.0)':
+    dependencies:
+      '@internationalized/date': 3.12.4
+      decimal.js: 10.6.0
 
   aws-ssl-profiles@1.1.2: {}
 

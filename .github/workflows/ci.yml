@@ -29,6 +29,9 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - uses: ./.github/actions/json-wire
+        with:
+          java: 'true'
       - name: 编译、运行全部单元测试并生成发布用的源码与 javadoc 包（实库测试只跑 SQLite，其余库跳过；不签名）
         run: ./mvnw --batch-mode --threads 1C -P release -Dgpg.skip verify
       - name: 保存测试报告
@@ -54,6 +57,9 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
+      - uses: ./.github/actions/json-wire
+        with:
+          java: 'true'
       - name: 在较新的 JDK 上编译并运行全部单元测试（字节码仍按 release 17 生成）
         run: ./mvnw --batch-mode --threads 1C verify
 
@@ -108,6 +114,10 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - if: matrix.language == 'java'
+        uses: ./.github/actions/json-wire
+        with:
+          java: 'true'
       - name: 数据库启动期间编译 Java
         if: matrix.language == 'java'
         run: ./mvnw --batch-mode -pl java/query-it -am test-compile
@@ -121,6 +131,10 @@ jobs:
           package_json_file: typescript/package.json
           cache: true
           cache_dependency_path: typescript/pnpm-lock.yaml
+      - if: matrix.language == 'typescript'
+        uses: ./.github/actions/json-wire
+        with:
+          typescript: 'true'
       - name: 数据库启动期间构建 TypeScript
         if: matrix.language == 'typescript'
         working-directory: typescript
@@ -194,6 +208,10 @@ jobs:
           package_json_file: typescript/package.json
           cache: true
           cache_dependency_path: typescript/pnpm-lock.yaml
+      - uses: ./.github/actions/json-wire
+        with:
+          java: 'true'
+          typescript: 'true'
       - name: HANA 启动期间编译 Java 并构建 TypeScript
         run: |
           ./mvnw --batch-mode -pl java/query-it -am test-compile
@@ -245,6 +263,9 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - uses: ./.github/actions/json-wire
+        with:
+          java: 'true'
       - name: 用指定的 Spring 版本运行事务测试
         run: ./mvnw --batch-mode verify -pl java/query-spring -am "-Dspring.version=${{ matrix.spring }}" -Dtest=SpringConnectionsTest -Dsurefire.failIfNoSpecifiedTests=false
 
@@ -262,6 +283,9 @@ jobs:
           package_json_file: typescript/package.json
           cache: true
           cache_dependency_path: typescript/pnpm-lock.yaml
+      - uses: ./.github/actions/json-wire
+        with:
+          typescript: 'true'
       - name: 编译并运行单元、编译期类型与金样例测试
         working-directory: typescript
         run: |
