@@ -20,10 +20,10 @@
     </properties>
 
     <dependencies>
-        <!-- 线上的 typed JSON（0015）：表头筛选、区间的文字按列类型读；它自己也没有第三方依赖。 -->
+        <!-- 线上的 typed JSON（0015，github.com/kenconnet666/json-wire）：表头筛选、区间的文字按列类型读；它自己也没有第三方依赖。 -->
         <dependency>
             <groupId>org.dpdns.zerodep</groupId>
-            <artifactId>wire</artifactId>
+            <artifactId>json-wire</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

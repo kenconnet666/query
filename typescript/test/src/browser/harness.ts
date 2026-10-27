@@ -8,8 +8,11 @@ import { chromium, type Browser } from "playwright-core";
 /** 工作区根目录 `typescript/`：各包的 dist 和测试的 dist 都在它下面。 */
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
-/** sqlite-wasm 浏览器构建所在的目录（index.mjs、sqlite3.wasm）。 */
-const WASM = dirname(createRequire(import.meta.url).resolve("@sqlite.org/sqlite-wasm/sqlite3.wasm"));
+/** 工作区之外按前缀提供的目录：sqlite-wasm 的浏览器构建（index.mjs、sqlite3.wasm），json-wire 的 dist（单独的仓库，link 进来）。 */
+const MOUNTS: Readonly<Record<string, string>> = {
+  "/sqlite-wasm/": dirname(createRequire(import.meta.url).resolve("@sqlite.org/sqlite-wasm/sqlite3.wasm")),
+  "/json-wire/": dirname(fileURLToPath(import.meta.resolve("@zerodep-dev/json-wire"))),
+};
 
 /** 按 Node 的 ESM 解析找到依赖的入口，换成服务器上相对工作区根目录的路径（pnpm 的包都在 `node_modules/.pnpm` 下）。 */
 function served(name: string): string {
@@ -18,7 +21,7 @@ function served(name: string): string {
 
 /** 浏览器里没有包解析：把 JS 里的包名换成服务器上的路径。Worker 里不能用 import map，所以在服务端改写。 */
 const PACKAGES: Readonly<Record<string, string>> = {
-  "@zerodep-dev/wire": "/packages/wire/dist/index.js",
+  "@zerodep-dev/json-wire": "/json-wire/index.js",
   "@zerodep-dev/query-core": "/packages/core/dist/index.js",
   "@zerodep-dev/query-sqlite": "/packages/sqlite/dist/index.js",
   "@zerodep-dev/idb": "/packages/idb/dist/index.js",
@@ -36,7 +39,7 @@ const TYPES: Readonly<Record<string, string>> = {
 };
 
 /**
- * 测试用的静态服务器：`/sqlite-wasm/...` 指向 sqlite-wasm 的构建，其余路径指向工作区；`/` 返回 page。
+ * 测试用的静态服务器：MOUNTS 里的前缀指向对应的目录，其余路径指向工作区；`/` 返回 page。
  * 只监听 127.0.0.1（localhost 是安全上下文，OPFS 和 Web Crypto 可用）。返回服务器和它的地址。
  */
 export async function serve(page: string): Promise<{ server: Server; url: string }> {
@@ -46,8 +49,9 @@ export async function serve(page: string): Promise<{ server: Server; url: string
       res.writeHead(200, { "content-type": "text/html" }).end(page);
       return;
     }
-    const file = path.startsWith("/sqlite-wasm/") ? join(WASM, path.slice("/sqlite-wasm/".length)) : join(ROOT, normalize(path));
-    if (!file.startsWith(WASM) && !file.startsWith(ROOT)) {
+    const [prefix, base] = Object.entries(MOUNTS).find(([prefix]) => path.startsWith(prefix)) ?? ["/", ROOT];
+    const file = join(base, normalize(path.slice(prefix.length)));
+    if (!file.startsWith(base)) {
       res.writeHead(403).end();
       return;
     }

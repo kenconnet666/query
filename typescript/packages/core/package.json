@@ -38,7 +38,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zerodep-dev/wire": "workspace:*"
+    "@zerodep-dev/json-wire": "file:../../../../json-wire/typescript/packages/json-wire"
   },
   "devDependencies": {
     "@internationalized/date": "3.12.4",

@@ -1,0 +1,36 @@
+name: 准备 json-wire
+description: >-
+  query-core 依赖单独仓库的 json-wire（typed JSON，0015）的开发版本：检出到本仓库旁边（../json-wire，
+  TS 核心包的 file: 指向那里），按需把 Java 的 SNAPSHOT 装进本机 Maven 仓库、构建 TS 包。
+  放在 setup-java / pnpm 的步骤之后。
+
+inputs:
+  java:
+    description: 把 Java 的 SNAPSHOT 装进本机 Maven 仓库
+    default: 'false'
+  typescript:
+    description: 安装依赖并构建 TS 包（pnpm install 前要有它的 dist）
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: kenconnet666/json-wire
+        path: json-wire
+    - name: 放到本仓库旁边
+      shell: bash
+      run: mv json-wire ../json-wire
+    - name: 安装 Java 的 SNAPSHOT
+      if: inputs.java == 'true'
+      shell: bash
+      working-directory: ../json-wire
+      run: ./mvnw --batch-mode install -DskipTests
+    - name: 构建 TS 包
+      if: inputs.typescript == 'true'
+      shell: bash
+      working-directory: ../json-wire/typescript
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm build

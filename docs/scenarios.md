@@ -82,7 +82,7 @@
 | SQL 级列转换（读取） | `ColumnValueSQLConverter` | 字段上的 `@ReadAs("…{0}…")`，内置 `@BlankAsNull`、`@Trimmed`；列在语句的每个位置都按模板读取 | 1 |
 | 加密列 | `@Encryption` | `Converter` 在写入、读取和比较参数三处都转换，应用侧加解密可直接实现，等值查询可用；不做可以 LIKE 的分段加密 | 1 |
 | JSON 列 | 支持 | 由方言包提供 | 3 |
-| 特殊类型的 JSON 传输 | 交给 Jackson 的配置 | `wire` 模块（Java、TS 各一份、零依赖）：大整数、小数、日期时间、字节写成文字，根上附 `$types`，对端按它还原；不限于查询结果，见 [0015](decisions/0015-typed-json-wire.md) | 2.0 |
+| 特殊类型的 JSON 传输 | 交给 Jackson 的配置 | json-wire（单独的仓库，Java、TS 各一份、零依赖）：大整数、小数、日期时间、字节写成文字，根上附 `$types`，对端按它还原；不限于查询结果，见 [0015](decisions/0015-typed-json-wire.md) | 2.0 |
 | 日期部分与日期加减 | `year()`、`plusDays(n)`、`duration(...).toDays()` | `year`、`month`、`day`、`hour`、`minute`、`second`、`addDays`、`addMonths`、`addYears`、`addHours`、`addMinutes`、`addSeconds`、`monthStart`、`daysBetween`、`secondsBetween`，各方言自动换写法；按格式转文本仍用方言函数（HANA `toVarchar`、MySQL `dateFormat`）；周相关函数三库规则不同，暂不做 | 2.0 |
 | 文本补齐与数值函数 | `leftPad`、`rightPad`、`SQLMathFunc` | `lpad`、`rpad`、`mod`、`power`、`sqrt`、`sign`，三库实测一致；`length` 各库计法不同，留在方言包 | 2.0 |
 | 自定义函数 | `SQLFunc` 加各方言的继承实现 | 静态方法加 `FunctionDef`，按方言注册渲染，与内置函数写法相同；例如 `concat` 在 MySQL 上渲染为 `CONCAT` | 1 |

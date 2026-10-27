@@ -1,5 +1,5 @@
 // 线上的 typed JSON（0015）：处理函数返回 toWire(结果)；查询库读表头筛选、区间的文字也用它
-export { fromWire, parseWire, toWire, wireText, type Json, type WireKind, type WireOptions, type WireType, type WireTypes } from "@zerodep-dev/wire";
+export { fromWire, parseWire, toWire, wireText, type FromWireOptions, type Json, type WireKind, type WireOptions, type WireType, type WireTypes } from "@zerodep-dev/json-wire";
 export {
   bigint,
   boolean,

@@ -1242,7 +1242,7 @@ Object orders(@RequestParam MultiValueMap<String, String> params, OrderFilter fi
 - `db.table(q, request)` 依次 `filterBy`、`searchBy`、`conditionBy`（地址栏的 `condition` 参数）、`sortBy`、`page`；只认结果列，请求里的列名碰不到结果以外的列。用了没有的列时也报 `InvalidRequestException`。前端只翻页、换排序时带上上一次的总数，这时不再 COUNT。
 - 查询栏的条件交给条件对象（第 7 节）：Spring 按字段类型绑定，区间写成 `Range<LocalDate>` 或两项的 `List<LocalDate>`。
 
-**typed JSON**：`Page.toWire()` 和 `Wire.encode(任意对象)`（`wire` 模块，`org.dpdns.zerodep.wire`，不依赖 Jackson）把 Long、BigInteger、BigDecimal、java.time 的值、字节写成文字，根上附一张 `$types`，前端的请求层据此还原，JavaScript 不会丢精度：
+**typed JSON**：`Page.toWire()` 和 `Wire.encode(任意对象)`（[json-wire](https://github.com/kenconnet666/json-wire) 的 `org.dpdns.zerodep.wire`，`query-core` 依赖它，不依赖 Jackson）把 Long、BigInteger、BigDecimal、java.time 的值、字节写成文字，根上附一张 `$types`，前端的请求层据此还原，JavaScript 不会丢精度：
 
 ```json
 { "rows": [{ "id": "9007199254740993", "amount": "12.50", "createdOn": "2026-01-31" }], "total": 368, "page": 1, "size": 20, "totalPages": 19,

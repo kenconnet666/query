@@ -7,9 +7,10 @@
 | 构件 | 文件 |
 | --- | --- |
 | `query-parent` | POM（各模块的父 POM，必须一起发布） |
-| `wire` | jar、sources、javadoc（`query-core` 依赖它，要一起发布） |
 | `query-core` | jar、sources、javadoc，以及方言模块测试用的 `tests` jar |
 | `query-hana`、`query-postgres`、`query-mysql`、`query-polardb`、`query-sqlite`、`query-spring`、`query-maven-plugin` | jar、sources、javadoc |
+
+`query-core` 依赖的 typed JSON（`org.dpdns.zerodep:json-wire`，[0015](decisions/0015-typed-json-wire.md)）在单独的仓库 [json-wire](https://github.com/kenconnet666/json-wire)，按它自己的 `docs/release.md` 发布。发布查询库之前，它要先有正式版本：根 `pom.xml` 的 `json-wire.version` 改成那个版本（不能是 SNAPSHOT，中央仓库不收依赖 SNAPSHOT 的构件）。
 
 每个文件都附带 `.asc` 签名和校验和。jar 的清单里写了 `Automatic-Module-Name`（例如 `org.dpdns.zerodep.query.hana`），在模块路径上也能使用。
 
@@ -92,7 +93,7 @@
 
 ## TypeScript（npm）
 
-八个包 `@zerodep-dev/query-core|postgres|mysql|hana|sqlite|polardb`、`@zerodep-dev/idb` 和 `@zerodep-dev/wire` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
+七个包 `@zerodep-dev/query-core|postgres|mysql|hana|sqlite|polardb` 和 `@zerodep-dev/idb` 属于 npm 组织 `zerodep-dev`，版本号与 Java 保持一致。核心包依赖的 `@zerodep-dev/json-wire` 由 json-wire 仓库发布（2.0.0 时的 `@zerodep-dev/wire` 不再从这里发新版本）；开发时核心包写的是 `file:../../../../json-wire/...`，发布前改成 npm 上的版本（如 `"^0.1.0"`），否则发出去的包装不上。发布前提：账号开启 2FA，环境变量 `NPM_TOKEN` 是勾选了 Bypass 2FA、范围为 `@zerodep-dev` 的 Granular Access Token，`~/.npmrc` 写 `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`。
 
 ```powershell
 cd typescript
@@ -102,6 +103,6 @@ corepack pnpm test
 corepack pnpm -r --filter "@zerodep-dev/*" publish --access public --no-git-checks
 ```
 
-`pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。`wire` 要先于核心包、核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。
+`pnpm publish` 会把 `workspace:*` 换成实际版本号，所以必须用它而不是 `npm publish`。核心包要先于方言包发布，`-r` 会按依赖顺序处理。已发布的版本不能覆盖，只能发新版本；`npm deprecate` 可以标记作废。
 
 新版本和新包发布后要经过一两分钟校验才出现在版本列表里。发布中途如果报 `409 Cannot publish over previously staged version`，说明上传已被接收、正在校验，等版本出现即可，不要重发；`pnpm -r` 中断后用 `--filter` 只补发还没发的包。

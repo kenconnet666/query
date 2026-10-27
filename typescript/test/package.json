@@ -12,7 +12,6 @@
     "@zerodep-dev/query-polardb": "workspace:*",
     "@zerodep-dev/query-postgres": "workspace:*",
     "@zerodep-dev/query-sqlite": "workspace:*",
-    "@zerodep-dev/wire": "workspace:*",
     "decimal.js": "10.6.0"
   },
   "devDependencies": {
@@ -21,6 +20,7 @@
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "@zerodep-dev/idb": "workspace:*",
+    "@zerodep-dev/json-wire": "file:../../../json-wire/typescript/packages/json-wire",
     "fake-indexeddb": "6.2.5",
     "mysql2": "3.24.6",
     "pg": "8.23.1",

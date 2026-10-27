@@ -1,5 +1,5 @@
 import { CalendarDate, CalendarDateTime } from "@internationalized/date";
-import { parseDate, parseTimestamp, parseWire, type WireKind } from "@zerodep-dev/wire";
+import { parseDate, parseTimestamp, parseWire, type WireKind } from "@zerodep-dev/json-wire";
 import { Decimal } from "decimal.js";
 
 /**

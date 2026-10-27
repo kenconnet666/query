@@ -1,5 +1,5 @@
 import { CalendarDate, CalendarDateTime } from "@internationalized/date";
-import { parseDate } from "@zerodep-dev/wire";
+import { parseDate } from "@zerodep-dev/json-wire";
 import { entityMeta, type Ctor, type WhereOp } from "../schema/metadata.js";
 import { parseColumnText, type SqlType } from "../schema/types.js";
 import { addCondition, and, collect, Cond, or, skips, withSkipEmpty } from "../sql/cond.js";

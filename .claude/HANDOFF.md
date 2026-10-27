@@ -28,7 +28,7 @@ vue-tsx-pro 做了条件构造器与 FilterBar 的高级筛选（2026-10-26）�
 
 用户 2026-10-25 对照 EasyQuery 找出缺口（对象树上的多个条件、多列排序、分页等）后要求全部做完，前端 vue-tsx-pro 可以一起改；特殊类型（大整数、小数、日期）的 JSON 传输要通用、不限于 SQL，能不依赖 Jackson 就不依赖；主要支持 MySQL 和 PostgreSQL，两者支持时按性能更好的写，其他库可以退化或各写各的。
 
-- **typed JSON**：Java `java/wire`、TS `packages/wire`，`$types` 记路径到类型，样例 `spec/wire` 两端共用（vue-tsx-pro 拷了一份 `.test/wire-order.json`）。
+- **typed JSON**：`$types` 记路径到类型；2026-10-27 起实现与样例在单独的仓库 json-wire（`../json-wire`，样例 `spec/order.json`，vue-tsx-pro 拷了一份 `.test/wire-order.json`），本仓库依赖它（0015 第 4 节）。
 - **表格请求**：`sortBy("-a,b")`、`filterBy`、`searchBy`、`TableRequest` / `parseTableRequest`、`db.table`；聚合列的条件在渲染时判断进 HAVING（`dialect/Aggregation`）。
 - **条件对象**：`Range<T>`、文字字段按列的类型读；`where(Object)` 拒收 lambda。
 - **计数直接数行**（`QueryRenderer.count` 的 `countsRows`）；`page()` 仍是先查列表再计数（先计数会让空跑捕获的语句顺序变化）。
